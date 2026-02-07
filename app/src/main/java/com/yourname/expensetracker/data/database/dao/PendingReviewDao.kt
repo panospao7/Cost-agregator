@@ -1,0 +1,48 @@
+package com.yourname.expensetracker.data.database.dao
+
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.PendingReview
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface PendingReviewDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(review: PendingReview): Long
+
+    @Update
+    suspend fun update(review: PendingReview)
+
+    @Delete
+    suspend fun delete(review: PendingReview)
+
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC")
+    fun getPendingFlow(): Flow<List<PendingReview>>
+
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC")
+    suspend fun getPending(): List<PendingReview>
+
+    @Query("SELECT COUNT(*) FROM pending_reviews WHERE status = 'PENDING'")
+    fun getPendingCountFlow(): Flow<Int>
+
+    @Query("SELECT * FROM pending_reviews WHERE id = :id")
+    suspend fun getById(id: Long): PendingReview?
+
+    @Query("SELECT * FROM pending_reviews WHERE rawNotificationId = :rawId")
+    suspend fun getByRawId(rawId: Long): PendingReview?
+
+    @Query("UPDATE pending_reviews SET status = :status WHERE id = :id")
+    suspend fun updateStatus(id: Long, status: String)
+
+    @Query("UPDATE pending_reviews SET status = :status WHERE id = :id AND status = 'PENDING'")
+    suspend fun updateStatusIfPending(id: Long, status: String): Int
+
+    @Query("SELECT * FROM pending_reviews ORDER BY createdAt DESC")
+    fun getAllFlow(): Flow<List<PendingReview>>
+
+    @Query("DELETE FROM pending_reviews WHERE status != 'PENDING'")
+    suspend fun clearResolved()
+
+    @Query("DELETE FROM pending_reviews")
+    suspend fun deleteAll()
+}

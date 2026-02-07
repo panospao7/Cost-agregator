@@ -1,0 +1,66 @@
+﻿
+  > Task 
+:app:preBuild 
+UP-TO-DATE
+  > Task 
+:app:preDebugBuild 
+UP-TO-DATE
+  > Task :app:mergeDe
+bugNativeDebugMetadat
+a NO-SOURCE
+> > Task :app:checkKo
+tlinGradlePluginConfi
+gurationErrors 
+SKIPPED
+  > Task :app:checkDe
+bugAarMetadata 
+UP-TO-DATE
+  > Task :app:generat
+eDebugResValues 
+UP-TO-DATE
+  > Task :app:mapDebu
+gSourceSetPaths 
+UP-TO-DATE
+  > Task :app:generat
+eDebugResources 
+UP-TO-DATE
+  > Task :app:mergeDe
+bugResources 
+UP-TO-DATE
+   ] [Missi... is n  
+  
+  ot present:Strin   
+ 
+  g) [], RemoteExc   
+ 
+  eption
+      + 
+FullyQualified 
+>    ErrorId : 
+Native  
+>   CommandError
+   
+> e: Error occurred 
+in 
+  KSP, check log for 
+  detail
+  
+  FAILURE: Build 
+  failed with an 
+  
+lerRunner.GradleCompi
+  
+lerRunnerWithWorkers$
+  
+GradleKotlinCompilerW
+  orkAction
+     > Compilation 
+> error. See log for 
+  more details
+  
+  * Try:
+  > Run with 
+  --stacktrace 
+option 
+
+

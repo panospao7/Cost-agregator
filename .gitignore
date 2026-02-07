@@ -1,0 +1,35 @@
+# Gradle files
+.gradle/
+build/
+app/build/
+
+# Local configuration file (sdk.io.etc)
+local.properties
+
+# Android Studio logs
+*.log
+
+# Captures
+captures/
+
+# IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services config
+google-services.json
+
+# MacOS
+.DS_Store
+
+# Windows Thumbs
+Thumbs.db
+
+# Misc
+.cxx/
