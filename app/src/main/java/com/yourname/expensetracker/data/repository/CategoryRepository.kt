@@ -45,7 +45,7 @@ class CategoryRepository @Inject constructor(
             }
             if (merchantEntities.isNotEmpty()) {
                 // We need a bulk insert for speed
-                merchantEntities.forEach { merchantCategoryDao.insert(it) }
+                merchantCategoryDao.insertAll(merchantEntities)
             }
         }
     }

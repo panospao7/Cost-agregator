@@ -47,9 +47,12 @@ class CategorizationEngine @Inject constructor(
 
         // 3. Word-level match — split merchant into words and check each
         val words = normalized.split(" ").filter { it.length >= 4 }
-        for (word in words) {
-            val wordMatch = merchantCategoryDao.getCategoryForMerchant(word)
-            if (wordMatch != null) return wordMatch.categoryId
+        if (words.isNotEmpty()) {
+            val mappingsMap = allMappings.associateBy { it.merchantPattern }
+            for (word in words) {
+                val match = mappingsMap[word]
+                if (match != null) return match.categoryId
+            }
         }
 
         return null

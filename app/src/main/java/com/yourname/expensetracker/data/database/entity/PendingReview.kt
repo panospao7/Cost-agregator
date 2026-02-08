@@ -17,7 +17,8 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["rawNotificationId"]),
-        Index(value = ["status"])
+        Index(value = ["status"]),
+        Index(value = ["status", "createdAt"]) // New: for Pending order by date
     ]
 )
 data class PendingReview(

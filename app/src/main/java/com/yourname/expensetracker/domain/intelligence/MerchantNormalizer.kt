@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -8,6 +10,10 @@ import javax.inject.Singleton
 class MerchantNormalizer @Inject constructor(
     private val userCorrectionDao: UserCorrectionDao
 ) {
+    private val correctionCache = mutableMapOf<String, String>()
+    private var lastCacheClear = 0L
+    private val CACHE_DURATION = 300_000 // 5 min
+    private val cacheMutex = Mutex()
     // Suffixes/noise to strip
     private val noisePatterns by lazy {
         listOf(
@@ -72,23 +78,7 @@ class MerchantNormalizer @Inject constructor(
      * Full normalization: strip noise, apply known aliases, apply user corrections
      */
     suspend fun normalizeAndCorrect(merchant: String): String {
-        val stripped = normalize(merchant)
-
-        // Check known aliases
-        for ((key, canonical) in KNOWN_ALIASES) {
-            if (stripped.contains(key)) {
-                return canonical
-            }
-        }
-
-        // Check user corrections
-        val userCorrection = userCorrectionDao.getMostCommonMerchantCorrection(stripped)
-        if (userCorrection != null) {
-            return userCorrection
-        }
-
-        // Return cleaned version with proper casing
-        return toTitleCase(stripped)
+        return applyUserCorrections(merchant)
     }
 
     /**
@@ -104,8 +94,23 @@ class MerchantNormalizer @Inject constructor(
             }
         }
 
+        val now = System.currentTimeMillis()
+        val cached: String? = cacheMutex.withLock {
+            if (now - lastCacheClear > CACHE_DURATION) {
+                correctionCache.clear()
+                lastCacheClear = now
+            }
+            correctionCache[normalized]
+        }
+        if (cached != null) return cached
+
         val corrected = userCorrectionDao.getMostCommonMerchantCorrection(normalized)
-        return corrected ?: toTitleCase(normalized)
+        val result = corrected ?: toTitleCase(normalized)
+
+        cacheMutex.withLock {
+            correctionCache[normalized] = result
+        }
+        return result
     }
 
     /**

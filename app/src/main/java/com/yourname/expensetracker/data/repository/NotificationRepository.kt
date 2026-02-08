@@ -9,7 +9,8 @@ import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.*
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,6 +29,15 @@ class NotificationRepository @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer,
     private val classifier: TransactionClassifier
 ) {
+    private val repositoryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
+    // Shared expenses flow to prevent redundant DB queries (shared by multiple ViewModels)
+    private val sharedExpenses = expenseDao.getAllFlow()
+        .shareIn(
+            scope = repositoryScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            replay = 1
+        )
 
     // === Notification access ===
     fun getAllNotifications(): Flow<List<RawNotification>> = dao.getAllFlow()
@@ -54,10 +64,8 @@ class NotificationRepository @Inject constructor(
     // === Core Processing Pipeline ===
     @Transaction
     suspend fun processAndSave(notification: RawNotification) {
-        // 0. Deduplication check
-        if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) {
-            return
-        }
+        // Optimized check: return early if already exists
+        if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return
 
         // 1. Save raw notification
         val rawId = try {
@@ -400,5 +408,21 @@ class NotificationRepository @Inject constructor(
 
     fun getTotalSpent(): Flow<Double?> = expenseDao.getTotalSpentFlow()
 
-    fun getAllExpenses(): Flow<List<Expense>> = expenseDao.getAllFlow()
+    fun getAllExpenses(): Flow<List<Expense>> = sharedExpenses
+
+    suspend fun processAndSaveAll(notifications: List<RawNotification>) {
+        if (notifications.isEmpty()) return
+        
+        // Initialize once for the batch
+        classifier.initialize()
+        
+        // Process in parallel chunks
+        notifications.chunked(20).forEach { chunk ->
+            coroutineScope {
+                chunk.map { notification -> 
+                    async { processAndSave(notification) } 
+                }.awaitAll()
+            }
+        }
+    }
 }

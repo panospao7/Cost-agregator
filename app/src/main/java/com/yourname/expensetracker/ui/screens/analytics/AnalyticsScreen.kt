@@ -174,7 +174,7 @@ fun AnalyticsChart(state: AnalyticsState) {
                 }
             } else {
                 val entries = state.dailyTotals.values.map { it.toFloat() }
-                val chartEntryModel = entryModelOf(*entries.toTypedArray())
+                val chartEntryModel = remember(entries) { entryModelOf(*entries.toTypedArray()) }
                 
                 Chart(
                     chart = columnChart(),

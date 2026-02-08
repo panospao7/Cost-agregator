@@ -15,8 +15,7 @@ class InsightsEngineTest {
         // and buildDailyTotals() are testable with just data.
         // We'll use mockk for the constructor.
         val expenseDao = io.mockk.mockk<com.yourname.expensetracker.data.database.dao.ExpenseDao>(relaxed = true)
-        val categoryDao = io.mockk.mockk<com.yourname.expensetracker.data.database.dao.CategoryDao>(relaxed = true)
-        engine = InsightsEngine(expenseDao, categoryDao)
+        engine = InsightsEngine(expenseDao)
     }
 
     private val dayMs = 86_400_000L

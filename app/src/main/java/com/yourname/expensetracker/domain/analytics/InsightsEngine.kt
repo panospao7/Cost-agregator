@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,41 +25,36 @@ class InsightsEngine @Inject constructor(
     suspend fun generateInsights(
         categories: List<Category>,
         allExpenses: List<Expense>
-    ): InsightsSnapshot {
+    ): InsightsSnapshot = coroutineScope {
         val now = System.currentTimeMillis()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
 
         val categoryMap = categories.associateBy { it.id }
 
-        // Monthly comparison
-        val monthlyComparison = buildMonthlyComparison(currentMonth, previousMonth)
-
-        // Category insights (current vs previous vs average)
-        val categoryInsights = buildCategoryInsights(
-            currentMonth, previousMonth, categoryMap, allExpenses
-        )
-
-        // Top merchants this month
-        val topMerchants = buildMerchantInsights(allExpenses)
-
-        // Spending pace
-        val spendingPace = buildSpendingPace(currentMonth, previousMonth, allExpenses)
-
-        // Anomalies (transactions that deviate significantly from merchant average)
-        val anomalies = findAnomalies(currentMonth, categoryMap)
-
-        // Recurring expenses
-        val recurringExpenses = findRecurringExpenses()
-
-        // Day of week pattern (last 3 months)
+        // Start all independent queries in parallel
+        val monthlyComparisonDeferred = async { buildMonthlyComparison(currentMonth, previousMonth) }
+        val categoryInsightsDeferred = async { buildCategoryInsights(currentMonth, previousMonth, categoryMap, allExpenses) }
+        val topMerchantsDeferred = async { buildMerchantInsights(allExpenses) }
+        val spendingPaceDeferred = async { buildSpendingPace(currentMonth, previousMonth, allExpenses) }
+        val anomaliesDeferred = async { findAnomalies(currentMonth, categoryMap) }
+        val recurringExpensesDeferred = async { findRecurringExpenses() }
+        
         val threeMonthsAgo = getMonthPeriod(now, -2)
-        val dayOfWeekPattern = buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs)
+        val dayOfWeekPatternDeferred = async { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs) }
+        val largestTransactionDeferred = async { 
+            expenseDao.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) 
+        }
 
-        // Largest transaction this month
-        val largestTransaction = expenseDao.getLargestExpenseForPeriod(
-            currentMonth.startMs, currentMonth.endMs
-        )
+        // Await all results
+        val monthlyComparison = monthlyComparisonDeferred.await()
+        val categoryInsights = categoryInsightsDeferred.await()
+        val topMerchants = topMerchantsDeferred.await()
+        val spendingPace = spendingPaceDeferred.await()
+        val anomalies = anomaliesDeferred.await()
+        val recurringExpenses = recurringExpensesDeferred.await()
+        val dayOfWeekPattern = dayOfWeekPatternDeferred.await()
+        val largestTransaction = largestTransactionDeferred.await()
 
         // Transaction size stats
         val currentMonthPurchases = allExpenses.filter {
@@ -72,7 +69,7 @@ class InsightsEngine @Inject constructor(
         // How many months of data we have
         val totalMonthsOfData = countDistinctMonths(allExpenses)
 
-        return InsightsSnapshot(
+        InsightsSnapshot(
             currentMonth = currentMonth,
             monthlyComparison = monthlyComparison,
             categoryInsights = categoryInsights,
@@ -207,18 +204,23 @@ class InsightsEngine @Inject constructor(
     private suspend fun buildMonthlyComparison(
         current: MonthPeriod,
         previous: MonthPeriod
-    ): MonthlyComparison {
-        val currentTotal = expenseDao.getTotalForPeriod(current.startMs, current.endMs)
-        val currentCount = expenseDao.getCountForPeriod(current.startMs, current.endMs)
-        val previousTotal = expenseDao.getTotalForPeriod(previous.startMs, previous.endMs)
-        val previousCount = expenseDao.getCountForPeriod(previous.startMs, previous.endMs)
+    ): MonthlyComparison = coroutineScope {
+        val currentTotalDeferred = async { expenseDao.getTotalForPeriod(current.startMs, current.endMs) }
+        val currentCountDeferred = async { expenseDao.getCountForPeriod(current.startMs, current.endMs) }
+        val previousTotalDeferred = async { expenseDao.getTotalForPeriod(previous.startMs, previous.endMs) }
+        val previousCountDeferred = async { expenseDao.getCountForPeriod(previous.startMs, previous.endMs) }
+
+        val currentTotal = currentTotalDeferred.await()
+        val currentCount = currentCountDeferred.await()
+        val previousTotal = previousTotalDeferred.await()
+        val previousCount = previousCountDeferred.await()
 
         val hasPrevious = previousCount > 0
         val changeAmount = if (hasPrevious) currentTotal - previousTotal else null
         val changePercentage = if (hasPrevious && previousTotal > 0)
             ((currentTotal - previousTotal) / previousTotal * 100).toFloat() else null
 
-        return MonthlyComparison(
+        MonthlyComparison(
             currentMonth = current,
             previousMonth = if (hasPrevious) previous else null,
             currentTotal = currentTotal,
@@ -237,9 +239,12 @@ class InsightsEngine @Inject constructor(
         previous: MonthPeriod,
         categoryMap: Map<Long, Category>,
         allExpenses: List<Expense>
-    ): List<CategoryInsight> {
-        val currentTotals = expenseDao.getCategoryTotalsForPeriod(current.startMs, current.endMs)
-        val previousTotals = expenseDao.getCategoryTotalsForPeriod(previous.startMs, previous.endMs)
+    ): List<CategoryInsight> = coroutineScope {
+        val currentTotalsDeferred = async { expenseDao.getCategoryTotalsForPeriod(current.startMs, current.endMs) }
+        val previousTotalsDeferred = async { expenseDao.getCategoryTotalsForPeriod(previous.startMs, previous.endMs) }
+
+        val currentTotals = currentTotalsDeferred.await()
+        val previousTotals = previousTotalsDeferred.await()
         val previousMap = previousTotals.associateBy { it.categoryId }
 
         val currentGrandTotal = currentTotals.sumOf { it.total }
@@ -247,7 +252,7 @@ class InsightsEngine @Inject constructor(
         // Calculate multi-month averages per category
         val monthlyAverages = calculateCategoryMonthlyAverages(allExpenses, current)
 
-        return currentTotals.mapNotNull { ct ->
+        currentTotals.mapNotNull { ct ->
             val category = categoryMap[ct.categoryId] ?: return@mapNotNull null
             val prev = previousMap[ct.categoryId]
             val avgData = monthlyAverages[ct.categoryId]

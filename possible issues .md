@@ -1,493 +1,1040 @@
-1. CRITICAL: Compilation Errors
-1.1 — ReviewViewModel.kt Missing Imports (WON'T COMPILE)
-Kotlin
+# Comprehensive Performance & Optimization Audit
 
-// ReviewViewModel.kt — Line references
+After exhaustively reviewing your entire codebase, I've identified issues across **database**, **CPU/battery**, and **UI smoothness** categories. Here's everything:
+
+---
+
+## 🔴 CRITICAL ISSUES
+
+### 1. **AnalyticsViewModel: Full dataset recomputation on EVERY expense change**
+**File:** `AnalyticsViewModel.kt`
+**Impact:** SEVERE lag on analytics screen, excessive CPU
+
+```kotlin
+// PROBLEM: This triggers on EVERY single expense change, recomputing everything
+init {
+    viewModelScope.launch {
+        combine(
+            repository.getAllExpenses(), // ← Emits ALL expenses as Flow
+            categoryRepository.allCategories
+        ) { expenses, categories ->
+            Pair(expenses, categories)
+        }.collect { (expenses, categories) ->
+            computeAnalytics(expenses, categories, _state.value.selectedPeriod)
+            // ↑ calls insightsEngine.generateInsights() which makes 8+ DB queries
+            // ↑ calls insightsEngine.detectRecurring() which iterates all expenses
+            // ↑ filters, groups, sorts the ENTIRE expense list multiple times
+        }
+    }
+}
+```
+
+**And inside `computeAnalytics`:**
+```kotlin
+// This calls generateInsights which internally does:
+// - expenseDao.getTotalForPeriod (DB query)
+// - expenseDao.getCountForPeriod (DB query)
+// - expenseDao.getCategoryTotalsForPeriod x2 (DB queries)
+// - expenseDao.getAllMerchantStats (DB query - full table scan)
+// - expenseDao.getMerchantStats (DB query)
+// - expenseDao.getTopMerchantsForPeriod (DB query)
+// - expenseDao.getLargestExpenseForPeriod (DB query)
+// - expenseDao.getRecurringCandidates (DB query)
+// - expenseDao.getDayOfWeekPattern (DB query)
+// PLUS in-memory: calculateCategoryMonthlyAverages iterates ALL expenses
+// PLUS in-memory: buildMerchantInsights iterates ALL expenses
+// PLUS: detectRecurring iterates ALL purchases, groups, sorts
+val insightsSnapshot = insightsEngine.generateInsights(categories, allExpenses)
+val insights = insightsEngine.getLegacyInsights(insightsSnapshot)
+val recurring = insightsEngine.detectRecurring(purchases)
+```
+
+**FIX:**
+```kotlin
 @HiltViewModel
-class ReviewViewModel @Inject constructor(
-    private val repository: NotificationRepository,  // ← MISSING IMPORT
-    private val categoryRepository: CategoryRepository
+class AnalyticsViewModel @Inject constructor(
+    private val repository: NotificationRepository,
+    private val categoryRepository: CategoryRepository,
+    private val insightsEngine: InsightsEngine
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(AnalyticsState())
+    val state: StateFlow<AnalyticsState> = _state.asStateFlow()
+
+    private var computeJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            combine(
+                repository.getAllExpenses(),
+                categoryRepository.allCategories
+            ) { expenses, categories ->
+                Pair(expenses, categories)
+            }
+            .debounce(300) // ← Debounce rapid changes
+            .collectLatest { (expenses, categories) -> // ← collectLatest cancels previous
+                computeAnalytics(expenses, categories, _state.value.selectedPeriod)
+            }
+        }
+    }
+
+    fun selectPeriod(period: TimePeriod) {
+        _state.update { it.copy(selectedPeriod = period, isLoading = true) }
+        computeJob?.cancel()
+        computeJob = viewModelScope.launch {
+            val expenses = repository.getAllExpenses().first()
+            val categories = categoryRepository.allCategories.first()
+            computeAnalytics(expenses, categories, period)
+        }
+    }
+
+    private suspend fun computeAnalytics(
+        allExpenses: List<Expense>,
+        categories: List<Category>,
+        period: TimePeriod
+    ) {
+        // Move heavy work off main thread
+        withContext(Dispatchers.Default) {
+            val purchases = allExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+            val now = System.currentTimeMillis()
+            val categoryMap = categories.associateBy { it.id }
+            val (currentStart, currentEnd) = getPeriodRange(period, now)
+            val periodLength = currentEnd - currentStart
+            val previousStart = currentStart - periodLength
+            val previousEnd = currentStart
+
+            val currentExpenses = purchases.filter { it.date in currentStart..currentEnd }
+            val previousExpenses = purchases.filter { it.date in previousStart..previousEnd }
+
+            val currentTotal = currentExpenses.sumOf { it.amount }
+            val previousTotal = previousExpenses.sumOf { it.amount }
+            val changePercent = if (previousTotal > 0) {
+                ((currentTotal - previousTotal) / previousTotal * 100).toFloat()
+            } else null
+
+            val categoryBreakdown = currentExpenses
+                .groupBy { it.categoryId }
+                .mapNotNull { (catId, exps) ->
+                    val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
+                    CategoryBreakdown(
+                        category = cat,
+                        total = exps.sumOf { it.amount },
+                        count = exps.size,
+                        percentage = if (currentTotal > 0)
+                            (exps.sumOf { it.amount } / currentTotal * 100).toFloat()
+                        else 0f
+                    )
+                }
+                .sortedByDescending { it.total }
+
+            val merchantBreakdown = currentExpenses
+                .groupBy { it.merchant.uppercase() }
+                .map { (_, exps) ->
+                    val total = exps.sumOf { it.amount }
+                    MerchantBreakdown(
+                        name = exps.first().merchant,
+                        totalSpent = total,
+                        transactionCount = exps.size,
+                        averageTransaction = total / exps.size,
+                        categoryId = exps.firstOrNull()?.categoryId
+                    )
+                }
+                .sortedByDescending { it.totalSpent }
+
+            val chartDays = when (period) {
+                TimePeriod.TODAY -> 1
+                TimePeriod.WEEK -> 7
+                TimePeriod.MONTH -> 30
+                TimePeriod.YEAR -> 365
+                TimePeriod.ALL -> {
+                    val oldest = purchases.minOfOrNull { it.date } ?: now
+                    ((now - oldest) / 86_400_000L).toInt().coerceIn(7, 365)
+                }
+            }
+            val dailyTotals = insightsEngine.buildDailyTotals(currentExpenses, chartDays)
+
+            // Only generate insights if we have meaningful data
+            val insights = if (purchases.size >= 5) {
+                try {
+                    val insightsSnapshot = insightsEngine.generateInsights(categories, allExpenses)
+                    insightsEngine.getLegacyInsights(insightsSnapshot)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            } else emptyList()
+
+            val recurring = if (purchases.size >= 10) {
+                insightsEngine.detectRecurring(purchases)
+            } else emptyList()
+
+            _state.update {
+                it.copy(
+                    selectedPeriod = period,
+                    currentTotal = currentTotal,
+                    previousTotal = if (previousTotal > 0) previousTotal else null,
+                    changePercent = changePercent,
+                    transactionCount = currentExpenses.size,
+                    categoryBreakdown = categoryBreakdown,
+                    merchantBreakdown = merchantBreakdown,
+                    dailyTotals = dailyTotals,
+                    insights = insights,
+                    recurring = recurring,
+                    isLoading = false
+                )
+            }
+        }
+    }
+    // ... rest unchanged
+}
+```
+
+---
+
+### 2. **HomeViewModel: Heavy computation on every expense emission**
+**File:** `HomeViewModel.kt`
+**Impact:** Home screen stutters when data changes
+
+```kotlin
+// PROBLEM: Every time ANY expense changes, this re-processes ALL expenses
+val dashboard: StateFlow<DashboardState> = combine(
+    repository.getAllExpenses(), // ← Full list, every emission
+    categoryRepository.allCategories
+) { expenses, categories ->
+    // Iterates ALL expenses multiple times:
+    // 1. filter for purchases
+    // 2. sumOf for totalSpent
+    // 3. groupBy categoryId
+    // 4. mapNotNull + sortedByDescending
+    // 5. filter for today
+    // 6. filter for week
+    // 7. filter for month
+    // All on the MAIN thread within combine!
+```
+
+**FIX:**
+```kotlin
+val dashboard: StateFlow<DashboardState> = combine(
+    repository.getAllExpenses(),
+    categoryRepository.allCategories
+) { expenses, categories ->
+    expenses to categories
+}
+.debounce(200) // Don't recompute on rapid changes
+.map { (expenses, categories) ->
+    withContext(Dispatchers.Default) { // Off main thread
+        computeDashboard(expenses, categories)
+    }
+}
+.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState())
+
+private fun computeDashboard(expenses: List<Expense>, categories: List<Category>): DashboardState {
+    val now = System.currentTimeMillis()
+    val cal = Calendar.getInstance()
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    val todayStart = cal.timeInMillis
+
+    val tempCal = cal.clone() as Calendar
+    tempCal.firstDayOfWeek = Calendar.MONDAY
+    tempCal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+    if (tempCal.timeInMillis > todayStart) tempCal.add(Calendar.DAY_OF_YEAR, -7)
+    val weekStart = tempCal.timeInMillis
+
+    cal.set(Calendar.DAY_OF_MONTH, 1)
+    val monthStart = cal.timeInMillis
+
+    val categoryMap = categories.associateBy { it.id }
+
+    // Single pass through expenses instead of multiple filters
+    var totalSpent = 0.0
+    var todaySpent = 0.0
+    var weekSpent = 0.0
+    var monthSpent = 0.0
+    val categoryTotals = mutableMapOf<Long, Double>()
+    val recentList = mutableListOf<Expense>()
+
+    for (expense in expenses) {
+        if (expense.transactionType != TransactionType.PURCHASE) continue
+        val amount = expense.amount
+        totalSpent += amount
+        if (expense.date >= todayStart) todaySpent += amount
+        if (expense.date >= weekStart) weekSpent += amount
+        if (expense.date >= monthStart) monthSpent += amount
+        expense.categoryId?.let { catId ->
+            categoryTotals[catId] = (categoryTotals[catId] ?: 0.0) + amount
+        }
+        if (recentList.size < 5) recentList.add(expense)
+    }
+
+    val topCategories = categoryTotals.entries
+        .mapNotNull { (catId, catTotal) ->
+            val cat = categoryMap[catId] ?: return@mapNotNull null
+            CategorySpending(cat, catTotal, if (totalSpent > 0) (catTotal / totalSpent * 100).toFloat() else 0f)
+        }
+        .sortedByDescending { it.total }
+        .take(5)
+
+    return DashboardState(
+        totalSpent = totalSpent,
+        todaySpent = todaySpent,
+        weekSpent = weekSpent,
+        monthSpent = monthSpent,
+        transactionCount = expenses.count { it.transactionType == TransactionType.PURCHASE },
+        topCategories = topCategories,
+        recentExpenses = recentList
+    )
+}
+```
+
+---
+
+### 3. **TransactionsViewModel: Mapping ALL expenses with category on every change**
+**File:** `TransactionsViewModel.kt`
+**Impact:** Transactions list lag with many items
+
+```kotlin
+// PROBLEM: Every time expenses OR categories change, maps ALL expenses
+val transactions: StateFlow<List<ExpenseWithCategory>> = combine(
+    repository.getAllExpenses(), // ALL expenses
+    categoryRepository.allCategories
+) { expenses, categories ->
+    val categoryMap = categories.associateBy { it.id }
+    expenses.map { expense -> // Maps EVERY expense
+        ExpenseWithCategory(expense, expense.categoryId?.let { categoryMap[it] })
+    }
+}
+```
+
+**FIX:**
+```kotlin
+val transactions: StateFlow<List<ExpenseWithCategory>> = combine(
+    repository.getAllExpenses(),
+    categoryRepository.allCategories
+) { expenses, categories ->
+    expenses to categories
+}
+.debounce(150)
+.map { (expenses, categories) ->
+    withContext(Dispatchers.Default) {
+        val categoryMap = categories.associateBy { it.id }
+        expenses.map { expense ->
+            ExpenseWithCategory(expense, expense.categoryId?.let { categoryMap[it] })
+        }
+    }
+}
+.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+```
+
+---
+
+### 4. **TransactionsScreen: Missing LazyColumn item keys stability + no pagination**
+**File:** `TransactionsScreen.kt`
+**Impact:** Scrolling jank with many transactions
+
+The list has keys but creates a new `SimpleDateFormat` per composition and parses color on every recomposition of items not using `remember`:
+
+```kotlin
+// PROBLEM: dateFormat created on every recomposition of the screen
+val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
+// This is OK at screen level, but the format.format() call inside items is fine
+
+// However TransactionItem creates color parsing inline:
+// The fix is already partially there with remember(category?.color), which is good
+```
+
+**The bigger issue is no pagination.** With hundreds of transactions, LazyColumn renders all items' states:
+
+**FIX: Add pagination to the DAO and ViewModel:**
+```kotlin
+// In ExpenseDao.kt - add:
+@Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit OFFSET :offset")
+suspend fun getExpensesPaged(limit: Int, offset: Int): List<Expense>
+
+// Or better, use Paging 3:
+@Query("SELECT * FROM expenses ORDER BY date DESC")
+fun getExpensesPagingSource(): PagingSource<Int, Expense>
+```
+
+For a simpler immediate fix without Paging3, limit the initial load:
+```kotlin
+// In ExpenseDao - add:
+@Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
+fun getRecentExpensesFlow(limit: Int = 100): Flow<List<Expense>>
+```
+
+---
+
+## 🟠 DATABASE OPTIMIZATION ISSUES
+
+### 5. **Missing database indices for critical query patterns**
+**File:** `Expense.kt`, `RawNotification.kt`, `PendingReview.kt`
+
+```kotlin
+// PROBLEM: The expenses table has these indices:
+indices = [
+    Index(value = ["rawNotificationId"]),
+    Index(value = ["date"]),
+    Index(value = ["categoryId"]),
+    Index(value = ["amount", "merchant", "date"])
+]
+// MISSING: Index on transactionType - nearly EVERY query filters by it!
+// Every analytics query has: WHERE transactionType = 'PURCHASE'
+```
+
+**FIX:**
+```kotlin
+@Entity(
+    tableName = "expenses",
+    foreignKeys = [/* ... same ... */],
+    indices = [
+        Index(value = ["rawNotificationId"]),
+        Index(value = ["date"]),
+        Index(value = ["categoryId"]),
+        Index(value = ["amount", "merchant", "date"]),
+        Index(value = ["transactionType"]),  // ← ADD THIS
+        Index(value = ["transactionType", "date"]),  // ← ADD THIS (covers most analytics queries)
+        Index(value = ["transactionType", "merchant"]),  // ← ADD THIS (covers merchant stats)
+        Index(value = ["transactionType", "categoryId", "date"]),  // ← ADD THIS (covers category period queries)
+    ]
 )
-Problem: ReviewViewModel uses NotificationRepository but does not import it. The file imports com.yourname.expensetracker.data.repository.CategoryRepository but NOT com.yourname.expensetracker.data.repository.NotificationRepository. Also missing @HiltViewModel import (dagger.hilt.android.lifecycle.HiltViewModel).
+```
 
-Fix:
+Also for `raw_notifications`:
+```kotlin
+// Current: Index(value = ["packageName", "timestamp"])
+// MISSING: Index on capturedAt (used in ORDER BY capturedAt DESC)
+indices = [
+    Index(value = ["packageName", "timestamp"]),
+    Index(value = ["capturedAt"]),  // ← ADD THIS
+    Index(value = ["isRelevant"]),  // ← ADD THIS (if queried)
+]
+```
 
-Kotlin
+For `pending_reviews`:
+```kotlin
+// Current: Index on rawNotificationId and status - this is OK
+// But add compound index for the most common query:
+indices = [
+    Index(value = ["rawNotificationId"]),
+    Index(value = ["status"]),
+    Index(value = ["status", "createdAt"]),  // ← ADD THIS (covers getPendingFlow ORDER BY)
+]
+```
 
-import com.yourname.expensetracker.data.repository.NotificationRepository
-import dagger.hilt.android.lifecycle.HiltViewModel
-1.2 — MainActivity.kt Missing SnackbarHost / SnackbarHostState Imports (WON'T COMPILE)
-Kotlin
+---
 
-val snackbarHostState = remember { SnackbarHostState() }  // ← Not imported
-// ...
-snackbarHost = { SnackbarHost(snackbarHostState) },       // ← Not imported
-Problem: SnackbarHostState and SnackbarHost are used but never imported.
+### 6. **InsightsEngine makes excessive sequential DB queries**
+**File:** `InsightsEngine.kt`
 
-Fix:
-
-Kotlin
-
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-1.3 — MerchantCategoryProvider Does Not Exist (WON'T COMPILE)
-Kotlin
-
-// CategoryRepository.kt
-val defaults = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
-val merchantMap = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.getExpandedMap()
-Problem: The class com.yourname.expensetracker.data.provider.MerchantCategoryProvider is referenced but never exists in your codebase. This means:
-
-The app cannot compile
-Default categories are never seeded
-The merchant dictionary is never populated
-Fix: Create MerchantCategoryProvider.kt in data/provider/ or inline the data.
-
-2. CRITICAL: Missing Files / Broken References
-2.1 — No build.gradle Files Provided
-Without the Gradle files, these potential issues cannot be verified but are likely:
-
-Missing Hilt plugin (id 'dagger.hilt.android.plugin')
-Missing kapt/ksp for Room annotation processing
-Missing Room schema export config (you have exportSchema = false but no migration strategy tests)
-Dependency version mismatches between Compose, Room, Hilt
-2.2 — No colors.xml or Color Resources
-You reference colors inline but have no colors.xml. Not a compilation error but a best-practice miss.
-
-2.3 — Missing ProGuard Rules
-For a release build with Hilt, Room, JSONObject serialization — you need ProGuard rules or things will break in release.
-
-3. CRITICAL: Database Issues
-3.1 — fallbackToDestructiveMigration() Destroys User Data
-Kotlin
-
-// AppModule.kt
-Room.databaseBuilder(context, AppDatabase::class.java, "expense_tracker_db")
-    .fallbackToDestructiveMigration()
-    .build()
-Problem: You are at version = 5. Any schema change silently destroys ALL user data — all expenses, categories, corrections, ML training data, everything. This is extremely dangerous for a financial app.
-
-Fix: Write proper Migration objects or at minimum use fallbackToDestructiveMigrationFrom() targeting specific old versions.
-
-3.2 — Database Version 5 But No Migration History
-You're at version 5 but have zero migrations defined. Every user who updates from any previous version loses all data silently.
-
-3.3 — ExpenseDao.insert Uses OnConflictStrategy.ABORT
-Kotlin
-
-@Insert(onConflict = OnConflictStrategy.ABORT)
-suspend fun insert(expense: Expense): Long
-Problem: ABORT throws SQLiteConstraintException which you catch in several places, but you're using it as a flow-control mechanism. This is an anti-pattern that:
-
-Creates unnecessary exception overhead
-Makes debugging harder (exceptions show in logs)
-Is fragile if a new foreign key constraint is added
-3.4 — No @Transaction Annotations on Multi-Table Operations
-NotificationRepository.processAndSave() performs operations across 4+ tables (raw_notifications, expenses, source_stats, pending_reviews) without any @Transaction wrapper. A crash mid-way leaves data in an inconsistent state:
-
-Raw notification saved but stats not updated
-Expense created but source stats not incremented
-Status updated to APPROVED but expense insertion failed
-Fix: Wrap critical multi-table operations in withTransaction:
-
-Kotlin
-
-database.withTransaction {
-    // all DB operations
+```kotlin
+// PROBLEM: generateInsights() makes 10+ separate DB queries sequentially
+suspend fun generateInsights(...): InsightsSnapshot {
+    val monthlyComparison = buildMonthlyComparison(currentMonth, previousMonth) // 4 DB queries
+    val categoryInsights = buildCategoryInsights(...) // 2 DB queries
+    val topMerchants = buildMerchantInsights(allExpenses) // 1 DB query
+    val spendingPace = buildSpendingPace(...) // 2 DB queries
+    val anomalies = findAnomalies(currentMonth, categoryMap) // 2 DB queries
+    val recurringExpenses = findRecurringExpenses() // 1 DB query
+    val dayOfWeekPattern = buildDayOfWeekPattern(...) // 1 DB query
+    val largestTransaction = expenseDao.getLargestExpenseForPeriod(...) // 1 DB query
+    // Total: ~14 sequential DB queries!
 }
-3.5 — ForeignKey CASCADE on PendingReview → RawNotification Can Cause Silent Data Loss
-Kotlin
+```
 
-// PendingReview entity
-ForeignKey(
-    entity = RawNotification::class,
-    parentColumns = ["id"],
-    childColumns = ["rawNotificationId"],
-    onDelete = ForeignKey.CASCADE
-)
-Problem: If someone deletes a raw notification (which delete(notification) does), all associated pending reviews are silently deleted too — potentially losing items the user hasn't reviewed yet. The delete() method does try to handle this, but there's a race condition where the review might be approved between the check and the delete.
+**FIX: Use async/coroutines to parallelize independent queries:**
+```kotlin
+suspend fun generateInsights(
+    categories: List<Category>,
+    allExpenses: List<Expense>
+): InsightsSnapshot = coroutineScope {
+    val now = System.currentTimeMillis()
+    val currentMonth = getMonthPeriod(now)
+    val previousMonth = getPreviousMonthPeriod(currentMonth)
+    val categoryMap = categories.associateBy { it.id }
 
-3.6 — getTotalSpentFlow() SQL Includes Only PURCHASE and WITHDRAWAL
-SQL
+    // Parallel DB queries
+    val monthlyComparisonDeferred = async { buildMonthlyComparison(currentMonth, previousMonth) }
+    val categoryInsightsDeferred = async { buildCategoryInsights(currentMonth, previousMonth, categoryMap, allExpenses) }
+    val merchantInsightsDeferred = async { buildMerchantInsights(allExpenses) }
+    val spendingPaceDeferred = async { buildSpendingPace(currentMonth, previousMonth, allExpenses) }
+    val anomaliesDeferred = async { findAnomalies(currentMonth, categoryMap) }
+    val recurringDeferred = async { findRecurringExpenses() }
+    val threeMonthsAgo = getMonthPeriod(now, -2)
+    val dayOfWeekDeferred = async { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs) }
+    val largestDeferred = async { expenseDao.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) }
 
-SELECT SUM(amount) FROM expenses WHERE transactionType IN ('PURCHASE', 'WITHDRAWAL')
-Problem: This sums withdrawals as spending. But in HomeViewModel, you filter only PURCHASE for totalSpent. These two numbers will disagree — the home screen shows one total, and getTotalSpent() returns a different one. Confusing for users.
+    // Await all
+    val monthlyComparison = monthlyComparisonDeferred.await()
+    val categoryInsights = categoryInsightsDeferred.await()
+    val topMerchants = merchantInsightsDeferred.await()
+    val spendingPace = spendingPaceDeferred.await()
+    val anomalies = anomaliesDeferred.await()
+    val recurringExpenses = recurringDeferred.await()
+    val dayOfWeekPattern = dayOfWeekDeferred.await()
+    val largestTransaction = largestDeferred.await()
 
-3.7 — SourceStatsDao.incrementTotal Default Parameter
-Kotlin
+    // ... rest of computation
+}
+```
 
-suspend fun incrementTotal(packageName: String, now: Long = System.currentTimeMillis())
-Problem: Room DAOs don't support default parameter values in @Query methods properly. The default value System.currentTimeMillis() is evaluated at the call site in Kotlin, but this is a subtle footgun — if someone calls this from Java or through a Room-generated wrapper, the default won't apply. It works in your case but is fragile.
+---
 
-5. CRITICAL: Android Lifecycle / Service Issues
-5.1 — CoroutineScope Leak in NotificationCaptureService
-Kotlin
+### 7. **CategorizationEngine: DB query per word in merchant name**
+**File:** `CategorizationEngine.kt`
 
-private val serviceJob = SupervisorJob()
-private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
-Problem: NotificationListenerService lifecycle is managed by the system. onDestroy() may not always be called (e.g., force-stop, system kill). The SupervisorJob may leak if the service is recreated without proper cleanup.
+```kotlin
+// PROBLEM: For each word in merchant name, makes a separate DB query
+val words = normalized.split(" ").filter { it.length >= 4 }
+for (word in words) {
+    val wordMatch = merchantCategoryDao.getCategoryForMerchant(word) // DB QUERY per word!
+    if (wordMatch != null) return wordMatch.categoryId
+}
+```
 
-Additionally, the serviceScope isn't tied to the service lifecycle properly. If the system unbinds and rebinds the service without destroying it, you get multiple scopes.
+This is called during `processAndSave` for every notification. With a 3-word merchant name, that's 3 DB queries just for categorization.
 
-5.2 — startForegroundService() Called from DebugViewModel
-Kotlin
-
-// DebugViewModel.kt
-fun triggerManualSync(context: android.content.Context) {
-    val intent = android.content.Intent(context, 
-        NotificationCaptureService::class.java).apply {
-        action = NotificationCaptureService.ACTION_REFRESH_NOTIFICATIONS
+**FIX:** The cache already exists but the word-level matching bypasses it:
+```kotlin
+suspend fun categorize(merchant: String): Long? {
+    val normalized = normalize(merchant)
+    
+    // 1. Exact match from cache first
+    val allMappings = getMappings() // Uses cached mappings
+    val exactMatch = allMappings.find { it.merchantPattern == normalized }
+    if (exactMatch != null) return exactMatch.categoryId
+    
+    // 2. Substring match from cache (no DB query needed!)
+    val sortedMappings = allMappings.sortedByDescending { it.merchantPattern.length }
+    val paddedNormalized = " $normalized "
+    for (mapping in sortedMappings) {
+        if (mapping.merchantPattern.length >= 3) {
+            val paddedPattern = " ${mapping.merchantPattern} "
+            if (paddedNormalized.contains(paddedPattern)) {
+                return mapping.categoryId
+            }
+        }
     }
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-        context.startForegroundService(intent)
-    } else {
-        context.startService(intent)
+    
+    // 3. Word-level match FROM CACHE (not DB!)
+    val words = normalized.split(" ").filter { it.length >= 4 }
+    for (word in words) {
+        val wordMatch = allMappings.find { it.merchantPattern == word }
+        if (wordMatch != null) return wordMatch.categoryId
     }
+    
+    return null
 }
-Problem: startForegroundService() on a NotificationListenerService is problematic. The service is bound by the system, not started. Calling startForegroundService creates an obligation to call startForeground() within 5 seconds, but onStartCommand doesn't call startForeground() — it only calls refreshActiveNotifications(). This will cause an ANR or crash on Android 8+:
+```
 
-text
+---
 
-Context.startForegroundService() did not then call Service.startForeground()
-Fix: Either call startForeground() in onStartCommand() when handling that action, or don't use startForegroundService() — instead communicate via a different mechanism (broadcast, bound service, etc.).
+### 8. **CategoryRepository.ensureDefaultCategories: Sequential DB inserts**
+**File:** `CategoryRepository.kt`
 
-5.3 — BootReceiver Is Annotated with @AndroidEntryPoint But Does Nothing with Hilt
-Kotlin
-
-@AndroidEntryPoint
-class BootReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        // ... just logs
-    }
+```kotlin
+// PROBLEM: Inserts merchant entities one by one
+if (merchantEntities.isNotEmpty()) {
+    // We need a bulk insert for speed
+    merchantEntities.forEach { merchantCategoryDao.insert(it) } // N separate transactions!
 }
-Problem: @AndroidEntryPoint on a BroadcastReceiver requires Hilt setup, but you don't inject anything. This adds unnecessary overhead and may cause issues if Hilt isn't fully initialized at boot time. Also, the receiver literally does nothing — it just logs. Either make it functional or remove it.
+```
 
-5.4 — Foreground Service Icon Uses Internal Resource
-Kotlin
+**FIX:** Add bulk insert to MerchantCategoryDao:
+```kotlin
+// In MerchantCategoryDao.kt:
+@Insert(onConflict = OnConflictStrategy.REPLACE)
+suspend fun insertAll(merchantCategories: List<MerchantCategory>)
 
-.setSmallIcon(androidx.core.R.drawable.notification_bg)
-Problem: androidx.core.R.drawable.notification_bg is an internal AndroidX resource — it's a 9-patch background image, NOT an icon. This will render as a white square or crash on some devices. You should use a proper notification icon drawable.
-
-5.5 — onDestroy() Called on NotificationListenerService
-Kotlin
-
-override fun onDestroy() {
-    super.onDestroy()
-    serviceJob.cancel()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        stopForeground(STOP_FOREGROUND_REMOVE)
-    }
+// In CategoryRepository:
+if (merchantEntities.isNotEmpty()) {
+    merchantCategoryDao.insertAll(merchantEntities)
 }
-Problem: onDestroy() is not guaranteed to be called for system-managed services. The serviceJob.cancel() may never execute, leaving coroutines running. Also, STOP_FOREGROUND_REMOVE requires API 24 check, which you do, but the else branch uses deprecated stopForeground(true).
+```
 
-6. HIGH: Concurrency & Thread Safety Bugs
-6.1 — CategorizationEngine.invalidateCache() Is Not Thread-Safe
-Kotlin
+---
 
-fun invalidateCache() {
-    cachedMappings = null
-    lastCacheTime = 0
+### 9. **SourceStatsDao.upsert uses IGNORE strategy - broken upsert**
+**File:** `SourceStatsDao.kt`
+
+```kotlin
+// PROBLEM: This inserts with IGNORE, not a true upsert
+@Insert(onConflict = OnConflictStrategy.IGNORE)
+suspend fun upsert(stats: SourceStats)
+// If a row exists with the same packageName, the insert is silently ignored!
+// This means ensureSourceStats works, but the name "upsert" is misleading
+// and any fields meant to be updated on conflict won't be.
+```
+
+This is actually OK for the current usage in `ensureSourceStats`, but rename it:
+```kotlin
+@Insert(onConflict = OnConflictStrategy.IGNORE)
+suspend fun insertIfNotExists(stats: SourceStats) // ← Renamed for clarity
+```
+
+---
+
+## 🟡 CPU / BATTERY ISSUES
+
+### 10. **NotificationCaptureService: processAndSave runs full pipeline on IO thread**
+**File:** `NotificationCaptureService.kt`, `NotificationRepository.kt`
+
+```kotlin
+// In processAndSave, for EVERY notification:
+// 1. exists() check - DB query
+// 2. dao.insert() - DB write
+// 3. ensureSourceStats() - DB query + possible write
+// 4. incrementTotal() - DB write
+// 5. classifier.initialize() - possible disk I/O + DB query
+// 6. parserRegistry.parse() - CPU (regex parsing)
+// 7. merchantNormalizer.applyUserCorrections() - DB query
+// 8. confidenceRouter.route() - multiple DB queries
+//    - classifier.predict() - CPU
+//    - sourceStatsDao.getByPackage() - DB query
+//    - getMerchantRejectionRate() - 2 DB queries
+//    - getPackageRejectionRate() - 2 DB queries
+//    - hasPreviousApprovals() - DB query
+// 9. categorize() - DB queries (potentially multiple)
+// 10. expenseDao.isDuplicate() - DB query
+// 11. expenseDao.insert() OR pendingReviewDao.insert() - DB write
+// 12. classifier.train() - CPU + scheduled disk I/O
+//
+// Total: 15-20+ DB operations per notification!
+```
+
+**FIX:** Batch some operations and use `@Transaction` more effectively:
+```kotlin
+@Transaction
+suspend fun processAndSave(notification: RawNotification) {
+    // Already has @Transaction, but the individual DB calls within
+    // confidenceRouter.route() are NOT part of this transaction
+    // because they go through different DAOs
+    
+    // Quick exit: Check block list in memory cache instead of DB
+    // ... (see fix #12 below)
 }
-Problem: This modifies cachedMappings and lastCacheTime WITHOUT acquiring the cacheMutex. Meanwhile, getMappings() reads these values under the mutex. This is a classic data race:
+```
 
-text
+### 11. **TransactionClassifier.initialize() called on every notification**
+**File:** `NotificationRepository.kt` line in processAndSave
 
-Thread A: invalidateCache() → sets cachedMappings = null
-Thread B: getMappings() → reads cachedMappings, sees non-null (stale), returns it
-Thread A: sets lastCacheTime = 0
-Fix:
+```kotlin
+// PROBLEM: Called for every notification
+classifier.initialize() // checks isLoaded flag, but acquires mutex every time
+```
 
-Kotlin
+The `initialize()` method does a `mutex.withLock` check even when already loaded. The `@Volatile` flag should be checked before acquiring the mutex:
 
-suspend fun invalidateCache() {
-    cacheMutex.withLock {
-        cachedMappings = null
-        lastCacheTime = 0
-    }
-}
-6.2 — TransactionClassifier Non-Atomic Read of isLoaded
-Kotlin
+```kotlin
+// Already has early return: if (isLoaded) return
+// But the suspend function overhead + volatile read on every notification is unnecessary
+// The current implementation is actually fine - the volatile check is O(1)
+// Just ensure it's not calling userCorrectionDao.getCount() every time
+```
 
+Actually looking more closely, the issue is:
+```kotlin
 suspend fun initialize() {
-    if (isLoaded) return  // ← Read outside mutex
+    if (isLoaded) return // Fast path - OK
     mutex.withLock {
-        if (isLoaded) return  // ← Read inside mutex (correct, double-check)
-        // ...
+        if (isLoaded) return // Double-check - OK
+        // ... loads from disk
+        val correctionCount = userCorrectionDao.getCount() // DB QUERY every init!
+        if (correctionCount > lastTrainingCount && ...) {
+            retrainFromCorrectionsInternal() // Can be VERY expensive
+        }
         isLoaded = true
     }
 }
-Problem: The first isLoaded check is outside the mutex. While this is a valid double-checked locking pattern in some languages, in Kotlin/JVM, isLoaded is not @Volatile, so the JVM may cache the value and different threads may see stale values. The read could return true before the writes inside the mutex are visible.
+```
 
-Fix: Mark isLoaded as @Volatile:
-
-Kotlin
-
-@Volatile
-private var isLoaded = false
-6.3 — processAndSave() TOCTOU Race on Deduplication
-Kotlin
-
-// Step 0: Check exists
-if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) {
-    return
+The fix is: once loaded, it stays loaded. The current code is correct but `retrainFromCorrectionsInternal` could be deferred:
+```kotlin
+suspend fun initialize() {
+    if (isLoaded) return
+    mutex.withLock {
+        if (isLoaded) return
+        if (loadFromDisk()) {
+            isLoaded = true
+            // Defer retrain check to background
+            scope.launch {
+                val correctionCount = userCorrectionDao.getCount()
+                if (correctionCount > lastTrainingCount && correctionCount >= MIN_TRAINING_SAMPLES) {
+                    mutex.withLock { retrainFromCorrectionsInternal() }
+                }
+            }
+            return
+        }
+        isLoaded = true
+    }
 }
-// Step 1: Insert
-val rawId = try {
-    dao.insert(notification)
-} catch (e: SQLiteConstraintException) {
-    return
+```
+
+---
+
+### 12. **ConfidenceRouter.route(): 5-7 sequential DB queries per notification**
+**File:** `ConfidenceRouter.kt`
+
+```kotlin
+suspend fun route(...): RoutingResult {
+    // 1. classifier.predict() - CPU
+    // 2. sourceStatsDao.getByPackage() - DB
+    // 3. getMerchantRejectionRate() → 2 DB queries
+    // 4. getPackageRejectionRate() → 2 DB queries  
+    // 5. hasPreviousApprovals() → 1 DB query
+    // Total: 6 DB queries per notification routing!
 }
-Problem: Between the exists() check and the insert(), another thread (e.g., refreshActiveNotifications()) could insert the same notification. You handle this with the catch, but there's no unique constraint on (packageName, timestamp, title, text) — the raw_notifications table only has a composite index, NOT a unique index. So the catch may never fire, and you get duplicates.
+```
 
-Fix: Add a unique index:
+**FIX:** Cache source stats and correction rates:
+```kotlin
+@Singleton
+class ConfidenceRouter @Inject constructor(
+    private val sourceStatsDao: SourceStatsDao,
+    private val userCorrectionDao: UserCorrectionDao,
+    private val classifier: TransactionClassifier
+) {
+    // In-memory caches
+    private val sourceStatsCache = ConcurrentHashMap<String, Pair<SourceStats, Long>>()
+    private val merchantRejectionCache = ConcurrentHashMap<String, Pair<Float, Long>>()
+    private val packageRejectionCache = ConcurrentHashMap<String, Pair<Float, Long>>()
+    private val approvalCache = ConcurrentHashMap<String, Pair<Boolean, Long>>()
+    
+    private val CACHE_TTL = 60_000L // 1 minute
 
-Kotlin
-
-@Entity(
-    tableName = "raw_notifications",
-    indices = [
-        Index(value = ["packageName", "timestamp", "title", "text"], unique = true)
-    ]
-)
-6.4 — TransactionClassifier.scope Never Cancelled
-Kotlin
-
-private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-Problem: This scope is created when the singleton is created and never cancelled. It's a permanent coroutine scope that survives the entire app lifecycle. While not technically a leak (it's a singleton), any pending saveToDisk() jobs may run during shutdown and could cause Context access issues.
-
-6.5 — approveReview() Race Between Read and Update
-Kotlin
-
-val review = pendingReviewDao.getById(reviewId) ?: return
-val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "APPROVED")
-if (rowsUpdated == 0) return
-Problem: review is fetched before updateStatusIfPending. If another thread modifies the review between these two calls, you're working with stale data. The updateStatusIfPending prevents double-approval, but you then use the stale review object for creating the expense. If someone else modified the amount/merchant between fetch and status update, you'd use old data.
-
-7. HIGH: Logic Bugs & Data Integrity
-7.1 — deleteAll() Doesn't Delete All Related Data
-Kotlin
-
-suspend fun deleteAll() {
-    dao.deleteAll()          // raw notifications
-    expenseDao.deleteAll()   // expenses
-    sourceStatsDao.resetAllPendingCounts()  // just resets pending counts
+    private suspend fun getCachedSourceStats(packageName: String): SourceStats? {
+        val cached = sourceStatsCache[packageName]
+        if (cached != null && System.currentTimeMillis() - cached.second < CACHE_TTL) {
+            return cached.first
+        }
+        val stats = sourceStatsDao.getByPackage(packageName)
+        if (stats != null) {
+            sourceStatsCache[packageName] = stats to System.currentTimeMillis()
+        }
+        return stats
+    }
+    
+    // Similar for other cached lookups...
 }
-Problem: This does NOT delete:
+```
 
-pending_reviews — orphaned reviews remain
-user_corrections — stale corrections remain
-merchant_categories — user-learned mappings remain
-source_stats entries themselves — only resets pending counts
-blocked_packages — blocked apps remain
-Because pending_reviews has a CASCADE foreign key on rawNotificationId, deleting raw notifications WILL cascade-delete pending reviews. But the other tables remain inconsistent.
+---
 
-7.2 — getTotalSpentFlow() vs HomeViewModel Disagree on Calculation
-SQL
+### 13. **MerchantNormalizer: DB query on every merchant normalization**
+**File:** `MerchantNormalizer.kt`
 
--- ExpenseDao
-SELECT SUM(amount) FROM expenses WHERE transactionType IN ('PURCHASE', 'WITHDRAWAL')
-
--- HomeViewModel
-val purchases = expenses.filter {
-    it.transactionType == TransactionType.PURCHASE
+```kotlin
+suspend fun applyUserCorrections(merchant: String): String {
+    val normalized = normalize(merchant)
+    for ((key, canonical) in KNOWN_ALIASES) {
+        if (normalized.contains(key)) return canonical
+    }
+    // DB query for EVERY notification!
+    val corrected = userCorrectionDao.getMostCommonMerchantCorrection(normalized)
+    return corrected ?: toTitleCase(normalized)
 }
-val totalSpent = purchases.sumOf { it.amount }
-Problem: getTotalSpentFlow() includes WITHDRAWAL amounts; HomeViewModel.totalSpent only includes PURCHASE. The "total spent" shown on the home screen differs from what getTotalSpent() returns (used in DebugViewModel).
+```
 
-7.3 — Merchant Normalization Inconsistency
-Two different normalizers exist:
+**FIX:** Cache corrections:
+```kotlin
+private val correctionCache = ConcurrentHashMap<String, String?>()
+private var lastCorrectionCacheTime = 0L
 
-CategorizationEngine.normalize(): [^A-ZΑ-Ω0-9 &]
-MerchantNormalizer.normalize(): [^A-ZΑ-Ω0-9 &]
-They look the same, BUT the MerchantNormalizer also applies noise patterns first. So calling categorizationEngine.normalize("SKLAVENITIS #123") gives "SKLAVENITIS 123" while merchantNormalizer.normalize("SKLAVENITIS #123") gives "SKLAVENITIS". This means the merchant pattern stored in merchant_categories may not match what the categorization engine looks up.
-
-7.4 — approveReview Creates Expense Even When Duplicate (Silently)
-Kotlin
-
-if (!isDuplicate) {
-    // Create expense...
+suspend fun applyUserCorrections(merchant: String): String {
+    val normalized = normalize(merchant)
+    for ((key, canonical) in KNOWN_ALIASES) {
+        if (normalized.contains(key)) return canonical
+    }
+    
+    // Check cache first
+    if (correctionCache.containsKey(normalized)) {
+        return correctionCache[normalized] ?: toTitleCase(normalized)
+    }
+    
+    val corrected = userCorrectionDao.getMostCommonMerchantCorrection(normalized)
+    correctionCache[normalized] = corrected
+    return corrected ?: toTitleCase(normalized)
 }
-// Record user correction for learning (ALWAYS runs)
-val correction = UserCorrection(...)
-userCorrectionDao.insert(correction)
-Problem: When a duplicate IS detected, the code:
 
-Skips expense creation (correct)
-Still records a user correction as wasApproved = true (incorrect — the user approved something that wasn't actually saved)
-Still trains the classifier with positive signal
-Still learns the merchant → category mapping
-This corrupts the learning data.
+fun invalidateCache() {
+    correctionCache.clear()
+}
+```
 
-7.5 — rejectReview Missing Error Handling
-Kotlin
+---
 
-fun rejectReview(reviewId: Long) {
+### 14. **DebugViewModel: simulateMassData processes sequentially**
+**File:** `DebugViewModel.kt`
+
+```kotlin
+// PROBLEM: Processes 500 notifications one by one, each with 15+ DB queries
+fun simulateMassData(count: Int) {
     viewModelScope.launch {
-        repository.rejectReview(reviewId)
+        _isSimulating.value = true
+        val notifications = seeder.generate(count)
+        notifications.forEach { notification ->
+            repository.processAndSave(notification) // 15+ DB ops EACH
+        }
+        _isSimulating.value = false
     }
 }
-Unlike approveReview, rejectReview has no try/catch. If the rejection fails, the user gets no feedback.
+```
 
-7.6 — HomeViewModel now Variable Is Unused
-Kotlin
+With 500 notifications × 15 DB ops = 7,500 DB operations sequentially. This would freeze the UI.
 
-val now = System.currentTimeMillis()
-This is computed but never used.
-
-7.7 — Week Calculation Bug
-Kotlin
-
-val tempCal = cal.clone() as Calendar
-tempCal.firstDayOfWeek = Calendar.MONDAY
-tempCal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
-if (tempCal.timeInMillis > todayStart) {
-    tempCal.add(Calendar.DAY_OF_YEAR, -7)
-}
-Problem: After setting cal to start of today and then cloning, tempCal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY) can jump forward to the next Monday if today is Sunday and firstDayOfWeek is Monday. The > todayStart check attempts to fix this but compares against the wrong base — todayStart is the start of today from cal, but cal was already modified by set(DAY_OF_MONTH, 1) later. Wait — actually monthStart is computed later. Let me re-read...
-
-Actually, cal is used for today, then tempCal is cloned from it, then cal is used again for month. The order is:
-
-cal → today start → todayStart
-tempCal = clone of cal (which is today start) → set to Monday → weekStart
-cal.set(DAY_OF_MONTH, 1) → monthStart
-The issue is step 3 modifies the original cal which was already used for todayStart. If today is the 1st, this works fine. But monthStart calculation mutates cal — it's not wrong per se, but it's fragile code. The real bug potential is in the week calculation when firstDayOfWeek and DAY_OF_WEEK interact on locale boundaries.
-
-9. MEDIUM: UI / Compose Issues
-9.1 — Shared ReviewViewModel Instance Between MainScreen and ReviewScreen
-Kotlin
-
-// MainScreen
-val reviewViewModel: ReviewViewModel = hiltViewModel()  // ← Instance 1
-
-// ReviewScreen (called inside MainScreen)
-fun ReviewScreen(viewModel: ReviewViewModel = hiltViewModel()) // ← Instance 2
-Problem: hiltViewModel() creates a NEW ViewModel scoped to the nearest NavBackStackEntry or Activity. Since ReviewScreen is called inside MainScreen without navigation, both calls create separate instances. The pendingCount badge on the bottom bar and the actual review list may use different ViewModel instances.
-
-In this case, since both are scoped to the Activity (no navigation), they SHOULD be the same instance. But this is fragile and depends on the Compose hierarchy. If you add Navigation in the future, they'll diverge.
-
-9.2 — CategoryScreen Has Its Own Scaffold Inside the Main Scaffold
-Kotlin
-
-// MainScreen → Scaffold → CategoryScreen → Scaffold (nested!)
-fun CategoryScreen() {
-    Scaffold(
-        topBar = { TopAppBar(...) },
-        floatingActionButton = { ... }
-    ) { ... }
-}
-Problem: Nested Scaffolds cause:
-
-Double padding
-Overlapping top bars
-FAB positioning issues
-Insets handled incorrectly
-The same issue exists for DebugScreen, ReviewScreen, and TransactionsScreen — they ALL have their own Scaffold with TopAppBar inside the main Scaffold.
-
-9.3 — No Loading States
-None of the screens show loading indicators. When the database is being queried, users see empty screens briefly. This is especially noticeable on first launch when categories are being seeded.
-
-9.4 — No Error Handling in UI (Except ReviewScreen)
-Only ReviewViewModel has error messaging. All other ViewModels silently swallow exceptions:
-
-Kotlin
-
-fun deleteExpense(expense: Expense) {
+**FIX:**
+```kotlin
+fun simulateMassData(count: Int) {
     viewModelScope.launch {
-        repository.deleteExpense(expense)  // ← No try/catch, no error UI
+        _isSimulating.value = true
+        withContext(Dispatchers.IO) {
+            val notifications = seeder.generate(count)
+            // Process in batches to avoid overwhelming the DB
+            notifications.chunked(10).forEach { batch ->
+                batch.forEach { notification ->
+                    repository.processAndSave(notification)
+                }
+                yield() // Allow other coroutines to run
+            }
+        }
+        _isSimulating.value = false
     }
 }
-9.5 — TransactionsScreen Uses items() Without Stable Keys
-Kotlin
+```
 
-items(transactions) { item ->
-    TransactionItem(...)
+---
+
+## 🟡 UI SMOOTHNESS ISSUES
+
+### 15. **DebugScreen: Nested scrollable containers**
+**File:** `DebugScreen.kt`
+
+```kotlin
+// The DebugScreen has a LazyColumn as root, and inside items it has:
+// - LazyRow for filters (OK - different scroll direction)
+// - LazyRow for blocked apps (OK - different scroll direction)
+// But the notification cards expand/collapse which causes full list relayout
+```
+
+The main issue here is that every notification card expansion triggers recomposition of the entire list. Also, blocked apps and filter chips in `item {}` blocks containing `LazyRow` work but are inefficient.
+
+**FIX:** Use `animateContentSize()` for smooth expansion:
+```kotlin
+Card(
+    modifier = Modifier
+        .fillMaxWidth()
+        .clickable(onClick = onClick)
+        .animateContentSize() // ← Add smooth animation
+) {
+```
+
+### 16. **ReviewScreen: No item animation for approval/rejection**
+**File:** `ReviewScreen.kt`
+
+When items are approved/rejected, they disappear abruptly from the list.
+
+**FIX:**
+```kotlin
+LazyColumn(...) {
+    items(pendingReviews, key = { it.id }) { review ->
+        AnimatedVisibility(
+            visible = true,
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            ReviewCard(...)
+        }
+    }
 }
-Problem: No key parameter provided. When the list updates, Compose can't efficiently diff items and may recompose the entire list. This is especially wasteful since the list is ordered by date DESC and items are prepended.
+```
 
-Fix:
+### 17. **Color parsing on every recomposition in multiple screens**
+**Files:** `HomeScreen.kt`, `CategoryScreen.kt`, `AnalyticsScreen.kt`
 
-Kotlin
+```kotlin
+// In HomeScreen's CategorySpendingRow:
+val color = try {
+    Color(android.graphics.Color.parseColor(item.category.color))
+} catch (e: Exception) { Color.Gray }
+// This is NOT remembered! Parses the hex string on EVERY recomposition
 
-items(transactions, key = { it.expense.id }) { item -> ... }
-9.6 — EditReviewDialog Doesn't Validate Amount Input
-Kotlin
+// In CategoryScreen's CategoryItem:
+val color = try {
+    Color(android.graphics.Color.parseColor(category.color))
+} catch (e: Exception) { Color.Gray }
+// Same issue
+```
 
-OutlinedTextField(
-    value = amount,
-    onValueChange = { amount = it },
-    label = { Text("Amount") },
+**FIX:** Wrap in `remember`:
+```kotlin
+// HomeScreen CategorySpendingRow:
+val categoryColor = remember(item.category.color) {
+    try { Color(android.graphics.Color.parseColor(item.category.color)) }
+    catch (e: Exception) { Color.Gray }
+}
+
+// CategoryScreen CategoryItem:
+val color = remember(category.color) {
+    try { Color(android.graphics.Color.parseColor(category.color)) }
+    catch (e: Exception) { Color.Gray }
+}
+```
+
+Note: `TransactionsScreen.kt` and `AnalyticsScreen.kt` already have `remember` for color - good!
+
+### 18. **MainScreen: ReviewViewModel instantiated at top level**
+**File:** `MainActivity.kt`
+
+```kotlin
+@Composable
+fun MainScreen() {
+    val reviewViewModel: ReviewViewModel = hiltViewModel()
+    val pendingCount by reviewViewModel.pendingCount.collectAsState()
+    // This ViewModel is created even when we're on the Home tab
+    // And it starts collecting the Flow immediately
+```
+
+This is actually needed for the badge count, so it's somewhat unavoidable. But the `errorMessage` LaunchedEffect could be moved to only the Review tab.
+
+### 19. **AnalyticsScreen chart: entryModelOf called on every recomposition**
+**File:** `AnalyticsScreen.kt`
+
+```kotlin
+@Composable
+fun AnalyticsChart(state: AnalyticsState) {
+    // PROBLEM: Creates new model objects on every recomposition
+    val entries = state.dailyTotals.values.map { it.toFloat() }
+    val chartEntryModel = entryModelOf(*entries.toTypedArray())
+    // This allocates arrays and creates model objects every time
+}
+```
+
+**FIX:**
+```kotlin
+@Composable
+fun AnalyticsChart(state: AnalyticsState) {
+    Card(...) {
+        Column(...) {
+            Text("Daily Spending", ...)
+            Spacer(modifier = Modifier.height(16.dp))
+            if (state.dailyTotals.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No data for this period", color = Color.Gray)
+                }
+            } else {
+                val chartEntryModel = remember(state.dailyTotals) {
+                    val entries = state.dailyTotals.values.map { it.toFloat() }
+                    entryModelOf(*entries.toTypedArray())
+                }
+                Chart(
+                    chart = columnChart(),
+                    model = chartEntryModel,
+                    startAxis = rememberStartAxis(),
+                    bottomAxis = rememberBottomAxis(),
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
+```
+
+---
+
+### 20. **DebugScreen: SimpleDateFormat created per notification card**
+**File:** `DebugScreen.kt`
+
+```kotlin
+@Composable
+fun NotificationCard(...) {
+    // PROBLEM: Each card instance creates its own SimpleDateFormat
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault()) }
+    // 'remember' helps but with 200 notification cards, that's 200 instances
+```
+
+**FIX:** Create it once at the screen level and pass it down:
+```kotlin
+// In DebugScreen:
+val dateFormat = remember { SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault()) }
+
+// Pass to NotificationCard:
+NotificationCard(
+    notification = notification,
+    dateFormat = dateFormat, // ← Pass shared instance
+    ...
 )
-Users can type anything — letters, negative numbers, multiple decimal points. No input validation or keyboard type:
+```
 
-Fix:
+---
 
-Kotlin
+## 🟢 ADDITIONAL OPTIMIZATIONS
 
-keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-9.7 — Theme Status Bar Color Issue
-Kotlin
+### 21. **Flow emissions: getAllExpenses() used in 4+ places simultaneously**
+Multiple ViewModels observe `repository.getAllExpenses()`:
+- HomeViewModel
+- TransactionsViewModel  
+- AnalyticsViewModel
+- DebugViewModel (indirectly)
 
-SideEffect {
-    val window = (view.context as Activity).window
-    window.statusBarColor = colorScheme.primary.toArgb()
+Each creates a separate Room Flow that independently queries the database.
+
+**FIX:** Use `shareIn` in the repository:
+```kotlin
+@Singleton
+class NotificationRepository @Inject constructor(...) {
+    // Shared Flow - single DB query, multiple collectors
+    private val _allExpenses: SharedFlow<List<Expense>> = expenseDao.getAllFlow()
+        .shareIn(
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            started = SharingStarted.WhileSubscribed(5000),
+            replay = 1
+        )
+    
+    fun getAllExpenses(): Flow<List<Expense>> = _allExpenses
 }
-Problem: With enableEdgeToEdge() in MainActivity, setting statusBarColor directly conflicts with edge-to-edge handling. On Android 15+, this will be ignored anyway. The status bar should be transparent with appropriate content color.
+```
 
-10. MEDIUM: Parser & Intelligence Issues
-10.1 — Generic Parser Accepts Non-Transaction Amounts
-The generic parser's amountPattern matches \d+ without decimal — e.g., "5EUR" would match as 5 EUR. But the pattern is:
+### 22. **Room database: No WAL mode explicitly set**
+**File:** `AppModule.kt`
 
-regex
+Room uses WAL by default on API 16+, but explicitly setting it with journal mode ensures optimal concurrent read/write:
 
-([€$£])\s*(\d+(?:[.,]\d{2})?)|(\d+(?:[.,]\d{2})?)\s*([€$£]|EUR|USD|GBP)
-The (?:[.,]\d{2})? makes the decimal part optional. So "€5" matches as amount 5.0. This could match prices in promotional notifications like "Starting from €5".
-
-10.2 — GreekBankParser.tryExtract() Fragile Group Parsing
-Kotlin
-
-for (i in 1..matcher.groupCount()) {
-    val group = matcher.group(i) ?: continue
-    if (group.matches(Regex("""\d+[.,]\d{2}"""))) {
-        amountStr = group
-    } else if (group.matches(Regex("""[€$£]|EUR|USD|GBP""", RegexOption.IGNORE_CASE))) {
-        currency = normalizeCurrency(group)
-    } else if (group.length > 2) {
-        merchant = cleanMerchant(group)
-    }
+```kotlin
+fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
+    return Room.databaseBuilder(
+        context,
+        AppDatabase::class.java,
+        "expense_tracker_db"
+    )
+    .fallbackToDestructiveMigration()
+    .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING) // Explicit WAL
+    .build()
 }
-Problem: This iterates over ALL regex groups and classifies them by content. If a merchant name happens to be "EUR" or "USD" (unlikely but possible), it's classified as currency. More critically, if a merchant name contains only digits (e.g., "7-Eleven" → group "7" after cleaning), the length > 2 check fails and merchant stays "Unknown".
+```
 
-10.3 — Naive Bayes Classifier Numerical Instability
-Kotlin
+### 23. **Regex compilation in parsers: Lazy is good but verify**
+The parsers use `by lazy` for regex patterns, which is correct. However, `GenericTransactionParser` uses `java.util.regex.Pattern` while other places use Kotlin `Regex`. Both are fine, but consistency would help maintenance.
 
-var logProbPos = ln(totalPositive.toDouble() / total)
-Problem: If totalPositive is 0 (all training samples are negative), ln(0) = -Infinity, causing all calculations to produce -Infinity or NaN. Similarly for totalNegative = 0.
+---
 
-Fix: Add Laplace smoothing to class priors too:
+## Summary of Impact by Priority
 
-Kotlin
+| Priority | Issue | Impact | Fix Effort |
+|----------|-------|--------|-----------|
+| 🔴 Critical | AnalyticsVM full recompute | Major lag on analytics | Medium |
+| 🔴 Critical | HomeVM multi-pass computation | Home screen stutter | Medium |
+| 🔴 Critical | Missing transactionType index | ALL analytics queries slow | Low |
+| 🔴 Critical | 14 sequential DB queries in InsightsEngine | Analytics load time | Medium |
+| 🟠 High | TransactionsVM mapping all expenses | List lag | Low |
+| 🟠 High | ConfidenceRouter 6 DB queries/notification | Battery drain | Medium |
+| 🟠 High | MerchantNormalizer DB query per notification | Battery drain | Low |
+| 🟠 High | CategorizationEngine word-level DB queries | Battery drain | Low |
+| 🟠 High | No debounce on Flow combines | Excessive recomputation | Low |
+| 🟡 Medium | Chart model recreation | Analytics jank | Low |
+| 🟡 Medium | Color parsing without remember | Recomposition waste | Low |
+| 🟡 Medium | Sequential merchant category inserts | First-run slow | Low |
+| 🟡 Medium | Multiple getAllExpenses() flows | Redundant DB queries | Medium |
+| 🟡 Medium | No pagination for transactions | Memory with large lists | Medium |
+| 🟢 Low | SimpleDateFormat per card | Minor memory | Low |
+| 🟢 Low | Mass simulation sequential processing | Debug only | Low |
 
-var logProbPos = ln((totalPositive + 1.0) / (total + 2.0))
-10.4 — MerchantNormalizer Applies Noise Patterns to Already-Uppercased Text But Some Patterns Are Case-Insensitive While Already Upper
-The normalize() function uppercases first, then applies patterns with IGNORE_CASE. The IGNORE_CASE is redundant since text is already uppercase, but it also means the patterns like Regex("""BRANCH|STORE""", IGNORE_CASE) will work. However, IGNORE_CASE adds overhead for no reason when the input is already uppercase.
-
-10.5 — Duplicate Regex Compilation on Every Call
-Kotlin
-
-// CategorizationEngine.normalize()
-fun normalize(merchant: String): String {
-    return merchant.uppercase()
-        .replace(Regex("[^A-ZΑ-Ω0-9 &]"), "")  // ← New Regex every call
-        .trim()
-        .replace(Regex("\\s+"), " ")            // ← New Regex every call
-}
-Problem: Regex() compiles a new pattern on every invocation. For a method called for every notification, this adds GC pressure.
-
-Fix: Use by lazy or companion object:
-
-Kotlin
-
-companion object {
-    private val NON_ALPHA = Regex("[^A-ZΑ-Ω0-9 &]")
-    private val MULTI_SPACE = Regex("\\s+")
-}

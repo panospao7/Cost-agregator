@@ -7,7 +7,8 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "raw_notifications",
     indices = [
-        Index(value = ["packageName", "timestamp"])    
+        Index(value = ["packageName", "timestamp"]),
+        Index(value = ["capturedAt"]) // New: for sorting in Debug screen
     ]
 )
 data class RawNotification(

@@ -140,14 +140,14 @@ fun CategorySpendingRow(item: CategorySpending) {
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        val categoryColor = remember(item.category.color) {
+            try { Color(android.graphics.Color.parseColor(item.category.color)) } 
+            catch (e: Exception) { Color.Gray }
+        }
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .background(
-                    try { Color(android.graphics.Color.parseColor(item.category.color)) } 
-                    catch (e: Exception) { Color.Gray },
-                    CircleShape
-                ),
+                .background(categoryColor, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Text(item.category.icon, fontSize = 18.sp)
@@ -161,8 +161,7 @@ fun CategorySpendingRow(item: CategorySpending) {
                     .fillMaxWidth()
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp)),
-                color = try { Color(android.graphics.Color.parseColor(item.category.color)) }
-                catch (e: Exception) { MaterialTheme.colorScheme.primary },
+                color = categoryColor,
             )
         }
         Spacer(modifier = Modifier.width(12.dp))

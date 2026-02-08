@@ -106,10 +106,8 @@ class DebugViewModel @Inject constructor(
     fun simulateMassData(count: Int) {
         viewModelScope.launch {
             _isSimulating.value = true
-            val notifications = seeder.generate(count)
-            notifications.forEach { notification ->
-                repository.processAndSave(notification)
-            }
+            val simulated = seeder.generate(count)
+            repository.processAndSaveAll(simulated)
             _isSimulating.value = false
         }
     }

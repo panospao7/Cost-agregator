@@ -25,6 +25,8 @@ import androidx.room.PrimaryKey
         Index(value = ["rawNotificationId"]),
         Index(value = ["date"]),
         Index(value = ["categoryId"]),
+        Index(value = ["transactionType"]), // New: for type filtering
+        Index(value = ["categoryId", "date"]), // New: for category breakdown
         Index(value = ["amount", "merchant", "date"])
     ]
 )

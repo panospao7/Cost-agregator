@@ -38,7 +38,18 @@ fun ReviewScreen(
     val pendingCount by viewModel.pendingCount.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    val errorMessage by viewModel.errorMessage.collectAsState()
+
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearError()
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Review Queue ($pendingCount)") }

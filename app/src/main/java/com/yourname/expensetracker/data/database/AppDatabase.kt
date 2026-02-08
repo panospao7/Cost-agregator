@@ -15,7 +15,7 @@ import androidx.room.*
         UserCorrection::class,
         SourceStats::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)

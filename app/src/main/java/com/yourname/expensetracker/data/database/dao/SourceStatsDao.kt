@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.Flow
 interface SourceStatsDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun upsert(stats: SourceStats)
+    suspend fun insertIfNotExists(stats: SourceStats)
 
     @Query("SELECT * FROM source_stats WHERE packageName = :packageName")
     suspend fun getByPackage(packageName: String): SourceStats?

@@ -13,6 +13,9 @@ interface MerchantCategoryDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(merchantCategory: MerchantCategory)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(merchantCategories: List<MerchantCategory>)
     
     @Query("SELECT * FROM merchant_categories")
     suspend fun getAll(): List<MerchantCategory>

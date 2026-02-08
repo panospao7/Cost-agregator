@@ -30,6 +30,7 @@ object AppModule {
             AppDatabase::class.java,
             "expense_tracker_db"
         ).fallbackToDestructiveMigration()
+            .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()
     }
     

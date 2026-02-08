@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.debug
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -324,6 +325,7 @@ fun NotificationCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize()
             .clickable(onClick = onClick)
     ) {
         Column(

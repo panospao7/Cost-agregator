@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.analytics.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.*
 import javax.inject.Inject
@@ -38,28 +39,27 @@ class AnalyticsViewModel @Inject constructor(
     private val _state = MutableStateFlow(AnalyticsState())
     val state: StateFlow<AnalyticsState> = _state.asStateFlow()
 
+    private val _selectedPeriod = MutableStateFlow(TimePeriod.MONTH)
+
     init {
-        // Observe expenses and categories, recompute on change
-        viewModelScope.launch {
-            combine(
-                repository.getAllExpenses(),
-                categoryRepository.allCategories
-            ) { expenses, categories ->
-                Pair(expenses, categories)
-            }.collect { (expenses, categories) ->
-                computeAnalytics(expenses, categories, _state.value.selectedPeriod)
-            }
+        combine(
+            repository.getAllExpenses(),
+            categoryRepository.allCategories,
+            _selectedPeriod
+        ) { expenses, categories, period ->
+            Triple(expenses, categories, period)
         }
+        .debounce(300)
+        .onEach { (expenses, categories, period) ->
+            _state.update { it.copy(isLoading = true, selectedPeriod = period) }
+            computeAnalytics(expenses, categories, period)
+        }
+        .flowOn(Dispatchers.Default)
+        .launchIn(viewModelScope)
     }
 
     fun selectPeriod(period: TimePeriod) {
-        viewModelScope.launch {
-            _state.update { it.copy(selectedPeriod = period, isLoading = true) }
-            // Recompute
-            val expenses = repository.getAllExpenses().first()
-            val categories = categoryRepository.allCategories.first()
-            computeAnalytics(expenses, categories, period)
-        }
+        _selectedPeriod.value = period
     }
 
     private suspend fun computeAnalytics(

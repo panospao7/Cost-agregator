@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 import java.util.Calendar
 
@@ -91,5 +92,7 @@ class HomeViewModel @Inject constructor(
             topCategories = topCategories,
             recentExpenses = purchases.take(5)
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState())
+    }.debounce(300)
+    .flowOn(Dispatchers.Default)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState())
 }

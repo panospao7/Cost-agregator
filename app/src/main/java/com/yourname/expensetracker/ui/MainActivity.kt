@@ -75,19 +75,11 @@ class MainActivity : ComponentActivity() {
 fun MainScreen() {
     var selectedTab by remember { mutableIntStateOf(0) }
     
-    // Get pending review count for badge
-    val reviewViewModel: ReviewViewModel = hiltViewModel()
-    val pendingCount by reviewViewModel.pendingCount.collectAsState()
+    // Global app state (badges, etc)
+    val mainViewModel: MainViewModel = hiltViewModel()
+    val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     
     val snackbarHostState = remember { SnackbarHostState() }
-    val errorMessage by reviewViewModel.errorMessage.collectAsState()
-
-    LaunchedEffect(errorMessage) {
-        errorMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            reviewViewModel.clearError()
-        }
-    }
     
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(

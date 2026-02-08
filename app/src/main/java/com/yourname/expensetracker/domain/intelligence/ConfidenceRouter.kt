@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -59,35 +61,43 @@ class ConfidenceRouter @Inject constructor(
             }
         }
 
-        // 2. Adjust based on source trust score
-        val sourceStats = sourceStatsDao.getByPackage(packageName)
-        if (sourceStats != null && sourceStats.totalNotifications > 10) {
-            val trustModifier = calculateTrustModifier(sourceStats)
-            adjustedConfidence *= trustModifier
-            if (trustModifier < 0.9f) {
-                reasons.add("Source trust: ${(sourceStats.trustScore * 100).toInt()}%")
+        // 2-5. Adjust based on source trust, merchant history, package history, and previous approvals
+        coroutineScope {
+            val sourceStatsDeferred = async { sourceStatsDao.getByPackage(packageName) }
+            val merchantRejectionRateDeferred = async { getMerchantRejectionRate(parsed.merchant) }
+            val packageRejectionRateDeferred = async { getPackageRejectionRate(packageName) }
+            val previouslyApprovedDeferred = async { hasPreviousApprovals(parsed.merchant, packageName) }
+
+            // 2. Adjust based on source trust score
+            val sourceStats = sourceStatsDeferred.await()
+            if (sourceStats != null && sourceStats.totalNotifications > 10) {
+                val trustModifier = calculateTrustModifier(sourceStats)
+                adjustedConfidence *= trustModifier
+                if (trustModifier < 0.9f) {
+                    reasons.add("Source trust: ${(sourceStats.trustScore * 100).toInt()}%")
+                }
             }
-        }
 
-        // 3. Adjust based on user correction history for this merchant
-        val merchantRejectionRate = getMerchantRejectionRate(parsed.merchant)
-        if (merchantRejectionRate > 0.5f) {
-            adjustedConfidence *= 0.5f
-            reasons.add("Merchant often rejected")
-        }
+            // 3. Adjust based on user correction history for this merchant
+            val merchantRejectionRate = merchantRejectionRateDeferred.await()
+            if (merchantRejectionRate > 0.5f) {
+                adjustedConfidence *= 0.5f
+                reasons.add("Merchant often rejected")
+            }
 
-        // 4. Package rejection rate
-        val packageRejectionRate = getPackageRejectionRate(packageName)
-        if (packageRejectionRate > 0.7f) {
-            adjustedConfidence *= 0.3f
-            reasons.add("Package mostly rejected")
-        }
+            // 4. Package rejection rate
+            val packageRejectionRate = packageRejectionRateDeferred.await()
+            if (packageRejectionRate > 0.7f) {
+                adjustedConfidence *= 0.3f
+                reasons.add("Package mostly rejected")
+            }
 
-        // 5. Boost if user has previously approved similar transactions
-        val previouslyApproved = hasPreviousApprovals(parsed.merchant, packageName)
-        if (previouslyApproved) {
-            adjustedConfidence = (adjustedConfidence * 1.2f).coerceAtMost(1.0f)
-            reasons.add("Previously approved merchant")
+            // 5. Boost if user has previously approved similar transactions
+            val previouslyApproved = previouslyApprovedDeferred.await()
+            if (previouslyApproved) {
+                adjustedConfidence = (adjustedConfidence * 1.2f).coerceAtMost(1.0f)
+                reasons.add("Previously approved merchant")
+            }
         }
 
         // 6. Penalty for Unknown merchant
@@ -160,7 +170,7 @@ class ConfidenceRouter @Inject constructor(
     suspend fun ensureSourceStats(packageName: String) {
         val existing = sourceStatsDao.getByPackage(packageName)
         if (existing == null) {
-            sourceStatsDao.upsert(SourceStats(packageName = packageName))
+            sourceStatsDao.insertIfNotExists(SourceStats(packageName = packageName))
         }
     }
 }

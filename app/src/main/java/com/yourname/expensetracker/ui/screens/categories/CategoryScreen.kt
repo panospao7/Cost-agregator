@@ -69,10 +69,12 @@ fun CategoryItem(category: Category) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val color = try {
-                Color(android.graphics.Color.parseColor(category.color))
-            } catch (e: Exception) {
-                Color.Gray
+            val color = remember(category.color) {
+                try {
+                    Color(android.graphics.Color.parseColor(category.color))
+                } catch (e: Exception) {
+                    Color.Gray
+                }
             }
             Box(
                 modifier = Modifier
