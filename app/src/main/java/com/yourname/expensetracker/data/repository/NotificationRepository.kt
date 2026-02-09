@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 import androidx.room.*
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
@@ -27,7 +28,8 @@ class NotificationRepository @Inject constructor(
     private val categorizationEngine: CategorizationEngine,
     private val confidenceRouter: ConfidenceRouter,
     private val merchantNormalizer: MerchantNormalizer,
-    private val classifier: TransactionClassifier
+    private val classifier: TransactionClassifier,
+    private val budgetMonitor: BudgetMonitor // <-- NEW
 ) {
     private val repositoryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
 
@@ -60,6 +62,94 @@ class NotificationRepository @Inject constructor(
 
     // === Classifier Stats ===
     fun getClassifierStats() = classifier.getStats()
+
+    // === Manual Expense Entry ===
+
+    /**
+     * Search merchants from existing expenses for autocomplete
+     */
+    suspend fun searchMerchants(query: String): List<MerchantSuggestion> {
+        if (query.isBlank()) return emptyList()
+        return expenseDao.searchMerchants(query)
+    }
+
+    /**
+     * Get recent distinct merchant names for suggestions
+     */
+    suspend fun getRecentMerchantNames(): List<String> {
+        return expenseDao.getRecentMerchantNames()
+    }
+
+    /**
+     * Add a manually entered expense
+     */
+    suspend fun addManualExpense(
+        merchant: String,
+        amount: Double,
+        currency: String = "EUR",
+        categoryId: Long?,
+        transactionType: TransactionType = TransactionType.PURCHASE,
+        paymentMethod: PaymentMethod = PaymentMethod.CASH,
+        date: Long = System.currentTimeMillis(),
+        notes: String? = null
+    ): Long {
+        // 1. Normalize merchant name
+        val normalizedMerchant = merchantNormalizer.applyUserCorrections(merchant)
+
+        // 2. Auto-categorize if no category provided
+        val finalCategoryId = categoryId ?: categorizationEngine.categorize(normalizedMerchant)
+
+        // 3. Dedup check with tighter window for manual entries (1 minute)
+        val isDuplicate = expenseDao.isDuplicate(
+            amount = amount,
+            merchant = normalizedMerchant,
+            date = date,
+            windowMs = 60000
+        )
+        if (isDuplicate) return -1L
+
+        // 4. Create expense
+        val expense = Expense(
+            amount = amount,
+            currency = currency,
+            merchant = normalizedMerchant,
+            transactionType = transactionType,
+            date = date,
+            rawNotificationId = null,
+            categoryId = finalCategoryId,
+            paymentMethod = paymentMethod,
+            isManualEntry = true,
+            notes = notes
+        )
+
+        val id = expenseDao.insert(expense)
+
+        // 5. Check budgets
+        budgetMonitor.checkBudgets()
+
+        // 6. Learn the merchant→category mapping for future auto-categorization
+        if (finalCategoryId != null && id > 0) {
+            val pattern = categorizationEngine.normalize(normalizedMerchant)
+            if (pattern.isNotEmpty()) {
+                merchantCategoryDao.insert(
+                    MerchantCategory(
+                        merchantPattern = pattern,
+                        categoryId = finalCategoryId,
+                        confidence = 1.0f
+                    )
+                )
+            }
+        }
+
+        return id
+    }
+
+    /**
+     * Get category ID for a merchant (for auto-fill in manual entry)
+     */
+    suspend fun getCategoryForMerchant(merchant: String): Long? {
+        return categorizationEngine.categorize(merchant)
+    }
 
     // === Core Processing Pipeline ===
     @Transaction
@@ -135,12 +225,17 @@ class NotificationRepository @Inject constructor(
                     transactionType = parsed.type,
                     date = notification.timestamp,
                     rawNotificationId = rawId,
-                    categoryId = categoryId
+                    categoryId = categoryId,
+                    paymentMethod = PaymentMethod.CARD,
+                    isManualEntry = false
                 )
                 try {
                     expenseDao.insert(expense)
                     dao.markRelevance(rawId, true)
                     sourceStatsDao.incrementAccepted(notification.packageName)
+                    
+                    // Check budgets
+                    budgetMonitor.checkBudgets()
     
                     // Train classifier: auto-accepted = positive example
                     classifier.train(fullNotificationText, isTransaction = true)
@@ -229,7 +324,9 @@ class NotificationRepository @Inject constructor(
                 transactionType = type,
                 date = transactionDate,
                 rawNotificationId = review.rawNotificationId,
-                categoryId = categoryId
+                categoryId = categoryId,
+                paymentMethod = PaymentMethod.CARD,
+                isManualEntry = false
             )
             try {
                 expenseDao.insert(expense)
@@ -238,6 +335,9 @@ class NotificationRepository @Inject constructor(
                 dao.markRelevance(review.rawNotificationId, true)
                 sourceStatsDao.incrementAccepted(review.packageName)
                 sourceStatsDao.decrementPending(review.packageName)
+
+                // Check budgets
+                budgetMonitor.checkBudgets()
             } catch (e: android.database.sqlite.SQLiteConstraintException) {
                 // If expense insertion fails (e.g. key constraint even though we checked isDuplicate),
                 // we technically approved it but failed to create expense.

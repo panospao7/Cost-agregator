@@ -33,6 +33,7 @@ fun TransactionsScreen(
     val categories by viewModel.categories.collectAsState()
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
 
+    var showAddExpense by remember { mutableStateOf(false) }
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
 
@@ -41,6 +42,15 @@ fun TransactionsScreen(
             TopAppBar(
                 title = { Text("Transactions") }
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAddExpense = true },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
+                Icon(Icons.Default.Edit, contentDescription = "Add Expense")
+            }
         }
     ) { padding ->
         if (transactions.isEmpty()) {
@@ -82,7 +92,14 @@ fun TransactionsScreen(
             }
         }
 
-        // Deletion Confirmation Dialog
+        // Add Expense Sheet
+        if (showAddExpense) {
+            com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
+                onDismiss = { showAddExpense = false }
+            )
+        }
+
+        // ... Existing Dialogs ...
         if (expenseToDelete != null) {
             AlertDialog(
                 onDismissRequest = { expenseToDelete = null },
@@ -215,18 +232,37 @@ fun TransactionItem(
 
             // Info
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = expense.merchant,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    maxLines = 1
-                )
-                Text(
-                    text = category?.name ?: "Uncategorized",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.clickable { onEditCategory() }
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = expense.merchant,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (expense.isManualEntry) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("✏️", fontSize = 12.sp)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val methodIcon = when(expense.paymentMethod) {
+                        com.yourname.expensetracker.data.database.entity.PaymentMethod.CASH -> "💵"
+                        com.yourname.expensetracker.data.database.entity.PaymentMethod.BANK_TRANSFER -> "🏦"
+                        com.yourname.expensetracker.data.database.entity.PaymentMethod.CARD -> "💳"
+                        else -> ""
+                    }
+                    if (methodIcon.isNotEmpty()) {
+                        Text(methodIcon, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(
+                        text = category?.name ?: "Uncategorized",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable { onEditCategory() }
+                    )
+                }
                 Text(
                     text = dateStr,
                     style = MaterialTheme.typography.labelSmall,

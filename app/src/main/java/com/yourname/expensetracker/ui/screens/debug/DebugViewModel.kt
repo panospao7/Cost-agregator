@@ -13,7 +13,8 @@ import javax.inject.Inject
 
 @HiltViewModel
 class DebugViewModel @Inject constructor(
-    private val repository: NotificationRepository
+    private val repository: NotificationRepository,
+    private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository
 ) : ViewModel() {
     
     val notifications: StateFlow<List<RawNotification>> = repository
@@ -68,6 +69,12 @@ class DebugViewModel @Inject constructor(
     fun resetExpenses() {
         viewModelScope.launch {
             repository.deleteAllExpenses()
+        }
+    }
+
+    fun resetBudgets() {
+        viewModelScope.launch {
+            budgetRepository.deleteAll()
         }
     }
     

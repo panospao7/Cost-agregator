@@ -1,0 +1,571 @@
+package com.yourname.expensetracker.ui.screens.addexpense
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import java.text.SimpleDateFormat
+import java.util.*
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddExpenseSheet(
+    onDismiss: () -> Unit,
+    viewModel: AddExpenseViewModel = hiltViewModel()
+) {
+    val state by viewModel.state.collectAsState()
+    val categories by viewModel.categories.collectAsState()
+    val focusManager = LocalFocusManager.current
+    val scrollState = rememberScrollState()
+
+    // Handle save result
+    LaunchedEffect(state.saveResult) {
+        when (state.saveResult) {
+            is SaveResult.Success -> {
+                viewModel.reset()
+                onDismiss()
+            }
+            else -> { /* handled in UI */ }
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            // Top bar
+            TopAppBar(
+                title = { Text("Add Expense", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = {
+                        viewModel.reset()
+                        onDismiss()
+                    }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                },
+                actions = {
+                    Button(
+                        onClick = { viewModel.save() },
+                        enabled = !state.isSaving,
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        if (state.isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Save")
+                        }
+                    }
+                }
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // === Merchant Field with Autocomplete ===
+                MerchantFieldWithSuggestions(
+                    merchant = state.merchant,
+                    onMerchantChange = { viewModel.updateMerchant(it) },
+                    suggestions = state.suggestions,
+                    showSuggestions = state.showSuggestions,
+                    onSuggestionSelected = { viewModel.selectSuggestion(it) },
+                    onDismissSuggestions = { viewModel.dismissSuggestions() },
+                    error = state.merchantError,
+                    categories = categories,
+                    onNextFocus = { focusManager.moveFocus(FocusDirection.Down) }
+                )
+
+                // === Amount Field ===
+                OutlinedTextField(
+                    value = state.amount,
+                    onValueChange = { viewModel.updateAmount(it) },
+                    label = { Text("Amount (€)") },
+                    placeholder = { Text("0.00") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { focusManager.clearFocus() }
+                    ),
+                    isError = state.amountError != null,
+                    supportingText = state.amountError?.let { { Text(it) } },
+                    leadingIcon = { Text("€", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // === Payment Method ===
+                Text(
+                    "Payment Method",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PaymentMethodChip(
+                        label = "💳 Card",
+                        selected = state.paymentMethod == PaymentMethod.CARD,
+                        onClick = { viewModel.selectPaymentMethod(PaymentMethod.CARD) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    PaymentMethodChip(
+                        label = "💵 Cash",
+                        selected = state.paymentMethod == PaymentMethod.CASH,
+                        onClick = { viewModel.selectPaymentMethod(PaymentMethod.CASH) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    PaymentMethodChip(
+                        label = "🏦 Transfer",
+                        selected = state.paymentMethod == PaymentMethod.BANK_TRANSFER,
+                        onClick = { viewModel.selectPaymentMethod(PaymentMethod.BANK_TRANSFER) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // === Category Selector ===
+                Text(
+                    "Category",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                CategoryGrid(
+                    categories = categories,
+                    selectedId = state.selectedCategoryId,
+                    onSelect = { viewModel.selectCategory(it) }
+                )
+
+                // === Date Picker ===
+                DateSelector(
+                    dateMs = state.date,
+                    onDateSelected = { viewModel.updateDate(it) }
+                )
+
+                // === Transaction Type (collapsible) ===
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.toggleTransactionType() },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Transaction Type: ${state.transactionType.name.lowercase()
+                            .replaceFirstChar { it.uppercase() }}",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Icon(
+                        if (state.showTransactionType) Icons.Default.KeyboardArrowUp
+                        else Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Toggle"
+                    )
+                }
+
+                AnimatedVisibility(visible = state.showTransactionType) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TransactionType.values().filter { it != TransactionType.UNKNOWN }.forEach { type ->
+                            FilterChip(
+                                selected = state.transactionType == type,
+                                onClick = { viewModel.selectTransactionType(type) },
+                                label = {
+                                    Text(
+                                        type.name.lowercase().replaceFirstChar { it.uppercase() },
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // === Notes (collapsible) ===
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.toggleNotes() },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Notes",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Icon(
+                        if (state.showNotes) Icons.Default.KeyboardArrowUp
+                        else Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Toggle"
+                    )
+                }
+
+                AnimatedVisibility(visible = state.showNotes) {
+                    OutlinedTextField(
+                        value = state.notes,
+                        onValueChange = { viewModel.updateNotes(it) },
+                        label = { Text("Optional notes") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 4
+                    )
+                }
+
+                // === Error Messages ===
+                when (val result = state.saveResult) {
+                    is SaveResult.Duplicate -> {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                "⚠️ A similar transaction already exists",
+                                modifier = Modifier.padding(12.dp),
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                    is SaveResult.Error -> {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                "❌ ${result.message}",
+                                modifier = Modifier.padding(12.dp),
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                    else -> {}
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun MerchantFieldWithSuggestions(
+    merchant: String,
+    onMerchantChange: (String) -> Unit,
+    suggestions: List<MerchantSuggestion>,
+    showSuggestions: Boolean,
+    onSuggestionSelected: (MerchantSuggestion) -> Unit,
+    onDismissSuggestions: () -> Unit,
+    error: String?,
+    categories: List<Category>,
+    onNextFocus: () -> Unit
+) {
+    val categoryMap = remember(categories) { categories.associateBy { it.id } }
+
+    Column {
+        OutlinedTextField(
+            value = merchant,
+            onValueChange = onMerchantChange,
+            label = { Text("Merchant / Place") },
+            placeholder = { Text("e.g. Sklavenitis, Starbucks...") },
+            singleLine = true,
+            isError = error != null,
+            supportingText = error?.let { { Text(it) } },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            keyboardActions = KeyboardActions(onNext = { onNextFocus() }),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        // Suggestions dropdown
+        AnimatedVisibility(visible = showSuggestions && suggestions.isNotEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column {
+                    suggestions.forEach { suggestion ->
+                        val category = suggestion.categoryId?.let { categoryMap[it] }
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSuggestionSelected(suggestion) }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Category icon
+                                if (category != null) {
+                                    val catColor = remember(category.color) {
+                                        try {
+                                            Color(android.graphics.Color.parseColor(category.color))
+                                        } catch (e: Exception) {
+                                            Color.Gray
+                                        }
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .background(catColor, CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(category.icon, fontSize = 16.sp)
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                }
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        suggestion.merchant,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        buildString {
+                                            if (category != null) append(category.name)
+                                            if (suggestion.txCount > 0) {
+                                                if (isNotEmpty()) append(" · ")
+                                                append("${suggestion.txCount} visits")
+                                            }
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                Text(
+                                    "~€${String.format("%.2f", suggestion.avgAmount)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                        if (suggestion != suggestions.last()) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PaymentMethodChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected)
+            MaterialTheme.colorScheme.primaryContainer
+        else
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = if (selected) 2.dp else 0.dp
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                label,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                fontSize = 14.sp,
+                color = if (selected)
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                else
+                    MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+fun CategoryGrid(
+    categories: List<Category>,
+    selectedId: Long?,
+    onSelect: (Long) -> Unit
+) {
+    // Wrapping flow layout using multiple rows
+    val chunked = categories.chunked(4)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        chunked.forEach { row ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                row.forEach { category ->
+                    val isSelected = selectedId == category.id
+                    val catColor = remember(category.color) {
+                        try {
+                            Color(android.graphics.Color.parseColor(category.color))
+                        } catch (e: Exception) {
+                            Color.Gray
+                        }
+                    }
+                    Surface(
+                        onClick = { onSelect(category.id) },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) catColor.copy(alpha = 0.2f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        border = if (isSelected) androidx.compose.foundation.BorderStroke(
+                            2.dp, catColor
+                        ) else null
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(category.icon, fontSize = 20.sp)
+                            Text(
+                                category.name,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+                // Fill remaining space in last row
+                repeat(4 - row.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DateSelector(
+    dateMs: Long,
+    onDateSelected: (Long) -> Unit
+) {
+    val dateFormat = remember { SimpleDateFormat("EEE, dd MMM yyyy, HH:mm", Locale.getDefault()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = dateMs
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showDatePicker = true },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Default.DateRange,
+            contentDescription = "Date",
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(
+                "Date",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                dateFormat.format(Date(dateMs)),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { selectedDate ->
+                            // Preserve time of day, just change the date
+                            val calOld = Calendar.getInstance().apply { timeInMillis = dateMs }
+                            val calNew = Calendar.getInstance().apply { timeInMillis = selectedDate }
+                            calNew.set(Calendar.HOUR_OF_DAY, calOld.get(Calendar.HOUR_OF_DAY))
+                            calNew.set(Calendar.MINUTE, calOld.get(Calendar.MINUTE))
+                            calNew.set(Calendar.SECOND, calOld.get(Calendar.SECOND))
+                            onDateSelected(calNew.timeInMillis)
+                        }
+                        showDatePicker = false
+                    }
+                ) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+}

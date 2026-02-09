@@ -51,6 +51,8 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import dagger.hilt.android.AndroidEntryPoint
 import androidx.compose.material.icons.filled.Analytics
+import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
+import androidx.compose.material.icons.filled.CheckCircle
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -136,12 +138,18 @@ fun MainScreen() {
                 NavigationBarItem(
                     selected = selectedTab == 4,
                     onClick = { selectedTab = 4 },
-                    icon = { Icon(Icons.Default.List, contentDescription = "Categories") },
-                    label = { Text("Categories") }
+                    icon = { Icon(Icons.Default.CheckCircle, contentDescription = "Budget") },
+                    label = { Text("Budget") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 5,
                     onClick = { selectedTab = 5 },
+                    icon = { Icon(Icons.Default.List, contentDescription = "Categories") },
+                    label = { Text("Categories") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 6,
+                    onClick = { selectedTab = 6 },
                     icon = { Icon(Icons.Default.Settings, contentDescription = "Debug") },
                     label = { Text("Debug") }
                 )
@@ -156,8 +164,9 @@ fun MainScreen() {
                 1 -> com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen()
                 2 -> ReviewScreen()
                 3 -> AnalyticsScreen()
-                4 -> com.yourname.expensetracker.ui.screens.categories.CategoryScreen()
-                5 -> DebugScreen()
+                4 -> BudgetScreen()
+                5 -> com.yourname.expensetracker.ui.screens.categories.CategoryScreen()
+                6 -> DebugScreen()
             }
         }
     }

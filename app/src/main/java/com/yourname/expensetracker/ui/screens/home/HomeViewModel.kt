@@ -6,6 +6,9 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
@@ -25,19 +28,23 @@ data class DashboardState(
     val monthSpent: Double = 0.0,
     val transactionCount: Int = 0,
     val topCategories: List<CategorySpending> = emptyList(),
-    val recentExpenses: List<Expense> = emptyList()
+    val recentExpenses: List<Expense> = emptyList(),
+    val budgetStatuses: List<BudgetStatus> = emptyList(),
+    val budgetSummary: String? = null
 )
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repository: NotificationRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val budgetRepository: BudgetRepository
 ) : ViewModel() {
 
     val dashboard: StateFlow<DashboardState> = combine(
         repository.getAllExpenses(),
-        categoryRepository.allCategories
-    ) { expenses, categories ->
+        categoryRepository.allCategories,
+        budgetRepository.getBudgetStatuses()
+    ) { expenses, categories, budgetStatuses ->
         val now = System.currentTimeMillis()
         val cal = Calendar.getInstance()
 
@@ -83,6 +90,11 @@ class HomeViewModel @Inject constructor(
 
         val topCategories = categoryTotals.take(5)
 
+        val budgetSummary = if (budgetStatuses.isNotEmpty()) {
+            val exceeded = budgetStatuses.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
+            if (exceeded > 0) "$exceeded budgets exceeded!" else "All budgets on track."
+        } else null
+
         DashboardState(
             totalSpent = totalSpent,
             todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount },
@@ -90,7 +102,9 @@ class HomeViewModel @Inject constructor(
             monthSpent = purchases.filter { it.date >= monthStart }.sumOf { it.amount },
             transactionCount = purchases.size,
             topCategories = topCategories,
-            recentExpenses = purchases.take(5)
+            recentExpenses = purchases.take(5),
+            budgetStatuses = budgetStatuses,
+            budgetSummary = budgetSummary
         )
     }.debounce(300)
     .flowOn(Dispatchers.Default)

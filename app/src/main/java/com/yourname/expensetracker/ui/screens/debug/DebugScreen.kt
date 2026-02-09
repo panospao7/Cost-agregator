@@ -160,6 +160,18 @@ fun DebugScreen(
                     ) {
                         Text("Reset All Expenses")
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = { viewModel.resetBudgets() },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                        )
+                    ) {
+                        Text("Reset All Budgets")
+                    }
                 }
             }
 

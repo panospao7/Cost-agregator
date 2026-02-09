@@ -40,6 +40,40 @@ interface ExpenseDao {
         )
     """)
     suspend fun isDuplicate(amount: Double, merchant: String, date: Long, windowMs: Long = 300000): Boolean
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0.0) FROM expenses 
+        WHERE transactionType = 'PURCHASE' 
+        AND categoryId = :categoryId 
+        AND date >= :startMs AND date < :endMs
+    """)
+    suspend fun getCategorySpentInPeriod(categoryId: Long, startMs: Long, endMs: Long): Double
+
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0.0) FROM expenses 
+        WHERE transactionType = 'PURCHASE' 
+        AND categoryId = :categoryId 
+        AND date >= :startMs AND date < :endMs
+    """)
+    fun getCategorySpentInPeriodFlow(categoryId: Long, startMs: Long, endMs: Long): Flow<Double>
+
+    // === Merchant Search for Manual Entry ===
+    @Query("""
+        SELECT merchant, categoryId, AVG(amount) as avgAmount, COUNT(*) as txCount
+        FROM expenses
+        WHERE UPPER(merchant) LIKE '%' || UPPER(:query) || '%'
+        GROUP BY UPPER(merchant)
+        ORDER BY txCount DESC
+        LIMIT 10
+    """)
+    suspend fun searchMerchants(query: String): List<MerchantSuggestion>
+
+    @Query("""
+        SELECT DISTINCT merchant
+        FROM expenses
+        ORDER BY date DESC
+        LIMIT 100
+    """)
+    suspend fun getRecentMerchantNames(): List<String>
 
     // === Analytics Queries ===
 
@@ -205,6 +239,13 @@ interface ExpenseDao {
     """)
     suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long): List<DayOfWeekTotal>
 }
+
+data class MerchantSuggestion(
+    val merchant: String,
+    val categoryId: Long?,
+    val avgAmount: Double,
+    val txCount: Int
+)
 
 data class MerchantTotal(
     val merchant: String,

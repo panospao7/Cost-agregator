@@ -1,0 +1,412 @@
+package com.yourname.expensetracker.ui.screens.budget
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.budget.BudgetSuggestion
+import java.text.SimpleDateFormat
+import java.util.*
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun BudgetScreen(
+    viewModel: BudgetViewModel = hiltViewModel()
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val categories by viewModel.categories.collectAsState()
+    
+    var showAddDialog by remember { mutableStateOf(false) }
+    var editingBudget by remember { mutableStateOf<BudgetStatus?>(null) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Budgets") },
+                actions = {
+                    IconButton(onClick = { showAddDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Budget")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        if (uiState.isLoading) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item { BudgetSummaryCard(uiState.budgets) }
+
+                if (uiState.suggestions.isNotEmpty()) {
+                    item { SuggestionsBanner(uiState.suggestions, categories, onAdd = { viewModel.addBudget(it) }) }
+                }
+
+                if (uiState.budgets.isEmpty()) {
+                    item { EmptyBudgetsState { showAddDialog = true } }
+                } else {
+                    items(uiState.budgets) { budgetStatus ->
+                        BudgetCard(
+                            status = budgetStatus,
+                            onEdit = { editingBudget = budgetStatus },
+                            onToggle = { isActive -> viewModel.toggleBudget(budgetStatus.budget.id, isActive) },
+                            onDelete = { viewModel.deleteBudget(it) }
+                        )
+                    }
+                }
+                item { Spacer(modifier = Modifier.height(80.dp)) }
+            }
+        }
+
+        if (showAddDialog) {
+            AddEditBudgetDialog(
+                onDismiss = { showAddDialog = false },
+                onConfirm = { viewModel.addBudget(it) },
+                categories = categories
+            )
+        }
+
+        editingBudget?.let { status ->
+            AddEditBudgetDialog(
+                initialBudget = status.budget,
+                onDismiss = { editingBudget = null },
+                onConfirm = { viewModel.updateBudget(it) },
+                categories = categories
+            )
+        }
+    }
+}
+
+@Composable
+fun BudgetSummaryCard(budgets: List<BudgetStatus>) {
+    val onTrack = budgets.count { it.healthStatus == BudgetHealthStatus.ON_TRACK }
+    val warning = budgets.count { it.healthStatus == BudgetHealthStatus.WARNING || it.healthStatus == BudgetHealthStatus.CRITICAL }
+    val exceeded = budgets.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceAround
+        ) {
+            SummaryItem("On Track", onTrack, Color(0xFF4CAF50))
+            SummaryItem("Warning", warning, Color(0xFFFFC107))
+            SummaryItem("Exceeded", exceeded, Color(0xFFFF5722))
+        }
+    }
+}
+
+@Composable
+fun SummaryItem(label: String, count: Int, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = count.toString(),
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = color
+        )
+        Text(text = label, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+fun BudgetCard(
+    status: BudgetStatus,
+    onEdit: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onDelete: (Budget) -> Unit
+) {
+    val progressColor = when (status.healthStatus) {
+        BudgetHealthStatus.ON_TRACK -> Color(0xFF4CAF50)
+        BudgetHealthStatus.WARNING -> Color(0xFFFFC107)
+        BudgetHealthStatus.CRITICAL -> Color(0xFFFF9800)
+        BudgetHealthStatus.EXCEEDED -> Color(0xFFFF5722)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onEdit
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    status.category?.icon ?: "💰",
+                    fontSize = 24.sp
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        status.category?.name ?: "Overall Budget",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                    Text(
+                        "${status.budget.period.name.lowercase().capitalize()} • Starts ${formatDate(status.budget.startDate)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = status.budget.isActive,
+                    onCheckedChange = onToggle,
+                    modifier = Modifier.budgetScale(0.8f)
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "€${"%.2f".format(status.spentAmount)} spent",
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp
+                )
+                Text(
+                    "€${"%.2f".format(status.budget.amount)} limit",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { status.percentUsed.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                color = progressColor,
+                trackColor = progressColor.copy(alpha = 0.2f)
+            )
+
+            if (status.percentUsed > 1f) {
+                Text(
+                    "€${"%.2f".format(status.spentAmount - status.budget.amount)} over budget",
+                    color = Color(0xFFFF5722),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            } else {
+                Text(
+                    "€${"%.2f".format(status.remainingAmount)} remaining",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SuggestionsBanner(
+    suggestions: List<BudgetSuggestion>,
+    categories: List<Category>,
+    onAdd: (Budget) -> Unit
+) {
+    var currentIndex by remember { mutableIntStateOf(0) }
+    val suggestion = suggestions.getOrNull(currentIndex) ?: return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text("Smart Suggestion", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "You spend a lot on ${suggestion.categoryName}. How about a monthly budget of €${"%.0f".format(suggestion.suggestedAmount)}?",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = { if (currentIndex < suggestions.size - 1) currentIndex++ else currentIndex = 0 }) {
+                    Text("Skip")
+                }
+                Button(onClick = {
+                    onAdd(Budget(
+                        categoryId = suggestion.categoryId,
+                        amount = suggestion.suggestedAmount,
+                        period = BudgetPeriod.MONTHLY,
+                        startDate = System.currentTimeMillis()
+                    ))
+                }) {
+                    Text("Create Budget")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptyBudgetsState(onAdd: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("No budgets set yet", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Track your spending by category to save more money.",
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(vertical = 8.dp)
+        )
+        Button(onClick = onAdd) {
+            Text("Set Your First Budget")
+        }
+    }
+}
+
+@Composable
+fun AddEditBudgetDialog(
+    initialBudget: Budget? = null,
+    categories: List<Category>,
+    onDismiss: () -> Unit,
+    onConfirm: (Budget) -> Unit
+) {
+    var amount by remember { mutableStateOf(initialBudget?.amount?.toString() ?: "") }
+    var selectedCategory by remember { mutableStateOf(initialBudget?.categoryId) }
+    var period by remember { mutableStateOf(initialBudget?.period ?: BudgetPeriod.MONTHLY) }
+    var rollover by remember { mutableStateOf(initialBudget?.rollover ?: false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initialBudget == null) "Create Budget" else "Edit Budget") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it },
+                    label = { Text("Budget Amount (€)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                )
+
+                Text("Category", style = MaterialTheme.typography.labelMedium)
+                CategorySelector(
+                    categories = categories,
+                    selectedId = selectedCategory,
+                    onSelect = { selectedCategory = it }
+                )
+
+                Text("Period", style = MaterialTheme.typography.labelMedium)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    BudgetPeriod.values().forEach { p ->
+                        FilterChip(
+                            selected = period == p,
+                            onClick = { period = p },
+                            label = { Text(p.name.lowercase().capitalize(), fontSize = 12.sp) }
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = rollover, onCheckedChange = { rollover = it })
+                    Text("Rollover unspent amount", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val amt = amount.toDoubleOrNull() ?: 0.0
+                    if (amt > 0) {
+                        val budgetToSave = initialBudget?.copy(
+                            categoryId = selectedCategory,
+                            amount = amt,
+                            period = period,
+                            rollover = rollover
+                        ) ?: Budget(
+                            categoryId = selectedCategory,
+                            amount = amt,
+                            period = period,
+                            startDate = System.currentTimeMillis(),
+                            rollover = rollover
+                        )
+                        onConfirm(budgetToSave)
+                        onDismiss()
+                    }
+                }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun CategorySelector(
+    categories: List<Category>,
+    selectedId: Long?,
+    onSelect: (Long?) -> Unit
+) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChip(
+            selected = selectedId == null,
+            onClick = { onSelect(null) },
+            label = { Text("Overall") }
+        )
+        categories.forEach { category ->
+            FilterChip(
+                selected = selectedId == category.id,
+                onClick = { onSelect(category.id) },
+                label = { Text("${category.icon} ${category.name}") }
+            )
+        }
+    }
+}
+
+private fun formatDate(ms: Long): String {
+    return SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(ms))
+}
+
+// Extension to avoid repetitive logic
+fun String.capitalize() = replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+
+// Helper for UI scaling using graphicsLayer for better performance
+fun Modifier.budgetScale(scale: Float): Modifier = this.then(Modifier.graphicsLayer(scaleX = scale, scaleY = scale))

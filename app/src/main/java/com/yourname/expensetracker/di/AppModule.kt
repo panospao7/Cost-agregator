@@ -29,7 +29,12 @@ object AppModule {
             context,
             AppDatabase::class.java,
             "expense_tracker_db"
-        ).fallbackToDestructiveMigration()
+        ).addMigrations(
+            AppDatabase.MIGRATION_6_7, 
+            AppDatabase.MIGRATION_7_8,
+            AppDatabase.MIGRATION_8_9
+        )
+            .fallbackToDestructiveMigration()
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()
     }
@@ -50,6 +55,18 @@ object AppModule {
     @Singleton
     fun provideExpenseDao(database: AppDatabase): ExpenseDao {
         return database.expenseDao()
+    }
+    
+    @Provides
+    @Singleton
+    fun provideBudgetDao(database: AppDatabase): BudgetDao {
+        return database.budgetDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideScannedReceiptDao(database: AppDatabase): ScannedReceiptDao {
+        return database.scannedReceiptDao()
     }
     
     @Provides

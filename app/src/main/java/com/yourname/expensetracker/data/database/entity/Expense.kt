@@ -47,7 +47,12 @@ data class Expense(
     
     val categoryId: Long? = null, // Link to category
     
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+
+    // New fields
+    val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN,
+    val isManualEntry: Boolean = false,
+    val notes: String? = null
 )
 
 enum class TransactionType {
@@ -55,5 +60,12 @@ enum class TransactionType {
     WITHDRAWAL,
     TRANSFER,
     DEPOSIT,
+    UNKNOWN
+}
+
+enum class PaymentMethod {
+    CARD,
+    CASH,
+    BANK_TRANSFER,
     UNKNOWN
 }
