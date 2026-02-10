@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 import androidx.room.*
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
@@ -61,6 +62,7 @@ class NotificationRepository @Inject constructor(
     fun getSourceStats(): Flow<List<SourceStats>> = sourceStatsDao.getAllFlow()
 
     // === Classifier Stats ===
+    fun getClassifierStatsFlow(): Flow<ClassifierStats> = classifier.stats
     fun getClassifierStats() = classifier.getStats()
 
     // === Manual Expense Entry ===
@@ -268,8 +270,9 @@ class NotificationRepository @Inject constructor(
                 dao.markRelevance(rawId, false)
                 sourceStatsDao.incrementAutoRejected(notification.packageName)
 
-                // Train classifier: auto-rejected by low confidence = negative example
-                classifier.train(fullNotificationText, isTransaction = false)
+                // Only train negative if it's truly NOT a transaction (parser was null)
+                // If it reached here, it means parser WAS not null but confidence was low.
+                // We DON'T train it as negative yet, let the user decide if they mark it manually.
             }
         }
     }
@@ -430,6 +433,17 @@ class NotificationRepository @Inject constructor(
         }
     }
 
+    /**
+     * Approves all currently pending reviews
+     */
+    @Transaction
+    suspend fun approveAllReview() {
+        val pending = pendingReviewDao.getPending()
+        pending.forEach { review ->
+            approveReview(review.id)
+        }
+    }
+
     // === Classifier Management ===
 
     suspend fun retrainClassifier() {
@@ -438,8 +452,38 @@ class NotificationRepository @Inject constructor(
 
     // === Existing methods (updated) ===
 
-    suspend fun markAsRelevant(id: Long, isRelevant: Boolean) =
+    @Transaction
+    suspend fun markAsRelevant(id: Long, isRelevant: Boolean) {
+        val notification = dao.getById(id) ?: return
         dao.markRelevance(id, isRelevant)
+
+        // Train classifier directly from this manual action
+        val trainingText = listOfNotNull(
+            notification.title,
+            notification.text,
+            notification.bigText
+        ).joinToString(" ")
+
+        if (trainingText.isNotBlank()) {
+            classifier.train(trainingText, isTransaction = isRelevant)
+            
+            // Also record a correction for future retraining
+            val correction = UserCorrection(
+                packageName = notification.packageName,
+                originalMerchant = "Manual",
+                correctedMerchant = null,
+                originalAmount = 0.0,
+                correctedAmount = null,
+                originalCategoryId = null,
+                correctedCategoryId = null,
+                wasRejected = !isRelevant,
+                wasApproved = isRelevant,
+                notificationTitle = notification.title,
+                notificationText = notification.text ?: notification.bigText
+            )
+            userCorrectionDao.insert(correction)
+        }
+    }
 
     suspend fun deleteAll() {
         dao.deleteAll()
@@ -509,6 +553,9 @@ class NotificationRepository @Inject constructor(
     fun getTotalSpent(): Flow<Double?> = expenseDao.getTotalSpentFlow()
 
     fun getAllExpenses(): Flow<List<Expense>> = sharedExpenses
+
+    fun getExpensesWithCategory(limit: Int = 200): Flow<List<ExpenseWithCategory>> =
+        expenseDao.getAllWithCategoryFlow(limit)
 
     suspend fun processAndSaveAll(notifications: List<RawNotification>) {
         if (notifications.isEmpty()) return

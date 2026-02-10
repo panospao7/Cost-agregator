@@ -42,8 +42,9 @@ class DebugViewModel @Inject constructor(
         .getSourceStats()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val _classifierStats = MutableStateFlow(repository.getClassifierStats())
-    val classifierStats: StateFlow<com.yourname.expensetracker.domain.intelligence.ClassifierStats> = _classifierStats
+    val classifierStats: StateFlow<com.yourname.expensetracker.domain.intelligence.ClassifierStats> = repository
+        .getClassifierStatsFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.getClassifierStats())
     
     private val _selectedPackageFilter = MutableStateFlow<String?>(null)
     val selectedPackageFilter: StateFlow<String?> = _selectedPackageFilter
@@ -100,7 +101,6 @@ class DebugViewModel @Inject constructor(
     fun retrainClassifier() {
         viewModelScope.launch {
             repository.retrainClassifier()
-            _classifierStats.value = repository.getClassifierStats()
         }
     }
     

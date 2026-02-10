@@ -21,7 +21,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
-import java.text.SimpleDateFormat
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,7 +31,6 @@ fun TransactionsScreen(
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val categories by viewModel.categories.collectAsState()
-    val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
 
     var showAddExpense by remember { mutableStateOf(false) }
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
@@ -84,7 +83,6 @@ fun TransactionsScreen(
                 items(transactions, key = { it.expense.id }) { item ->
                     TransactionItem(
                         transaction = item,
-                        dateStr = dateFormat.format(Date(item.expense.date)),
                         onDelete = { expenseToDelete = item.expense },
                         onEditCategory = { expenseToCategorize = item.expense }
                     )
@@ -183,7 +181,6 @@ fun CategoryPickerDialog(
 @Composable
 fun TransactionItem(
     transaction: ExpenseWithCategory,
-    dateStr: String,
     onDelete: () -> Unit,
     onEditCategory: () -> Unit
 ) {
@@ -264,7 +261,7 @@ fun TransactionItem(
                     )
                 }
                 Text(
-                    text = dateStr,
+                    text = transaction.formattedDate,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline
                 )
@@ -272,7 +269,7 @@ fun TransactionItem(
 
             // Amount
             Text(
-                text = "${String.format("%.2f", expense.amount)} ${expense.currency}",
+                text = transaction.formattedAmount,
                 fontWeight = FontWeight.Black,
                 fontSize = 18.sp,
                 color = MaterialTheme.colorScheme.primary,

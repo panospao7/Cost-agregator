@@ -203,6 +203,15 @@ class AddExpenseViewModel @Inject constructor(
         _state.value = AddExpenseState()
     }
 
+    fun setInitialValues(amount: String? = null, merchant: String? = null) {
+        _state.update { 
+            it.copy(
+                amount = amount ?: it.amount,
+                merchant = merchant ?: it.merchant
+            )
+        }
+    }
+
     fun clearSaveResult() {
         _state.update { it.copy(saveResult = null) }
     }

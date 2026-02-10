@@ -6,6 +6,8 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -15,6 +17,10 @@ interface ExpenseDao {
 
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     fun getAllFlow(): Flow<List<Expense>>
+
+    @Transaction
+    @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
+    fun getAllWithCategoryFlow(limit: Int = 200): Flow<List<ExpenseWithCategory>>
 
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     suspend fun getAll(): List<Expense>

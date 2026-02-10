@@ -565,7 +565,8 @@ class InsightsEngine @Inject constructor(
                              amount = avgAmount,
                              intervalDays = avgInterval,
                              occurrences = sorted.size,
-                             nextExpectedDate = nextExpected
+                             nextExpectedDate = nextExpected,
+                             confidence = if (allSimilar && sorted.size > 3) 0.92f else 0.75f
                          )
                      )
                  }

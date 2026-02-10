@@ -902,3 +902,18 @@ class CurrencyConverter @Inject constructor(
         // Free, no API key, daily update
     }
 }
+
+## 7. AI & Cloud Strategy (New Proposal)
+
+### 7.1 Global Insights & Federated Learning
+The current classifier is powerful but limited by the data of a single user. To reach "zero-touch" expense tracking, the system should evolve into a crowdsourced intelligence network.
+
+**Concept:**
+- **Anonymized Pattern Sharing**: Users can opt-in to share "fingerprints" of their successful parses (ignoring amounts and personal data) to a central repository.
+- **Global Merchant Map**: A cloud-hosted database of normalized merchant patterns and their high-confidence categories.
+- **Federated Training**: Periodically pull down global model updates to improve the local Naive Bayes weights without compromising privacy.
+
+**Benefits:**
+- **Cold-Start Problem**: New users get high accuracy from day one.
+- **Dynamic Adaption**: If a new digital bank or merchant (e.g., "TEMU") appears, the system learns it globally as soon as the first few users categorize it.
+- **Crowdsourced Parsers**: The "Generic" parser can be replaced by a collection of community-contributed regex patterns for local banks and services.

@@ -1,58 +1,37 @@
 package com.yourname.expensetracker.ui
 
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.runtime.LaunchedEffect
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
-import com.yourname.expensetracker.ui.screens.categories.CategoryScreen
-import com.yourname.expensetracker.ui.screens.debug.DebugScreen
+import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
 import com.yourname.expensetracker.ui.screens.home.HomeScreen
 import com.yourname.expensetracker.ui.screens.review.ReviewScreen
-import com.yourname.expensetracker.ui.screens.review.ReviewViewModel
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
+import com.yourname.expensetracker.ui.util.HapticType
+import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import dagger.hilt.android.AndroidEntryPoint
-import androidx.compose.material.icons.filled.Analytics
-import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
-import androidx.compose.material.icons.filled.CheckCircle
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -77,7 +56,6 @@ class MainActivity : ComponentActivity() {
 fun MainScreen() {
     var selectedTab by remember { mutableIntStateOf(0) }
     
-    // Global app state (badges, etc)
     val mainViewModel: MainViewModel = hiltViewModel()
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     
@@ -97,25 +75,43 @@ fun MainScreen() {
         }
     }
 
+    val haptic = rememberHapticFeedback()
+
+    var showAddExpense by remember { mutableStateOf(false) }
+    var showScanReceipt by remember { mutableStateOf(false) }
+    var isFabExpanded by remember { mutableStateOf(false) }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            NavigationBar {
+            // ... (rest of bottomBar)
+            NavigationBar(
+                tonalElevation = 0.dp // Cleaner Bento look
+            ) {
                 NavigationBarItem(
                     selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                    label = { Text("Home") }
+                    onClick = { 
+                        if (selectedTab != 0) haptic(HapticType.Standard)
+                        selectedTab = 0 
+                    },
+                    icon = { Icon(Icons.Rounded.GridView, contentDescription = "Dashboard") },
+                    label = { Text("Dashboard") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.ShoppingCart, contentDescription = "Transactions") },
-                    label = { Text("Transactions") }
+                    onClick = { 
+                        if (selectedTab != 1) haptic(HapticType.Standard)
+                        selectedTab = 1 
+                    },
+                    icon = { Icon(Icons.Rounded.History, contentDescription = "Activity") },
+                    label = { Text("Activity") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
+                    onClick = { 
+                        if (selectedTab != 2) haptic(HapticType.Standard)
+                        selectedTab = 2 
+                    },
                     icon = { 
                         BadgedBox(
                             badge = {
@@ -124,50 +120,188 @@ fun MainScreen() {
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.Notifications, contentDescription = "Review")
+                            Icon(Icons.Rounded.FactCheck, contentDescription = "Review")
                         }
                     },
                     label = { Text("Review") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    icon = { Icon(Icons.Default.Analytics, contentDescription = "Analytics") },
-                    label = { Text("Analytics") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 4,
-                    onClick = { selectedTab = 4 },
-                    icon = { Icon(Icons.Default.CheckCircle, contentDescription = "Budget") },
-                    label = { Text("Budget") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 5,
-                    onClick = { selectedTab = 5 },
-                    icon = { Icon(Icons.Default.List, contentDescription = "Categories") },
-                    label = { Text("Categories") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 6,
-                    onClick = { selectedTab = 6 },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "Debug") },
-                    label = { Text("Debug") }
+                    onClick = { 
+                        if (selectedTab != 3) haptic(HapticType.Standard)
+                        selectedTab = 3 
+                    },
+                    icon = { Icon(Icons.Rounded.PieChart, contentDescription = "Plan") },
+                    label = { Text("Plan") }
                 )
             }
+        },
+        floatingActionButton = {
+            val reviewViewModel: com.yourname.expensetracker.ui.screens.review.ReviewViewModel = hiltViewModel()
+            SmartFAB(
+                selectedTab = selectedTab,
+                isExpanded = isFabExpanded,
+                onToggleExpand = { isFabExpanded = !isFabExpanded },
+                onAddExpense = { 
+                    showAddExpense = true 
+                    isFabExpanded = false
+                },
+                onScanReceipt = {
+                    showScanReceipt = true
+                    isFabExpanded = false
+                },
+                onApproveAll = { reviewViewModel.approveAll() }
+            )
         }
     ) { padding ->
         Box(
             modifier = Modifier.padding(padding)
         ) {
-            when (selectedTab) {
-                0 -> HomeScreen()
-                1 -> com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen()
-                2 -> ReviewScreen()
-                3 -> AnalyticsScreen()
-                4 -> BudgetScreen()
-                5 -> com.yourname.expensetracker.ui.screens.categories.CategoryScreen()
-                6 -> DebugScreen()
+            AnimatedContent(
+                targetState = selectedTab,
+                transitionSpec = {
+                    fadeIn() togetherWith fadeOut()
+                },
+                label = "TabTransition"
+            ) { targetTab ->
+                when (targetTab) {
+                    0 -> HomeScreen()
+                    1 -> TransactionsScreen()
+                    2 -> ReviewScreen()
+                    3 -> BudgetScreen()
+                }
+            }
+
+            if (showAddExpense) {
+                val clipboardManager = LocalClipboardManager.current
+                var initialAmount by remember { mutableStateOf<String?>(null) }
+                
+                LaunchedEffect(Unit) {
+                    val text = clipboardManager.getText()?.text ?: ""
+                    val regex = Regex("""(\d+[\.,]\d{2})""")
+                    val match = regex.find(text)
+                    if (match != null) {
+                        initialAmount = match.value
+                    }
+                }
+
+                com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
+                    onDismiss = { showAddExpense = false },
+                    initialAmount = initialAmount
+                )
+            }
+
+            if (showScanReceipt) {
+                com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen(
+                    onDismiss = { showScanReceipt = false }
+                )
             }
         }
+    }
+}
+
+@Composable
+fun SmartFAB(
+    selectedTab: Int,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
+    onAddExpense: () -> Unit,
+    onScanReceipt: () -> Unit,
+    onApproveAll: () -> Unit
+) {
+    val haptic = rememberHapticFeedback()
+    val clipboardManager = LocalClipboardManager.current
+    var clipboardAmount by remember { mutableStateOf<String?>(null) }
+    
+    // Detect currency amount in clipboard (e.g., "$12.50", "12,50 €", etc.)
+    LaunchedEffect(Unit) {
+        val text = clipboardManager.getText()?.text ?: ""
+        val regex = Regex("""(\d+[\.,]\d{2})""")
+        val match = regex.find(text)
+        if (match != null) {
+            clipboardAmount = match.value
+        }
+    }
+    
+    val (icon, label) = when (selectedTab) {
+        2 -> Pair(Icons.Rounded.CheckCircle, "Approve All")
+        else -> {
+            if (clipboardAmount != null) {
+                Pair(Icons.Rounded.ContentPaste, "Add €$clipboardAmount")
+            } else {
+                Pair(Icons.Rounded.Add, "Add Expense")
+            }
+        }
+    }
+
+    Column(horizontalAlignment = Alignment.End) {
+        // Speed Dial Actions
+        AnimatedVisibility(
+            visible = isExpanded && selectedTab != 2,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(bottom = 16.dp)
+            ) {
+                SmallFloatingActionButton(
+                    onClick = { 
+                        haptic(HapticType.Standard)
+                        onScanReceipt() 
+                    },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.ReceiptLong, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scan Receipt")
+                    }
+                }
+                
+                SmallFloatingActionButton(
+                    onClick = { 
+                        haptic(HapticType.Standard)
+                        onAddExpense() 
+                    },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Edit, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Add Manual")
+                    }
+                }
+            }
+        }
+
+        ExtendedFloatingActionButton(
+            onClick = { 
+                haptic(HapticType.Heavy)
+                if (selectedTab == 2) {
+                    onApproveAll()
+                } else {
+                    onToggleExpand()
+                }
+            },
+            icon = { 
+                Icon(
+                    if (isExpanded && selectedTab != 2) Icons.Rounded.Close else icon, 
+                    contentDescription = label
+                ) 
+            },
+            text = { Text(if (isExpanded && selectedTab != 2) "Close" else label) },
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        )
     }
 }

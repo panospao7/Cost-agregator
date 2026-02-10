@@ -8,6 +8,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.File
 import javax.inject.Inject
@@ -42,6 +45,9 @@ class TransactionClassifier @Inject constructor(
     private val positiveBigramCounts = mutableMapOf<String, Int>()
     private val negativeBigramCounts = mutableMapOf<String, Int>()
 
+    private val _stats = MutableStateFlow(getStats())
+    val stats: StateFlow<ClassifierStats> = _stats.asStateFlow()
+
     private val mutex = Mutex()
     @Volatile
     private var isLoaded = false
@@ -54,6 +60,7 @@ class TransactionClassifier @Inject constructor(
 
             if (loadFromDisk()) {
                 isLoaded = true
+                _stats.value = getStats()
                 Log.d(TAG, "Loaded model from disk: +$totalPositive/-$totalNegative samples")
             }
 
@@ -162,6 +169,7 @@ class TransactionClassifier @Inject constructor(
             }
         }
         vocabularySize = (positiveWordCounts.keys + negativeWordCounts.keys).toSet().size
+        _stats.value = getStats()
     }
 
     private fun calculateProbability(features: FeatureSet): Float {

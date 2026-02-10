@@ -74,4 +74,14 @@ class ReviewViewModel @Inject constructor(
     fun clearError() {
         _errorMessage.value = null
     }
+
+    fun approveAll() {
+        viewModelScope.launch {
+            try {
+                repository.approveAllReview()
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to approve all: ${e.message}"
+            }
+        }
+    }
 }

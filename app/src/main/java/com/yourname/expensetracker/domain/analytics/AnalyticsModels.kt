@@ -182,7 +182,8 @@ data class RecurringCandidate(
     val amount: Double,
     val intervalDays: Int,
     val occurrences: Int,
-    val nextExpectedDate: Long?
+    val nextExpectedDate: Long?,
+    val confidence: Float = 0.0f
 )
 
 enum class TimePeriod {

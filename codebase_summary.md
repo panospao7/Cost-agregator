@@ -16,50 +16,55 @@ This file contains the complete source code from the `src` directory.
 11. [main\java\com\yourname\expensetracker\data\database\entity\ScannedReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityscannedreceiptkt)
 12. [main\java\com\yourname\expensetracker\data\database\entity\SourceStats.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysourcestatskt)
 13. [main\java\com\yourname\expensetracker\data\database\entity\UserCorrection.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityusercorrectionkt)
-14. [main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
-15. [main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
-16. [main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
-17. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
-18. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
-19. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
-20. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
-21. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
-22. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
-23. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
-24. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
-25. [main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt)
-26. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
-27. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
-28. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
-29. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
-30. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
-31. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
-32. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
-33. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
-34. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
-35. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
-36. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
-37. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
-38. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
-39. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
-40. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
-41. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
-42. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
-43. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
-44. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
-45. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
-46. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
-47. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
-48. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
-49. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
-50. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
-51. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
-52. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
-53. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
-54. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
-55. [main\res\values\strings.xml](#mainresvaluesstringsxml)
-56. [main\res\values\themes.xml](#mainresvaluesthemesxml)
-57. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
+14. [main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategorykt)
+15. [main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
+16. [main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
+17. [main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
+18. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
+19. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
+20. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
+21. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
+22. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
+23. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
+24. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
+25. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
+26. [main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt)
+27. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
+28. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
+29. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
+30. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
+31. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
+32. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
+33. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
+34. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
+35. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
+36. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
+37. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
+38. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
+39. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
+40. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
+41. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
+42. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
+43. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
+44. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
+45. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
+46. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
+47. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
+48. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
+49. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
+50. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
+51. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
+52. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
+53. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
+54. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
+55. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
+56. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
+57. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
+58. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
+59. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
+60. [main\res\values\strings.xml](#mainresvaluesstringsxml)
+61. [main\res\values\themes.xml](#mainresvaluesthemesxml)
+62. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
 
 ---
 
@@ -599,6 +604,42 @@ data class UserCorrection(
 
 ---
 
+## main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory.kt <a name="mainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategorykt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.model
+import androidx.room.Embedded
+import androidx.room.Relation
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.Expense
+import java.text.SimpleDateFormat
+import java.util.*
+/**
+ * Optimized Room model for displaying transactions. 
+ * Formatted strings are computed once when the object is instantiated from the DB,
+ * preventing expensive re-calculation during LazyColumn scrolling.
+ */
+data class ExpenseWithCategory(
+    @Embedded
+    val expense: Expense,
+    @Relation(
+        parentColumn = "categoryId",
+        entityColumn = "id"
+    )
+    val category: Category?
+) {
+    // Pre-computed formatting for UI efficiency
+    val formattedDate: String by lazy {
+        SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(Date(expense.date))
+    }
+    val formattedAmount: String by lazy {
+        String.format("%.2f %s", expense.amount, expense.currency)
+    }
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt <a name="mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt"></a>
 ```kotlin
 package com.yourname.expensetracker.data.repository
@@ -777,6 +818,7 @@ package com.yourname.expensetracker.data.repository
 import androidx.room.*
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
@@ -830,6 +872,7 @@ class NotificationRepository @Inject constructor(
     // === Source Stats ===
     fun getSourceStats(): Flow<List<SourceStats>> = sourceStatsDao.getAllFlow()
     // === Classifier Stats ===
+    fun getClassifierStatsFlow(): Flow<ClassifierStats> = classifier.stats
     fun getClassifierStats() = classifier.getStats()
     // === Manual Expense Entry ===
     /**
@@ -1007,8 +1050,9 @@ class NotificationRepository @Inject constructor(
             RoutingDecision.AUTO_REJECT -> {
                 dao.markRelevance(rawId, false)
                 sourceStatsDao.incrementAutoRejected(notification.packageName)
-                // Train classifier: auto-rejected by low confidence = negative example
-                classifier.train(fullNotificationText, isTransaction = false)
+                // Only train negative if it's truly NOT a transaction (parser was null)
+                // If it reached here, it means parser WAS not null but confidence was low.
+                // We DON'T train it as negative yet, let the user decide if they mark it manually.
             }
         }
     }
@@ -1152,13 +1196,50 @@ class NotificationRepository @Inject constructor(
             classifier.train(trainingText, isTransaction = false)
         }
     }
+    /**
+     * Approves all currently pending reviews
+     */
+    @Transaction
+    suspend fun approveAllReview() {
+        val pending = pendingReviewDao.getPending()
+        pending.forEach { review ->
+            approveReview(review.id)
+        }
+    }
     // === Classifier Management ===
     suspend fun retrainClassifier() {
         classifier.retrainFromCorrections()
     }
     // === Existing methods (updated) ===
-    suspend fun markAsRelevant(id: Long, isRelevant: Boolean) =
+    @Transaction
+    suspend fun markAsRelevant(id: Long, isRelevant: Boolean) {
+        val notification = dao.getById(id) ?: return
         dao.markRelevance(id, isRelevant)
+        // Train classifier directly from this manual action
+        val trainingText = listOfNotNull(
+            notification.title,
+            notification.text,
+            notification.bigText
+        ).joinToString(" ")
+        if (trainingText.isNotBlank()) {
+            classifier.train(trainingText, isTransaction = isRelevant)
+            // Also record a correction for future retraining
+            val correction = UserCorrection(
+                packageName = notification.packageName,
+                originalMerchant = "Manual",
+                correctedMerchant = null,
+                originalAmount = 0.0,
+                correctedAmount = null,
+                originalCategoryId = null,
+                correctedCategoryId = null,
+                wasRejected = !isRelevant,
+                wasApproved = isRelevant,
+                notificationTitle = notification.title,
+                notificationText = notification.text ?: notification.bigText
+            )
+            userCorrectionDao.insert(correction)
+        }
+    }
     suspend fun deleteAll() {
         dao.deleteAll()
         expenseDao.deleteAll()
@@ -1216,6 +1297,8 @@ class NotificationRepository @Inject constructor(
         blockedPackageDao.getAllFlow()
     fun getTotalSpent(): Flow<Double?> = expenseDao.getTotalSpentFlow()
     fun getAllExpenses(): Flow<List<Expense>> = sharedExpenses
+    fun getExpensesWithCategory(limit: Int = 200): Flow<List<ExpenseWithCategory>> =
+        expenseDao.getAllWithCategoryFlow(limit)
     suspend fun processAndSaveAll(notifications: List<RawNotification>) {
         if (notifications.isEmpty()) return
         // Initialize once for the batch
@@ -1541,7 +1624,8 @@ data class RecurringCandidate(
     val amount: Double,
     val intervalDays: Int,
     val occurrences: Int,
-    val nextExpectedDate: Long?
+    val nextExpectedDate: Long?,
+    val confidence: Float = 0.0f
 )
 enum class TimePeriod {
     TODAY, WEEK, MONTH, YEAR, ALL
@@ -2035,7 +2119,8 @@ class InsightsEngine @Inject constructor(
                              amount = avgAmount,
                              intervalDays = avgInterval,
                              occurrences = sorted.size,
-                             nextExpectedDate = nextExpected
+                             nextExpectedDate = nextExpected,
+                             confidence = if (allSimilar && sorted.size > 3) 0.92f else 0.75f
                          )
                      )
                  }
@@ -2788,6 +2873,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.File
 import javax.inject.Inject
@@ -2817,6 +2905,8 @@ class TransactionClassifier @Inject constructor(
     private var vocabularySize = 0
     private val positiveBigramCounts = mutableMapOf<String, Int>()
     private val negativeBigramCounts = mutableMapOf<String, Int>()
+    private val _stats = MutableStateFlow(getStats())
+    val stats: StateFlow<ClassifierStats> = _stats.asStateFlow()
     private val mutex = Mutex()
     @Volatile
     private var isLoaded = false
@@ -2827,6 +2917,7 @@ class TransactionClassifier @Inject constructor(
             if (isLoaded) return
             if (loadFromDisk()) {
                 isLoaded = true
+                _stats.value = getStats()
                 Log.d(TAG, "Loaded model from disk: +$totalPositive/-$totalNegative samples")
             }
             val correctionCount = userCorrectionDao.getCount()
@@ -2920,6 +3011,7 @@ class TransactionClassifier @Inject constructor(
             }
         }
         vocabularySize = (positiveWordCounts.keys + negativeWordCounts.keys).toSet().size
+        _stats.value = getStats()
     }
     private fun calculateProbability(features: FeatureSet): Float {
         val total = totalPositive + totalNegative
@@ -3255,59 +3347,38 @@ class ReceiptOcrService @Inject constructor(
 ## main\java\com\yourname\expensetracker\ui\MainActivity.kt <a name="mainjavacomyournameexpensetrackeruimainactivitykt"></a>
 ```kotlin
 package com.yourname.expensetracker.ui
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.runtime.LaunchedEffect
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
-import com.yourname.expensetracker.ui.screens.categories.CategoryScreen
-import com.yourname.expensetracker.ui.screens.debug.DebugScreen
+import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
 import com.yourname.expensetracker.ui.screens.home.HomeScreen
 import com.yourname.expensetracker.ui.screens.review.ReviewScreen
-import com.yourname.expensetracker.ui.screens.review.ReviewViewModel
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
+import com.yourname.expensetracker.ui.util.HapticType
+import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import dagger.hilt.android.AndroidEntryPoint
-import androidx.compose.material.icons.filled.Analytics
-import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
-import androidx.compose.material.icons.filled.CheckCircle
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -3329,7 +3400,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen() {
     var selectedTab by remember { mutableIntStateOf(0) }
-    // Global app state (badges, etc)
     val mainViewModel: MainViewModel = hiltViewModel()
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -3345,25 +3415,41 @@ fun MainScreen() {
             }
         }
     }
+    val haptic = rememberHapticFeedback()
+    var showAddExpense by remember { mutableStateOf(false) }
+    var showScanReceipt by remember { mutableStateOf(false) }
+    var isFabExpanded by remember { mutableStateOf(false) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            NavigationBar {
+            // ... (rest of bottomBar)
+            NavigationBar(
+                tonalElevation = 0.dp // Cleaner Bento look
+            ) {
                 NavigationBarItem(
                     selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                    label = { Text("Home") }
+                    onClick = { 
+                        if (selectedTab != 0) haptic(HapticType.Standard)
+                        selectedTab = 0 
+                    },
+                    icon = { Icon(Icons.Rounded.GridView, contentDescription = "Dashboard") },
+                    label = { Text("Dashboard") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.ShoppingCart, contentDescription = "Transactions") },
-                    label = { Text("Transactions") }
+                    onClick = { 
+                        if (selectedTab != 1) haptic(HapticType.Standard)
+                        selectedTab = 1 
+                    },
+                    icon = { Icon(Icons.Rounded.History, contentDescription = "Activity") },
+                    label = { Text("Activity") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
+                    onClick = { 
+                        if (selectedTab != 2) haptic(HapticType.Standard)
+                        selectedTab = 2 
+                    },
                     icon = { 
                         BadgedBox(
                             badge = {
@@ -3372,51 +3458,179 @@ fun MainScreen() {
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.Notifications, contentDescription = "Review")
+                            Icon(Icons.Rounded.FactCheck, contentDescription = "Review")
                         }
                     },
                     label = { Text("Review") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    icon = { Icon(Icons.Default.Analytics, contentDescription = "Analytics") },
-                    label = { Text("Analytics") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 4,
-                    onClick = { selectedTab = 4 },
-                    icon = { Icon(Icons.Default.CheckCircle, contentDescription = "Budget") },
-                    label = { Text("Budget") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 5,
-                    onClick = { selectedTab = 5 },
-                    icon = { Icon(Icons.Default.List, contentDescription = "Categories") },
-                    label = { Text("Categories") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 6,
-                    onClick = { selectedTab = 6 },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "Debug") },
-                    label = { Text("Debug") }
+                    onClick = { 
+                        if (selectedTab != 3) haptic(HapticType.Standard)
+                        selectedTab = 3 
+                    },
+                    icon = { Icon(Icons.Rounded.PieChart, contentDescription = "Plan") },
+                    label = { Text("Plan") }
                 )
             }
+        },
+        floatingActionButton = {
+            val reviewViewModel: com.yourname.expensetracker.ui.screens.review.ReviewViewModel = hiltViewModel()
+            SmartFAB(
+                selectedTab = selectedTab,
+                isExpanded = isFabExpanded,
+                onToggleExpand = { isFabExpanded = !isFabExpanded },
+                onAddExpense = { 
+                    showAddExpense = true 
+                    isFabExpanded = false
+                },
+                onScanReceipt = {
+                    showScanReceipt = true
+                    isFabExpanded = false
+                },
+                onApproveAll = { reviewViewModel.approveAll() }
+            )
         }
     ) { padding ->
         Box(
             modifier = Modifier.padding(padding)
         ) {
-            when (selectedTab) {
-                0 -> HomeScreen()
-                1 -> com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen()
-                2 -> ReviewScreen()
-                3 -> AnalyticsScreen()
-                4 -> BudgetScreen()
-                5 -> com.yourname.expensetracker.ui.screens.categories.CategoryScreen()
-                6 -> DebugScreen()
+            AnimatedContent(
+                targetState = selectedTab,
+                transitionSpec = {
+                    fadeIn() togetherWith fadeOut()
+                },
+                label = "TabTransition"
+            ) { targetTab ->
+                when (targetTab) {
+                    0 -> HomeScreen()
+                    1 -> TransactionsScreen()
+                    2 -> ReviewScreen()
+                    3 -> BudgetScreen()
+                }
+            }
+            if (showAddExpense) {
+                val clipboardManager = LocalClipboardManager.current
+                var initialAmount by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(Unit) {
+                    val text = clipboardManager.getText()?.text ?: ""
+                    val regex = Regex("""(\d+[\.,]\d{2})""")
+                    val match = regex.find(text)
+                    if (match != null) {
+                        initialAmount = match.value
+                    }
+                }
+                com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
+                    onDismiss = { showAddExpense = false },
+                    initialAmount = initialAmount
+                )
+            }
+            if (showScanReceipt) {
+                com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen(
+                    onDismiss = { showScanReceipt = false }
+                )
             }
         }
+    }
+}
+@Composable
+fun SmartFAB(
+    selectedTab: Int,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
+    onAddExpense: () -> Unit,
+    onScanReceipt: () -> Unit,
+    onApproveAll: () -> Unit
+) {
+    val haptic = rememberHapticFeedback()
+    val clipboardManager = LocalClipboardManager.current
+    var clipboardAmount by remember { mutableStateOf<String?>(null) }
+    // Detect currency amount in clipboard (e.g., "$12.50", "12,50 €", etc.)
+    LaunchedEffect(Unit) {
+        val text = clipboardManager.getText()?.text ?: ""
+        val regex = Regex("""(\d+[\.,]\d{2})""")
+        val match = regex.find(text)
+        if (match != null) {
+            clipboardAmount = match.value
+        }
+    }
+    val (icon, label) = when (selectedTab) {
+        2 -> Pair(Icons.Rounded.CheckCircle, "Approve All")
+        else -> {
+            if (clipboardAmount != null) {
+                Pair(Icons.Rounded.ContentPaste, "Add €$clipboardAmount")
+            } else {
+                Pair(Icons.Rounded.Add, "Add Expense")
+            }
+        }
+    }
+    Column(horizontalAlignment = Alignment.End) {
+        // Speed Dial Actions
+        AnimatedVisibility(
+            visible = isExpanded && selectedTab != 2,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(bottom = 16.dp)
+            ) {
+                SmallFloatingActionButton(
+                    onClick = { 
+                        haptic(HapticType.Standard)
+                        onScanReceipt() 
+                    },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.ReceiptLong, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scan Receipt")
+                    }
+                }
+                SmallFloatingActionButton(
+                    onClick = { 
+                        haptic(HapticType.Standard)
+                        onAddExpense() 
+                    },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Edit, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Add Manual")
+                    }
+                }
+            }
+        }
+        ExtendedFloatingActionButton(
+            onClick = { 
+                haptic(HapticType.Heavy)
+                if (selectedTab == 2) {
+                    onApproveAll()
+                } else {
+                    onToggleExpand()
+                }
+            },
+            icon = { 
+                Icon(
+                    if (isExpanded && selectedTab != 2) Icons.Rounded.Close else icon, 
+                    contentDescription = label
+                ) 
+            },
+            text = { Text(if (isExpanded && selectedTab != 2) "Close" else label) },
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        )
     }
 }
 
@@ -3442,6 +3656,312 @@ class MainViewModel @Inject constructor(
     val pendingReviewCount: StateFlow<Int> = repository
         .getPendingReviewCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\ui\components\BentoCard.kt <a name="mainjavacomyournameexpensetrackeruicomponentsbentocardkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.components
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+/**
+ * Atomic BentoCard — the building block for the Bento Grid layout.
+ */
+@Composable
+fun BentoCard(
+    modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+    cornerRadius: Dp = 20.dp,
+    contentPadding: PaddingValues = PaddingValues(16.dp),
+    onClick: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    if (onClick != null) {
+        Card(
+            modifier = modifier,
+            shape = RoundedCornerShape(cornerRadius),
+            colors = CardDefaults.cardColors(containerColor = containerColor),
+            onClick = onClick
+        ) {
+            Column(
+                modifier = Modifier.padding(contentPadding),
+                content = content
+            )
+        }
+    } else {
+        Card(
+            modifier = modifier,
+            shape = RoundedCornerShape(cornerRadius),
+            colors = CardDefaults.cardColors(containerColor = containerColor),
+        ) {
+            Column(
+                modifier = Modifier.padding(contentPadding),
+                content = content
+            )
+        }
+    }
+}
+/**
+ * Hero BentoCard — larger, primary-colored, for the main metric
+ */
+@Composable
+fun HeroBentoCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    BentoCard(
+        modifier = modifier,
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        cornerRadius = 24.dp,
+        contentPadding = PaddingValues(24.dp),
+        content = content
+    )
+}
+/**
+ * Compact stat label used inside BentoCards
+ */
+@Composable
+fun StatLabel(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontWeight = FontWeight.Bold,
+                fontFeatureSettings = "tnum"
+            ),
+            color = valueColor
+        )
+    }
+}
+/**
+ * Amount text with tabular figures
+ */
+@Composable
+fun AmountText(
+    amount: Double,
+    currency: String = "€",
+    modifier: Modifier = Modifier,
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.displaySmall,
+    color: Color = MaterialTheme.colorScheme.onSurface
+) {
+    Text(
+        text = "$currency${String.format("%.2f", amount)}",
+        style = style.copy(fontFeatureSettings = "tnum"),
+        fontWeight = FontWeight.Bold,
+        color = color,
+        modifier = modifier
+    )
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\ui\components\PulseDot.kt <a name="mainjavacomyournameexpensetrackeruicomponentspulsedotkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.components
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.ui.theme.SemanticColors
+/**
+ * Animated pulse dot that indicates the background service is running.
+ */
+@Composable
+fun PulseDot(
+    modifier: Modifier = Modifier,
+    color: Color = SemanticColors.SuccessGreen,
+    size: Dp = 8.dp,
+    isActive: Boolean = true
+) {
+    if (!isActive) {
+        Box(
+            modifier = modifier
+                .size(size)
+                .background(SemanticColors.NeutralGray, CircleShape)
+        )
+        return
+    }
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.6f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_scale"
+    )
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.6f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_alpha"
+    )
+    Box(modifier = modifier) {
+        // Outer pulse ring
+        Box(
+            modifier = Modifier
+                .size(size)
+                .scale(scale)
+                .alpha(alpha)
+                .background(color, CircleShape)
+        )
+        // Inner solid dot
+        Box(
+            modifier = Modifier
+                .size(size)
+                .background(color, CircleShape)
+        )
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt <a name="mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.components
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.domain.analytics.PaceStatus
+import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.ui.theme.SemanticColors
+@Composable
+fun SpendingPaceGauge(
+    pace: SpendingPace,
+    modifier: Modifier = Modifier
+) {
+    val paceColor = when (pace.paceStatus) {
+        PaceStatus.UNDER_PACE -> SemanticColors.UnderPace
+        PaceStatus.ON_PACE -> SemanticColors.OnPace
+        PaceStatus.OVER_PACE -> SemanticColors.OverPace
+        PaceStatus.NO_BASELINE -> SemanticColors.NeutralGray
+    }
+    // Animate the sweep angle
+    val targetSweep = (pace.pacePercentage / 200f).coerceIn(0f, 1f) * 240f
+    val animatedSweep by animateFloatAsState(
+        targetValue = targetSweep,
+        animationSpec = tween(1000),
+        label = "pace_sweep"
+    )
+    val statusLabel = when (pace.paceStatus) {
+        PaceStatus.UNDER_PACE -> "Under pace"
+        PaceStatus.ON_PACE -> "On track"
+        PaceStatus.OVER_PACE -> "Over pace"
+        PaceStatus.NO_BASELINE -> "No data yet"
+    }
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.size(120.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            val trackColor = MaterialTheme.colorScheme.surfaceVariant
+            Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                val strokeWidth = 12.dp.toPx()
+                val arcSize = Size(size.width - strokeWidth, size.height - strokeWidth)
+                val topLeft = Offset(strokeWidth / 2, strokeWidth / 2)
+                // Background arc (240° sweep, centered at bottom)
+                drawArc(
+                    color = trackColor,
+                    startAngle = 150f,
+                    sweepAngle = 240f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+                // Foreground arc
+                drawArc(
+                    color = paceColor,
+                    startAngle = 150f,
+                    sweepAngle = animatedSweep,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+            }
+            // Center text
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "${pace.pacePercentage.toInt()}%",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = paceColor
+                )
+                Text(
+                    text = "Day ${pace.daysElapsed}/${pace.daysInMonth}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = statusLabel,
+            style = MaterialTheme.typography.labelMedium,
+            color = paceColor,
+            fontWeight = FontWeight.Medium
+        )
+        if (pace.projectedTotal > 0) {
+            Text(
+                text = "Projected: €${String.format("%.0f", pace.projectedTotal)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 ```
@@ -3490,6 +4010,8 @@ import java.util.*
 @Composable
 fun AddExpenseSheet(
     onDismiss: () -> Unit,
+    initialAmount: String? = null,
+    initialMerchant: String? = null,
     viewModel: AddExpenseViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -3504,6 +4026,12 @@ fun AddExpenseSheet(
                 onDismiss()
             }
             else -> { /* handled in UI */ }
+        }
+    }
+    // Set initial values once
+    LaunchedEffect(Unit) {
+        if (initialAmount != null || initialMerchant != null) {
+            viewModel.setInitialValues(initialAmount, initialMerchant)
         }
     }
     Surface(
@@ -4179,6 +4707,14 @@ class AddExpenseViewModel @Inject constructor(
     fun reset() {
         _state.value = AddExpenseState()
     }
+    fun setInitialValues(amount: String? = null, merchant: String? = null) {
+        _state.update { 
+            it.copy(
+                amount = amount ?: it.amount,
+                merchant = merchant ?: it.merchant
+            )
+        }
+    }
     fun clearSaveResult() {
         _state.update { it.copy(saveResult = null) }
     }
@@ -4191,6 +4727,7 @@ class AddExpenseViewModel @Inject constructor(
 ## main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt <a name="mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt"></a>
 ```kotlin
 package com.yourname.expensetracker.ui.screens.analytics
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -4215,10 +4752,12 @@ import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
 import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.column.columnChart
-import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.analytics.*
+import com.yourname.expensetracker.ui.components.*
+import com.yourname.expensetracker.ui.theme.SemanticColors
+import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnalyticsScreen(
@@ -4227,8 +4766,8 @@ fun AnalyticsScreen(
     val state by viewModel.state.collectAsState()
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Analytics", fontWeight = FontWeight.Bold) }
+            CenterAlignedTopAppBar(
+                title = { Text("Financial Insights", fontWeight = FontWeight.Bold) }
             )
         }
     ) { padding ->
@@ -4242,74 +4781,145 @@ fun AnalyticsScreen(
                     .fillMaxSize()
                     .padding(padding),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                // 1. Total Spent Header
-                item { TotalSpentHeader(state) }
-                // 2. Period Selector
+                // 1. Period Selector (Top Level)
                 item { PeriodSelector(state.selectedPeriod) { viewModel.selectPeriod(it) } }
-                // 3. Main Chart
-                item { AnalyticsChart(state) }
-                // 4. Insights Section
+                // 2. Main Hero Bento: Total Spent + Change
+                item { TotalSpentHero(state) }
+                // 3. AI Insights (Natural Language)
                 if (state.insights.isNotEmpty()) {
-                    item { SectionHeader("Insights") }
-                    item { InsightsRow(state.insights) }
+                    item { NaturalLanguageInsightBento(state.insights.first()) }
                 }
+                // 4. Daily Spending Chart
+                item { SpendingChartBento(state) }
                 // 5. Category Breakdown
                 if (state.categoryBreakdown.isNotEmpty()) {
-                    item { SectionHeader("By Category") }
+                    item { SectionHeader("Breakdown by Category") }
                     items(state.categoryBreakdown) { CategoryItem(it) }
                 }
-                // 6. Merchant Breakdown
+                // 6. Deep Insights Carousel
+                if (state.insights.size > 1) {
+                    item { SectionHeader("Deep Insights") }
+                    item { InsightsRow(state.insights.drop(1)) }
+                }
+                // 7. Merchant Breakdown
                 if (state.merchantBreakdown.isNotEmpty()) {
                     item { SectionHeader("Top Merchants") }
-                    items(state.merchantBreakdown.take(10)) { MerchantItem(it) }
+                    items(state.merchantBreakdown.take(8)) { MerchantItem(it) }
                 }
-                // 7. Recurring
+                // 8. Recurring
                 if (state.recurring.isNotEmpty()) {
-                    item { SectionHeader("Detected Recurring") }
+                    item { SectionHeader("Subscription Detection") }
                     items(state.recurring) { RecurringItem(it) }
                 }
-                item { Spacer(modifier = Modifier.height(32.dp)) }
+                item { Spacer(modifier = Modifier.height(24.dp)) }
             }
         }
     }
 }
 @Composable
-fun TotalSpentHeader(state: AnalyticsState) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+fun TotalSpentHero(state: AnalyticsState) {
+    HeroBentoCard {
+        Column {
             Text(
-                text = state.selectedPeriod.name.lowercase().replaceFirstChar { it.uppercase() },
-                style = MaterialTheme.typography.labelLarge,
+                text = "${state.selectedPeriod.name} Total",
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
             )
-            Text(
-                text = "€${String.format("%.2f", state.currentTotal)}",
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold,
+            Spacer(modifier = Modifier.height(4.dp))
+            AmountText(
+                amount = state.currentTotal,
+                style = MaterialTheme.typography.displayMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
             state.changePercent?.let { change ->
                 val isIncrease = change > 0
-                val color = if (isIncrease) Color(0xFFE57373) else Color(0xFF81C784)
-                val arrow = if (isIncrease) "▲" else "▼"
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "$arrow ${String.format("%.1f", Math.abs(change))}%",
-                        color = color,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text(
-                        text = " vs previous period",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                    )
+                val color = if (isIncrease) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                val icon = if (isIncrease) "📈" else "📉"
+                Surface(
+                    color = Color.White.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.padding(top = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(icon, fontSize = 14.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${if (change > 0) "+" else ""}${String.format("%.1f", change)}% vs last period",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "${state.transactionCount} transactions recorded in this period.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+            )
+        }
+    }
+}
+@Composable
+fun NaturalLanguageInsightBento(insight: SpendingInsight) {
+    BentoCard(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(Color.White.copy(alpha = 0.5f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(insight.icon, fontSize = 24.sp)
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column {
+                Text(
+                    text = insight.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = insight.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
+                    lineHeight = 20.sp
+                )
+            }
+        }
+    }
+}
+@Composable
+fun SpendingChartBento(state: AnalyticsState) {
+    BentoCard {
+        Column {
+            Text(
+                "Spending Distribution",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            if (state.dailyTotals.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                    Text("Insufficient data for visualization", style = MaterialTheme.typography.bodySmall)
+                }
+            } else {
+                val entries = state.dailyTotals.values.map { it.toFloat() }
+                val chartEntryModel = remember(entries) { entryModelOf(*entries.toTypedArray()) }
+                Chart(
+                    chart = columnChart(),
+                    model = chartEntryModel,
+                    startAxis = rememberStartAxis(),
+                    bottomAxis = rememberBottomAxis(),
+                    modifier = Modifier.fillMaxWidth().height(180.dp)
+                )
             }
         }
     }
@@ -4324,41 +4934,9 @@ fun PeriodSelector(selected: TimePeriod, onSelect: (TimePeriod) -> Unit) {
             FilterChip(
                 selected = selected == period,
                 onClick = { onSelect(period) },
-                label = { Text(period.name) }
+                label = { Text(period.name.lowercase().capitalize()) },
+                shape = RoundedCornerShape(20.dp)
             )
-        }
-    }
-}
-@Composable
-fun AnalyticsChart(state: AnalyticsState) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(240.dp),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "Daily Spending",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            if (state.dailyTotals.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No data for this period", color = Color.Gray)
-                }
-            } else {
-                val entries = state.dailyTotals.values.map { it.toFloat() }
-                val chartEntryModel = remember(entries) { entryModelOf(*entries.toTypedArray()) }
-                Chart(
-                    chart = columnChart(),
-                    model = chartEntryModel,
-                    startAxis = rememberStartAxis(),
-                    bottomAxis = rememberBottomAxis(),
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
         }
     }
 }
@@ -4366,50 +4944,45 @@ fun AnalyticsChart(state: AnalyticsState) {
 fun SectionHeader(title: String) {
     Text(
         text = title,
-        style = MaterialTheme.typography.titleLarge,
+        style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(top = 8.dp)
+        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
     )
 }
 @Composable
 fun InsightsRow(insights: List<SpendingInsight>) {
     LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(vertical = 4.dp)
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(bottom = 4.dp)
     ) {
         items(insights) { insight ->
             Card(
-                modifier = Modifier.width(280.dp),
+                modifier = Modifier.width(260.dp),
+                shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
                 )
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(MaterialTheme.colorScheme.surface, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(insight.icon, fontSize = 20.sp)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             insight.title,
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            insight.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        insight.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -4417,87 +4990,109 @@ fun InsightsRow(insights: List<SpendingInsight>) {
 }
 @Composable
 fun CategoryItem(item: CategoryBreakdown) {
-    // Optimize color parsing: remember the color based on the category's hex string
     val categoryColor = remember(item.category.color) {
-        try {
-            Color(android.graphics.Color.parseColor(item.category.color))
-        } catch (e: Exception) {
-            Color.Gray
-        }
+        try { Color(android.graphics.Color.parseColor(item.category.color)) } 
+        catch (e: Exception) { Color.Gray }
     }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .background(categoryColor, CircleShape),
+                .size(44.dp)
+                .background(categoryColor.copy(alpha = 0.15f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(item.category.icon)
+            Text(item.category.icon, fontSize = 20.sp)
         }
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(item.category.name, fontWeight = FontWeight.Bold)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(item.category.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text("€${String.format("%.2f", item.total)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(6.dp))
             LinearProgressIndicator(
-                progress = item.percentage / 100f,
+                progress = { item.percentage / 100f },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
+                    .clip(CircleShape),
                 color = categoryColor,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            Text("€${String.format("%.2f", item.total)}", fontWeight = FontWeight.Bold)
-            Text("${item.percentage.toInt()}%", style = MaterialTheme.typography.bodySmall)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "${item.percentage.toInt()}% of total spending",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
         }
     }
 }
 @Composable
 fun MerchantItem(item: MerchantBreakdown) {
-    ListItem(
-        headlineContent = { Text(item.name, fontWeight = FontWeight.Medium) },
-        supportingContent = { Text("${item.transactionCount} transactions") },
-        trailingContent = { Text("€${String.format("%.2f", item.totalSpent)}", fontWeight = FontWeight.Bold) },
-        leadingContent = {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = Color.Transparent
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Surface(
                 modifier = Modifier.size(40.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.secondaryContainer
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text(item.name.take(1).uppercase(), fontWeight = FontWeight.Bold)
+                    Text(item.name.take(1).uppercase(), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
             }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text("${item.transactionCount} visits", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("€${String.format("%.2f", item.totalSpent)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         }
-    )
+    }
 }
 @Composable
 fun RecurringItem(item: RecurringCandidate) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(item.merchant, fontWeight = FontWeight.Bold)
-                Text("~every ${item.intervalDays} days", style = MaterialTheme.typography.bodySmall)
+            Box(
+                modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("🔄", fontSize = 18.sp)
             }
-            Text("€${String.format("%.2f", item.amount)}", fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.merchant, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text("Estimated every ${item.intervalDays} days", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("€${String.format("%.2f", item.amount)}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                Text(item.confidence.let { if (it > 0.8) "High confidence" else "Plausible" }, style = MaterialTheme.typography.labelSmall, color = if (item.confidence > 0.8) SemanticColors.SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
+// Extension to help with capitalizing names
+fun String.capitalize() = this.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 
 ```
 
@@ -5172,6 +5767,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -5183,13 +5779,21 @@ import com.yourname.expensetracker.data.database.entity.Category
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategoryScreen(
+    onDismiss: () -> Unit,
     viewModel: CategoryViewModel = hiltViewModel()
 ) {
     val categories by viewModel.categories.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Manage Categories") })
+            TopAppBar(
+                title = { Text("Manage Categories") },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
         },
         floatingActionButton = {
             FloatingActionButton(onClick = { showAddDialog = true }) {
@@ -5364,6 +5968,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -5387,6 +5992,7 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DebugScreen(
+    onDismiss: () -> Unit,
     viewModel: DebugViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
@@ -5399,6 +6005,11 @@ fun DebugScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Debug: Notifications ($count)") },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
                 actions = {
                     IconButton(onClick = { viewModel.clearAll() }) {
                         Icon(Icons.Default.Delete, contentDescription = "Clear all")
@@ -5930,8 +6541,9 @@ class DebugViewModel @Inject constructor(
     val sourceStats: StateFlow<List<com.yourname.expensetracker.data.database.entity.SourceStats>> = repository
         .getSourceStats()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    private val _classifierStats = MutableStateFlow(repository.getClassifierStats())
-    val classifierStats: StateFlow<com.yourname.expensetracker.domain.intelligence.ClassifierStats> = _classifierStats
+    val classifierStats: StateFlow<com.yourname.expensetracker.domain.intelligence.ClassifierStats> = repository
+        .getClassifierStatsFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.getClassifierStats())
     private val _selectedPackageFilter = MutableStateFlow<String?>(null)
     val selectedPackageFilter: StateFlow<String?> = _selectedPackageFilter
     val filteredNotifications: StateFlow<List<RawNotification>> = combine(
@@ -5978,7 +6590,6 @@ class DebugViewModel @Inject constructor(
     fun retrainClassifier() {
         viewModelScope.launch {
             repository.retrainClassifier()
-            _classifierStats.value = repository.getClassifierStats()
         }
     }
     @Inject
@@ -6026,20 +6637,19 @@ class DebugViewModel @Inject constructor(
 ```kotlin
 package com.yourname.expensetracker.ui.screens.home
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -6050,8 +6660,9 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
+import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
@@ -6060,138 +6671,208 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
-    var showAddExpense by remember { mutableStateOf(false) }
-    var showScanReceipt by remember { mutableStateOf(false) }
+    var showQuickSettings by remember { mutableStateOf(false) }
+    var showCategories by remember { mutableStateOf(false) }
+    var showDebug by remember { mutableStateOf(false) }
     Scaffold(
-        floatingActionButton = {
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Scan Receipt Mini FAB
-                SmallFloatingActionButton(
-                    onClick = { showScanReceipt = true },
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                ) {
-                    Text("📷", fontSize = 18.sp)
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { 
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PulseDot(isActive = state.isServiceRunning)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Dashboard", style = MaterialTheme.typography.titleLarge)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showQuickSettings = true }) {
+                        Icon(Icons.Rounded.Settings, contentDescription = "Settings")
+                    }
                 }
-                // Main Add Expense FAB
-                FloatingActionButton(
-                    onClick = { showAddExpense = true },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add Expense"
-                    )
-                }
-            }
+            )
         }
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Total Spent Card
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    ),
-                    shape = RoundedCornerShape(20.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            "Total Spent",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                        )
-                        Text(
-                            "€${String.format("%.2f", state.totalSpent)}",
-                            style = MaterialTheme.typography.displayMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "${state.transactionCount} transactions",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                        )
+        if (state.isLoading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                state.widgets.forEach { widget ->
+                    when (widget) {
+                        is DashboardWidget.SafeToSpend -> {
+                            item(span = { GridItemSpan(2) }) {
+                                HeroBentoCard {
+                                    Text(
+                                        text = if (widget.totalBudget != null) "Safe to spend" else "Spent this month",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                    )
+                                    AmountText(
+                                        amount = widget.amount,
+                                        style = MaterialTheme.typography.displayMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    if (widget.totalBudget != null) {
+                                        LinearProgressIndicator(
+                                            progress = { ( (widget.totalBudget - widget.amount) / widget.totalBudget ).toFloat().coerceIn(0f, 1f) },
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).height(8.dp).clip(CircleShape),
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f)
+                                        )
+                                        Text(
+                                            "${widget.daysRemaining} days remaining in month",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        is DashboardWidget.SpendingPaceWidget -> {
+                            item {
+                                BentoCard {
+                                    Text("Spending Pace", style = MaterialTheme.typography.labelMedium)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    SpendingPaceGauge(pace = widget.pace)
+                                }
+                            }
+                        }
+                        is DashboardWidget.NaturalLanguageInsight -> {
+                            item(span = { GridItemSpan(2) }) {
+                                BentoCard(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(widget.icon, fontSize = 24.sp)
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Text(
+                                            text = widget.text,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        is DashboardWidget.PeriodSummary -> {
+                            item {
+                                BentoCard {
+                                    Text("Overview", style = MaterialTheme.typography.labelMedium)
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    StatLabel("Today", "€${String.format("%.2f", widget.todaySpent)}")
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    StatLabel("This Week", "€${String.format("%.2f", widget.weekSpent)}")
+                                }
+                            }
+                        }
+                        is DashboardWidget.PendingReviewAlert -> {
+                            item {
+                                BentoCard(
+                                    containerColor = SemanticColors.WarningOrange.copy(alpha = 0.15f),
+                                    onClick = { /* Navigate to review */ }
+                                ) {
+                                    Text("Pending Review", style = MaterialTheme.typography.labelMedium, color = SemanticColors.WarningOrange)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("${widget.count}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = SemanticColors.WarningOrange)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("items", style = MaterialTheme.typography.bodySmall, color = SemanticColors.WarningOrange)
+                                    }
+                                    Text("Tap to verify", style = MaterialTheme.typography.labelSmall, color = SemanticColors.WarningOrange.copy(alpha = 0.8f))
+                                }
+                            }
+                        }
+                        is DashboardWidget.BudgetHealthWidget -> {
+                            item(span = { GridItemSpan(2) }) {
+                                BentoCard {
+                                    Text("Budget Health", style = MaterialTheme.typography.labelMedium)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(widget.summary ?: "All good", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                    // Could add a small bar or dots here
+                                }
+                            }
+                        }
+                        is DashboardWidget.TopCategories -> {
+                            item(span = { GridItemSpan(2) }) {
+                                BentoCard {
+                                    Text("Top Categories", style = MaterialTheme.typography.labelMedium)
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    widget.categories.forEach { CategorySpendingRow(it) }
+                                }
+                            }
+                        }
+                        is DashboardWidget.RecentTransactions -> {
+                            item(span = { GridItemSpan(2) }) {
+                                BentoCard {
+                                    Text("Recent Transactions", style = MaterialTheme.typography.labelMedium)
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    widget.expenses.forEach { RecentExpenseRow(it) }
+                                }
+                            }
+                        }
                     }
                 }
             }
-            // Time Period Cards
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    PeriodCard("Today", state.todaySpent, Modifier.weight(1f))
-                    PeriodCard("This Week", state.weekSpent, Modifier.weight(1f))
-                    PeriodCard("This Month", state.monthSpent, Modifier.weight(1f))
-                }
-            }
-            // Budget Summary Widget
-            if (state.budgetStatuses.isNotEmpty()) {
-                item {
-                    BudgetSummaryWidget(
-                        onTrack = state.budgetStatuses.count { it.healthStatus == BudgetHealthStatus.ON_TRACK },
-                        warning = state.budgetStatuses.count { it.healthStatus == BudgetHealthStatus.WARNING || it.healthStatus == BudgetHealthStatus.CRITICAL },
-                        exceeded = state.budgetStatuses.count { it.healthStatus == BudgetHealthStatus.EXCEEDED },
-                        summary = state.budgetSummary
-                    )
-                }
-            }
-            // Top Categories
-            if (state.topCategories.isNotEmpty()) {
-                item {
-                    Text(
-                        "Top Categories",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                items(state.topCategories) { catSpending ->
-                    CategorySpendingRow(catSpending)
-                }
-            }
-            // Recent Transactions
-            if (state.recentExpenses.isNotEmpty()) {
-                item {
-                    Text(
-                        "Recent",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                items(state.recentExpenses) { expense ->
-                    RecentExpenseRow(expense)
-                }
-            }
         }
-        if (showAddExpense) {
-            com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
-                onDismiss = { showAddExpense = false }
+        if (showQuickSettings) {
+            QuickSettingsDialog(
+                onDismiss = { showQuickSettings = false },
+                onNavigateToCategories = { 
+                    showQuickSettings = false
+                    showCategories = true 
+                },
+                onNavigateToDebug = {
+                    showQuickSettings = false
+                    showDebug = true
+                }
             )
         }
-        if (showScanReceipt) {
-            ReceiptScanScreen(
-                onDismiss = { showScanReceipt = false }
+        if (showCategories) {
+            com.yourname.expensetracker.ui.screens.categories.CategoryScreen(
+                onDismiss = { showCategories = false }
+            )
+        }
+        if (showDebug) {
+            com.yourname.expensetracker.ui.screens.debug.DebugScreen(
+                onDismiss = { showDebug = false }
             )
         }
     }
+}
+@Composable
+fun QuickSettingsDialog(
+    onDismiss: () -> Unit,
+    onNavigateToCategories: () -> Unit,
+    onNavigateToDebug: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Quick Settings") },
+        text = {
+            Column {
+                ListItem(
+                    headlineContent = { Text("Categories") },
+                    leadingContent = { Text("🏷️") },
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onNavigateToCategories() }
+                )
+                ListItem(
+                    headlineContent = { Text("Debug Menu") },
+                    leadingContent = { Text("🛠️") },
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onNavigateToDebug() }
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
 }
 @Composable
 fun PeriodCard(label: String, amount: Double, modifier: Modifier = Modifier) {
@@ -6339,67 +7020,107 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
-import com.yourname.expensetracker.data.repository.BudgetRepository
-import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.analytics.InsightsEngine
+import com.yourname.expensetracker.domain.analytics.PaceStatus
+import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
-import javax.inject.Inject
+import kotlinx.coroutines.flow.*
 import java.util.Calendar
+import javax.inject.Inject
+// === State Widget sealed class for Bento Grid ===
+sealed class DashboardWidget {
+    data class SafeToSpend(
+        val amount: Double,
+        val totalBudget: Double?,
+        val daysRemaining: Int
+    ) : DashboardWidget()
+    data class SpendingPaceWidget(
+        val pace: SpendingPace
+    ) : DashboardWidget()
+    data class PendingReviewAlert(
+        val count: Int
+    ) : DashboardWidget()
+    data class PeriodSummary(
+        val todaySpent: Double,
+        val weekSpent: Double,
+        val monthSpent: Double
+    ) : DashboardWidget()
+    data class TopCategories(
+        val categories: List<CategorySpending>
+    ) : DashboardWidget()
+    data class BudgetHealthWidget(
+        val statuses: List<BudgetStatus>,
+        val summary: String?
+    ) : DashboardWidget()
+    data class RecentTransactions(
+        val expenses: List<Expense>
+    ) : DashboardWidget()
+    data class NaturalLanguageInsight(
+        val text: String,
+        val icon: String
+    ) : DashboardWidget()
+}
 data class CategorySpending(
     val category: Category,
     val total: Double,
     val percentage: Float
 )
 data class DashboardState(
+    val widgets: List<DashboardWidget> = emptyList(),
     val totalSpent: Double = 0.0,
-    val todaySpent: Double = 0.0,
-    val weekSpent: Double = 0.0,
-    val monthSpent: Double = 0.0,
     val transactionCount: Int = 0,
-    val topCategories: List<CategorySpending> = emptyList(),
-    val recentExpenses: List<Expense> = emptyList(),
-    val budgetStatuses: List<BudgetStatus> = emptyList(),
-    val budgetSummary: String? = null
+    val isServiceRunning: Boolean = true, // For pulse dot
+    val isLoading: Boolean = true
 )
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
-    private val budgetRepository: BudgetRepository
+    private val budgetRepository: BudgetRepository,
+    private val insightsEngine: InsightsEngine
 ) : ViewModel() {
     val dashboard: StateFlow<DashboardState> = combine(
         repository.getAllExpenses(),
         categoryRepository.allCategories,
-        budgetRepository.getBudgetStatuses()
-    ) { expenses, categories, budgetStatuses ->
+        budgetRepository.getBudgetStatuses(),
+        repository.getPendingReviewCount()
+    ) { expenses, categories, budgetStatuses, pendingCount ->
         val now = System.currentTimeMillis()
         val cal = Calendar.getInstance()
-        // Reset to start of today
+        // Time boundaries
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
         val todayStart = cal.timeInMillis
-        // Start of week (Monday)
         val tempCal = cal.clone() as Calendar
         tempCal.firstDayOfWeek = Calendar.MONDAY
         tempCal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
-        if (tempCal.timeInMillis > todayStart) {
-            tempCal.add(Calendar.DAY_OF_YEAR, -7)
-        }
+        if (tempCal.timeInMillis > todayStart) tempCal.add(Calendar.DAY_OF_YEAR, -7)
         val weekStart = tempCal.timeInMillis
-        // Start of month
         cal.set(Calendar.DAY_OF_MONTH, 1)
         val monthStart = cal.timeInMillis
-        val purchases = expenses.filter { 
-            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE 
-        }
+        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
         val categoryMap = categories.associateBy { it.id }
         val totalSpent = purchases.sumOf { it.amount }
+        val monthSpent = purchases.filter { it.date >= monthStart }.sumOf { it.amount }
+        val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
+        val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
+        // Days remaining in month
+        val daysInMonth = Calendar.getInstance().getActualMaximum(Calendar.DAY_OF_MONTH)
+        val dayOfMonth = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
+        val daysRemaining = daysInMonth - dayOfMonth
+        // Overall budget (if set)
+        val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
+        val safeToSpend = overallBudget?.remainingAmount ?: (0.0) 
+        // Category totals
         val categoryTotals = purchases
             .groupBy { it.categoryId }
             .mapNotNull { (catId, exps) ->
@@ -6412,25 +7133,115 @@ class HomeViewModel @Inject constructor(
                 )
             }
             .sortedByDescending { it.total }
-        val topCategories = categoryTotals.take(5)
-        val budgetSummary = if (budgetStatuses.isNotEmpty()) {
-            val exceeded = budgetStatuses.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
-            if (exceeded > 0) "$exceeded budgets exceeded!" else "All budgets on track."
-        } else null
-        DashboardState(
-            totalSpent = totalSpent,
-            todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount },
-            weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount },
-            monthSpent = purchases.filter { it.date >= monthStart }.sumOf { it.amount },
-            transactionCount = purchases.size,
-            topCategories = topCategories,
-            recentExpenses = purchases.take(5),
-            budgetStatuses = budgetStatuses,
-            budgetSummary = budgetSummary
+        // Spending pace logic (adapted for flow combine)
+        val previousMonthStart = insightsEngine.getMonthPeriod(now, -1).startMs
+        val previousMonthEnd = monthStart
+        val previousMonthTotal = purchases
+            .filter { it.date >= previousMonthStart && it.date < previousMonthEnd }
+            .sumOf { it.amount }
+        val projectedTotal = if (dayOfMonth > 0)
+            monthSpent * daysInMonth.toDouble() / dayOfMonth else monthSpent
+        val pace = SpendingPace(
+            currentMonthSpent = monthSpent,
+            daysElapsed = dayOfMonth,
+            daysInMonth = daysInMonth,
+            projectedTotal = projectedTotal,
+            previousMonthTotal = if (previousMonthTotal > 0) previousMonthTotal else null,
+            averageMonthlyTotal = null,
+            pacePercentage = if (previousMonthTotal > 0) {
+                val expected = previousMonthTotal * dayOfMonth / daysInMonth
+                (monthSpent / expected * 100).toFloat()
+            } else 0f,
+            paceStatus = when {
+                previousMonthTotal <= 0 -> PaceStatus.NO_BASELINE
+                monthSpent < previousMonthTotal * dayOfMonth / daysInMonth * 0.9 -> PaceStatus.UNDER_PACE
+                monthSpent > previousMonthTotal * dayOfMonth / daysInMonth * 1.1 -> PaceStatus.OVER_PACE
+                else -> PaceStatus.ON_PACE
+            }
         )
-    }.debounce(300)
-    .flowOn(Dispatchers.Default)
-    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState())
+        // Natural language insight
+        val insightText = buildNaturalLanguageInsight(
+            monthSpent, previousMonthTotal, todaySpent, purchases.size
+        )
+        // Budget summary
+        val exceeded = budgetStatuses.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
+        val budgetSummary = if (budgetStatuses.isNotEmpty()) {
+            if (exceeded > 0) "$exceeded budgets exceeded!" else "All budgets on track"
+        } else null
+        // === Build widget list ===
+        val widgets = mutableListOf<DashboardWidget>()
+        // Hero: Safe-to-Spend (or total spent if no overall budget)
+        widgets.add(
+            DashboardWidget.SafeToSpend(
+                amount = if (overallBudget != null) safeToSpend else monthSpent,
+                totalBudget = overallBudget?.budget?.amount,
+                daysRemaining = daysRemaining
+            )
+        )
+        // Spending Pace
+        if (pace.paceStatus != PaceStatus.NO_BASELINE) {
+            widgets.add(DashboardWidget.SpendingPaceWidget(pace))
+        }
+        // Pending Review Alert
+        if (pendingCount > 0) {
+            widgets.add(DashboardWidget.PendingReviewAlert(pendingCount))
+        }
+        // Natural language insight
+        if (insightText != null) {
+            widgets.add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
+        }
+        // Period summary
+        widgets.add(DashboardWidget.PeriodSummary(todaySpent, weekSpent, monthSpent))
+        // Budget health
+        if (budgetStatuses.isNotEmpty()) {
+            widgets.add(DashboardWidget.BudgetHealthWidget(budgetStatuses, budgetSummary))
+        }
+        // Top categories
+        if (categoryTotals.isNotEmpty()) {
+            widgets.add(DashboardWidget.TopCategories(categoryTotals.take(5)))
+        }
+        // Recent transactions
+        if (purchases.isNotEmpty()) {
+            widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
+        }
+        DashboardState(
+            widgets = widgets,
+            totalSpent = totalSpent,
+            transactionCount = purchases.size,
+            isLoading = false
+        )
+    }
+        .debounce(300)
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState())
+    private fun buildNaturalLanguageInsight(
+        monthSpent: Double,
+        previousMonthTotal: Double,
+        todaySpent: Double,
+        txCount: Int
+    ): Pair<String, String>? {
+        if (previousMonthTotal > 0) {
+            val diff = monthSpent - previousMonthTotal
+            return if (diff < 0) {
+                Pair(
+                    "You've spent €${String.format("%.0f", -diff)} less than last month so far.",
+                    "📉"
+                )
+            } else if (diff > previousMonthTotal * 0.2) {
+                Pair(
+                    "Spending is €${String.format("%.0f", diff)} higher than last month.",
+                    "📈"
+                )
+            } else null
+        }
+        if (txCount > 0 && todaySpent > 0) {
+            return Pair(
+                "You've spent €${String.format("%.2f", todaySpent)} today across $txCount transactions.",
+                "💡"
+            )
+        }
+        return null
+    }
 }
 
 ```
@@ -7270,30 +8081,30 @@ class ReceiptScanViewModel @Inject constructor(
 ```kotlin
 package com.yourname.expensetracker.ui.screens.review
 import androidx.compose.animation.*
-import androidx.compose.foundation.background
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
-import androidx.compose.foundation.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.util.HapticType
+import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import java.text.SimpleDateFormat
 import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
@@ -7305,6 +8116,7 @@ fun ReviewScreen(
     val categories by viewModel.categories.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
+    val haptic = rememberHapticFeedback()
     val snackbarHostState = remember { SnackbarHostState() }
     val errorMessage by viewModel.errorMessage.collectAsState()
     LaunchedEffect(errorMessage) {
@@ -7316,7 +8128,7 @@ fun ReviewScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
+            CenterAlignedTopAppBar(
                 title = { Text("Review Queue ($pendingCount)") }
             )
         }
@@ -7348,27 +8160,74 @@ fun ReviewScreen(
                     .fillMaxSize()
                     .padding(padding),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
                     Text(
-                        "Swipe through to approve or reject",
-                        style = MaterialTheme.typography.bodySmall,
+                        "Swipe right to approve, left to reject",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
+                        modifier = Modifier.padding(horizontal = 4.dp)
                     )
                 }
                 items(pendingReviews, key = { it.id }) { review ->
-                    ReviewCard(
-                        review = review,
-                        onApprove = { viewModel.approveReview(review.id) },
-                        onReject = { viewModel.rejectReview(review.id) },
-                        onEdit = { editingReview = review }
+                    val dismissState = rememberSwipeToDismissBoxState(
+                        confirmValueChange = { dismissValue ->
+                            when (dismissValue) {
+                                SwipeToDismissBoxValue.StartToEnd -> {
+                                    haptic(HapticType.Success)
+                                    viewModel.approveReview(review.id)
+                                    true
+                                }
+                                SwipeToDismissBoxValue.EndToStart -> {
+                                    haptic(HapticType.Error)
+                                    viewModel.rejectReview(review.id)
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                    )
+                    SwipeToDismissBox(
+                        state = dismissState,
+                        backgroundContent = {
+                            val color = when (dismissState.dismissDirection) {
+                                SwipeToDismissBoxValue.StartToEnd -> SemanticColors.SuccessGreen
+                                SwipeToDismissBoxValue.EndToStart -> SemanticColors.DangerRed
+                                else -> Color.Transparent
+                            }
+                            val alignment = when (dismissState.dismissDirection) {
+                                SwipeToDismissBoxValue.StartToEnd -> Alignment.CenterStart
+                                SwipeToDismissBoxValue.EndToStart -> Alignment.CenterEnd
+                                else -> Alignment.Center
+                            }
+                            val icon = when (dismissState.dismissDirection) {
+                                SwipeToDismissBoxValue.StartToEnd -> Icons.Rounded.CheckCircle
+                                SwipeToDismissBoxValue.EndToStart -> Icons.Rounded.Delete
+                                else -> Icons.Rounded.ArrowForward
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(color.copy(alpha = 0.8f), RoundedCornerShape(16.dp))
+                                    .padding(horizontal = 24.dp),
+                                contentAlignment = alignment
+                            ) {
+                                Icon(icon, null, tint = Color.White)
+                            }
+                        },
+                        content = {
+                            ReviewCard(
+                                review = review,
+                                onApprove = { viewModel.approveReview(review.id) },
+                                onReject = { viewModel.rejectReview(review.id) },
+                                onEdit = { editingReview = review }
+                            )
+                        }
                     )
                 }
             }
         }
-        // Edit dialog
         if (editingReview != null) {
             EditReviewDialog(
                 review = editingReview!!,
@@ -7395,49 +8254,60 @@ fun ReviewCard(
     onEdit: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
+    var showTrustSignal by remember { mutableStateOf(false) }
+    val haptic = rememberHapticFeedback()
     val confidenceColor = when {
-        review.confidence >= 0.75f -> Color(0xFF4CAF50)
-        review.confidence >= 0.60f -> Color(0xFFFFC107)
-        else -> Color(0xFFFF5722)
+        review.confidence >= 0.85f -> SemanticColors.SuccessGreen
+        review.confidence >= 0.65f -> SemanticColors.WarningOrange
+        else -> SemanticColors.DangerRed
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
-            // Confidence indicator bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = review.packageName.split(".").lastOrNull() ?: review.packageName,
+                    text = review.packageName.split(".").lastOrNull()?.uppercase() ?: "SYSTEM",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    letterSpacing = 1.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .background(confidenceColor, RoundedCornerShape(4.dp))
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${(review.confidence * 100).toInt()}% sure",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = confidenceColor
-                    )
+                Surface(
+                    color = confidenceColor.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(confidenceColor, androidx.compose.foundation.shape.CircleShape)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${(review.confidence * 100).toInt()}% Match",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = confidenceColor
+                        )
+                    }
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            // Transaction details
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = review.suggestedMerchant,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
             Text(
@@ -7445,75 +8315,103 @@ fun ReviewCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            // Amount
+            Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "${review.suggestedCurrency} ${String.format("%.2f", review.suggestedAmount)}",
-                style = MaterialTheme.typography.headlineSmall,
+                text = "€${String.format("%.2f", review.suggestedAmount)}",
+                style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.error
+                color = MaterialTheme.colorScheme.primary
             )
-            // Original notification preview
-            review.notificationTitle?.let { title ->
-                Spacer(modifier = Modifier.height(8.dp))
-                Surface(
+            Spacer(modifier = Modifier.height(20.dp))
+            // Trust Signal / Detailed Evidence
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .clickable { 
+                        haptic(HapticType.Standard)
+                        showTrustSignal = !showTrustSignal 
+                    }
+                    .padding(12.dp)
+            ) {
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
+                    Text(
+                        "🔍 View Source Evidence",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Icon(
+                        if (showTrustSignal) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                AnimatedVisibility(visible = showTrustSignal) {
+                    Column(modifier = Modifier.padding(top = 12.dp)) {
                         Text(
-                            text = title,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Medium
+                            "Extracted from notification:",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        review.notificationText?.let { text ->
-                            Text(
-                                text = text,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2
-                            )
-                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "\"${review.notificationText ?: "No raw text available"}\"",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
                     }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
-            // Action buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Reject
-                OutlinedButton(
-                    onClick = onReject,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
+                OutlinedIconButton(
+                    onClick = {
+                        haptic(HapticType.Heavy)
+                        onEdit()
+                    },
+                    modifier = Modifier.size(48.dp),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Icon(Icons.Default.Close, null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Reject")
+                    Icon(Icons.Rounded.Edit, "Edit", modifier = Modifier.size(20.dp))
                 }
-                // Edit
-                OutlinedButton(
-                    onClick = onEdit,
-                    modifier = Modifier.weight(0.5f)
-                ) {
-                    Icon(Icons.Default.Edit, null, modifier = Modifier.size(18.dp))
-                }
-                // Approve
                 Button(
-                    onClick = onApprove,
+                    onClick = {
+                        haptic(HapticType.Error)
+                        onReject()
+                    },
                     modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF4CAF50)
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
                     )
                 ) {
-                    Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Approve")
+                    Text("Reject", fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = {
+                        haptic(HapticType.Success)
+                        onApprove()
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SemanticColors.SuccessGreen,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("Approve", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -7529,56 +8427,67 @@ fun EditReviewDialog(
     var amount by remember { mutableStateOf(String.format("%.2f", review.suggestedAmount)) }
     var merchant by remember { mutableStateOf(review.suggestedMerchant) }
     var selectedCategoryId by remember { mutableStateOf(review.suggestedCategoryId) }
+    val haptic = rememberHapticFeedback()
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Edit Transaction") },
+        title = { Text("Fix Extraction Details") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = merchant,
                     onValueChange = { merchant = it },
-                    label = { Text("Merchant") },
+                    label = { Text("Merchant Name") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
                 )
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("Amount (${review.suggestedCurrency})") },
+                    label = { Text("Amount (€)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
                 )
                 Text(
-                    "Category",
+                    "Assign Category",
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.padding(top = 4.dp)
                 )
                 val scrollState = rememberScrollState()
                 Column(
                     modifier = Modifier
-                        .heightIn(max = 200.dp)
+                        .heightIn(max = 240.dp)
                         .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     categories.forEach { category ->
                         Surface(
-                            onClick = { selectedCategoryId = category.id },
-                            shape = RoundedCornerShape(8.dp),
+                            onClick = { 
+                                haptic(HapticType.Standard)
+                                selectedCategoryId = category.id 
+                            },
+                            shape = RoundedCornerShape(10.dp),
                             color = if (selectedCategoryId == category.id)
                                 MaterialTheme.colorScheme.primaryContainer
                             else
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, if (selectedCategoryId == category.id) MaterialTheme.colorScheme.primary else Color.Transparent)
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(category.icon)
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(category.icon, fontSize = 20.sp)
+                                Spacer(modifier = Modifier.width(12.dp))
                                 Text(category.name, style = MaterialTheme.typography.bodyMedium)
+                                if (selectedCategoryId == category.id) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    Icon(Icons.Rounded.Check, null, modifier = Modifier.size(16.dp))
+                                }
                             }
                         }
                     }
@@ -7588,18 +8497,23 @@ fun EditReviewDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val parsedAmount = amount.toDoubleOrNull()
+                    haptic(HapticType.Success)
+                    val parsedAmount = amount.replace(",", ".").toDoubleOrNull()
                     val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - review.suggestedAmount) > 0.001) parsedAmount else null
                     val editedMerchant = merchant.takeIf { it != review.suggestedMerchant }
                     val editedCategory = selectedCategoryId.takeIf { it != review.suggestedCategoryId }
                     onSave(editedAmount, editedMerchant, editedCategory)
-                }
+                },
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Save & Approve")
+                Text("Confirm Fix")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = {
+                haptic(HapticType.Standard)
+                onDismiss()
+            }) {
                 Text("Cancel")
             }
         }
@@ -7678,6 +8592,15 @@ class ReviewViewModel @Inject constructor(
     fun clearError() {
         _errorMessage.value = null
     }
+    fun approveAll() {
+        viewModelScope.launch {
+            try {
+                repository.approveAllReview()
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to approve all: ${e.message}"
+            }
+        }
+    }
 }
 
 ```
@@ -7708,7 +8631,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
-import java.text.SimpleDateFormat
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -7717,7 +8640,6 @@ fun TransactionsScreen(
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val categories by viewModel.categories.collectAsState()
-    val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
     var showAddExpense by remember { mutableStateOf(false) }
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
@@ -7768,7 +8690,6 @@ fun TransactionsScreen(
                 items(transactions, key = { it.expense.id }) { item ->
                     TransactionItem(
                         transaction = item,
-                        dateStr = dateFormat.format(Date(item.expense.date)),
                         onDelete = { expenseToDelete = item.expense },
                         onEditCategory = { expenseToCategorize = item.expense }
                     )
@@ -7862,7 +8783,6 @@ fun CategoryPickerDialog(
 @Composable
 fun TransactionItem(
     transaction: ExpenseWithCategory,
-    dateStr: String,
     onDelete: () -> Unit,
     onEditCategory: () -> Unit
 ) {
@@ -7939,14 +8859,14 @@ fun TransactionItem(
                     )
                 }
                 Text(
-                    text = dateStr,
+                    text = transaction.formattedDate,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline
                 )
             }
             // Amount
             Text(
-                text = "${String.format("%.2f", expense.amount)} ${expense.currency}",
+                text = transaction.formattedAmount,
                 fontWeight = FontWeight.Black,
                 fontSize = 18.sp,
                 color = MaterialTheme.colorScheme.primary,
@@ -7979,14 +8899,11 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-data class ExpenseWithCategory(
-    val expense: Expense,
-    val category: Category?
-)
 @HiltViewModel
 class TransactionsViewModel @Inject constructor(
     private val repository: NotificationRepository,
@@ -7994,24 +8911,14 @@ class TransactionsViewModel @Inject constructor(
 ) : ViewModel() {
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val transactions: StateFlow<List<ExpenseWithCategory>> = combine(
-        repository.getAllExpenses(),
-        categoryRepository.allCategories
-    ) { expenses, categories ->
-        val categoryMap = categories.associateBy { it.id }
-        expenses.map { expense ->
-            ExpenseWithCategory(
-                expense = expense,
-                category = expense.categoryId?.let { categoryMap[it] }
-            )
-        }
-    }.debounce(300)
-    .flowOn(Dispatchers.Default)
-    .stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = emptyList()
-    )
+    val transactions: StateFlow<List<ExpenseWithCategory>> = repository
+        .getExpensesWithCategory(limit = 200)
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
     fun deleteExpense(expense: Expense) {
         viewModelScope.launch {
             repository.deleteExpense(expense)
@@ -8034,26 +8941,152 @@ package com.yourname.expensetracker.ui.theme
 import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+// === Semantic Colors (used across light/dark) ===
+object SemanticColors {
+    val WarningOrange = Color(0xFFFF9800)
+    val ActionIndigo = Color(0xFF5C6BC0)
+    val SuccessGreen = Color(0xFF4CAF50)
+    val DangerRed = Color(0xFFFF5722)
+    val CriticalAmber = Color(0xFFFFC107)
+    val NeutralGray = Color(0xFF9E9E9E)
+    // Budget health
+    val OnTrack = Color(0xFF4CAF50)
+    val Warning = Color(0xFFFFC107)
+    val Critical = Color(0xFFFF9800)
+    val Exceeded = Color(0xFFFF5722)
+    // Pace
+    val UnderPace = Color(0xFF4CAF50)
+    val OnPace = Color(0xFF2196F3)
+    val OverPace = Color(0xFFFF5722)
+    // Confidence
+    fun confidenceColor(confidence: Float): Color = when {
+        confidence >= 0.75f -> SuccessGreen
+        confidence >= 0.60f -> CriticalAmber
+        else -> DangerRed
+    }
+}
+// === Typography with Tabular Lining Figures ===
+val ExpenseTypography = Typography(
+    displayLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 57.sp,
+        fontWeight = FontWeight.Bold,
+        lineHeight = 64.sp,
+        fontFeatureSettings = "tnum"
+    ),
+    displayMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 45.sp,
+        fontWeight = FontWeight.Bold,
+        lineHeight = 52.sp,
+        fontFeatureSettings = "tnum"
+    ),
+    displaySmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 36.sp,
+        fontWeight = FontWeight.Bold,
+        lineHeight = 44.sp,
+        fontFeatureSettings = "tnum"
+    ),
+    headlineLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 32.sp,
+        fontWeight = FontWeight.SemiBold,
+        lineHeight = 40.sp
+    ),
+    headlineMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 28.sp,
+        fontWeight = FontWeight.SemiBold,
+        lineHeight = 36.sp
+    ),
+    headlineSmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 24.sp,
+        fontWeight = FontWeight.SemiBold,
+        lineHeight = 32.sp,
+        fontFeatureSettings = "tnum"
+    ),
+    titleLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 22.sp,
+        fontWeight = FontWeight.SemiBold,
+        lineHeight = 28.sp
+    ),
+    titleMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Medium,
+        lineHeight = 24.sp
+    ),
+    titleSmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Medium,
+        lineHeight = 20.sp
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Normal,
+        lineHeight = 24.sp
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Normal,
+        lineHeight = 20.sp
+    ),
+    bodySmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Normal,
+        lineHeight = 16.sp
+    ),
+    labelLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Medium,
+        lineHeight = 20.sp
+    ),
+    labelMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        lineHeight = 16.sp
+    ),
+    labelSmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Medium,
+        lineHeight = 16.sp
+    )
+)
 private val DarkColorScheme = darkColorScheme(
-    primary = androidx.compose.ui.graphics.Color(0xFF6750A4),
-    secondary = androidx.compose.ui.graphics.Color(0xFF625B71),
-    tertiary = androidx.compose.ui.graphics.Color(0xFF7D5260)
+    primary = Color(0xFFD0BCFF),
+    secondary = Color(0xFFCCC2DC),
+    tertiary = Color(0xFFEFB8C8),
+    surface = Color(0xFF1C1B1F),
+    surfaceVariant = Color(0xFF49454F)
 )
 private val LightColorScheme = lightColorScheme(
-    primary = androidx.compose.ui.graphics.Color(0xFF6750A4),
-    secondary = androidx.compose.ui.graphics.Color(0xFF625B71),
-    tertiary = androidx.compose.ui.graphics.Color(0xFF7D5260)
+    primary = Color(0xFF6750A4),
+    secondary = Color(0xFF625B71),
+    tertiary = Color(0xFF7D5260),
+    surface = Color(0xFFFFFBFE),
+    surfaceVariant = Color(0xFFE7E0EC)
 )
 @Composable
 fun ExpenseTrackerTheme(
@@ -8079,8 +9112,50 @@ fun ExpenseTrackerTheme(
     }
     MaterialTheme(
         colorScheme = colorScheme,
+        typography = ExpenseTypography,
         content = content
     )
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt <a name="mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.util
+import android.view.HapticFeedbackConstants
+import android.view.View
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalView
+object AppHaptics {
+    fun performStandard(view: View) {
+        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+    }
+    fun performSuccess(view: View) {
+        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+    }
+    fun performError(view: View) {
+        view.performHapticFeedback(HapticFeedbackConstants.REJECT)
+    }
+    fun performHeavy(view: View) {
+        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    }
+}
+@Composable
+fun rememberHapticFeedback(): (HapticType) -> Unit {
+    val view = LocalView.current
+    return { type ->
+        when (type) {
+            HapticType.Standard -> AppHaptics.performStandard(view)
+            HapticType.Success -> AppHaptics.performSuccess(view)
+            HapticType.Error -> AppHaptics.performError(view)
+            HapticType.Heavy -> AppHaptics.performHeavy(view)
+        }
+    }
+}
+enum class HapticType {
+    Standard, Success, Error, Heavy
 }
 
 ```

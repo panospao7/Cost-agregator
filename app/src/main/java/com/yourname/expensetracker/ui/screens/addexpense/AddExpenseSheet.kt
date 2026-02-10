@@ -40,6 +40,8 @@ import java.util.*
 @Composable
 fun AddExpenseSheet(
     onDismiss: () -> Unit,
+    initialAmount: String? = null,
+    initialMerchant: String? = null,
     viewModel: AddExpenseViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -55,6 +57,13 @@ fun AddExpenseSheet(
                 onDismiss()
             }
             else -> { /* handled in UI */ }
+        }
+    }
+
+    // Set initial values once
+    LaunchedEffect(Unit) {
+        if (initialAmount != null || initialMerchant != null) {
+            viewModel.setInitialValues(initialAmount, initialMerchant)
         }
     }
 

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.analytics
 
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,10 +25,12 @@ import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
 import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.column.columnChart
-import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.analytics.*
+import com.yourname.expensetracker.ui.components.*
+import com.yourname.expensetracker.ui.theme.SemanticColors
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,8 +41,8 @@ fun AnalyticsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Analytics", fontWeight = FontWeight.Bold) }
+            CenterAlignedTopAppBar(
+                title = { Text("Financial Insights", fontWeight = FontWeight.Bold) }
             )
         }
     ) { padding ->
@@ -53,84 +56,161 @@ fun AnalyticsScreen(
                     .fillMaxSize()
                     .padding(padding),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                // 1. Total Spent Header
-                item { TotalSpentHeader(state) }
-
-                // 2. Period Selector
+                // 1. Period Selector (Top Level)
                 item { PeriodSelector(state.selectedPeriod) { viewModel.selectPeriod(it) } }
 
-                // 3. Main Chart
-                item { AnalyticsChart(state) }
+                // 2. Main Hero Bento: Total Spent + Change
+                item { TotalSpentHero(state) }
 
-                // 4. Insights Section
+                // 3. AI Insights (Natural Language)
                 if (state.insights.isNotEmpty()) {
-                    item { SectionHeader("Insights") }
-                    item { InsightsRow(state.insights) }
+                    item { NaturalLanguageInsightBento(state.insights.first()) }
                 }
+
+                // 4. Daily Spending Chart
+                item { SpendingChartBento(state) }
 
                 // 5. Category Breakdown
                 if (state.categoryBreakdown.isNotEmpty()) {
-                    item { SectionHeader("By Category") }
+                    item { SectionHeader("Breakdown by Category") }
                     items(state.categoryBreakdown) { CategoryItem(it) }
                 }
 
-                // 6. Merchant Breakdown
+                // 6. Deep Insights Carousel
+                if (state.insights.size > 1) {
+                    item { SectionHeader("Deep Insights") }
+                    item { InsightsRow(state.insights.drop(1)) }
+                }
+
+                // 7. Merchant Breakdown
                 if (state.merchantBreakdown.isNotEmpty()) {
                     item { SectionHeader("Top Merchants") }
-                    items(state.merchantBreakdown.take(10)) { MerchantItem(it) }
+                    items(state.merchantBreakdown.take(8)) { MerchantItem(it) }
                 }
                 
-                // 7. Recurring
+                // 8. Recurring
                 if (state.recurring.isNotEmpty()) {
-                    item { SectionHeader("Detected Recurring") }
+                    item { SectionHeader("Subscription Detection") }
                     items(state.recurring) { RecurringItem(it) }
                 }
                 
-                item { Spacer(modifier = Modifier.height(32.dp)) }
+                item { Spacer(modifier = Modifier.height(24.dp)) }
             }
         }
     }
 }
 
 @Composable
-fun TotalSpentHeader(state: AnalyticsState) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+fun TotalSpentHero(state: AnalyticsState) {
+    HeroBentoCard {
+        Column {
             Text(
-                text = state.selectedPeriod.name.lowercase().replaceFirstChar { it.uppercase() },
-                style = MaterialTheme.typography.labelLarge,
+                text = "${state.selectedPeriod.name} Total",
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
             )
-            Text(
-                text = "€${String.format("%.2f", state.currentTotal)}",
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold,
+            Spacer(modifier = Modifier.height(4.dp))
+            AmountText(
+                amount = state.currentTotal,
+                style = MaterialTheme.typography.displayMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
             
             state.changePercent?.let { change ->
                 val isIncrease = change > 0
-                val color = if (isIncrease) Color(0xFFE57373) else Color(0xFF81C784)
-                val arrow = if (isIncrease) "▲" else "▼"
+                val color = if (isIncrease) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                val icon = if (isIncrease) "📈" else "📉"
                 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "$arrow ${String.format("%.1f", Math.abs(change))}%",
-                        color = color,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text(
-                        text = " vs previous period",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                    )
+                Surface(
+                    color = Color.White.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.padding(top = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(icon, fontSize = 14.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${if (change > 0) "+" else ""}${String.format("%.1f", change)}% vs last period",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "${state.transactionCount} transactions recorded in this period.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+            )
+        }
+    }
+}
+
+@Composable
+fun NaturalLanguageInsightBento(insight: SpendingInsight) {
+    BentoCard(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(Color.White.copy(alpha = 0.5f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(insight.icon, fontSize = 24.sp)
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column {
+                Text(
+                    text = insight.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = insight.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
+                    lineHeight = 20.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SpendingChartBento(state: AnalyticsState) {
+    BentoCard {
+        Column {
+            Text(
+                "Spending Distribution",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            if (state.dailyTotals.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                    Text("Insufficient data for visualization", style = MaterialTheme.typography.bodySmall)
+                }
+            } else {
+                val entries = state.dailyTotals.values.map { it.toFloat() }
+                val chartEntryModel = remember(entries) { entryModelOf(*entries.toTypedArray()) }
+                
+                Chart(
+                    chart = columnChart(),
+                    model = chartEntryModel,
+                    startAxis = rememberStartAxis(),
+                    bottomAxis = rememberBottomAxis(),
+                    modifier = Modifier.fillMaxWidth().height(180.dp)
+                )
             }
         }
     }
@@ -146,44 +226,9 @@ fun PeriodSelector(selected: TimePeriod, onSelect: (TimePeriod) -> Unit) {
             FilterChip(
                 selected = selected == period,
                 onClick = { onSelect(period) },
-                label = { Text(period.name) }
+                label = { Text(period.name.lowercase().capitalize()) },
+                shape = RoundedCornerShape(20.dp)
             )
-        }
-    }
-}
-
-@Composable
-fun AnalyticsChart(state: AnalyticsState) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(240.dp),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "Daily Spending",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            if (state.dailyTotals.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No data for this period", color = Color.Gray)
-                }
-            } else {
-                val entries = state.dailyTotals.values.map { it.toFloat() }
-                val chartEntryModel = remember(entries) { entryModelOf(*entries.toTypedArray()) }
-                
-                Chart(
-                    chart = columnChart(),
-                    model = chartEntryModel,
-                    startAxis = rememberStartAxis(),
-                    bottomAxis = rememberBottomAxis(),
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
         }
     }
 }
@@ -192,51 +237,46 @@ fun AnalyticsChart(state: AnalyticsState) {
 fun SectionHeader(title: String) {
     Text(
         text = title,
-        style = MaterialTheme.typography.titleLarge,
+        style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(top = 8.dp)
+        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
     )
 }
 
 @Composable
 fun InsightsRow(insights: List<SpendingInsight>) {
     LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(vertical = 4.dp)
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(bottom = 4.dp)
     ) {
         items(insights) { insight ->
             Card(
-                modifier = Modifier.width(280.dp),
+                modifier = Modifier.width(260.dp),
+                shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
                 )
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(MaterialTheme.colorScheme.surface, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(insight.icon, fontSize = 20.sp)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             insight.title,
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            insight.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        insight.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -245,87 +285,110 @@ fun InsightsRow(insights: List<SpendingInsight>) {
 
 @Composable
 fun CategoryItem(item: CategoryBreakdown) {
-    // Optimize color parsing: remember the color based on the category's hex string
     val categoryColor = remember(item.category.color) {
-        try {
-            Color(android.graphics.Color.parseColor(item.category.color))
-        } catch (e: Exception) {
-            Color.Gray
-        }
+        try { Color(android.graphics.Color.parseColor(item.category.color)) } 
+        catch (e: Exception) { Color.Gray }
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .background(categoryColor, CircleShape),
+                .size(44.dp)
+                .background(categoryColor.copy(alpha = 0.15f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(item.category.icon)
+            Text(item.category.icon, fontSize = 20.sp)
         }
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(item.category.name, fontWeight = FontWeight.Bold)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(item.category.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text("€${String.format("%.2f", item.total)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(6.dp))
             LinearProgressIndicator(
-                progress = item.percentage / 100f,
+                progress = { item.percentage / 100f },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
+                    .clip(CircleShape),
                 color = categoryColor,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            Text("€${String.format("%.2f", item.total)}", fontWeight = FontWeight.Bold)
-            Text("${item.percentage.toInt()}%", style = MaterialTheme.typography.bodySmall)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "${item.percentage.toInt()}% of total spending",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
         }
     }
 }
 
 @Composable
 fun MerchantItem(item: MerchantBreakdown) {
-    ListItem(
-        headlineContent = { Text(item.name, fontWeight = FontWeight.Medium) },
-        supportingContent = { Text("${item.transactionCount} transactions") },
-        trailingContent = { Text("€${String.format("%.2f", item.totalSpent)}", fontWeight = FontWeight.Bold) },
-        leadingContent = {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = Color.Transparent
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Surface(
                 modifier = Modifier.size(40.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.secondaryContainer
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text(item.name.take(1).uppercase(), fontWeight = FontWeight.Bold)
+                    Text(item.name.take(1).uppercase(), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
             }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text("${item.transactionCount} visits", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("€${String.format("%.2f", item.totalSpent)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         }
-    )
+    }
 }
 
 @Composable
 fun RecurringItem(item: RecurringCandidate) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(item.merchant, fontWeight = FontWeight.Bold)
-                Text("~every ${item.intervalDays} days", style = MaterialTheme.typography.bodySmall)
+            Box(
+                modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("🔄", fontSize = 18.sp)
             }
-            Text("€${String.format("%.2f", item.amount)}", fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.merchant, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text("Estimated every ${item.intervalDays} days", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("€${String.format("%.2f", item.amount)}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                Text(item.confidence.let { if (it > 0.8) "High confidence" else "Plausible" }, style = MaterialTheme.typography.labelSmall, color = if (item.confidence > 0.8) SemanticColors.SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
+
+// Extension to help with capitalizing names
+fun String.capitalize() = this.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }

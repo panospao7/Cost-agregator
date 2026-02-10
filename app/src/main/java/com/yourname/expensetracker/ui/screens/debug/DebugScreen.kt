@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -34,6 +35,7 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DebugScreen(
+    onDismiss: () -> Unit,
     viewModel: DebugViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
@@ -48,6 +50,11 @@ fun DebugScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Debug: Notifications ($count)") },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
                 actions = {
                     IconButton(onClick = { viewModel.clearAll() }) {
                         Icon(Icons.Default.Delete, contentDescription = "Clear all")
