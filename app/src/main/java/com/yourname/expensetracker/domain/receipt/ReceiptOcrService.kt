@@ -27,7 +27,11 @@ data class OcrResult(
 
 data class TextBlock(
     val text: String,
-    val confidence: Float?
+    val confidence: Float?,
+    val left: Int = 0,
+    val top: Int = 0,
+    val right: Int = 0,
+    val bottom: Int = 0
 )
 
 @Singleton
@@ -56,7 +60,11 @@ class ReceiptOcrService @Inject constructor(
             val blocks = visionText.textBlocks.map { block ->
                 TextBlock(
                     text = block.text,
-                    confidence = block.lines.firstOrNull()?.confidence
+                    confidence = block.lines.firstOrNull()?.confidence,
+                    left = block.boundingBox?.left ?: 0,
+                    top = block.boundingBox?.top ?: 0,
+                    right = block.boundingBox?.right ?: 0,
+                    bottom = block.boundingBox?.bottom ?: 0
                 )
             }
 

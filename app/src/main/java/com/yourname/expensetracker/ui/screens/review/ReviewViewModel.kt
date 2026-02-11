@@ -122,6 +122,28 @@ class ReviewViewModel @Inject constructor(
         }
     }
 
+    fun processStatement(uri: android.net.Uri) {
+        viewModelScope.launch {
+            try {
+                _isBatchProcessing.value = true // Reuse batch loading state
+                _batchProgress.value = Pair(0, 1)
+                
+                val result = receiptRepository.processStatement(uri)
+                
+                if (result.failureCount > 0) {
+                    _errorMessage.value = "Failed to parse screenshot: ${result.errors.firstOrNull()}"
+                } else {
+                    _errorMessage.value = "Imported ${result.successCount} transactions from screenshot!"
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "Import failed: ${e.message}"
+            } finally {
+                _isBatchProcessing.value = false
+                _batchProgress.value = null
+            }
+        }
+    }
+
     suspend fun getDebugExportData(): String {
         return receiptRepository.exportParserDebugData()
     }

@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
+import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -29,6 +30,7 @@ class ReceiptRepository @Inject constructor(
     private val pendingReviewDao: PendingReviewDao,
     private val ocrService: ReceiptOcrService,
     private val receiptParser: ReceiptParser,
+    private val statementParser: BankStatementParser,
     private val categorizationEngine: CategorizationEngine,
     private val merchantNormalizer: MerchantNormalizer,
     private val budgetMonitor: BudgetMonitor
@@ -207,6 +209,67 @@ class ReceiptRepository @Inject constructor(
             }
         }
         return BatchResult(successes, failures, errors)
+    }
+
+    /**
+     * Process an image URI as a bank statement: extracting multiple transactions
+     */
+    suspend fun processStatement(imageUri: Uri): BatchResult {
+        // 1. Run OCR
+        val ocrResult: OcrResult = ocrService.processImage(imageUri)
+
+        // 2. Parse as multiple transactions using spatial data
+        val parsedTransactions = statementParser.parse(ocrResult.blocks)
+        
+        if (parsedTransactions.isEmpty()) {
+            return BatchResult(0, 1, listOf("No transactions found in screenshot"))
+        }
+
+        // 3. Save common scanned receipt record
+        val receiptRecord = ScannedReceipt(
+            imagePath = ocrResult.savedImagePath,
+            rawOcrText = ocrResult.fullText,
+            parsedTotal = null, // Varies per transaction
+            parsedMerchant = "Bank Statement",
+            parsedDate = System.currentTimeMillis(),
+            parsedItems = null,
+            parsedTaxAmount = null,
+            currency = parsedTransactions.firstOrNull()?.currency ?: "EUR",
+            confidence = 0.8f
+        )
+        val receiptId = scannedReceiptDao.insert(receiptRecord)
+
+        // 4. Create a PendingReview for EACH transaction found
+        var successCount = 0
+        val errors = mutableListOf<String>()
+
+        parsedTransactions.forEach { tx ->
+            try {
+                // Normalize merchant
+                val normalizedMerchant = merchantNormalizer.applyUserCorrections(tx.merchant)
+                
+                val review = PendingReview(
+                    rawNotificationId = null,
+                    scannedReceiptId = receiptId,
+                    suggestedAmount = tx.amount,
+                    suggestedCurrency = tx.currency,
+                    suggestedMerchant = normalizedMerchant,
+                    suggestedType = tx.type.name,
+                    suggestedCategoryId = categorizationEngine.categorize(normalizedMerchant),
+                    suggestedDate = System.currentTimeMillis(),
+                    confidence = tx.confidence,
+                    packageName = "statement.import",
+                    notificationTitle = "Bank Screenshot",
+                    notificationText = "Imported from screenshot: ${tx.merchant}"
+                )
+                pendingReviewDao.insert(review)
+                successCount++
+            } catch (e: Exception) {
+                errors.add("Failed to save transaction ${tx.merchant}: ${e.message}")
+            }
+        }
+
+        return BatchResult(successCount, parsedTransactions.size - successCount, errors)
     }
 
     suspend fun clearAllScannedReceipts() {
