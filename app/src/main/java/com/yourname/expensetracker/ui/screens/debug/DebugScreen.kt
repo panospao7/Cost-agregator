@@ -315,7 +315,7 @@ fun DebugScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
-                items(notifications, key = { it.id }) { notification ->
+                items(notifications.take(100), key = { it.id }) { notification ->
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         NotificationCard(
                             notification = notification,

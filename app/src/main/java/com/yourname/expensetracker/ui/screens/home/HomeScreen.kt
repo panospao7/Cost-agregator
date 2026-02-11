@@ -107,7 +107,8 @@ fun HomeScreen(
                     key = { getWidgetId(it) },
                     span = { widget ->
                         GridItemSpan(if (isFullSpan(widget)) 2 else 1)
-                    }
+                    },
+                    contentType = { it.javaClass.simpleName }
                 ) { widget ->
                     WidgetWrapper(
                         widget = widget,

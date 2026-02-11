@@ -127,11 +127,24 @@ class ReceiptScanViewModel @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        step = ScanStep.ERROR,
-                        errorMessage = e.message ?: "Failed to process receipt"
-                    )
+                try {
+                    val (receipt, parsed) = receiptRepository.saveManualReceiptRecord(uri)
+                    _state.update {
+                        it.copy(
+                            step = ScanStep.REVIEW,
+                            imageUri = uri,
+                            parsedReceipt = parsed,
+                            receiptId = receipt.id,
+                            errorMessage = "OCR Failed: ${e.message}. You can enter details manually."
+                        )
+                    }
+                } catch (fallbackError: Exception) {
+                    _state.update {
+                        it.copy(
+                            step = ScanStep.ERROR,
+                            errorMessage = "Total failure: ${fallbackError.message}"
+                        )
+                    }
                 }
             }
         }

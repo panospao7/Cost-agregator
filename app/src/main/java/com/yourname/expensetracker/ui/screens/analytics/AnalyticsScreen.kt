@@ -201,8 +201,11 @@ fun SpendingChartBento(state: AnalyticsState) {
                     Text("Insufficient data for visualization", style = MaterialTheme.typography.bodySmall)
                 }
             } else {
-                val entries = state.dailyTotals.values.map { it.toFloat() }
-                val chartEntryModel = remember(entries) { entryModelOf(*entries.toTypedArray()) }
+                // Optimized: convert map to entries once and remember
+                val chartEntryModel = remember(state.dailyTotals) {
+                    val entries = state.dailyTotals.values.map { it.toFloat() }
+                    entryModelOf(*entries.toTypedArray())
+                }
                 
                 Chart(
                     chart = columnChart(),

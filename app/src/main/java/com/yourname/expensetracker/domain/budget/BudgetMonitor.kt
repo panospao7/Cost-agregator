@@ -31,7 +31,11 @@ class BudgetMonitor @Inject constructor(
         serviceScope.launch {
             val activeBudgets = budgetDao.getActiveBudgets()
             for (budget in activeBudgets) {
-                processBudget(budget)
+                try {
+                    processBudget(budget)
+                } catch (e: Exception) {
+                    android.util.Log.e("BudgetMonitor", "Error processing budget ${budget.id}: ${e.message}", e)
+                }
             }
         }
     }
@@ -115,8 +119,11 @@ class BudgetMonitor @Inject constructor(
     }
 
     private fun calculatePeriodWindowForTime(period: BudgetPeriod, anchorDate: Long, evaluationTime: Long): Pair<Long, Long> {
-        val anchorCal = Calendar.getInstance().apply { timeInMillis = anchorDate }
-        val cal = Calendar.getInstance().apply { timeInMillis = evaluationTime }
+        val anchorCal = Calendar.getInstance()
+        anchorCal.timeInMillis = anchorDate
+
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = evaluationTime
 
         // Reset time components to start of day
         cal.set(Calendar.HOUR_OF_DAY, 0)

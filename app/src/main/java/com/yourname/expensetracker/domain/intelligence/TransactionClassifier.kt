@@ -32,14 +32,27 @@ class TransactionClassifier @Inject constructor(
     companion object {
         private const val TAG = "TxClassifier"
         private const val MODEL_FILE = "naive_bayes_model.json"
+        private const val MODEL_VERSION = 1
         private const val MIN_TRAINING_SAMPLES = 20
         private const val LAPLACE_SMOOTHING = 1.0
+
+        private val regexNonAlphanumeric = Regex("[^a-zα-ωά-ώ0-9€$£ ]")
+        private val regexWhitespace = Regex("\\s+")
+        private val regexDecimalAmount = Regex("""\d+[.,]\d{2}""")
+        private val regexCurrencySymbol = Regex("""[€$£]""")
+        private val regexCurrencyCode = Regex("""(?i)(EUR|USD|GBP)""")
+        private val regexPaymentKeyword = Regex("""(?i)(paid|payment|purchase|charged|debit)""")
+        private val regexGreekPaymentKeyword = Regex("""(?i)(πληρωμ|αγορ|χρέωσ|συναλλαγ)""")
+        private val regexPromoKeyword = Regex("""(?i)(offer|discount|promo|sale|free|δωρεάν|προσφορά|έκπτωση)""")
+        private val regexOtpKeyword = Regex("""(?i)(otp|code|verify|κωδικός)""")
+        private val regexBalanceKeyword = Regex("""(?i)(balance|υπόλοιπο)""")
     }
 
     private val positiveWordCounts = mutableMapOf<String, Int>()
     private val negativeWordCounts = mutableMapOf<String, Int>()
     private var totalPositive = 0
     private var totalNegative = 0
+    private val vocabulary = mutableSetOf<String>()
     private var vocabularySize = 0
 
     private val positiveBigramCounts = mutableMapOf<String, Int>()
@@ -136,7 +149,7 @@ class TransactionClassifier @Inject constructor(
             }
         }
 
-        vocabularySize = (positiveWordCounts.keys + negativeWordCounts.keys).toSet().size
+        vocabularySize = vocabulary.size
         lastTrainingCount = corrections.size
 
         scheduleSave()
@@ -165,6 +178,7 @@ class TransactionClassifier @Inject constructor(
             totalPositive++
             features.words.forEach {
                 positiveWordCounts[it] = (positiveWordCounts[it] ?: 0) + 1
+                vocabulary.add(it)
             }
             features.bigrams.forEach {
                 positiveBigramCounts[it] = (positiveBigramCounts[it] ?: 0) + 1
@@ -173,12 +187,13 @@ class TransactionClassifier @Inject constructor(
             totalNegative++
             features.words.forEach {
                 negativeWordCounts[it] = (negativeWordCounts[it] ?: 0) + 1
+                vocabulary.add(it)
             }
             features.bigrams.forEach {
                 negativeBigramCounts[it] = (negativeBigramCounts[it] ?: 0) + 1
             }
         }
-        vocabularySize = (positiveWordCounts.keys + negativeWordCounts.keys).toSet().size
+        vocabularySize = vocabulary.size
         _stats.value = getStats()
     }
 
@@ -223,36 +238,36 @@ class TransactionClassifier @Inject constructor(
 
     private fun extractFeatures(text: String): FeatureSet {
         val normalized = text.lowercase()
-            .replace(Regex("[^a-zα-ωά-ώ0-9€$£ ]"), " ")
-            .replace(Regex("\\s+"), " ")
+            .replace(regexNonAlphanumeric, " ")
+            .replace(regexWhitespace, " ")
             .trim()
 
         val words = normalized.split(" ")
             .filter { it.length >= 2 }
             .toMutableList()
 
-        if (Regex("""\d+[.,]\d{2}""").containsMatchIn(text)) {
+        if (regexDecimalAmount.containsMatchIn(text)) {
             words.add("__HAS_DECIMAL_AMOUNT__")
         }
-        if (Regex("""[€$£]""").containsMatchIn(text)) {
+        if (regexCurrencySymbol.containsMatchIn(text)) {
             words.add("__HAS_CURRENCY_SYMBOL__")
         }
-        if (Regex("""(?i)(EUR|USD|GBP)""").containsMatchIn(text)) {
+        if (regexCurrencyCode.containsMatchIn(text)) {
             words.add("__HAS_CURRENCY_CODE__")
         }
-        if (Regex("""(?i)(paid|payment|purchase|charged|debit)""").containsMatchIn(text)) {
+        if (regexPaymentKeyword.containsMatchIn(text)) {
             words.add("__HAS_PAYMENT_KEYWORD__")
         }
-        if (Regex("""(?i)(πληρωμ|αγορ|χρέωσ|συναλλαγ)""").containsMatchIn(text)) {
+        if (regexGreekPaymentKeyword.containsMatchIn(text)) {
             words.add("__HAS_GREEK_PAYMENT_KEYWORD__")
         }
-        if (Regex("""(?i)(offer|discount|promo|sale|free|δωρεάν|προσφορά|έκπτωση)""").containsMatchIn(text)) {
+        if (regexPromoKeyword.containsMatchIn(text)) {
             words.add("__HAS_PROMO_KEYWORD__")
         }
-        if (Regex("""(?i)(otp|code|verify|κωδικός)""").containsMatchIn(text)) {
+        if (regexOtpKeyword.containsMatchIn(text)) {
             words.add("__HAS_OTP_KEYWORD__")
         }
-        if (Regex("""(?i)(balance|υπόλοιπο)""").containsMatchIn(text)) {
+        if (regexBalanceKeyword.containsMatchIn(text)) {
             words.add("__HAS_BALANCE_KEYWORD__")
         }
 
@@ -280,6 +295,7 @@ class TransactionClassifier @Inject constructor(
         withContext(Dispatchers.IO) {
             try {
                 val json = JSONObject().apply {
+                    put("version", MODEL_VERSION)
                     put("totalPositive", totalPositive)
                     put("totalNegative", totalNegative)
                     put("vocabularySize", vocabularySize)
@@ -312,6 +328,12 @@ class TransactionClassifier @Inject constructor(
             if (!file.exists()) return false
 
             val json = JSONObject(file.readText())
+            val version = json.optInt("version", 0)
+            if (version != MODEL_VERSION) {
+                Log.w(TAG, "Model version mismatch. Current: $MODEL_VERSION, Found: $version.")
+                return false
+            }
+
             totalPositive = json.getInt("totalPositive")
             totalNegative = json.getInt("totalNegative")
             vocabularySize = json.optInt("vocabularySize", 0)
@@ -320,13 +342,17 @@ class TransactionClassifier @Inject constructor(
             val posWords = json.getJSONObject("positiveWords")
             positiveWordCounts.clear()
             posWords.keys().forEach { key ->
-                positiveWordCounts[key] = posWords.getInt(key)
+                val count = posWords.getInt(key)
+                positiveWordCounts[key] = count
+                vocabulary.add(key)
             }
 
             val negWords = json.getJSONObject("negativeWords")
             negativeWordCounts.clear()
             negWords.keys().forEach { key ->
-                negativeWordCounts[key] = negWords.getInt(key)
+                val count = negWords.getInt(key)
+                negativeWordCounts[key] = count
+                vocabulary.add(key)
             }
 
             json.optJSONObject("positiveBigrams")?.let { posBi ->
@@ -342,7 +368,7 @@ class TransactionClassifier @Inject constructor(
                 }
             }
 
-            vocabularySize = (positiveWordCounts.keys + negativeWordCounts.keys).toSet().size
+            vocabularySize = vocabulary.size
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load model", e)

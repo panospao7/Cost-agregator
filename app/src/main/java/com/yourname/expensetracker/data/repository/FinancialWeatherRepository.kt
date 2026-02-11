@@ -40,6 +40,7 @@ data class FinancialWeather(
     val riskLevel: Int, // 0-100
     val totalCommitted: Double,
     val totalLikely: Double,
+    val predictedDiscretionary: Double,
     val discretionaryBudget: Double,
     val pastSpendingPoints: List<Double> = emptyList(),
     val projectedSpendingPoints: List<Double> = emptyList(),
@@ -115,9 +116,20 @@ class FinancialWeatherRepository @Inject constructor(
             it.transactionType == TransactionType.PURCHASE 
         }
         
-        val pastSumDaily: List<Double> = (1..currentDay).map { index: Int ->
-            val dayEnd = monthStart + (index.toLong() * 24 * 60 * 60 * 1000L)
-            purchases.filter { it.date >= monthStart && it.date < dayEnd }.sumOf { it.amount }
+        val pastSumDaily = run {
+            val amountByDay = purchases
+                .filter { it.date >= monthStart }
+                .groupBy { 
+                    val c = Calendar.getInstance().apply { timeInMillis = it.date }
+                    c.get(Calendar.DAY_OF_MONTH)
+                }
+                .mapValues { it.value.sumOf { exp -> exp.amount } }
+            
+            var runningTotal = 0.0
+            (1..currentDay).map { day ->
+                runningTotal += amountByDay[day] ?: 0.0
+                runningTotal
+            }
         }
 
         // 2. Get Engines data
@@ -150,6 +162,7 @@ class FinancialWeatherRepository @Inject constructor(
             },
             totalCommitted = forecast.components.totalCommitted,
             totalLikely = forecast.components.totalLikely,
+            predictedDiscretionary = forecast.components.predictedDiscretionary,
             discretionaryBudget = forecast.components.discretionaryBudget,
             pastSpendingPoints = forecast.components.pastSpendingPoints,
             projectedSpendingPoints = forecast.components.projectedSpendingPoints,

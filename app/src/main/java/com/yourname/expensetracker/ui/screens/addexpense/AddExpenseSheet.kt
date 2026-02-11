@@ -512,7 +512,7 @@ fun CategoryGrid(
     onSelect: (Long) -> Unit
 ) {
     // Wrapping flow layout using multiple rows
-    val chunked = categories.chunked(4)
+    val chunked = remember(categories) { categories.chunked(4) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         chunked.forEach { row ->
             Row(

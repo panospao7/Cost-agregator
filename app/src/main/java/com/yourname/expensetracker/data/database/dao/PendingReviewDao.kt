@@ -18,12 +18,12 @@ interface PendingReviewDao {
     suspend fun delete(review: PendingReview)
 
     @Transaction
-    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC")
-    fun getPendingFlow(): Flow<List<PendingReviewWithReceipt>>
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT :limit")
+    fun getPendingFlow(limit: Int = 100): Flow<List<PendingReviewWithReceipt>>
 
     @Transaction
-    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC")
-    suspend fun getPending(): List<PendingReviewWithReceipt>
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun getPending(limit: Int = 500): List<PendingReviewWithReceipt>
 
     @Query("SELECT COUNT(*) FROM pending_reviews WHERE status = 'PENDING'")
     fun getPendingCountFlow(): Flow<Int>

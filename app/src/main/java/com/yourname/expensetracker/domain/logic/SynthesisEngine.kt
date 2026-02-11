@@ -68,7 +68,8 @@ class SynthesisEngine @Inject constructor() {
             ?: (spendingPace.previousMonthTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth })
             ?: 0.0
             
-        val totalLikely = likelyUpcomingBills + likelyPlanned + (typicalDailyDiscretionary * daysRemaining)
+        val predictedDiscretionary = typicalDailyDiscretionary * daysRemaining
+        val totalLikely = likelyUpcomingBills + likelyPlanned
 
         // 3. Goal Reserves
         // Strict goals are subtracted from "Available"
@@ -91,12 +92,12 @@ class SynthesisEngine @Inject constructor() {
 
         // 4. Calculate Projected Timeline Points
         val lastKnownTotal = pastSumDaily.lastOrNull() ?: 0.0
-        val dailyProjectionRate = totalLikely / daysRemaining
+        val dailyProjectionRate = (totalLikely + predictedDiscretionary) / daysRemaining
         
         val projectedPoints = (1..daysRemaining).map { dayIndex ->
             lastKnownTotal + (dailyProjectionRate * dayIndex)
         }
-
+        
         // 5. Calculate Discretionary (Available)
         val overallBudget = budgetStatuses.find { it.budget.categoryId == null }?.budget?.amount ?: 0.0
         val categoryBudgetsSum = budgetStatuses.filter { it.budget.categoryId != null }.sumOf { it.budget.amount }
@@ -105,10 +106,8 @@ class SynthesisEngine @Inject constructor() {
         val spentSoFar = spendingPace.currentMonthSpent
         
         // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
-        // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
-        // LOG-004 Fix: totalLikely includes future discretionary (lines 67-71). 
-        // We should NOT subtract that "future discretionary" from the "available pool".
-        // We only subtract BILLS and PLANNED expenses.
+        // LOG-004 Fix: We only subtract BILLS and PLANNED expenses.
+        // We do NOT subtract the "future discretionary" because that IS the "available pool" we are tracking.
         val projectedObligations = committedUpcomingBills + committedPlanned + likelyUpcomingBills + likelyPlanned
         
         val discretionaryBudget = (budgetLimit - (spentSoFar + projectedObligations + goalReserves)).coerceAtLeast(0.0)
@@ -134,6 +133,7 @@ class SynthesisEngine @Inject constructor() {
                 projectedSpendingPoints = projectedPoints,
                 totalCommitted = totalCommitted,
                 totalLikely = totalLikely,
+                predictedDiscretionary = predictedDiscretionary,
                 discretionaryBudget = discretionaryBudget,
                 riskLevel = riskLevel
             ),

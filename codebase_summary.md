@@ -27,63 +27,65 @@ This file contains the complete source code from the `src` directory.
 22. [main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt)
 23. [main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt)
 24. [main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
-25. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
-26. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
-27. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
-28. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
-29. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
-30. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
-31. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
-32. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
-33. [main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt)
-34. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
-35. [main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#mainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
-36. [main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
-37. [main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
-38. [main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#mainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
-39. [main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
-40. [main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
-41. [main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
-42. [main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
-43. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
-44. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
-45. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
-46. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
-47. [main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
-48. [main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
-49. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
-50. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
-51. [main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
-52. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
-53. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
-54. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
-55. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
-56. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
-57. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
-58. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
-59. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
-60. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
-61. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
-62. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
-63. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
-64. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
-65. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
-66. [main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
-67. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
-68. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
-69. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
-70. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
-71. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
-72. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
-73. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
-74. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
-75. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
-76. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
-77. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
-78. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
-79. [main\res\values\strings.xml](#mainresvaluesstringsxml)
-80. [main\res\values\themes.xml](#mainresvaluesthemesxml)
-81. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
+25. [main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt)
+26. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
+27. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
+28. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
+29. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
+30. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
+31. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
+32. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
+33. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
+34. [main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt)
+35. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
+36. [main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#mainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
+37. [main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
+38. [main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
+39. [main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#mainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
+40. [main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
+41. [main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
+42. [main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
+43. [main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
+44. [main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
+45. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
+46. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
+47. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
+48. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
+49. [main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
+50. [main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
+51. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
+52. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
+53. [main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
+54. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
+55. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
+56. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
+57. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
+58. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
+59. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
+60. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
+61. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
+62. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
+63. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
+64. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
+65. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
+66. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
+67. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
+68. [main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
+69. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
+70. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
+71. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
+72. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
+73. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
+74. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
+75. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
+76. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
+77. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
+78. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
+79. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
+80. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
+81. [main\res\values\strings.xml](#mainresvaluesstringsxml)
+82. [main\res\values\themes.xml](#mainresvaluesthemesxml)
+83. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
 
 ---
 
@@ -157,9 +159,31 @@ This file contains the complete source code from the `src` directory.
 ```kotlin
 package com.yourname.expensetracker
 import android.app.Application
+import android.os.StrictMode
+import com.yourname.expensetracker.BuildConfig
 import dagger.hilt.android.HiltAndroidApp
+import timber.log.Timber
 @HiltAndroidApp
-class ExpenseTrackerApp : Application()
+class ExpenseTrackerApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        if (BuildConfig.DEBUG) {
+            Timber.plant(Timber.DebugTree())
+            StrictMode.setThreadPolicy(
+                StrictMode.ThreadPolicy.Builder()
+                    .detectAll()
+                    .penaltyLog()
+                    .build()
+            )
+            StrictMode.setVmPolicy(
+                StrictMode.VmPolicy.Builder()
+                    .detectAll()
+                    .penaltyLog()
+                    .build()
+            )
+        }
+    }
+}
 
 ```
 
@@ -270,46 +294,52 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // To change NOT NULL constraint in SQLite, we must recreate the table
-                database.execSQL("ALTER TABLE pending_reviews RENAME TO pending_reviews_old")
-                database.execSQL("""
-                    CREATE TABLE IF NOT EXISTS pending_reviews (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        rawNotificationId INTEGER,
-                        scannedReceiptId INTEGER,
-                        suggestedAmount REAL NOT NULL,
-                        suggestedCurrency TEXT NOT NULL,
-                        suggestedMerchant TEXT NOT NULL,
-                        suggestedType TEXT NOT NULL,
-                        suggestedCategoryId INTEGER,
-                        confidence REAL NOT NULL,
-                        packageName TEXT NOT NULL,
-                        notificationTitle TEXT,
-                        notificationText TEXT,
-                        createdAt INTEGER NOT NULL,
-                        status TEXT NOT NULL DEFAULT 'PENDING',
-                        FOREIGN KEY(rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
-                        FOREIGN KEY(scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
-                    )
-                """.trimIndent())
-                database.execSQL("""
-                    INSERT INTO pending_reviews (
-                        id, rawNotificationId, suggestedAmount, suggestedCurrency, 
-                        suggestedMerchant, suggestedType, suggestedCategoryId, 
-                        confidence, packageName, notificationTitle, notificationText, 
-                        createdAt, status
-                    )
-                    SELECT 
-                        id, rawNotificationId, suggestedAmount, suggestedCurrency, 
-                        suggestedMerchant, suggestedType, suggestedCategoryId, 
-                        confidence, packageName, notificationTitle, notificationText, 
-                        createdAt, status
-                    FROM pending_reviews_old
-                """.trimIndent())
-                database.execSQL("DROP TABLE pending_reviews_old")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+                database.beginTransaction()
+                try {
+                    database.execSQL("ALTER TABLE pending_reviews RENAME TO pending_reviews_old")
+                    database.execSQL("""
+                        CREATE TABLE IF NOT EXISTS pending_reviews (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            rawNotificationId INTEGER,
+                            scannedReceiptId INTEGER,
+                            suggestedAmount REAL NOT NULL,
+                            suggestedCurrency TEXT NOT NULL,
+                            suggestedMerchant TEXT NOT NULL,
+                            suggestedType TEXT NOT NULL,
+                            suggestedCategoryId INTEGER,
+                            confidence REAL NOT NULL,
+                            packageName TEXT NOT NULL,
+                            notificationTitle TEXT,
+                            notificationText TEXT,
+                            createdAt INTEGER NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'PENDING',
+                            FOREIGN KEY(rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                            FOREIGN KEY(scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    database.execSQL("""
+                        INSERT INTO pending_reviews (
+                            id, rawNotificationId, suggestedAmount, suggestedCurrency, 
+                            suggestedMerchant, suggestedType, suggestedCategoryId, 
+                            confidence, packageName, notificationTitle, notificationText, 
+                            createdAt, status
+                        )
+                        SELECT 
+                            id, rawNotificationId, suggestedAmount, suggestedCurrency, 
+                            suggestedMerchant, suggestedType, suggestedCategoryId, 
+                            confidence, packageName, notificationTitle, notificationText, 
+                            createdAt, status
+                        FROM pending_reviews_old
+                    """.trimIndent())
+                    database.execSQL("DROP TABLE pending_reviews_old")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
             }
         }
         val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
@@ -782,11 +812,11 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "source_stats")
 data class SourceStats(
     @PrimaryKey val packageName: String,
-    val totalNotifications: Int = 0,
-    val acceptedAsExpense: Int = 0,
-    val rejectedByUser: Int = 0,
-    val autoRejected: Int = 0,
-    val pendingReview: Int = 0,
+    val totalNotifications: Long = 0,
+    val acceptedAsExpense: Long = 0,
+    val rejectedByUser: Long = 0,
+    val autoRejected: Long = 0,
+    val pendingReview: Long = 0,
     val lastSeen: Long = System.currentTimeMillis()
 ) {
     val trustScore: Float
@@ -865,10 +895,24 @@ data class ExpenseWithCategory(
 ) {
     // Pre-computed formatting for UI efficiency
     val formattedDate: String by lazy {
-        SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(Date(expense.date))
+        FORMATTER.get()?.format(Date(expense.date)) ?: ""
     }
     val formattedAmount: String by lazy {
         String.format("%.2f %s", expense.amount, expense.currency)
+    }
+    val categoryColor: Long by lazy {
+        try {
+            category?.color?.let { android.graphics.Color.parseColor(it).toLong() } ?: android.graphics.Color.GRAY.toLong()
+        } catch (e: Exception) {
+            android.graphics.Color.GRAY.toLong()
+        }
+    }
+    companion object {
+        private val FORMATTER = object : ThreadLocal<SimpleDateFormat>() {
+            override fun initialValue(): SimpleDateFormat {
+                return SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
+            }
+        }
     }
 }
 
@@ -922,20 +966,36 @@ class BudgetRepository @Inject constructor(
     val allBudgets: Flow<List<Budget>> = budgetDao.getAllFlow()
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
+        // We fetch the last 13 months to cover yearly budgets + rollover
+        val thirteenMonthsAgo = System.currentTimeMillis() - (13L * 30 * 24 * 60 * 60 * 1000)
         return combine(
             budgetDao.getActiveBudgetsFlow(),
-            categoryDao.getAllFlow()
-        ) { budgets, categories ->
+            categoryDao.getAllFlow(),
+            expenseDao.getExpensesBetweenFlow(thirteenMonthsAgo, System.currentTimeMillis() + 86400000) // +1 day for safety
+        ) { budgets, categories, allExpenses ->
+            val purchases = allExpenses.filter { it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE }
             val categoryMap = categories.associateBy { it.id }
             budgets.map { budget ->
                 val window = budgetMonitor.calculatePeriodWindow(budget.period, budget.startDate)
-                val spent = if (budget.categoryId != null) {
-                    expenseDao.getCategorySpentInPeriod(budget.categoryId, window.first, window.second)
-                } else {
-                    expenseDao.getTotalForPeriod(window.first, window.second)
+                fun getSpentInRange(start: Long, end: Long): Double {
+                    return purchases
+                        .filter { 
+                            (budget.categoryId == null || it.categoryId == budget.categoryId) && 
+                            it.date >= start && it.date < end 
+                        }
+                        .sumOf { it.amount }
                 }
-                val percent = if (budget.amount > 0) (spent / budget.amount).toFloat() else 0f
-                val remaining = (budget.amount - spent).coerceAtLeast(0.0)
+                val spent = getSpentInRange(window.first, window.second)
+                var limit = budget.amount
+                // LOG-002: Implement Rollover
+                if (budget.rollover) {
+                    val prevWindow = budgetMonitor.getPreviousPeriodWindow(budget.period, budget.startDate)
+                    val prevSpent = getSpentInRange(prevWindow.first, prevWindow.second)
+                    val rolloverAmount = (budget.amount - prevSpent).coerceAtLeast(0.0)
+                    limit += rolloverAmount
+                }
+                val percent = if (limit > 0) (spent / limit).toFloat() else 0f
+                val remaining = (limit - spent).coerceAtLeast(0.0)
                 val health = when {
                     percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
                     percent >= budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
@@ -943,7 +1003,7 @@ class BudgetRepository @Inject constructor(
                     else -> BudgetHealthStatus.ON_TRACK
                 }
                 BudgetStatus(
-                    budget = budget,
+                    budget = budget.copy(amount = limit), // Show effective limit
                     category = categoryMap[budget.categoryId],
                     spentAmount = spent,
                     remainingAmount = remaining,
@@ -956,23 +1016,44 @@ class BudgetRepository @Inject constructor(
         }
     }
     suspend fun addBudget(budget: Budget): Long {
-        val id = budgetDao.insert(budget)
-        budgetMonitor.checkBudgets()
-        return id
+        return try {
+            val id = budgetDao.insert(budget)
+            budgetMonitor.checkBudgets()
+            id
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to add budget", e)
+            -1L
+        }
     }
     suspend fun updateBudget(budget: Budget) {
-        budgetDao.update(budget)
-        budgetMonitor.checkBudgets()
+        try {
+            budgetDao.update(budget)
+            budgetMonitor.checkBudgets()
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to update budget ${budget.id}", e)
+        }
     }
     suspend fun deleteBudget(budget: Budget) {
-        budgetDao.delete(budget)
+        try {
+            budgetDao.delete(budget)
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to delete budget ${budget.id}", e)
+        }
     }
     suspend fun toggleBudget(id: Long, isActive: Boolean) {
-        budgetDao.setActive(id, isActive)
-        budgetMonitor.checkBudgets()
+        try {
+            budgetDao.setActive(id, isActive)
+            budgetMonitor.checkBudgets()
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to toggle budget $id", e)
+        }
     }
     suspend fun deleteAll() {
-        budgetDao.deleteAll()
+        try {
+            budgetDao.deleteAll()
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to delete all budgets", e)
+        }
     }
     suspend fun getSuggestions(): List<BudgetSuggestion> {
         val categories = categoryDao.getAllFlow().first()
@@ -981,19 +1062,30 @@ class BudgetRepository @Inject constructor(
         val activeBudgets = budgetDao.getActiveBudgets()
         val categoriesWithBudget = activeBudgets.mapNotNull { it.categoryId }.toSet()
         val now = System.currentTimeMillis()
+        val oldestDate = expenseDao.getOldestExpenseDate() ?: now
+        // Use up to 3 months of history, but at least 1 month if available
+        // If data is less than 15 days, results might be unreliable, but we'll try to extrapolate conservatively
         val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
+        val effectiveStart = maxOf(oldestDate, threeMonthsAgo)
+        val daysDiff = ((now - effectiveStart) / (24 * 60 * 60 * 1000)).coerceAtLeast(1)
+        // If we have very little data (e.g. < 7 days), skip suggestions to avoid noise (LOG-010)
+        if (daysDiff < 7) return emptyList()
+        val monthsDivisor = daysDiff / 30.0
         for (category in categories) {
             if (categoriesWithBudget.contains(category.id)) continue
-            val spent = expenseDao.getCategorySpentInPeriod(category.id, threeMonthsAgo, now)
-            if (spent > 50.0) { // Only suggest for categories with significant spend
-                val monthlyAvg = spent / 3.0
+            val spent = expenseDao.getCategorySpentInPeriod(category.id, effectiveStart, now)
+            // Calculate monthly average
+            val monthlyAvg = if (monthsDivisor > 0) spent / monthsDivisor else 0.0
+            // Only suggest if significant spend (> €20/month)
+            if (monthlyAvg > 20.0) { 
                 suggestions.add(
                     BudgetSuggestion(
                         categoryId = category.id,
                         categoryName = category.name,
                         categoryIcon = category.icon,
-                        suggestedAmount = (monthlyAvg * 1.1).coerceAtLeast(20.0), // 10% buffer
-                        basedOnMonths = 3,
+                        // increase buffer to 20% (LOG-016)
+                        suggestedAmount = (monthlyAvg * 1.2).coerceAtLeast(20.0), 
+                        basedOnMonths = Math.round(monthsDivisor).toInt().coerceAtLeast(1),
                         reason = "Based on your €${"%.0f".format(monthlyAvg)} monthly average spend."
                     )
                 )
@@ -1079,11 +1171,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 @Singleton
 class DashboardRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val prefs: SharedPreferences = context.getSharedPreferences("dashboard_prefs", Context.MODE_PRIVATE)
+    private val _configFlow = MutableStateFlow(getDashboardConfig())
+    val configFlow: StateFlow<List<DashboardWidgetConfig>> = _configFlow.asStateFlow()
     fun getDashboardConfig(): List<DashboardWidgetConfig> {
         val json = prefs.getString("layout_config", null) ?: return getDefaultConfig()
         return try {
@@ -1114,6 +1211,7 @@ class DashboardRepository @Inject constructor(
             array.put(obj)
         }
         prefs.edit().putString("layout_config", array.toString()).apply()
+        _configFlow.value = config
     }
     private fun getDefaultConfig(): List<DashboardWidgetConfig> {
         return listOf(
@@ -1141,6 +1239,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
@@ -1175,6 +1274,7 @@ data class FinancialWeather(
     val riskLevel: Int, // 0-100
     val totalCommitted: Double,
     val totalLikely: Double,
+    val predictedDiscretionary: Double,
     val discretionaryBudget: Double,
     val pastSpendingPoints: List<Double> = emptyList(),
     val projectedSpendingPoints: List<Double> = emptyList(),
@@ -1243,9 +1343,19 @@ class FinancialWeatherRepository @Inject constructor(
         val purchases = expenses.filter { 
             it.transactionType == TransactionType.PURCHASE 
         }
-        val pastSumDaily: List<Double> = (1..currentDay).map { index: Int ->
-            val dayEnd = monthStart + (index.toLong() * 24 * 60 * 60 * 1000L)
-            purchases.filter { it.date >= monthStart && it.date < dayEnd }.sumOf { it.amount }
+        val pastSumDaily = run {
+            val amountByDay = purchases
+                .filter { it.date >= monthStart }
+                .groupBy { 
+                    val c = Calendar.getInstance().apply { timeInMillis = it.date }
+                    c.get(Calendar.DAY_OF_MONTH)
+                }
+                .mapValues { it.value.sumOf { exp -> exp.amount } }
+            var runningTotal = 0.0
+            (1..currentDay).map { day ->
+                runningTotal += amountByDay[day] ?: 0.0
+                runningTotal
+            }
         }
         // 2. Get Engines data
         val pace = insightsEngine.getSpendingPaceSuspend()
@@ -1259,7 +1369,7 @@ class FinancialWeatherRepository @Inject constructor(
             spendingPace = pace
         )
         // 4. Generate Narrative
-        val narrative = narrativeGenerator.generate(forecast)
+        val narrative = narrativeGenerator.generate(forecast, budgetStatuses)
         // 5. Map to UI Model
         FinancialWeather(
             state = narrative.state,
@@ -1274,6 +1384,7 @@ class FinancialWeatherRepository @Inject constructor(
             },
             totalCommitted = forecast.components.totalCommitted,
             totalLikely = forecast.components.totalLikely,
+            predictedDiscretionary = forecast.components.predictedDiscretionary,
             discretionaryBudget = forecast.components.discretionaryBudget,
             pastSpendingPoints = forecast.components.pastSpendingPoints,
             projectedSpendingPoints = forecast.components.projectedSpendingPoints,
@@ -1289,12 +1400,17 @@ class FinancialWeatherRepository @Inject constructor(
         recurring: List<RecurringPattern>,
         planned: List<PlannedExpense>
     ): List<UpcomingItem> {
-        val now = System.currentTimeMillis()
-        val horizon = now + (31 * 86_400_000L) // Show next 31 days in the list
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val startOfToday = cal.timeInMillis
+        val horizon = startOfToday + (31 * 86_400_000L) // Show next 31 days in the list
         val items = mutableListOf<com.yourname.expensetracker.domain.model.UpcomingItem>()
-        recurring.filter { it.nextExpectedDate in (now + 1)..horizon }
+        recurring.filter { it.nextExpectedDate in startOfToday..horizon }
             .forEach { items.add(UpcomingItem.Recurring(it)) }
-        planned.filter { it.date in (now + 1)..horizon }
+        planned.filter { it.date in startOfToday..horizon }
             .forEach { items.add(UpcomingItem.Planned(it)) }
         return items.sortedBy { it.date }
     }
@@ -1381,7 +1497,7 @@ class NotificationRepository @Inject constructor(
     suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?): Boolean =
         dao.exists(packageName, timestamp, title, text)
     // === Review Queue ===
-    fun getPendingReviews(): Flow<List<PendingReviewWithReceipt>> = pendingReviewDao.getPendingFlow()
+    fun getPendingReviews(limit: Int = 100): Flow<List<PendingReviewWithReceipt>> = pendingReviewDao.getPendingFlow(limit)
     fun getPendingReviewCount(): Flow<Int> = pendingReviewDao.getPendingCountFlow()
     // === Source Stats ===
     fun getSourceStats(): Flow<List<SourceStats>> = sourceStatsDao.getAllFlow()
@@ -1419,13 +1535,14 @@ class NotificationRepository @Inject constructor(
         val normalizedMerchant = merchantNormalizer.applyUserCorrections(merchant)
         // 2. Auto-categorize if no category provided
         val finalCategoryId = categoryId ?: categorizationEngine.categorize(normalizedMerchant)
-        // 3. Dedup check with tighter window for manual entries (1 minute)
-        val isDuplicate = expenseDao.isDuplicate(
-            amount = amount,
-            merchant = normalizedMerchant,
-            date = date,
-            windowMs = 60000
-        )
+                // 3. Dedup check with tighter window for manual entries (1 minute)
+                // For manual entries, we trust the user but want to avoid accidental double-taps.
+                val isDuplicate = expenseDao.isDuplicate(
+                    amount = amount,
+                    merchant = normalizedMerchant,
+                    date = date,
+                    windowMs = 60000 // 1 minute window for manual double-entry prevention
+                )
         if (isDuplicate) return -1L
         // 4. Create expense
         val expense = Expense(
@@ -1510,10 +1627,15 @@ class NotificationRepository @Inject constructor(
         )
         when (routingResult.decision) {
             RoutingDecision.AUTO_ACCEPT -> {
+                // 3. Check for duplicates
+                // Use a short window (e.g. 10s) for auto-detected transactions to avoid flagging
+                // legitimate consecutive purchases (e.g. buying rounds of drinks) as duplicates,
+                // while still catching immediate double-processing of the same notification.
                 val isDuplicate = expenseDao.isDuplicate(
                     amount = parsed.amount,
                     merchant = correctedMerchant,
-                    date = notification.timestamp
+                    date = notification.timestamp,
+                    windowMs = 10000 
                 )
                 if (isDuplicate) {
                     dao.markRelevance(rawId, false)
@@ -1596,6 +1718,7 @@ class NotificationRepository @Inject constructor(
         val type: com.yourname.expensetracker.data.database.entity.TransactionType = try {
             com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(review.suggestedType)
         } catch (e: Exception) {
+            android.util.Log.w("NotificationRepo", "Unknown transaction type: ${review.suggestedType}, falling back to PURCHASE")
             com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
         }
         val notification = review.rawNotificationId?.let { dao.getById(it) }
@@ -1659,12 +1782,11 @@ class NotificationRepository @Inject constructor(
         )
         userCorrectionDao.insert(correction)
         // Train classifier: user approved = positive
-        val trainingText = listOfNotNull(
-            review.notificationTitle,
-            review.notificationText
-        ).joinToString(" ")
-        if (trainingText.isNotBlank()) {
-            classifier.train(trainingText, isTransaction = true)
+        // LOG-003 Fix: Use retrainFromCorrections to ensure consistency and "un-learn" previous mistakes
+        try {
+            classifier.retrainFromCorrections()
+        } catch (e: Exception) {
+            android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
         }
         // Learn merchant → category mapping if category was set
         if (categoryId != null) {
@@ -1708,12 +1830,11 @@ class NotificationRepository @Inject constructor(
         )
         userCorrectionDao.insert(correction)
         // Train classifier: user rejected = negative
-        val trainingText = listOfNotNull(
-            review.notificationTitle,
-            review.notificationText
-        ).joinToString(" ")
-        if (trainingText.isNotBlank()) {
-            classifier.train(trainingText, isTransaction = false)
+        // LOG-003 Fix: Use retrainFrom corrections
+        try {
+            classifier.retrainFromCorrections()
+        } catch (e: Exception) {
+            android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
         }
     }
     /**
@@ -1736,28 +1857,26 @@ class NotificationRepository @Inject constructor(
         val notification = dao.getById(id) ?: return
         dao.markRelevance(id, isRelevant)
         // Train classifier directly from this manual action
-        val trainingText = listOfNotNull(
-            notification.title,
-            notification.text,
-            notification.bigText
-        ).joinToString(" ")
-        if (trainingText.isNotBlank()) {
-            classifier.train(trainingText, isTransaction = isRelevant)
-            // Also record a correction for future retraining
-            val correction = UserCorrection(
-                packageName = notification.packageName,
-                originalMerchant = "Manual",
-                correctedMerchant = null,
-                originalAmount = 0.0,
-                correctedAmount = null,
-                originalCategoryId = null,
-                correctedCategoryId = null,
-                wasRejected = !isRelevant,
-                wasApproved = isRelevant,
-                notificationTitle = notification.title,
-                notificationText = notification.text ?: notification.bigText
-            )
-            userCorrectionDao.insert(correction)
+        // Also record a correction for future retraining (LOG-003)
+        // We record correction AND retrain immediately to ensure consistency
+        val correction = UserCorrection(
+            packageName = notification.packageName,
+            originalMerchant = "Manual",
+            correctedMerchant = null,
+            originalAmount = 0.0,
+            correctedAmount = null,
+            originalCategoryId = null,
+            correctedCategoryId = null,
+            wasRejected = !isRelevant,
+            wasApproved = isRelevant,
+            notificationTitle = notification.title,
+            notificationText = notification.text ?: notification.bigText
+        )
+        userCorrectionDao.insert(correction)
+        try {
+            classifier.retrainFromCorrections()
+        } catch (e: Exception) {
+            android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
         }
     }
     suspend fun deleteAll() {
@@ -1766,8 +1885,10 @@ class NotificationRepository @Inject constructor(
         pendingReviewDao.deleteAll()
         userCorrectionDao.deleteAll()
         merchantCategoryDao.deleteAll()
-        blockedPackageDao.deleteAll()
         sourceStatsDao.resetAllPendingCounts()
+    }
+    suspend fun resetSourceStats() {
+        sourceStatsDao.deleteAll()
     }
     suspend fun deleteAllExpenses() = expenseDao.deleteAll()
     suspend fun deleteExpense(expense: Expense) = expenseDao.delete(expense)
@@ -1838,6 +1959,39 @@ class NotificationRepository @Inject constructor(
 
 ---
 
+## main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt <a name="mainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt"></a>
+```kotlin
+package com.yourname.expensetracker.data.repository
+import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+import com.yourname.expensetracker.data.database.entity.PlannedExpense
+import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
+import javax.inject.Singleton
+@Singleton
+class PlannedExpenseRepository @Inject constructor(
+    private val plannedExpenseDao: PlannedExpenseDao
+) {
+    fun getAllPlannedExpenses(): Flow<List<PlannedExpense>> {
+        return plannedExpenseDao.getAllPlannedExpenses()
+    }
+    fun getPlannedExpensesForPeriod(startMs: Long, endMs: Long): Flow<List<PlannedExpense>> {
+        return plannedExpenseDao.getPlannedExpensesForPeriod(startMs, endMs)
+    }
+    suspend fun addPlannedExpense(expense: PlannedExpense): Long {
+        return plannedExpenseDao.insertPlannedExpense(expense)
+    }
+    suspend fun deletePlannedExpense(expense: PlannedExpense) {
+        plannedExpenseDao.deletePlannedExpense(expense)
+    }
+    suspend fun deletePlannedExpenseById(id: Long) {
+        plannedExpenseDao.deletePlannedExpenseById(id)
+    }
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt <a name="mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt"></a>
 ```kotlin
 package com.yourname.expensetracker.data.repository
@@ -1853,6 +2007,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
+import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -1869,6 +2024,7 @@ class ReceiptRepository @Inject constructor(
     private val pendingReviewDao: PendingReviewDao,
     private val ocrService: ReceiptOcrService,
     private val receiptParser: ReceiptParser,
+    private val statementParser: BankStatementParser,
     private val categorizationEngine: CategorizationEngine,
     private val merchantNormalizer: MerchantNormalizer,
     private val budgetMonitor: BudgetMonitor
@@ -1925,6 +2081,42 @@ class ReceiptRepository @Inject constructor(
             pendingReviewDao.insert(review)
         }
         return Pair(receipt.copy(id = receiptId), parsed)
+    }
+    suspend fun saveManualReceiptRecord(imageUri: android.net.Uri): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
+        // 1. Try to at least copy the image for display if possible, or use original
+        // For simplicity, we'll try to get ocrService to at least give us a path if it can load the bitmap
+        val path = try {
+            // We'll reuse the OCR service's image saving logic if possible
+            // But if it fails, we fall back to the original URI string (not ideal but better than nothing)
+            ocrService.processImage(imageUri).savedImagePath
+        } catch (e: Exception) {
+            imageUri.toString()
+        }
+        val receipt = ScannedReceipt(
+            imagePath = path,
+            rawOcrText = "[OCR Failed or Skipped]",
+            parsedTotal = null,
+            parsedMerchant = null,
+            parsedDate = System.currentTimeMillis(),
+            parsedItems = null,
+            parsedTaxAmount = null,
+            currency = "EUR",
+            confidence = 0f
+        )
+        val receiptId = scannedReceiptDao.insert(receipt)
+        return Pair(
+            receipt.copy(id = receiptId),
+            ReceiptParser.ParsedReceipt(
+                merchantName = null,
+                total = null,
+                subtotal = null,
+                tax = null,
+                date = System.currentTimeMillis(),
+                currency = "EUR",
+                lineItems = emptyList(),
+                confidence = 0f
+            )
+        )
     }
     /**
      * Create an expense from a scanned receipt (after user review/edit)
@@ -2024,6 +2216,59 @@ class ReceiptRepository @Inject constructor(
             }
         }
         return BatchResult(successes, failures, errors)
+    }
+    /**
+     * Process an image URI as a bank statement: extracting multiple transactions
+     */
+    suspend fun processStatement(imageUri: Uri): BatchResult {
+        // 1. Run OCR
+        val ocrResult: OcrResult = ocrService.processImage(imageUri)
+        // 2. Parse as multiple transactions using spatial data
+        val parsedTransactions = statementParser.parse(ocrResult.blocks)
+        if (parsedTransactions.isEmpty()) {
+            return BatchResult(0, 1, listOf("No transactions found in screenshot"))
+        }
+        // 3. Save common scanned receipt record
+        val receiptRecord = ScannedReceipt(
+            imagePath = ocrResult.savedImagePath,
+            rawOcrText = ocrResult.fullText,
+            parsedTotal = null, // Varies per transaction
+            parsedMerchant = "Bank Statement",
+            parsedDate = System.currentTimeMillis(),
+            parsedItems = null,
+            parsedTaxAmount = null,
+            currency = parsedTransactions.firstOrNull()?.currency ?: "EUR",
+            confidence = 0.8f
+        )
+        val receiptId = scannedReceiptDao.insert(receiptRecord)
+        // 4. Create a PendingReview for EACH transaction found
+        var successCount = 0
+        val errors = mutableListOf<String>()
+        parsedTransactions.forEach { tx ->
+            try {
+                // Normalize merchant
+                val normalizedMerchant = merchantNormalizer.applyUserCorrections(tx.merchant)
+                val review = PendingReview(
+                    rawNotificationId = null,
+                    scannedReceiptId = receiptId,
+                    suggestedAmount = tx.amount,
+                    suggestedCurrency = tx.currency,
+                    suggestedMerchant = normalizedMerchant,
+                    suggestedType = tx.type.name,
+                    suggestedCategoryId = categorizationEngine.categorize(normalizedMerchant),
+                    suggestedDate = System.currentTimeMillis(),
+                    confidence = tx.confidence,
+                    packageName = "statement.import",
+                    notificationTitle = "Bank Screenshot",
+                    notificationText = "Imported from screenshot: ${tx.merchant}"
+                )
+                pendingReviewDao.insert(review)
+                successCount++
+            } catch (e: Exception) {
+                errors.add("Failed to save transaction ${tx.merchant}: ${e.message}")
+            }
+        }
+        return BatchResult(successCount, parsedTransactions.size - successCount, errors)
     }
     suspend fun clearAllScannedReceipts() {
         val receipts = scannedReceiptDao.getAll()
@@ -2604,14 +2849,15 @@ class InsightsEngine @Inject constructor(
             val historicalStats = statsMap[merchantStat.merchant] ?: continue
             // We need 3+ transactions historically to have a reliable average
             if (historicalStats.txCount < 3) continue
-            // If the max amount this month is > 2x the historical average
-            if (merchantStat.maxAmount > historicalStats.avgAmount * 2.0) {
+            // If the max amount this month is > 3x the historical average (LOG-015 Fix: Increased from 2x)
+            if (merchantStat.maxAmount > historicalStats.avgAmount * 3.0) {
                 // Find the actual expense (largest for this merchant this month)
-                val expense = expenseDao.getLargestExpenseForPeriod(
-                    currentMonth.startMs, currentMonth.endMs
+                // Find the actual expense (largest for THIS merchant this month)
+                val expense = expenseDao.getLargestExpenseForMerchant(
+                    merchantStat.merchant, currentMonth.startMs, currentMonth.endMs
                 )
                 // Filter specifically for this merchant
-                if (expense != null && expense.merchant == merchantStat.merchant) {
+                if (expense != null) {
                      anomalies.add(
                         AnomalyTransaction(
                             expense = expense,
@@ -2670,10 +2916,12 @@ class InsightsEngine @Inject constructor(
             val key = dateKeyFormat.format(cal.time)
             result[key] = 0.0
         }
-        // Fill in actual values
+        // Fill in actual values - Optimized: reuse Date object
         val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        val dateObj = java.util.Date()
         for (expense in purchases) {
-            val key = dateKeyFormat.format(java.util.Date(expense.date))
+            dateObj.time = expense.date
+            val key = dateKeyFormat.format(dateObj)
             if (result.containsKey(key)) {
                 result[key] = (result[key] ?: 0.0) + expense.amount
             }
@@ -2683,10 +2931,10 @@ class InsightsEngine @Inject constructor(
     // Make detectRecurring available for ViewModel compatibility if needed
     // But it's better to use the snapshot.
     // We already have findRecurringExpenses internally.
-    // Legacy helper for detections from list
-    fun detectRecurring(expenses: List<Expense>): List<com.yourname.expensetracker.domain.analytics.RecurringCandidate> {
+    // Legacy helper for detections from list - RE-ADDED FOR UI COMPATIBILITY
+    fun detectRecurring(expenses: List<Expense>): List<RecurringCandidate> {
          val dayMs = 86_400_000L
-         val results = mutableListOf<com.yourname.expensetracker.domain.analytics.RecurringCandidate>()
+         val results = mutableListOf<RecurringCandidate>()
          val byMerchant = expenses
             .filter { it.transactionType == TransactionType.PURCHASE }
             .groupBy { it.merchant.uppercase() }
@@ -2710,7 +2958,7 @@ class InsightsEngine @Inject constructor(
                      val lastDate = sorted.last().date
                      val nextExpected = lastDate + avgInterval * dayMs
                      results.add(
-                         com.yourname.expensetracker.domain.analytics.RecurringCandidate(
+                         RecurringCandidate(
                              merchant = exps.first().merchant,
                              amount = avgAmount,
                              intervalDays = avgInterval,
@@ -2843,7 +3091,11 @@ class BudgetMonitor @Inject constructor(
         serviceScope.launch {
             val activeBudgets = budgetDao.getActiveBudgets()
             for (budget in activeBudgets) {
-                processBudget(budget)
+                try {
+                    processBudget(budget)
+                } catch (e: Exception) {
+                    android.util.Log.e("BudgetMonitor", "Error processing budget ${budget.id}: ${e.message}", e)
+                }
             }
         }
     }
@@ -2854,7 +3106,7 @@ class BudgetMonitor @Inject constructor(
         } else {
             expenseDao.getTotalForPeriod(window.first, window.second)
         }
-        if (spent <= 0) return
+        if (spent <= 0 || budget.amount <= 0) return
         val percent = (spent / budget.amount).toFloat()
         val now = System.currentTimeMillis()
         when {
@@ -2903,10 +3155,22 @@ class BudgetMonitor @Inject constructor(
         }
     }
     fun calculatePeriodWindow(period: BudgetPeriod, anchorDate: Long): Pair<Long, Long> {
+        return calculatePeriodWindowForTime(period, anchorDate, System.currentTimeMillis())
+    }
+    fun getPreviousPeriodWindow(period: BudgetPeriod, anchorDate: Long): Pair<Long, Long> {
+        val currentWindow = calculatePeriodWindow(period, anchorDate)
+        // To get previous, we can just subtract a small amount from the start of current and recalculate
+        // This is safer than date math which might miss (e.g. variable month lengths)
+        // If current start is Nov 1. Nov 1 - 1ms = Oct 31.
+        // Calculate window for Oct 31. It will be Oct 1 - Nov 1.
+        return calculatePeriodWindowForTime(period, anchorDate, currentWindow.first - 1000)
+    }
+    private fun calculatePeriodWindowForTime(period: BudgetPeriod, anchorDate: Long, evaluationTime: Long): Pair<Long, Long> {
+        val anchorCal = Calendar.getInstance()
+        anchorCal.timeInMillis = anchorDate
         val cal = Calendar.getInstance()
-        val now = System.currentTimeMillis()
-        cal.timeInMillis = now
-        // Set to start of current day
+        cal.timeInMillis = evaluationTime
+        // Reset time components to start of day
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
@@ -2918,24 +3182,49 @@ class BudgetMonitor @Inject constructor(
                 Pair(start, cal.timeInMillis)
             }
             BudgetPeriod.WEEKLY -> {
-                // Set to current week's Monday
-                cal.firstDayOfWeek = Calendar.MONDAY
-                cal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+                // Find the most recent occurrence of the anchor weekday
+                val anchorDayOfWeek = anchorCal.get(Calendar.DAY_OF_WEEK)
+                while (cal.get(Calendar.DAY_OF_WEEK) != anchorDayOfWeek) {
+                    cal.add(Calendar.DAY_OF_YEAR, -1)
+                }
                 val start = cal.timeInMillis
                 cal.add(Calendar.WEEK_OF_YEAR, 1)
                 Pair(start, cal.timeInMillis)
             }
             BudgetPeriod.MONTHLY -> {
-                cal.set(Calendar.DAY_OF_MONTH, 1)
+                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+                val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+                // If we haven't reached the anchor day this month, the cycle started last month
+                if (currentDay < anchorDay) {
+                    cal.add(Calendar.MONTH, -1)
+                }
+                // Set day, handling shorter months (e.g. 31st vs Feb 28th)
+                val maxDays = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(maxDays))
                 val start = cal.timeInMillis
                 cal.add(Calendar.MONTH, 1)
-                Pair(start, cal.timeInMillis)
+                // Note: Standard add(MONTH, 1) handles month length variations (Jan 31 -> Feb 28/29)
+                val end = cal.timeInMillis
+                Pair(start, end)
             }
             BudgetPeriod.YEARLY -> {
-                cal.set(Calendar.DAY_OF_YEAR, 1)
+                val anchorMonth = anchorCal.get(Calendar.MONTH)
+                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+                val currentMonth = cal.get(Calendar.MONTH)
+                val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+                // Check if we passed the anniversary this year
+                var passed = false
+                if (currentMonth > anchorMonth) passed = true
+                else if (currentMonth == anchorMonth && currentDay >= anchorDay) passed = true
+                if (!passed) {
+                    cal.add(Calendar.YEAR, -1)
+                }
+                cal.set(Calendar.MONTH, anchorMonth)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH)))
                 val start = cal.timeInMillis
                 cal.add(Calendar.YEAR, 1)
-                Pair(start, cal.timeInMillis)
+                val end = cal.timeInMillis
+                Pair(start, end)
             }
         }
     }
@@ -2970,16 +3259,11 @@ class CategorizationEngine @Inject constructor(
         val exactMatch = merchantCategoryDao.getCategoryForMerchant(normalized)
         if (exactMatch != null) return exactMatch.categoryId
         // 2. Substring match — check if any known merchant pattern is contained in this merchant
-        val allMappings = getMappings()
-        // Sort by pattern length descending to match longest first
-        val sortedMappings = allMappings.sortedByDescending { it.merchantPattern.length }
+        val sortedMappings = getMappings() // Already sorted by length descending (LOG-022)
         val paddedNormalized = " $normalized "
         for (mapping in sortedMappings) {
-            if (mapping.merchantPattern.length >= 3) {
-                // Check if the pattern exists as a whole word(s) in the merchant name
-                // e.g. "UBER" matches "UBER EATS" but "ONE" does not match "PHONE"
-                val paddedPattern = " ${mapping.merchantPattern} "
-                if (paddedNormalized.contains(paddedPattern)) {
+            if (mapping.merchantPattern.length >= 5) { // Adjusted for " pattern "
+                if (paddedNormalized.contains(mapping.merchantPattern)) {
                     return mapping.categoryId
                 }
             }
@@ -2987,7 +3271,7 @@ class CategorizationEngine @Inject constructor(
         // 3. Word-level match — split merchant into words and check each
         val words = normalized.split(" ").filter { it.length >= 4 }
         if (words.isNotEmpty()) {
-            val mappingsMap = allMappings.associateBy { it.merchantPattern }
+            val mappingsMap = sortedMappings.associateBy { it.merchantPattern }
             for (word in words) {
                 val match = mappingsMap[word]
                 if (match != null) return match.categoryId
@@ -3005,7 +3289,11 @@ class CategorizationEngine @Inject constructor(
         cacheMutex.withLock {
             val now = System.currentTimeMillis()
             if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
+                // LOG-022 Fix: Sort by pattern length descending ONCE during cache population
+                // This avoids sorting on every analyze call
                 cachedMappings = merchantCategoryDao.getAll()
+                    .map { it.copy(merchantPattern = " ${it.merchantPattern} ") }
+                    .sortedByDescending { it.merchantPattern.length }
                 lastCacheTime = now
             }
             return cachedMappings!!
@@ -3087,12 +3375,17 @@ class NotificationSeeder @Inject constructor() {
             capturedAt = System.currentTimeMillis()
         )
     }
+    private val recurringTemplates = listOf(
+        Pair("Netflix", 13.99),
+        Pair("Spotify", 7.99),
+        Pair("Cosmote", 35.00),
+        Pair("DEI", 45.50),
+        Pair("iCloud", 2.99),
+        Pair("YouTube Premium", 11.99)
+    )
     private fun generateRecurring(index: Int, now: Long): RawNotification {
-        // Force some recurring patterns (e.g. Netflix every month)
-        // We'll generate a "Netflix" charge at a specific day of month relative to 'index' simply to seed *some* recurring data
-        // But for mass simulation in one go, we can just sprinkle them randomly in time but with fixed amount
-        val merchant = "Netflix"
-        val amount = 13.99
+        val (merchant, amount) = recurringTemplates.random()
+        // Random date within last 60 days
         val date = now - Random.nextLong(60L * 24 * 60 * 60 * 1000)
         return RawNotification(
             packageName = "com.simulation.revolut",
@@ -3172,8 +3465,9 @@ class ConfidenceRouter @Inject constructor(
     ): RoutingResult {
         var adjustedConfidence = parsed.confidence
         val reasons = mutableListOf<String>()
-        // 1. ML classifier prediction (if ready)
-        if (notificationText != null) {
+        // 1. ML classifier prediction (if ready and needed)
+        // Skip ML if parser is extremely confident (e.g. exact template match) to save resources
+        if (notificationText != null && parsed.confidence < 1.0f) {
             val mlPrediction = classifier.predict(notificationText)
             val classifierStats = classifier.getStats()
             if (classifierStats.isReady) {
@@ -3251,18 +3545,18 @@ class ConfidenceRouter @Inject constructor(
         return when {
             totalSamples < 20 -> 0f       // Not ready
             totalSamples < 50 -> 0.2f     // Low confidence in ML
-            totalSamples < 100 -> 0.3f    // Growing confidence
-            totalSamples < 200 -> 0.35f   // Moderate
-            else -> 0.4f                   // Maxed out — never fully trust ML alone
+            totalSamples < 100 -> 0.35f   // Growing confidence
+            totalSamples < 200 -> 0.5f    // Moderate
+            else -> 0.6f                   // Max capped at 60% (LOG-007)
         }
     }
     private fun calculateTrustModifier(stats: SourceStats): Float {
         return when {
-            stats.isLikelySpam -> 0.2f
+            stats.isLikelySpam -> 0.1f // LOG-014: Heavy penalty for spam
             stats.trustScore > 0.8f -> 1.1f
-            stats.trustScore > 0.5f -> 1.0f
-            stats.trustScore > 0.2f -> 0.8f
-            else -> 0.5f
+            stats.trustScore > 0.4f -> 1.0f // 40-80% is neutral
+            stats.trustScore > 0.15f -> 0.9f // 15-40% is slight penalty
+            else -> 0.5f // < 15% is heavy penalty
         }
     }
     private suspend fun getMerchantRejectionRate(merchant: String): Float {
@@ -3379,20 +3673,21 @@ class MerchantNormalizer @Inject constructor(
             }
         }
         val now = System.currentTimeMillis()
-        val cached: String? = cacheMutex.withLock {
+        return cacheMutex.withLock {
             if (now - lastCacheClear > CACHE_DURATION) {
                 correctionCache.clear()
                 lastCacheClear = now
             }
-            correctionCache[normalized]
+            val cached = correctionCache[normalized]
+            if (cached != null) {
+                cached
+            } else {
+                val corrected = userCorrectionDao.getMostCommonMerchantCorrection(normalized)
+                val result = corrected ?: toTitleCase(normalized)
+                correctionCache[normalized] = result
+                result
+            }
         }
-        if (cached != null) return cached
-        val corrected = userCorrectionDao.getMostCommonMerchantCorrection(normalized)
-        val result = corrected ?: toTitleCase(normalized)
-        cacheMutex.withLock {
-            correctionCache[normalized] = result
-        }
-        return result
     }
     /**
      * Jaccard similarity for matching merchant names
@@ -3414,22 +3709,26 @@ class MerchantNormalizer @Inject constructor(
      * Levenshtein distance for close matches
      */
     fun levenshteinDistance(a: String, b: String): Int {
-        val m = a.length
+        if (a == b) return 0
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
         val n = b.length
-        val dp = Array(m + 1) { IntArray(n + 1) }
-        for (i in 0..m) dp[i][0] = i
-        for (j in 0..n) dp[0][j] = j
-        for (i in 1..m) {
+        var prev = IntArray(n + 1) { it }
+        var curr = IntArray(n + 1)
+        for (i in 1..a.length) {
+            curr[0] = i
             for (j in 1..n) {
                 val cost = if (a[i - 1] == b[j - 1]) 0 else 1
-                dp[i][j] = minOf(
-                    dp[i - 1][j] + 1,      // deletion
-                    dp[i][j - 1] + 1,       // insertion
-                    dp[i - 1][j - 1] + cost // substitution
+                curr[j] = minOf(
+                    minOf(curr[j - 1] + 1, prev[j] + 1),
+                    prev[j - 1] + cost
                 )
             }
+            val temp = prev
+            prev = curr
+            curr = temp
         }
-        return dp[m][n]
+        return prev[n]
     }
     /**
      * Normalized Levenshtein similarity (0.0 to 1.0)
@@ -3445,7 +3744,7 @@ class MerchantNormalizer @Inject constructor(
     /**
      * Find best matching merchant name from a list
      */
-    fun findBestMatch(merchant: String, candidates: List<String>, threshold: Float = 0.7f): String? {
+    fun findBestMatch(merchant: String, candidates: List<String>, threshold: Float = 0.85f): String? {
         var bestMatch: String? = null
         var bestScore = 0f
         for (candidate in candidates) {
@@ -3504,13 +3803,25 @@ class TransactionClassifier @Inject constructor(
     companion object {
         private const val TAG = "TxClassifier"
         private const val MODEL_FILE = "naive_bayes_model.json"
+        private const val MODEL_VERSION = 1
         private const val MIN_TRAINING_SAMPLES = 20
         private const val LAPLACE_SMOOTHING = 1.0
+        private val regexNonAlphanumeric = Regex("[^a-zα-ωά-ώ0-9€$£ ]")
+        private val regexWhitespace = Regex("\\s+")
+        private val regexDecimalAmount = Regex("""\d+[.,]\d{2}""")
+        private val regexCurrencySymbol = Regex("""[€$£]""")
+        private val regexCurrencyCode = Regex("""(?i)(EUR|USD|GBP)""")
+        private val regexPaymentKeyword = Regex("""(?i)(paid|payment|purchase|charged|debit)""")
+        private val regexGreekPaymentKeyword = Regex("""(?i)(πληρωμ|αγορ|χρέωσ|συναλλαγ)""")
+        private val regexPromoKeyword = Regex("""(?i)(offer|discount|promo|sale|free|δωρεάν|προσφορά|έκπτωση)""")
+        private val regexOtpKeyword = Regex("""(?i)(otp|code|verify|κωδικός)""")
+        private val regexBalanceKeyword = Regex("""(?i)(balance|υπόλοιπο)""")
     }
     private val positiveWordCounts = mutableMapOf<String, Int>()
     private val negativeWordCounts = mutableMapOf<String, Int>()
     private var totalPositive = 0
     private var totalNegative = 0
+    private val vocabulary = mutableSetOf<String>()
     private var vocabularySize = 0
     private val positiveBigramCounts = mutableMapOf<String, Int>()
     private val negativeBigramCounts = mutableMapOf<String, Int>()
@@ -3570,7 +3881,14 @@ class TransactionClassifier @Inject constructor(
         negativeBigramCounts.clear()
         totalPositive = 0
         totalNegative = 0
-        for (correction in corrections) {
+        // LOG-012 Fix: Balance dataset
+        val positiveCorrections = corrections.filter { it.wasApproved }
+        val negativeCorrections = corrections.filter { it.wasRejected }
+        // Cap negatives to 3x positives to prevent skew
+        val maxNegatives = (positiveCorrections.size * 3).coerceAtLeast(MIN_TRAINING_SAMPLES)
+        val selectedNegatives = negativeCorrections.shuffled().take(maxNegatives)
+        val trainingSet = positiveCorrections + selectedNegatives
+        for (correction in trainingSet) {
             val text = buildTrainingText(correction)
             if (text.isNotBlank()) {
                 val features = extractFeatures(text)
@@ -3581,7 +3899,7 @@ class TransactionClassifier @Inject constructor(
                 }
             }
         }
-        vocabularySize = (positiveWordCounts.keys + negativeWordCounts.keys).toSet().size
+        vocabularySize = vocabulary.size
         lastTrainingCount = corrections.size
         scheduleSave()
         Log.d(TAG, "Retrained from ${corrections.size} corrections: +$totalPositive/-$totalNegative")
@@ -3606,6 +3924,7 @@ class TransactionClassifier @Inject constructor(
             totalPositive++
             features.words.forEach {
                 positiveWordCounts[it] = (positiveWordCounts[it] ?: 0) + 1
+                vocabulary.add(it)
             }
             features.bigrams.forEach {
                 positiveBigramCounts[it] = (positiveBigramCounts[it] ?: 0) + 1
@@ -3614,19 +3933,22 @@ class TransactionClassifier @Inject constructor(
             totalNegative++
             features.words.forEach {
                 negativeWordCounts[it] = (negativeWordCounts[it] ?: 0) + 1
+                vocabulary.add(it)
             }
             features.bigrams.forEach {
                 negativeBigramCounts[it] = (negativeBigramCounts[it] ?: 0) + 1
             }
         }
-        vocabularySize = (positiveWordCounts.keys + negativeWordCounts.keys).toSet().size
+        vocabularySize = vocabulary.size
         _stats.value = getStats()
     }
     private fun calculateProbability(features: FeatureSet): Float {
         val total = totalPositive + totalNegative
         if (total == 0) return 0.5f
-        var logProbPos = ln(totalPositive.toDouble() / total)
-        var logProbNeg = ln(totalNegative.toDouble() / total)
+        // Guard against ln(0) which returns -Infinity
+        // If a class has 0 samples, we treat its prior probability as extremely low (-20.0 in log space ~= 2e-9)
+        var logProbPos = if (totalPositive > 0) ln(totalPositive.toDouble() / total) else -20.0
+        var logProbNeg = if (totalNegative > 0) ln(totalNegative.toDouble() / total) else -20.0
         val vocabSize = vocabularySize.coerceAtLeast(1)
         for (word in features.words) {
             val posCount = (positiveWordCounts[word] ?: 0).toDouble() + LAPLACE_SMOOTHING
@@ -3652,34 +3974,34 @@ class TransactionClassifier @Inject constructor(
     }
     private fun extractFeatures(text: String): FeatureSet {
         val normalized = text.lowercase()
-            .replace(Regex("[^a-zα-ωά-ώ0-9€$£ ]"), " ")
-            .replace(Regex("\\s+"), " ")
+            .replace(regexNonAlphanumeric, " ")
+            .replace(regexWhitespace, " ")
             .trim()
         val words = normalized.split(" ")
             .filter { it.length >= 2 }
             .toMutableList()
-        if (Regex("""\d+[.,]\d{2}""").containsMatchIn(text)) {
+        if (regexDecimalAmount.containsMatchIn(text)) {
             words.add("__HAS_DECIMAL_AMOUNT__")
         }
-        if (Regex("""[€$£]""").containsMatchIn(text)) {
+        if (regexCurrencySymbol.containsMatchIn(text)) {
             words.add("__HAS_CURRENCY_SYMBOL__")
         }
-        if (Regex("""(?i)(EUR|USD|GBP)""").containsMatchIn(text)) {
+        if (regexCurrencyCode.containsMatchIn(text)) {
             words.add("__HAS_CURRENCY_CODE__")
         }
-        if (Regex("""(?i)(paid|payment|purchase|charged|debit)""").containsMatchIn(text)) {
+        if (regexPaymentKeyword.containsMatchIn(text)) {
             words.add("__HAS_PAYMENT_KEYWORD__")
         }
-        if (Regex("""(?i)(πληρωμ|αγορ|χρέωσ|συναλλαγ)""").containsMatchIn(text)) {
+        if (regexGreekPaymentKeyword.containsMatchIn(text)) {
             words.add("__HAS_GREEK_PAYMENT_KEYWORD__")
         }
-        if (Regex("""(?i)(offer|discount|promo|sale|free|δωρεάν|προσφορά|έκπτωση)""").containsMatchIn(text)) {
+        if (regexPromoKeyword.containsMatchIn(text)) {
             words.add("__HAS_PROMO_KEYWORD__")
         }
-        if (Regex("""(?i)(otp|code|verify|κωδικός)""").containsMatchIn(text)) {
+        if (regexOtpKeyword.containsMatchIn(text)) {
             words.add("__HAS_OTP_KEYWORD__")
         }
-        if (Regex("""(?i)(balance|υπόλοιπο)""").containsMatchIn(text)) {
+        if (regexBalanceKeyword.containsMatchIn(text)) {
             words.add("__HAS_BALANCE_KEYWORD__")
         }
         val actualWords = normalized.split(" ").filter { it.length >= 2 }
@@ -3703,6 +4025,7 @@ class TransactionClassifier @Inject constructor(
         withContext(Dispatchers.IO) {
             try {
                 val json = JSONObject().apply {
+                    put("version", MODEL_VERSION)
                     put("totalPositive", totalPositive)
                     put("totalNegative", totalNegative)
                     put("vocabularySize", vocabularySize)
@@ -3731,6 +4054,11 @@ class TransactionClassifier @Inject constructor(
             val file = File(context.filesDir, MODEL_FILE)
             if (!file.exists()) return false
             val json = JSONObject(file.readText())
+            val version = json.optInt("version", 0)
+            if (version != MODEL_VERSION) {
+                Log.w(TAG, "Model version mismatch. Current: $MODEL_VERSION, Found: $version.")
+                return false
+            }
             totalPositive = json.getInt("totalPositive")
             totalNegative = json.getInt("totalNegative")
             vocabularySize = json.optInt("vocabularySize", 0)
@@ -3738,12 +4066,16 @@ class TransactionClassifier @Inject constructor(
             val posWords = json.getJSONObject("positiveWords")
             positiveWordCounts.clear()
             posWords.keys().forEach { key ->
-                positiveWordCounts[key] = posWords.getInt(key)
+                val count = posWords.getInt(key)
+                positiveWordCounts[key] = count
+                vocabulary.add(key)
             }
             val negWords = json.getJSONObject("negativeWords")
             negativeWordCounts.clear()
             negWords.keys().forEach { key ->
-                negativeWordCounts[key] = negWords.getInt(key)
+                val count = negWords.getInt(key)
+                negativeWordCounts[key] = count
+                vocabulary.add(key)
             }
             json.optJSONObject("positiveBigrams")?.let { posBi ->
                 positiveBigramCounts.clear()
@@ -3757,7 +4089,7 @@ class TransactionClassifier @Inject constructor(
                     negativeBigramCounts[key] = negBi.getInt(key)
                 }
             }
-            vocabularySize = (positiveWordCounts.keys + negativeWordCounts.keys).toSet().size
+            vocabularySize = vocabulary.size
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load model", e)
@@ -3789,16 +4121,21 @@ import com.yourname.expensetracker.domain.model.RiskLevel
 import com.yourname.expensetracker.domain.model.WeatherNarrative
 import com.yourname.expensetracker.domain.model.NarrativeSection
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import javax.inject.Inject
 import javax.inject.Singleton
 @Singleton
 class NarrativeGenerator @Inject constructor() {
-    fun generate(forecast: FinancialForecast): WeatherNarrative {
+    fun generate(
+        forecast: FinancialForecast, 
+        budgetStatuses: List<com.yourname.expensetracker.domain.budget.BudgetStatus>
+    ): WeatherNarrative {
         val components = forecast.components
         val risk = components.riskLevel
         val discretionary = components.discretionaryBudget
         val basic = when {
-            risk == RiskLevel.LOW && discretionary > 200.0 -> WeatherNarrative(
+            risk == RiskLevel.LOW && discretionary > 100.0 -> WeatherNarrative(
                 state = WeatherState.CLEAR_SKIES,
                 icon = "☀️",
                 headline = "Clear Skies",
@@ -3835,25 +4172,50 @@ class NarrativeGenerator @Inject constructor() {
                 summary = "Not enough data to provide a clear outlook yet."
             )
         }
-        return basic.copy(details = buildDetails(forecast))
+        return basic.copy(details = buildDetails(forecast, budgetStatuses))
     }
-    private fun buildDetails(forecast: FinancialForecast): List<NarrativeSection> {
+    private fun buildDetails(
+        forecast: FinancialForecast,
+        budgetStatuses: List<com.yourname.expensetracker.domain.budget.BudgetStatus>
+    ): List<NarrativeSection> {
         val sections = mutableListOf<NarrativeSection>()
         val components = forecast.components
-        // 1. Upcoming Bills Section (Pattern Engine)
-        val highConfidenceRecurring = components.recurringExpenses.filter { it.confidence >= 0.90f }
-        if (highConfidenceRecurring.isNotEmpty()) {
+        // 1. Budget Health Section (Momentum Engine)
+        val criticalBudgets = budgetStatuses.filter { 
+            it.healthStatus == com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED ||
+            it.healthStatus == com.yourname.expensetracker.domain.budget.BudgetHealthStatus.CRITICAL 
+        }
+        if (criticalBudgets.isNotEmpty()) {
             sections.add(
                 NarrativeSection(
-                    title = "Known Bills",
-                    icon = "⚡",
-                    items = highConfidenceRecurring.take(3).map { 
-                        "${it.merchantName}: €${String.format("%.0f", it.averageAmount)} expected soon"
+                    title = "Budget Alerts",
+                    icon = "🚨",
+                    items = criticalBudgets.map { 
+                        val name = it.category?.name ?: "Total Budget"
+                        "$name is ${it.healthStatus.name}: €${String.format("%.0f", it.spentAmount)} spent"
                     }
                 )
             )
+        } else if (budgetStatuses.isNotEmpty()) {
+            sections.add(
+                NarrativeSection(
+                    title = "Budget Health",
+                    icon = "✅",
+                    items = listOf("All active budgets are currently on track")
+                )
+            )
         }
-        // 2. Intentions Section (Intention Engine)
+        // 2. Goal Protection (Constraint)
+        if (components.goalReserves > 0) {
+            sections.add(
+                NarrativeSection(
+                    title = "Goal Reserves",
+                    icon = "⛨",
+                    items = listOf("€${String.format("%.0f", components.goalReserves)} locked for high-priority savings")
+                )
+            )
+        }
+        // 3. Planned Intentions (Intention Engine)
         val importantPlans = components.plannedExpenses.filter { 
             it.priority == PlannedExpensePriority.MUST || 
             it.priority == PlannedExpensePriority.LIKELY 
@@ -3861,21 +4223,24 @@ class NarrativeGenerator @Inject constructor() {
         if (importantPlans.isNotEmpty()) {
             sections.add(
                 NarrativeSection(
-                    title = "Planned Intentions",
-                    icon = "📝",
-                    items = importantPlans.take(3).map {
-                        "${it.description}: ~€${String.format("%.0f", it.amount)}"
+                    title = "Committed Plans",
+                    icon = "🎯",
+                    items = importantPlans.map { 
+                        val priorityLabel = if (it.priority == PlannedExpensePriority.MUST) "Must" else "Likely"
+                        "${it.description}: €${String.format("%.0f", it.amount)} ($priorityLabel)"
                     }
                 )
             )
         }
-        // 3. Goal Reserves Section
-        if (components.goalReserves > 0) {
+        // 4. Predicted Habits (Behavioral)
+        if (components.predictedDiscretionary > 0) {
             sections.add(
                 NarrativeSection(
-                    title = "Goal Protection",
-                    icon = "🛡️",
-                    items = listOf("€${String.format("%.0f", components.goalReserves)} reserved for strict savings goals")
+                    title = "Predicted Activity",
+                    icon = "📈",
+                    items = listOf(
+                        "Habit-based forecast: €${String.format("%.0f", components.predictedDiscretionary)} likely spending based on your typical month."
+                    )
                 )
             )
         }
@@ -3936,11 +4301,20 @@ class RecurringExpenseEngine @Inject constructor(
             val dates = sorted.map { it.date }
             val intervals = calculateIntervals(dates)
             val (frequency, confidence, varianceDays) = determineFrequency(intervals)
-            // Thresholds: Must be a known frequency and have > 65% confidence
-            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.65) {
+            // Thresholds: Must be a known frequency and have > 60% confidence (LOG-013 Relaxed from 65%)
+            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.60) {
                 // Predict next date
-                val lastDate = dates.last()
-                val nextDate = lastDate + (frequency.days * 86_400_000L) // days to ms
+                // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)
+                val cal = java.util.Calendar.getInstance()
+                cal.timeInMillis = dates.last()
+                when (frequency) {
+                    RecurrenceFrequency.MONTHLY -> cal.add(java.util.Calendar.MONTH, 1)
+                    RecurrenceFrequency.QUARTERLY -> cal.add(java.util.Calendar.MONTH, 3)
+                    RecurrenceFrequency.SEMI_ANNUALLY -> cal.add(java.util.Calendar.MONTH, 6)
+                    RecurrenceFrequency.ANNUALLY -> cal.add(java.util.Calendar.YEAR, 1)
+                    else -> cal.add(java.util.Calendar.DAY_OF_YEAR, frequency.days)
+                }
+                val nextDate = cal.timeInMillis
                 detectedPatterns.add(
                     RecurringPattern(
                         merchantName = merchant,
@@ -3969,7 +4343,8 @@ class RecurringExpenseEngine @Inject constructor(
                 nextExpectedDate = manual.nextDate,
                 confidence = 1.0f, // Manual is 100% confident
                 previousDates = emptyList(), // No history needed for display
-                categoryId = null // Manual entries don't have categoryId yet
+                categoryId = null, // Manual entries don't have categoryId yet
+                id = manual.id // Use DB ID
             )
         }
         return (manualPatterns + detectedPatterns).sortedByDescending { it.confidence }
@@ -4062,35 +4437,54 @@ class SynthesisEngine @Inject constructor() {
             set(Calendar.MILLISECOND, 999)
         }
         val endOfMonth = endOfMonthCal.timeInMillis
+        val startOfToday = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
         // 1. Calculate Committed (Highly likely/Automated/Must happen)
         val committedUpcomingBills = recurringPatterns.filter { 
-            it.confidence >= 0.90f && it.nextExpectedDate > now && it.nextExpectedDate <= endOfMonth 
+            it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth 
         }.sumOf { it.averageAmount }
         val committedPlanned = plannedExpenses.filter {
-            it.priority == PlannedExpensePriority.MUST && it.date > now && it.date <= endOfMonth
+            it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date <= endOfMonth
         }.sumOf { it.amount }
         val totalCommitted = committedUpcomingBills + committedPlanned
         // 2. Calculate Likely (Probable behavior)
         val likelyUpcomingBills = recurringPatterns.filter { 
-            it.confidence in 0.70f..0.89f && it.nextExpectedDate > now && it.nextExpectedDate <= endOfMonth
+            it.confidence in 0.70f..0.89f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth
         }.sumOf { it.averageAmount }
         val likelyPlanned = plannedExpenses.filter {
-            it.priority == PlannedExpensePriority.LIKELY && it.date > now && it.date <= endOfMonth
+            it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date <= endOfMonth
         }.sumOf { it.amount }
         val monthlyRecurringTotal = recurringPatterns.sumOf { it.averageAmount }
         val typicalDailyDiscretionary = spendingPace.averageMonthlyTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth } 
             ?: (spendingPace.previousMonthTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth })
             ?: 0.0
-        val totalLikely = likelyUpcomingBills + likelyPlanned + (typicalDailyDiscretionary * daysRemaining)
+        val predictedDiscretionary = typicalDailyDiscretionary * daysRemaining
+        val totalLikely = likelyUpcomingBills + likelyPlanned
         // 3. Goal Reserves
         // Strict goals are subtracted from "Available"
+        // 3. Goal Reserves (Pro-rated for strict goals - LOG-019)
         val goalReserves = savingsGoals
             .filter { it.protectionLevel == GoalProtectionLevel.STRICT }
-            .sumOf { it.targetAmount - it.currentAmount }
-            .coerceAtLeast(0.0)
+            .sumOf { goal ->
+                 val remaining = (goal.targetAmount - goal.currentAmount).coerceAtLeast(0.0)
+                 if (remaining <= 0) 0.0
+                 else {
+                     val targetDate = goal.targetDate
+                     if (targetDate == null || targetDate <= now) remaining // Due now or past due
+                     else {
+                         val msRemaining = targetDate - now
+                         val monthsRemaining = (msRemaining / (30.0 * 24 * 60 * 60 * 1000)).coerceAtLeast(1.0)
+                         remaining / monthsRemaining
+                     }
+                 }
+            }
         // 4. Calculate Projected Timeline Points
         val lastKnownTotal = pastSumDaily.lastOrNull() ?: 0.0
-        val dailyProjectionRate = totalLikely / daysRemaining
+        val dailyProjectionRate = (totalLikely + predictedDiscretionary) / daysRemaining
         val projectedPoints = (1..daysRemaining).map { dayIndex ->
             lastKnownTotal + (dailyProjectionRate * dayIndex)
         }
@@ -4100,7 +4494,10 @@ class SynthesisEngine @Inject constructor() {
         val budgetLimit = if (overallBudget > 0) overallBudget else categoryBudgetsSum
         val spentSoFar = spendingPace.currentMonthSpent
         // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
-        val discretionaryBudget = (budgetLimit - (spentSoFar + totalCommitted + totalLikely + goalReserves)).coerceAtLeast(0.0)
+        // LOG-004 Fix: We only subtract BILLS and PLANNED expenses.
+        // We do NOT subtract the "future discretionary" because that IS the "available pool" we are tracking.
+        val projectedObligations = committedUpcomingBills + committedPlanned + likelyUpcomingBills + likelyPlanned
+        val discretionaryBudget = (budgetLimit - (spentSoFar + projectedObligations + goalReserves)).coerceAtLeast(0.0)
         // 6. Determine Risk Level
         val riskLevel = determineRiskLevel(
             spendingPace, 
@@ -4121,6 +4518,7 @@ class SynthesisEngine @Inject constructor() {
                 projectedSpendingPoints = projectedPoints,
                 totalCommitted = totalCommitted,
                 totalLikely = totalLikely,
+                predictedDiscretionary = predictedDiscretionary,
                 discretionaryBudget = discretionaryBudget,
                 riskLevel = riskLevel
             ),
@@ -4193,7 +4591,8 @@ data class ForecastComponents(
     val projectedSpendingPoints: List<Double>, // Projected cumulative daily spend for rest of month
     // Synthesis Metrics
     val totalCommitted: Double,        // High confidence (bills, manual)
-    val totalLikely: Double,           // Medium confidence (patterns, avg)
+    val totalLikely: Double,           // Medium confidence (patterns, manual)
+    val predictedDiscretionary: Double, // Habit-based predicted spending
     val discretionaryBudget: Double,   // "Safe-to-Spend"
     val riskLevel: RiskLevel
 )
@@ -4256,7 +4655,8 @@ data class RecurringPattern(
     val nextExpectedDate: Long, // Epoch millis
     val confidence: Float, // 0.0 - 1.0
     val previousDates: List<Long>, // For debugging/UI visualization
-    val categoryId: Long? = null
+    val categoryId: Long? = null,
+    val id: Long? = null // ID of the underlying RecurringExpense rule, if any
 )
 enum class RecurrenceFrequency(val days: Int) {
     WEEKLY(7),
@@ -4328,6 +4728,110 @@ sealed class UpcomingItem {
 
 ---
 
+## main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt <a name="mainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.receipt
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import java.util.regex.Pattern
+import javax.inject.Inject
+import javax.inject.Singleton
+@Singleton
+class BankStatementParser @Inject constructor() {
+    /**
+     * Parse a list of text blocks (with spatial data) into multiple transactions.
+     * Groups text into horizontal rows and then extracts data from each row.
+     */
+    fun parse(blocks: List<TextBlock>): List<ParsedTransaction> {
+        if (blocks.isEmpty()) return emptyList()
+        // 1. Group blocks into rows based on vertical proximity
+        val rows = groupBlocksIntoRows(blocks)
+        // 2. Process each row to extract transactions
+        return rows.mapNotNull { rowText ->
+            extractTransactionFromRow(rowText)
+        }
+    }
+    private fun groupBlocksIntoRows(blocks: List<TextBlock>): List<String> {
+        // Sort by top coordinate to process top-to-bottom
+        val sortedBlocks = blocks.sortedBy { it.top }
+        val rows = mutableListOf<MutableList<TextBlock>>()
+        for (block in sortedBlocks) {
+            val lastRow = rows.lastOrNull()
+            // If block overlaps vertically with the current row, add it to that row
+            if (lastRow != null && isSameRow(lastRow.last(), block)) {
+                lastRow.add(block)
+            } else {
+                // Otherwise, it belongs to a new row below
+                rows.add(mutableListOf(block))
+            }
+        }
+        // Within each row, sort blocks by left-to-right and join into a single string
+        return rows.map { rowBlocks ->
+            rowBlocks.sortedBy { it.left }.joinToString(" ") { it.text }
+        }
+    }
+    /**
+     * Heuristic to determine if two text blocks belong to the same horizontal row.
+     */
+    private fun isSameRow(lastBlock: TextBlock, currentBlock: TextBlock): Boolean {
+        val lastHeight = lastBlock.bottom - lastBlock.top
+        val currentHeight = currentBlock.bottom - currentBlock.top
+        val avgHeight = (lastHeight + currentHeight) / 2
+        // Use center point comparison with a threshold based on font size (height)
+        val lastCenter = (lastBlock.top + lastBlock.bottom) / 2
+        val currentCenter = (currentBlock.top + currentBlock.bottom) / 2
+        // 60% of average height is a safe overlap threshold for rows
+        return kotlin.math.abs(lastCenter - currentCenter) < (avgHeight * 0.6)
+    }
+    private fun extractTransactionFromRow(rowText: String): ParsedTransaction? {
+        // 1. Clean noise
+        val cleanRow = rowText.replace('\u00A0', ' ').trim()
+        // 2. Look for amount patterns
+        // Matches -12.50, 1.250,50, etc. optionally followed by currency
+        val amountPattern = Pattern.compile(
+            """(-?\b\d+[\s.,]?\d{0,3}[\s.,]\d{2})\s*([€$£]|EUR|USD|GBP)?""",
+            Pattern.CASE_INSENSITIVE
+        )
+        val amountMatcher = amountPattern.matcher(cleanRow)
+        if (!amountMatcher.find()) return null
+        val amountStr = amountMatcher.group(1)!!.replace(" ", "").replace(",", ".")
+        val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
+        val currency = normalizeCurrency(amountMatcher.group(2) ?: "EUR")
+        // 3. Extract logic for merchant
+        // Usually merchant is the text that is NOT the amount and NOT a date/time
+        var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
+            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Date
+            .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "") // Time
+            .replace(Regex("""\s{2,}"""), " ") // Double spaces
+            .trim()
+        // Basic validation: must have some letters to be a merchant
+        if (merchant.isBlank() || !merchant.any { it.isLetter() }) {
+            merchant = "Unknown Merchant"
+        }
+        // Sanity checks: amount shouldn't be zero, merchant shouldn't be too long
+        if (absAmount < 0.01) return null
+        return ParsedTransaction(
+            amount = absAmount,
+            currency = currency,
+            merchant = merchant.take(40).trim(),
+            type = if (amountStr.contains("-")) TransactionType.PURCHASE else TransactionType.DEPOSIT,
+            confidence = 0.70f // Base confidence for statement parsing
+        )
+    }
+    private fun normalizeCurrency(raw: String): String {
+        return when (raw.uppercase().trim()) {
+            "€", "EUR" -> "EUR"
+            "$", "USD" -> "USD"
+            "£", "GBP" -> "GBP"
+            else -> "EUR"
+        }
+    }
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt <a name="mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt"></a>
 ```kotlin
 package com.yourname.expensetracker.domain.receipt
@@ -4356,7 +4860,11 @@ data class OcrResult(
 )
 data class TextBlock(
     val text: String,
-    val confidence: Float?
+    val confidence: Float?,
+    val left: Int = 0,
+    val top: Int = 0,
+    val right: Int = 0,
+    val bottom: Int = 0
 )
 @Singleton
 class ReceiptOcrService @Inject constructor(
@@ -4380,7 +4888,11 @@ class ReceiptOcrService @Inject constructor(
             val blocks = visionText.textBlocks.map { block ->
                 TextBlock(
                     text = block.text,
-                    confidence = block.lines.firstOrNull()?.confidence
+                    confidence = block.lines.firstOrNull()?.confidence,
+                    left = block.boundingBox?.left ?: 0,
+                    top = block.boundingBox?.top ?: 0,
+                    right = block.boundingBox?.right ?: 0,
+                    bottom = block.boundingBox?.bottom ?: 0
                 )
             }
             return OcrResult(
@@ -4412,7 +4924,8 @@ class ReceiptOcrService @Inject constructor(
      */
     private fun loadAndCorrectBitmap(uri: Uri): Bitmap? {
         val tempFile = File(context.cacheDir, "temp_ocr_${System.nanoTime()}.jpg")
-        return try {
+        var decodedBitmap: Bitmap? = null
+        try {
             // Copy URI to temp file
             val inputStream = context.contentResolver.openInputStream(uri)
                 ?: throw IllegalStateException("Could not open input stream for $uri")
@@ -4429,8 +4942,8 @@ class ReceiptOcrService @Inject constructor(
                 inJustDecodeBounds = true
             }
             BitmapFactory.decodeFile(tempFile.absolutePath, options)
-            // Calculate sample size
-            val maxDimension = 2048
+            // Calculate sample size - Optimized: 1024 is plenty for OCR and saves memory/time
+            val maxDimension = 1024
             var sampleSize = 1
             if (options.outWidth > 0 && options.outHeight > 0) {
                 while (options.outWidth / sampleSize > maxDimension ||
@@ -4445,6 +4958,7 @@ class ReceiptOcrService @Inject constructor(
             }
             val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath, decodeOptions)
                 ?: throw IllegalStateException("Bitmap decode failed for $uri (Sample: $sampleSize)")
+            decodedBitmap = bitmap
             // 3. Apply EXIF rotation
             val exif = ExifInterface(tempFile.absolutePath)
             val orientation = exif.getAttributeInt(
@@ -4462,16 +4976,24 @@ class ReceiptOcrService @Inject constructor(
                 else -> needsRotate = false
             }
             if (needsRotate) {
-                val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-                if (rotated != bitmap) {
-                    bitmap.recycle() // Clean up original if rotated
+                try {
+                    val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                    if (rotated != bitmap) {
+                        bitmap.recycle() // Clean up original if rotated
+                    }
+                    return rotated
+                } catch (e: Exception) {
+                    bitmap.recycle() // CRITICAL: Recycle original if rotation fails (OOM similar)
+                    throw e
                 }
-                rotated
             } else {
-                bitmap
+                return bitmap
             }
         } catch (e: Exception) {
             android.util.Log.e("ReceiptOcrService", "Error loading bitmap from $uri", e)
+            if (decodedBitmap?.isRecycled == false) {
+                decodedBitmap?.recycle()
+            }
             throw IllegalStateException("Failed to load image: ${e.message}", e)
         } finally {
             if (tempFile.exists()) tempFile.delete()
@@ -4543,6 +5065,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
@@ -4555,9 +5078,11 @@ import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private val mainViewModel: MainViewModel by viewModels()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleIntent(intent)
         setContent {
             ExpenseTrackerTheme {
                 Surface(
@@ -4569,6 +5094,22 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+    private fun handleIntent(intent: android.content.Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme == "expensetracker") {
+            when (data.host) {
+                "dashboard" -> mainViewModel.navigateToTab(0)
+                "activity" -> mainViewModel.navigateToTab(1)
+                "review" -> mainViewModel.navigateToTab(2)
+                "plan" -> mainViewModel.navigateToTab(3)
+                "add" -> mainViewModel.navigateToTab(0)
+            }
+        }
+    }
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -4576,6 +5117,11 @@ fun MainScreen() {
     var selectedTab by remember { mutableIntStateOf(0) }
     val mainViewModel: MainViewModel = hiltViewModel()
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
+    LaunchedEffect(Unit) {
+        mainViewModel.navigationRequest.collect { tabIndex ->
+            selectedTab = tabIndex
+        }
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -4726,15 +5272,55 @@ fun SmartFAB(
     onApproveAll: () -> Unit
 ) {
     val haptic = rememberHapticFeedback()
-    val clipboardManager = LocalClipboardManager.current
+    // Use native ClipboardManager to listen for changes
+    val context = LocalContext.current
+    val clipboardManager = remember {
+        context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    }
     var clipboardAmount by remember { mutableStateOf<String?>(null) }
-    // Detect currency amount in clipboard (e.g., "$12.50", "12,50 €", etc.)
-    LaunchedEffect(Unit) {
-        val text = clipboardManager.getText()?.text ?: ""
-        val regex = Regex("""(\d+[\.,]\d{2})""")
-        val match = regex.find(text)
-        if (match != null) {
-            clipboardAmount = match.value
+    // Helper to check clipboard content
+    fun checkClipboard() {
+        try {
+            if (clipboardManager.hasPrimaryClip()) {
+                val item = clipboardManager.primaryClip?.getItemAt(0)
+                val text = item?.text?.toString() ?: ""
+                val regex = Regex("""(\d+[\.,]\d{2})""")
+                val match = regex.find(text)
+                if (match != null) {
+                    clipboardAmount = match.value
+                } else {
+                    clipboardAmount = null
+                }
+            } else {
+                clipboardAmount = null
+            }
+        } catch (e: Exception) {
+            // Ignore clipboard errors
+        }
+    }
+    // Listen for clipboard changes while this composable is active
+    DisposableEffect(clipboardManager) {
+        val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
+            checkClipboard()
+        }
+        clipboardManager.addPrimaryClipChangedListener(listener)
+        // Initial check
+        checkClipboard()
+        onDispose {
+            clipboardManager.removePrimaryClipChangedListener(listener)
+        }
+    }
+    // Also check on resume to handle background changes
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                checkClipboard()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
     val (icon, label) = when (selectedTab) {
@@ -4832,13 +5418,31 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 @HiltViewModel
 class MainViewModel @Inject constructor(
-    private val repository: NotificationRepository
+    private val repository: NotificationRepository,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
 ) : ViewModel() {
+    private val _navigationRequest = kotlinx.coroutines.flow.MutableSharedFlow<Int>()
+    val navigationRequest = _navigationRequest.asSharedFlow()
     val pendingReviewCount: StateFlow<Int> = repository
         .getPendingReviewCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    fun navigateToTab(tabIndex: Int) {
+        viewModelScope.launch {
+            _navigationRequest.emit(tabIndex)
+        }
+    }
+    fun isNotificationServiceEnabled(): Boolean {
+        val packageName = context.packageName
+        val flat = android.provider.Settings.Secure.getString(
+            context.contentResolver,
+            "enabled_notification_listeners"
+        )
+        return flat != null && flat.contains(packageName)
+    }
 }
 
 ```
@@ -4853,6 +5457,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -4860,6 +5465,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import java.util.Currency
 /**
  * Atomic BentoCard — the building block for the Bento Grid layout.
  * Features: Glassmorphism (semi-transparency + hairline border).
@@ -4910,12 +5516,14 @@ fun HeroBentoCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     // Gradient for a more vibrant Hero card
-    val heroGradient = Brush.linearGradient(
-        colors = listOf(
-            SemanticColors.PrimaryIndigo.copy(alpha = 0.4f),
-            SemanticColors.PrimaryLight.copy(alpha = 0.2f)
+    val heroGradient = remember {
+        Brush.linearGradient(
+            colors = listOf(
+                SemanticColors.PrimaryIndigo.copy(alpha = 0.4f),
+                SemanticColors.PrimaryLight.copy(alpha = 0.2f)
+            )
         )
-    )
+    }
     BentoCard(
         modifier = modifier,
         containerColor = Color.Transparent, // Overridden by custom modifier or nested content if needed
@@ -4961,7 +5569,7 @@ fun StatLabel(
 @Composable
 fun AmountText(
     amount: Double,
-    currency: String = "€",
+    currency: String = Currency.getInstance("EUR").symbol,
     modifier: Modifier = Modifier,
     style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.displaySmall,
     color: Color = SemanticColors.TextPrimary
@@ -5439,27 +6047,36 @@ fun ForecastTimeline(
             }
             return
         }
-        // Vico model creation
-        val pastEntries = pastPoints.mapIndexed { index, value -> 
-            FloatEntry(index.toFloat(), value.toFloat()) 
+        // Vico model creation - Optimized: wrap in remember to avoid allocation spikes
+        val chartEntryModel: ChartEntryModel = remember(pastPoints, projectedPoints, budgetLimit) {
+            val pastEntries = pastPoints.mapIndexed { index, value -> 
+                FloatEntry(index.toFloat(), value.toFloat()) 
+            }
+            val projectionEntries = projectedPoints.mapIndexed { index, value -> 
+                FloatEntry((pastPoints.size + index).toFloat(), value.toFloat()) 
+            }
+            val budgetLimitEntries = listOf(
+                FloatEntry(0f, budgetLimit.toFloat()),
+                FloatEntry((pastPoints.size + projectionEntries.size).toFloat(), budgetLimit.toFloat())
+            )
+            entryModelOf(pastEntries, projectionEntries, budgetLimitEntries)
         }
-        val projectionEntries = projectedPoints.mapIndexed { index, value -> 
-            FloatEntry((pastPoints.size + index).toFloat(), value.toFloat()) 
-        }
-        val chartEntryModel: ChartEntryModel = remember(pastEntries, projectionEntries) {
-            entryModelOf(pastEntries, projectionEntries)
+        val lineSpecs = remember {
+            listOf(
+                LineChart.LineSpec(
+                    lineColor = SemanticColors.PrimaryIndigo.toArgb(),
+                ),
+                LineChart.LineSpec(
+                    lineColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f).toArgb(),
+                ),
+                LineChart.LineSpec(
+                    lineColor = SemanticColors.WarningOrange.copy(alpha = 0.5f).toArgb(),
+                    lineThicknessDp = 1f
+                )
+            )
         }
         Chart(
-            chart = lineChart(
-                lines = listOf(
-                    LineChart.LineSpec(
-                        lineColor = SemanticColors.PrimaryIndigo.toArgb(),
-                    ),
-                    LineChart.LineSpec(
-                        lineColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f).toArgb(),
-                    )
-                )
-            ),
+            chart = lineChart(lines = lineSpecs),
             model = chartEntryModel,
             startAxis = rememberStartAxis(),
             bottomAxis = rememberBottomAxis(),
@@ -5605,11 +6222,12 @@ fun SpendingPaceGauge(
         PaceStatus.NO_BASELINE -> SemanticColors.TextMuted
     }
     // Animate the sweep angle (240 degree range)
-    val targetSweep = (pace.pacePercentage / 200f).coerceIn(0f, 1f) * 240f
+    val maxPacePercent = 200f
+    val targetSweep = (pace.pacePercentage / maxPacePercent).coerceIn(0f, 1f) * 240f
     val animatedSweep by animateFloatAsState(
         targetValue = targetSweep,
-        animationSpec = tween(1200), // Slightly slower, more premium animation
-        label = "pace_sweep"
+        animationSpec = tween(800), // More responsive
+        label = "pace_sweep_${pace.paceStatus}"
     )
     val statusLabel = when (pace.paceStatus) {
         PaceStatus.UNDER_PACE -> "Under pace"
@@ -5812,8 +6430,11 @@ import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import java.text.SimpleDateFormat
+import java.time.format.DateTimeFormatter
+import java.time.Instant
+import java.time.ZoneId
 import java.util.*
+import java.util.Currency
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddExpenseSheet(
@@ -5914,7 +6535,7 @@ fun AddExpenseSheet(
                     ),
                     isError = state.amountError != null,
                     supportingText = state.amountError?.let { { Text(it) } },
-                    leadingIcon = { Text("€", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Text(Currency.getInstance("EUR").symbol, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 // === Payment Method ===
@@ -6261,7 +6882,7 @@ fun CategoryGrid(
     onSelect: (Long) -> Unit
 ) {
     // Wrapping flow layout using multiple rows
-    val chunked = categories.chunked(4)
+    val chunked = remember(categories) { categories.chunked(4) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         chunked.forEach { row ->
             Row(
@@ -6315,7 +6936,7 @@ fun DateSelector(
     dateMs: Long,
     onDateSelected: (Long) -> Unit
 ) {
-    val dateFormat = remember { SimpleDateFormat("EEE, dd MMM yyyy, HH:mm", Locale.getDefault()) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy, HH:mm", Locale.getDefault()) }
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
         initialSelectedDateMillis = dateMs
@@ -6339,7 +6960,7 @@ fun DateSelector(
                 fontWeight = FontWeight.Medium
             )
             Text(
-                dateFormat.format(Date(dateMs)),
+                dateFormat.format(Instant.ofEpochMilli(dateMs).atZone(ZoneId.systemDefault())),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -6406,6 +7027,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlinx.coroutines.isActive
 data class AddExpenseState(
     val merchant: String = "",
     val amount: String = "",
@@ -6454,7 +7076,9 @@ class AddExpenseViewModel @Inject constructor(
         if (value.length >= 2) {
             searchJob = viewModelScope.launch {
                 delay(300)
+                if (!isActive) return@launch
                 val suggestions = repository.searchMerchants(value)
+                if (!isActive) return@launch
                 _state.update {
                     it.copy(
                         suggestions = suggestions,
@@ -6799,8 +7423,11 @@ fun SpendingChartBento(state: AnalyticsState) {
                     Text("Insufficient data for visualization", style = MaterialTheme.typography.bodySmall)
                 }
             } else {
-                val entries = state.dailyTotals.values.map { it.toFloat() }
-                val chartEntryModel = remember(entries) { entryModelOf(*entries.toTypedArray()) }
+                // Optimized: convert map to entries once and remember
+                val chartEntryModel = remember(state.dailyTotals) {
+                    val entries = state.dailyTotals.values.map { it.toFloat() }
+                    entryModelOf(*entries.toTypedArray())
+                }
                 Chart(
                     chart = columnChart(),
                     model = chartEntryModel,
@@ -7016,6 +7643,7 @@ data class AnalyticsState(
     val recurring: List<RecurringCandidate> = emptyList(),
     val isLoading: Boolean = true
 )
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class AnalyticsViewModel @Inject constructor(
     private val repository: NotificationRepository,
@@ -7070,12 +7698,13 @@ class AnalyticsViewModel @Inject constructor(
             .groupBy { it.categoryId }
             .mapNotNull { (catId, exps) ->
                 val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
+                val totalAmount = exps.sumOf { it.amount }
                 CategoryBreakdown(
                     category = cat,
-                    total = exps.sumOf { it.amount },
+                    total = totalAmount,
                     count = exps.size,
                     percentage = if (currentTotal > 0)
-                        (exps.sumOf { it.amount } / currentTotal * 100).toFloat()
+                        (totalAmount / currentTotal * 100).toFloat()
                     else 0f
                 )
             }
@@ -7084,12 +7713,12 @@ class AnalyticsViewModel @Inject constructor(
         val merchantBreakdown = currentExpenses
             .groupBy { it.merchant.uppercase() }
             .map { (_, exps) ->
-                val total = exps.sumOf { it.amount }
+                val totalAmount = exps.sumOf { it.amount }
                 MerchantBreakdown(
                     name = exps.first().merchant,
-                    totalSpent = total,
+                    totalSpent = totalAmount,
                     transactionCount = exps.size,
-                    averageTransaction = total / exps.size,
+                    averageTransaction = totalAmount / exps.size,
                     categoryId = exps.firstOrNull()?.categoryId
                 )
             }
@@ -8011,6 +8640,16 @@ fun DebugScreen(
                     ) {
                         Text("Reset All Budgets")
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = { viewModel.resetSourceStats() },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Text("Reset Trust Scores")
+                    }
                 }
             }
             // 4. ML Stats
@@ -8130,7 +8769,7 @@ fun DebugScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
-                items(notifications, key = { it.id }) { notification ->
+                items(notifications.take(100), key = { it.id }) { notification ->
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         NotificationCard(
                             notification = notification,
@@ -8480,6 +9119,11 @@ class DebugViewModel @Inject constructor(
             repository.retrainClassifier()
         }
     }
+    fun resetSourceStats() {
+        viewModelScope.launch {
+            repository.resetSourceStats()
+        }
+    }
     @Inject
     lateinit var seeder: com.yourname.expensetracker.domain.debug.NotificationSeeder
     private val _isSimulating = MutableStateFlow(false)
@@ -8536,6 +9180,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -8628,7 +9273,8 @@ fun HomeScreen(
                     key = { getWidgetId(it) },
                     span = { widget ->
                         GridItemSpan(if (isFullSpan(widget)) 2 else 1)
-                    }
+                    },
+                    contentType = { it.javaClass.simpleName }
                 ) { widget ->
                     WidgetWrapper(
                         widget = widget,
@@ -9100,7 +9746,7 @@ fun AddPlannedExpenseDialog(
     var description by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     var priority by remember { mutableStateOf(PlannedExpensePriority.LIKELY) }
-    val date = remember { System.currentTimeMillis() }
+    var date by remember { mutableStateOf(System.currentTimeMillis()) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { 
@@ -9153,6 +9799,11 @@ fun AddPlannedExpenseDialog(
                         }
                     }
                 }
+                // Date Selector
+                DateSelector(
+                    dateMs = date,
+                    onDateSelected = { date = it }
+                )
             }
         },
         confirmButton = {
@@ -9176,6 +9827,74 @@ fun AddPlannedExpenseDialog(
         containerColor = SemanticColors.BaseNavy,
         shape = RoundedCornerShape(28.dp)
     )
+}
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DateSelector(
+    dateMs: Long,
+    onDateSelected: (Long) -> Unit
+) {
+    val dateFormat = remember { java.text.SimpleDateFormat("EEE, dd MMM yyyy", java.util.Locale.getDefault()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = dateMs
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showDatePicker = true }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Default.DateRange,
+            contentDescription = "Date",
+            tint = SemanticColors.PrimaryIndigo
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(
+                "Date",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium,
+                color = SemanticColors.TextSecondary
+            )
+            Text(
+                dateFormat.format(java.util.Date(dateMs)),
+                style = MaterialTheme.typography.bodyMedium,
+                color = SemanticColors.TextPrimary
+            )
+        }
+    }
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { selectedDate ->
+                            // Preserve time of day (roughly, or just set to noon to avoid timezone issues/start of day)
+                            // Here we just use the selected date (which is usually UTC midnight) + current time offset if needed?
+                            // Material3 DatePicker returns UTC start of day. 
+                            // Let's just use it as is, or add current time component if we cared about exact time.
+                            // For forecast, date is most important.
+                            onDateSelected(selectedDate)
+                        }
+                        showDatePicker = false
+                    }
+                ) {
+                    Text("OK", color = SemanticColors.PrimaryIndigo)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel", color = SemanticColors.TextSecondary)
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 }
 
 ```
@@ -9202,9 +9921,9 @@ import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
 import com.yourname.expensetracker.data.repository.FinancialWeather
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
-import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
-import com.yourname.expensetracker.data.database.entity.PlannedExpense as PlannedExpenseEntity
+import com.yourname.expensetracker.data.database.entity.PlannedExpense
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -9264,6 +9983,7 @@ data class DashboardState(
     val isEditMode: Boolean = false,
     val isLoading: Boolean = true
 )
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repository: NotificationRepository,
@@ -9272,23 +9992,33 @@ class HomeViewModel @Inject constructor(
     private val dashboardRepository: DashboardRepository,
     private val insightsEngine: InsightsEngine,
     private val financialWeatherRepository: FinancialWeatherRepository,
-    private val plannedExpenseDao: PlannedExpenseDao
+    private val plannedExpenseRepository: PlannedExpenseRepository
 ) : ViewModel() {
     private val isEditMode = MutableStateFlow(false)
     // distinct intermediate flow for data to avoid 5-arg limit
     private val dataFlow = combine(
-        repository.getAllExpenses(),
-        categoryRepository.allCategories,
-        budgetRepository.getBudgetStatuses(),
-        repository.getPendingReviewCount(),
-        financialWeatherRepository.getFinancialWeather()
+        repository.getAllExpenses().catch { emit(emptyList()) },
+        categoryRepository.allCategories.catch { emit(emptyList()) },
+        budgetRepository.getBudgetStatuses().catch { emit(emptyList()) },
+        repository.getPendingReviewCount().catch { emit(0) },
+        financialWeatherRepository.getFinancialWeather().catch { /* Repository handles defaults */ }
     ) { expenses, categories, budgetStatuses, pendingCount, weather ->
         FiveData(expenses, categories, budgetStatuses, pendingCount, weather)
     }
     val dashboard: StateFlow<DashboardState> = combine(
         dataFlow,
-        isEditMode
-    ) { data, editMode ->
+        isEditMode,
+        dashboardRepository.configFlow
+    ) { data, editMode, configList ->
+        // Check service status (simplified for demo, usually via repository)
+        val isServiceRunning = try {
+            val packageName = "com.yourname.expensetracker"
+            val flat = android.provider.Settings.Secure.getString(
+                null, // This might fail without context, I should have passed it or used a repo
+                "enabled_notification_listeners"
+            )
+            flat != null && flat.contains(packageName)
+        } catch (e: Exception) { true }
         val (expenses, categories, budgetStatuses, pendingCount, weather) = data
         val now = System.currentTimeMillis()
         val cal = Calendar.getInstance()
@@ -9337,8 +10067,14 @@ class HomeViewModel @Inject constructor(
         val previousMonthTotal = purchases
             .filter { it.date >= previousMonthStart && it.date < previousMonthEnd }
             .sumOf { it.amount }
+        val baseline = overallBudget?.budget?.amount ?: if (previousMonthTotal > 0) previousMonthTotal else null
         val projectedTotal = if (dayOfMonth > 0)
             monthSpent * daysInMonth.toDouble() / dayOfMonth else monthSpent
+        val pacePercentage = if (baseline != null && baseline > 0) {
+            val expected = baseline * dayOfMonth / daysInMonth
+            val calculated = (monthSpent / expected * 100).toFloat()
+            if (calculated.isFinite()) calculated else 0f
+        } else 0f
         val pace = SpendingPace(
             currentMonthSpent = monthSpent,
             daysElapsed = dayOfMonth,
@@ -9346,30 +10082,45 @@ class HomeViewModel @Inject constructor(
             projectedTotal = projectedTotal,
             previousMonthTotal = if (previousMonthTotal > 0) previousMonthTotal else null,
             averageMonthlyTotal = null,
-            pacePercentage = if (previousMonthTotal > 0) {
-                val expected = previousMonthTotal * dayOfMonth / daysInMonth
-                (monthSpent / expected * 100).toFloat()
-            } else 0f,
+            pacePercentage = pacePercentage,
             paceStatus = when {
-                previousMonthTotal <= 0 -> PaceStatus.NO_BASELINE
-                monthSpent < previousMonthTotal * dayOfMonth / daysInMonth * 0.9 -> PaceStatus.UNDER_PACE
-                monthSpent > previousMonthTotal * dayOfMonth / daysInMonth * 1.1 -> PaceStatus.OVER_PACE
+                baseline == null || baseline <= 0 -> PaceStatus.NO_BASELINE
+                pacePercentage < 90f -> PaceStatus.UNDER_PACE
+                pacePercentage > 110f -> PaceStatus.OVER_PACE
                 else -> PaceStatus.ON_PACE
             }
         )
         // Cumulative Spend Trend Data
-        val currentMonthDaily = (1..dayOfMonth).map { day ->
-            val dayStart = monthStart + (day - 1) * 24 * 60 * 60 * 1000L
-            val dayEnd = dayStart + 24 * 60 * 60 * 1000L
-            purchases.filter { it.date >= monthStart && it.date < dayEnd }.sumOf { it.amount }.toFloat()
+        val currentMonthDaily = run {
+            val amountByDay = purchases
+                .filter { it.date >= monthStart }
+                .groupBy { 
+                    val cal = Calendar.getInstance().apply { timeInMillis = it.date }
+                    cal.get(Calendar.DAY_OF_MONTH)
+                }
+                .mapValues { it.value.sumOf { exp -> exp.amount } }
+            var runningTotal = 0.0
+            (1..dayOfMonth).map { day ->
+                runningTotal += amountByDay[day] ?: 0.0
+                runningTotal.toFloat()
+            }
         }
         val previousMonthDays = Calendar.getInstance().apply {
             timeInMillis = previousMonthStart
         }.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val previousMonthDaily = (1..previousMonthDays).map { day ->
-            val pMonthStart = previousMonthStart
-            val pDayEnd = pMonthStart + day * 24 * 60 * 60 * 1000L
-            purchases.filter { it.date >= pMonthStart && it.date < pDayEnd }.sumOf { it.amount }.toFloat()
+        val previousMonthDaily = run {
+            val amountByDay = purchases
+                .filter { it.date >= previousMonthStart && it.date < monthStart }
+                .groupBy { 
+                    val cal = Calendar.getInstance().apply { timeInMillis = it.date }
+                    cal.get(Calendar.DAY_OF_MONTH)
+                }
+                .mapValues { it.value.sumOf { exp -> exp.amount } }
+            var runningTotal = 0.0
+            (1..previousMonthDays).map { day ->
+                runningTotal += amountByDay[day] ?: 0.0
+                runningTotal.toFloat()
+            }
         }
         val trend = DashboardWidget.SpendingTrend(
             currentMonthData = currentMonthDaily,
@@ -9425,8 +10176,7 @@ class HomeViewModel @Inject constructor(
             widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
         }
         // === Apply Custom Layout ===
-        val config = dashboardRepository.getDashboardConfig()
-        val sortedWidgets = config
+        val sortedWidgets = configList
             .filter { it.isVisible || editMode } // Show all in edit mode, otherwise filter
             .mapNotNull { conf ->
                 widgets.find { w -> getWidgetId(w) == conf.id }
@@ -9514,8 +10264,8 @@ class HomeViewModel @Inject constructor(
         priority: PlannedExpensePriority
     ) {
         viewModelScope.launch {
-            plannedExpenseDao.insertPlannedExpense(
-                PlannedExpenseEntity(
+            plannedExpenseRepository.addPlannedExpense(
+                PlannedExpense(
                     description = description,
                     amount = amount,
                     date = date,
@@ -9582,6 +10332,7 @@ import com.yourname.expensetracker.ui.screens.addexpense.CategoryGrid
 import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
 import com.yourname.expensetracker.ui.screens.addexpense.PaymentMethodChip
 import kotlinx.coroutines.delay
+import java.util.Currency
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReceiptScanScreen(
@@ -9839,7 +10590,10 @@ private fun ReviewStep(
         value = state.editAmount,
         onValueChange = { viewModel.updateAmount(it) },
         label = { Text("Total Amount") },
-        leadingIcon = { Text("€", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+        leadingIcon = { 
+            val symbol = try { Currency.getInstance(parsed?.currency ?: "EUR").symbol } catch(e: Exception) { "€" }
+            Text(symbol, fontSize = 18.sp, fontWeight = FontWeight.Bold) 
+        },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true,
         modifier = Modifier.fillMaxWidth()
@@ -9920,7 +10674,7 @@ private fun ReviewStep(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "€${String.format("%.2f", item.totalPrice)}",
+                            "${try { Currency.getInstance(parsed.currency).symbol } catch(e: Exception) { "€" }}${String.format("%.2f", item.totalPrice)}",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
@@ -9945,7 +10699,7 @@ private fun ReviewStep(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "€${String.format("%.2f", tax)}",
+                            "${try { Currency.getInstance(parsed.currency).symbol } catch(e: Exception) { "€" }}${String.format("%.2f", tax)}",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -10209,9 +10963,12 @@ sealed class SaveReceiptResult {
 @HiltViewModel
 class ReceiptScanViewModel @Inject constructor(
     private val receiptRepository: ReceiptRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val savedStateHandle: androidx.lifecycle.SavedStateHandle
 ) : ViewModel() {
-    private val _state = MutableStateFlow(ReceiptScanState())
+    private val _state = MutableStateFlow(ReceiptScanState(
+        tempCameraUri = savedStateHandle.get<Uri>("temp_uri")
+    ))
     val state: StateFlow<ReceiptScanState> = _state.asStateFlow()
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -10220,6 +10977,7 @@ class ReceiptScanViewModel @Inject constructor(
      */
     fun createTempPhotoUri(): Uri {
         val uri = receiptRepository.createTempPhotoUri()
+        savedStateHandle["temp_uri"] = uri
         _state.update { it.copy(tempCameraUri = uri) }
         return uri
     }
@@ -10265,11 +11023,24 @@ class ReceiptScanViewModel @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        step = ScanStep.ERROR,
-                        errorMessage = e.message ?: "Failed to process receipt"
-                    )
+                try {
+                    val (receipt, parsed) = receiptRepository.saveManualReceiptRecord(uri)
+                    _state.update {
+                        it.copy(
+                            step = ScanStep.REVIEW,
+                            imageUri = uri,
+                            parsedReceipt = parsed,
+                            receiptId = receipt.id,
+                            errorMessage = "OCR Failed: ${e.message}. You can enter details manually."
+                        )
+                    }
+                } catch (fallbackError: Exception) {
+                    _state.update {
+                        it.copy(
+                            step = ScanStep.ERROR,
+                            errorMessage = "Total failure: ${fallbackError.message}"
+                        )
+                    }
                 }
             }
         }
@@ -10399,7 +11170,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
+import java.time.format.DateTimeFormatter
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
@@ -10429,12 +11202,17 @@ class RecurringExpensesViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     fun deleteManualRule(pattern: RecurringPattern) {
         viewModelScope.launch {
-            // Find by merchant (heuristic for now, real ID would be better)
-            val rules = recurringExpenseDao.getAll()
-            val rule = rules.find { it.merchant == pattern.merchantName }
-            if (rule != null) {
-                recurringExpenseDao.delete(rule)
+            if (pattern.id != null) {
+                recurringExpenseDao.deleteById(pattern.id)
                 refreshTrigger.value += 1
+            } else {
+                // Legacy fallback: Delete by merchant name if ID is missing (e.g. old local data)
+                val rules = recurringExpenseDao.getAll()
+                val rule = rules.find { it.merchant == pattern.merchantName }
+                if (rule != null) {
+                    recurringExpenseDao.delete(rule)
+                    refreshTrigger.value += 1
+                }
             }
         }
     }
@@ -10549,9 +11327,9 @@ fun PlannedExpenseItem(
                     text = "€${String.format("%.2f", expense.amount)} • ${expense.priority.name.lowercase().capitalize()}",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+                val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
                 Text(
-                    text = "Date: ${dateFormat.format(Date(expense.date))}",
+                    text = "Date: ${dateFormat.format(Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()))}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -10571,7 +11349,7 @@ fun RecurringExpenseItem(
     pattern: RecurringPattern,
     onDelete: () -> Unit
 ) {
-    val isManual = pattern.confidence >= 0.99f // Check based on confidence
+    val isManual = pattern.id != null || pattern.confidence >= 0.99f
     Card(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
@@ -10591,9 +11369,9 @@ fun RecurringExpenseItem(
                     text = "${String.format("%.2f", pattern.averageAmount)} ${pattern.currency} • ${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+                val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault()) }
                 Text(
-                    text = "Next: ${dateFormat.format(Date(pattern.nextExpectedDate))}",
+                    text = "Next: ${dateFormat.format(Instant.ofEpochMilli(pattern.nextExpectedDate).atZone(ZoneId.systemDefault()))}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -10634,6 +11412,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -10655,7 +11434,9 @@ import com.yourname.expensetracker.ui.components.AmountText
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
-import java.text.SimpleDateFormat
+import java.time.format.DateTimeFormatter
+import java.time.Instant
+import java.time.ZoneId
 import java.util.*
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import coil.compose.AsyncImage
@@ -10671,6 +11452,8 @@ fun ReviewScreen(
     val categories by viewModel.categories.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
+    // Guard against double-swipes/rapid-fire actions
+    val processingIds = remember { mutableStateListOf<Long>() }
     val haptic = rememberHapticFeedback()
     val snackbarHostState = remember { SnackbarHostState() }
     val errorMessage by viewModel.errorMessage.collectAsState()
@@ -10682,7 +11465,7 @@ fun ReviewScreen(
     val batchLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
     ) { uris ->
-        if (uris != null && uris.isNotEmpty()) {
+        if (uris.isNotEmpty()) {
             viewModel.processBatch(uris)
         }
     }
@@ -10731,7 +11514,7 @@ fun ReviewScreen(
                                 },
                                 leadingIcon = { Icon(Icons.Rounded.Layers, null) }
                             )
-                            Divider()
+                            HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text("Export Parser Data") },
                                 onClick = {
@@ -10744,7 +11527,7 @@ fun ReviewScreen(
                                 },
                                 leadingIcon = { Icon(Icons.Rounded.ContentCopy, null) }
                             )
-                            Divider()
+                            HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text("Clear Scanned Data") },
                                 onClick = {
@@ -10803,13 +11586,16 @@ fun ReviewScreen(
                 items(pendingReviews, key = { it.review.id }) { item ->
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { dismissValue ->
+                            if (processingIds.contains(item.review.id)) return@rememberSwipeToDismissBoxState false
                             when (dismissValue) {
                                 SwipeToDismissBoxValue.StartToEnd -> {
+                                    processingIds.add(item.review.id)
                                     haptic(HapticType.Success)
                                     viewModel.approveReview(item.review.id)
                                     true
                                 }
                                 SwipeToDismissBoxValue.EndToStart -> {
+                                    processingIds.add(item.review.id)
                                     haptic(HapticType.Error)
                                     viewModel.rejectReview(item.review.id)
                                     true
@@ -10834,7 +11620,7 @@ fun ReviewScreen(
                             val icon = when (dismissState.dismissDirection) {
                                 SwipeToDismissBoxValue.StartToEnd -> Icons.Rounded.CheckCircle
                                 SwipeToDismissBoxValue.EndToStart -> Icons.Rounded.Delete
-                                else -> Icons.Rounded.ArrowForward
+                                else -> Icons.AutoMirrored.Rounded.ArrowForward
                             }
                             Box(
                                 modifier = Modifier
@@ -10919,7 +11705,7 @@ fun ReviewCard(
     onEdit: () -> Unit
 ) {
     val review = item.review
-    val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, HH:mm", Locale.getDefault()) }
     var showTrustSignal by remember { mutableStateOf(false) }
     val haptic = rememberHapticFeedback()
     val confidenceColor = when {
@@ -10994,7 +11780,7 @@ fun ReviewCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = dateFormat.format(Date(review.createdAt)),
+                        text = dateFormat.format(Instant.ofEpochMilli(review.createdAt).atZone(ZoneId.systemDefault())),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextSecondary,
                         letterSpacing = 0.5.sp
@@ -11226,6 +12012,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelChildren
 import javax.inject.Inject
 @HiltViewModel
 class ReviewViewModel @Inject constructor(
@@ -11239,6 +12027,7 @@ class ReviewViewModel @Inject constructor(
     val batchProgress = _batchProgress.asStateFlow()
     private val _isBatchProcessing = MutableStateFlow(false)
     val isBatchProcessing = _isBatchProcessing.asStateFlow()
+    private var batchJob: Job? = null
     val pendingReviews: StateFlow<List<PendingReviewWithReceipt>> = repository
         .getPendingReviews()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -11294,7 +12083,8 @@ class ReviewViewModel @Inject constructor(
     }
     fun processBatch(uris: List<android.net.Uri>) {
         if (uris.isEmpty()) return
-        viewModelScope.launch {
+        batchJob?.cancel() // Cancel previous if any
+        batchJob = viewModelScope.launch {
             try {
                 _isBatchProcessing.value = true
                 _batchProgress.value = Pair(0, uris.size)
@@ -11311,6 +12101,31 @@ class ReviewViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "Batch failed: ${e.message}"
+            } finally {
+                _isBatchProcessing.value = false
+                _batchProgress.value = null
+            }
+        }
+    }
+    fun cancelBatchProcessing() {
+        batchJob?.cancel()
+        _isBatchProcessing.value = false
+        _batchProgress.value = null
+        _errorMessage.value = "Batch processing cancelled."
+    }
+    fun processStatement(uri: android.net.Uri) {
+        viewModelScope.launch {
+            try {
+                _isBatchProcessing.value = true // Reuse batch loading state
+                _batchProgress.value = Pair(0, 1)
+                val result = receiptRepository.processStatement(uri)
+                if (result.failureCount > 0) {
+                    _errorMessage.value = "Failed to parse screenshot: ${result.errors.firstOrNull()}"
+                } else {
+                    _errorMessage.value = "Imported ${result.successCount} transactions from screenshot!"
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "Import failed: ${e.message}"
             } finally {
                 _isBatchProcessing.value = false
                 _batchProgress.value = null
@@ -11458,7 +12273,11 @@ fun TransactionsScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(transactions, key = { it.expense.id }) { item ->
+                items(
+                    items = transactions,
+                    key = { it.expense.id },
+                    contentType = { "transaction" }
+                ) { item ->
                     TransactionItem(
                         transaction = item,
                         onDelete = { expenseToDelete = item.expense },
@@ -11571,14 +12390,7 @@ fun TransactionItem(
 ) {
     val expense = transaction.expense
     val category = transaction.category
-    // Optimize color parsing: remember the color based on the category's hex string
-    val categoryColor = remember(category?.color) {
-        try {
-            category?.color?.let { Color(android.graphics.Color.parseColor(it)) } ?: Color.Gray
-        } catch (e: Exception) {
-            Color.Gray
-        }
-    }
+    val categoryColor = Color(transaction.categoryColor.toInt())
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(

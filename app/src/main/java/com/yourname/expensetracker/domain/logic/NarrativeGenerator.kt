@@ -126,6 +126,19 @@ class NarrativeGenerator @Inject constructor() {
             )
         }
 
+        // 4. Predicted Habits (Behavioral)
+        if (components.predictedDiscretionary > 0) {
+            sections.add(
+                NarrativeSection(
+                    title = "Predicted Activity",
+                    icon = "📈",
+                    items = listOf(
+                        "Habit-based forecast: €${String.format("%.0f", components.predictedDiscretionary)} likely spending based on your typical month."
+                    )
+                )
+            )
+        }
+
         return sections
     }
 }

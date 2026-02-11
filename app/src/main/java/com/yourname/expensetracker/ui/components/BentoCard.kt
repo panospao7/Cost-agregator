@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -65,12 +66,14 @@ fun HeroBentoCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     // Gradient for a more vibrant Hero card
-    val heroGradient = Brush.linearGradient(
-        colors = listOf(
-            SemanticColors.PrimaryIndigo.copy(alpha = 0.4f),
-            SemanticColors.PrimaryLight.copy(alpha = 0.2f)
+    val heroGradient = remember {
+        Brush.linearGradient(
+            colors = listOf(
+                SemanticColors.PrimaryIndigo.copy(alpha = 0.4f),
+                SemanticColors.PrimaryLight.copy(alpha = 0.2f)
+            )
         )
-    )
+    }
 
     BentoCard(
         modifier = modifier,

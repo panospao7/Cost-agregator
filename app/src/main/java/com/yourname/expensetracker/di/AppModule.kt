@@ -38,6 +38,12 @@ object AppModule {
             AppDatabase.MIGRATION_11_12,
             AppDatabase.MIGRATION_12_13
         )
+            .addCallback(object : androidx.room.RoomDatabase.Callback() {
+                override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    super.onOpen(db)
+                    android.util.Log.d("AppDatabase", "Database opened successfully. Version: ${db.version}")
+                }
+            })
             .fallbackToDestructiveMigration()
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()

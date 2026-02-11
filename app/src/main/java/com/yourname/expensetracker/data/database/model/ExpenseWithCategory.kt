@@ -24,10 +24,26 @@ data class ExpenseWithCategory(
 ) {
     // Pre-computed formatting for UI efficiency
     val formattedDate: String by lazy {
-        SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(Date(expense.date))
+        FORMATTER.get()?.format(Date(expense.date)) ?: ""
     }
 
     val formattedAmount: String by lazy {
         String.format("%.2f %s", expense.amount, expense.currency)
+    }
+
+    val categoryColor: Long by lazy {
+        try {
+            category?.color?.let { android.graphics.Color.parseColor(it).toLong() } ?: android.graphics.Color.GRAY.toLong()
+        } catch (e: Exception) {
+            android.graphics.Color.GRAY.toLong()
+        }
+    }
+
+    companion object {
+        private val FORMATTER = object : ThreadLocal<SimpleDateFormat>() {
+            override fun initialValue(): SimpleDateFormat {
+                return SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
+            }
+        }
     }
 }

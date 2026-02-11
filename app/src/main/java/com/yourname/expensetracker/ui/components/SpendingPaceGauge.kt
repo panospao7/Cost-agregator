@@ -38,8 +38,8 @@ fun SpendingPaceGauge(
     val targetSweep = (pace.pacePercentage / maxPacePercent).coerceIn(0f, 1f) * 240f
     val animatedSweep by animateFloatAsState(
         targetValue = targetSweep,
-        animationSpec = tween(1200), // Slightly slower, more premium animation
-        label = "pace_sweep"
+        animationSpec = tween(800), // More responsive
+        label = "pace_sweep_${pace.paceStatus}"
     )
 
     val statusLabel = when (pace.paceStatus) {

@@ -127,7 +127,11 @@ fun TransactionsScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(transactions, key = { it.expense.id }) { item ->
+                items(
+                    items = transactions,
+                    key = { it.expense.id },
+                    contentType = { "transaction" }
+                ) { item ->
                     TransactionItem(
                         transaction = item,
                         onDelete = { expenseToDelete = item.expense },
@@ -247,14 +251,7 @@ fun TransactionItem(
     val expense = transaction.expense
     val category = transaction.category
 
-    // Optimize color parsing: remember the color based on the category's hex string
-    val categoryColor = remember(category?.color) {
-        try {
-            category?.color?.let { Color(android.graphics.Color.parseColor(it)) } ?: Color.Gray
-        } catch (e: Exception) {
-            Color.Gray
-        }
-    }
+    val categoryColor = Color(transaction.categoryColor.toInt())
 
     Card(
         modifier = Modifier.fillMaxWidth(),

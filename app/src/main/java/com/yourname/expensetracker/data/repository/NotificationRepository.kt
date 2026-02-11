@@ -57,7 +57,7 @@ class NotificationRepository @Inject constructor(
         dao.exists(packageName, timestamp, title, text)
 
     // === Review Queue ===
-    fun getPendingReviews(): Flow<List<PendingReviewWithReceipt>> = pendingReviewDao.getPendingFlow()
+    fun getPendingReviews(limit: Int = 100): Flow<List<PendingReviewWithReceipt>> = pendingReviewDao.getPendingFlow(limit)
     fun getPendingReviewCount(): Flow<Int> = pendingReviewDao.getPendingCountFlow()
 
     // === Source Stats ===

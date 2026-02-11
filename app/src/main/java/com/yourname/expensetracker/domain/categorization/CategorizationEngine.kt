@@ -32,11 +32,8 @@ class CategorizationEngine @Inject constructor(
         val paddedNormalized = " $normalized "
         
         for (mapping in sortedMappings) {
-            if (mapping.merchantPattern.length >= 3) {
-                // Check if the pattern exists as a whole word(s) in the merchant name
-                // e.g. "UBER" matches "UBER EATS" but "ONE" does not match "PHONE"
-                val paddedPattern = " ${mapping.merchantPattern} "
-                if (paddedNormalized.contains(paddedPattern)) {
+            if (mapping.merchantPattern.length >= 5) { // Adjusted for " pattern "
+                if (paddedNormalized.contains(mapping.merchantPattern)) {
                     return mapping.categoryId
                 }
             }
@@ -69,6 +66,7 @@ class CategorizationEngine @Inject constructor(
                 // LOG-022 Fix: Sort by pattern length descending ONCE during cache population
                 // This avoids sorting on every analyze call
                 cachedMappings = merchantCategoryDao.getAll()
+                    .map { it.copy(merchantPattern = " ${it.merchantPattern} ") }
                     .sortedByDescending { it.merchantPattern.length }
                 lastCacheTime = now
             }

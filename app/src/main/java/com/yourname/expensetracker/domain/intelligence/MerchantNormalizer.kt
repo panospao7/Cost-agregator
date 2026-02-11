@@ -135,24 +135,28 @@ class MerchantNormalizer @Inject constructor(
      * Levenshtein distance for close matches
      */
     fun levenshteinDistance(a: String, b: String): Int {
-        val m = a.length
+        if (a == b) return 0
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
+
         val n = b.length
-        val dp = Array(m + 1) { IntArray(n + 1) }
+        var prev = IntArray(n + 1) { it }
+        var curr = IntArray(n + 1)
 
-        for (i in 0..m) dp[i][0] = i
-        for (j in 0..n) dp[0][j] = j
-
-        for (i in 1..m) {
+        for (i in 1..a.length) {
+            curr[0] = i
             for (j in 1..n) {
                 val cost = if (a[i - 1] == b[j - 1]) 0 else 1
-                dp[i][j] = minOf(
-                    dp[i - 1][j] + 1,      // deletion
-                    dp[i][j - 1] + 1,       // insertion
-                    dp[i - 1][j - 1] + cost // substitution
+                curr[j] = minOf(
+                    minOf(curr[j - 1] + 1, prev[j] + 1),
+                    prev[j - 1] + cost
                 )
             }
+            val temp = prev
+            prev = curr
+            curr = temp
         }
-        return dp[m][n]
+        return prev[n]
     }
 
     /**

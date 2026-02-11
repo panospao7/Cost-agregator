@@ -29,6 +29,7 @@ data class AnalyticsState(
     val isLoading: Boolean = true
 )
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class AnalyticsViewModel @Inject constructor(
     private val repository: NotificationRepository,
@@ -93,12 +94,13 @@ class AnalyticsViewModel @Inject constructor(
             .groupBy { it.categoryId }
             .mapNotNull { (catId, exps) ->
                 val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
+                val totalAmount = exps.sumOf { it.amount }
                 CategoryBreakdown(
                     category = cat,
-                    total = exps.sumOf { it.amount },
+                    total = totalAmount,
                     count = exps.size,
                     percentage = if (currentTotal > 0)
-                        (exps.sumOf { it.amount } / currentTotal * 100).toFloat()
+                        (totalAmount / currentTotal * 100).toFloat()
                     else 0f
                 )
             }
@@ -108,12 +110,12 @@ class AnalyticsViewModel @Inject constructor(
         val merchantBreakdown = currentExpenses
             .groupBy { it.merchant.uppercase() }
             .map { (_, exps) ->
-                val total = exps.sumOf { it.amount }
+                val totalAmount = exps.sumOf { it.amount }
                 MerchantBreakdown(
                     name = exps.first().merchant,
-                    totalSpent = total,
+                    totalSpent = totalAmount,
                     transactionCount = exps.size,
-                    averageTransaction = total / exps.size,
+                    averageTransaction = totalAmount / exps.size,
                     categoryId = exps.firstOrNull()?.categoryId
                 )
             }

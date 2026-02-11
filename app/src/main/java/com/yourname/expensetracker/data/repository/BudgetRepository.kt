@@ -25,32 +25,37 @@ class BudgetRepository @Inject constructor(
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
 
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
+        // We fetch the last 13 months to cover yearly budgets + rollover
+        val thirteenMonthsAgo = System.currentTimeMillis() - (13L * 30 * 24 * 60 * 60 * 1000)
+        
         return combine(
             budgetDao.getActiveBudgetsFlow(),
-            categoryDao.getAllFlow()
-        ) { budgets, categories ->
+            categoryDao.getAllFlow(),
+            expenseDao.getExpensesBetweenFlow(thirteenMonthsAgo, System.currentTimeMillis() + 86400000) // +1 day for safety
+        ) { budgets, categories, allExpenses ->
+            val purchases = allExpenses.filter { it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE }
             val categoryMap = categories.associateBy { it.id }
+            
             budgets.map { budget ->
                 val window = budgetMonitor.calculatePeriodWindow(budget.period, budget.startDate)
-                val spent = if (budget.categoryId != null) {
-                    expenseDao.getCategorySpentInPeriod(budget.categoryId, window.first, window.second)
-                } else {
-                    expenseDao.getTotalForPeriod(window.first, window.second)
+                
+                fun getSpentInRange(start: Long, end: Long): Double {
+                    return purchases
+                        .filter { 
+                            (budget.categoryId == null || it.categoryId == budget.categoryId) && 
+                            it.date >= start && it.date < end 
+                        }
+                        .sumOf { it.amount }
                 }
 
+                val spent = getSpentInRange(window.first, window.second)
                 var limit = budget.amount
                 
                 // LOG-002: Implement Rollover
                 if (budget.rollover) {
                     val prevWindow = budgetMonitor.getPreviousPeriodWindow(budget.period, budget.startDate)
-                    val prevSpent = if (budget.categoryId != null) {
-                        expenseDao.getCategorySpentInPeriod(budget.categoryId, prevWindow.first, prevWindow.second)
-                    } else {
-                        expenseDao.getTotalForPeriod(prevWindow.first, prevWindow.second)
-                    }
+                    val prevSpent = getSpentInRange(prevWindow.first, prevWindow.second)
                     
-                    // Simplified rollover: Assumes budget amount was same in previous period.
-                    // Calculate unspent amount from previous period.
                     val rolloverAmount = (budget.amount - prevSpent).coerceAtLeast(0.0)
                     limit += rolloverAmount
                 }
@@ -80,27 +85,48 @@ class BudgetRepository @Inject constructor(
     }
 
     suspend fun addBudget(budget: Budget): Long {
-        val id = budgetDao.insert(budget)
-        budgetMonitor.checkBudgets()
-        return id
+        return try {
+            val id = budgetDao.insert(budget)
+            budgetMonitor.checkBudgets()
+            id
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to add budget", e)
+            -1L
+        }
     }
 
     suspend fun updateBudget(budget: Budget) {
-        budgetDao.update(budget)
-        budgetMonitor.checkBudgets()
+        try {
+            budgetDao.update(budget)
+            budgetMonitor.checkBudgets()
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to update budget ${budget.id}", e)
+        }
     }
 
     suspend fun deleteBudget(budget: Budget) {
-        budgetDao.delete(budget)
+        try {
+            budgetDao.delete(budget)
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to delete budget ${budget.id}", e)
+        }
     }
 
     suspend fun toggleBudget(id: Long, isActive: Boolean) {
-        budgetDao.setActive(id, isActive)
-        budgetMonitor.checkBudgets()
+        try {
+            budgetDao.setActive(id, isActive)
+            budgetMonitor.checkBudgets()
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to toggle budget $id", e)
+        }
     }
 
     suspend fun deleteAll() {
-        budgetDao.deleteAll()
+        try {
+            budgetDao.deleteAll()
+        } catch (e: Exception) {
+            android.util.Log.e("BudgetRepository", "Failed to delete all budgets", e)
+        }
     }
 
     suspend fun getSuggestions(): List<BudgetSuggestion> {

@@ -35,6 +35,7 @@ android {
     
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -90,6 +91,12 @@ dependencies {
 
     // Coil for image loading in Compose
     implementation("io.coil-kt:coil-compose:2.5.0")
+
+    // Logging
+    implementation("com.jakewharton.timber:timber:5.0.1")
+    
+    // Activity Extensions for viewModels()
+    implementation("androidx.activity:activity-ktx:1.9.3")
     
     // Testing
     testImplementation("junit:junit:4.13.2")

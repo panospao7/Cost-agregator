@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
@@ -35,9 +36,12 @@ import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private val mainViewModel: MainViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleIntent(intent)
         setContent {
             ExpenseTrackerTheme {
                 Surface(
@@ -46,6 +50,24 @@ class MainActivity : ComponentActivity() {
                 ) {
                     MainScreen()
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: android.content.Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme == "expensetracker") {
+            when (data.host) {
+                "dashboard" -> mainViewModel.navigateToTab(0)
+                "activity" -> mainViewModel.navigateToTab(1)
+                "review" -> mainViewModel.navigateToTab(2)
+                "plan" -> mainViewModel.navigateToTab(3)
+                "add" -> mainViewModel.navigateToTab(0)
             }
         }
     }
@@ -59,6 +81,12 @@ fun MainScreen() {
     val mainViewModel: MainViewModel = hiltViewModel()
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     
+    LaunchedEffect(Unit) {
+        mainViewModel.navigationRequest.collect { tabIndex ->
+            selectedTab = tabIndex
+        }
+    }
+
     val snackbarHostState = remember { SnackbarHostState() }
     
     val context = LocalContext.current

@@ -92,8 +92,46 @@ class ReceiptRepository @Inject constructor(
             )
             pendingReviewDao.insert(review)
         }
-
         return Pair(receipt.copy(id = receiptId), parsed)
+    }
+
+    suspend fun saveManualReceiptRecord(imageUri: android.net.Uri): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
+        // 1. Try to at least copy the image for display if possible, or use original
+        // For simplicity, we'll try to get ocrService to at least give us a path if it can load the bitmap
+        val path = try {
+            // We'll reuse the OCR service's image saving logic if possible
+            // But if it fails, we fall back to the original URI string (not ideal but better than nothing)
+            ocrService.processImage(imageUri).savedImagePath
+        } catch (e: Exception) {
+            imageUri.toString()
+        }
+
+        val receipt = ScannedReceipt(
+            imagePath = path,
+            rawOcrText = "[OCR Failed or Skipped]",
+            parsedTotal = null,
+            parsedMerchant = null,
+            parsedDate = System.currentTimeMillis(),
+            parsedItems = null,
+            parsedTaxAmount = null,
+            currency = "EUR",
+            confidence = 0f
+        )
+        val receiptId = scannedReceiptDao.insert(receipt)
+        
+        return Pair(
+            receipt.copy(id = receiptId),
+            ReceiptParser.ParsedReceipt(
+                merchantName = null,
+                total = null,
+                subtotal = null,
+                tax = null,
+                date = System.currentTimeMillis(),
+                currency = "EUR",
+                lineItems = emptyList(),
+                confidence = 0f
+            )
+        )
     }
 
     /**

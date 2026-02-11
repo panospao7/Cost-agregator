@@ -28,7 +28,8 @@ data class ForecastComponents(
     
     // Synthesis Metrics
     val totalCommitted: Double,        // High confidence (bills, manual)
-    val totalLikely: Double,           // Medium confidence (patterns, avg)
+    val totalLikely: Double,           // Medium confidence (patterns, manual)
+    val predictedDiscretionary: Double, // Habit-based predicted spending
     val discretionaryBudget: Double,   // "Safe-to-Spend"
     val riskLevel: RiskLevel
 )

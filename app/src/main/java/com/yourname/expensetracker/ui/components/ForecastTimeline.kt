@@ -45,29 +45,38 @@ fun ForecastTimeline(
             return
         }
 
-        // Vico model creation
-        val pastEntries = pastPoints.mapIndexed { index, value -> 
-            FloatEntry(index.toFloat(), value.toFloat()) 
+        // Vico model creation - Optimized: wrap in remember to avoid allocation spikes
+        val chartEntryModel: ChartEntryModel = remember(pastPoints, projectedPoints, budgetLimit) {
+            val pastEntries = pastPoints.mapIndexed { index, value -> 
+                FloatEntry(index.toFloat(), value.toFloat()) 
+            }
+            val projectionEntries = projectedPoints.mapIndexed { index, value -> 
+                FloatEntry((pastPoints.size + index).toFloat(), value.toFloat()) 
+            }
+            val budgetLimitEntries = listOf(
+                FloatEntry(0f, budgetLimit.toFloat()),
+                FloatEntry((pastPoints.size + projectionEntries.size).toFloat(), budgetLimit.toFloat())
+            )
+            entryModelOf(pastEntries, projectionEntries, budgetLimitEntries)
         }
-        val projectionEntries = projectedPoints.mapIndexed { index, value -> 
-            FloatEntry((pastPoints.size + index).toFloat(), value.toFloat()) 
-        }
-        
-        val chartEntryModel: ChartEntryModel = remember(pastEntries, projectionEntries) {
-            entryModelOf(pastEntries, projectionEntries)
+
+        val lineSpecs = remember {
+            listOf(
+                LineChart.LineSpec(
+                    lineColor = SemanticColors.PrimaryIndigo.toArgb(),
+                ),
+                LineChart.LineSpec(
+                    lineColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f).toArgb(),
+                ),
+                LineChart.LineSpec(
+                    lineColor = SemanticColors.WarningOrange.copy(alpha = 0.5f).toArgb(),
+                    lineThicknessDp = 1f
+                )
+            )
         }
 
         Chart(
-            chart = lineChart(
-                lines = listOf(
-                    LineChart.LineSpec(
-                        lineColor = SemanticColors.PrimaryIndigo.toArgb(),
-                    ),
-                    LineChart.LineSpec(
-                        lineColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f).toArgb(),
-                    )
-                )
-            ),
+            chart = lineChart(lines = lineSpecs),
             model = chartEntryModel,
             startAxis = rememberStartAxis(),
             bottomAxis = rememberBottomAxis(),

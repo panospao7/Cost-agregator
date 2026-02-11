@@ -512,10 +512,12 @@ class InsightsEngine @Inject constructor(
             result[key] = 0.0
         }
 
-        // Fill in actual values
+        // Fill in actual values - Optimized: reuse Date object
         val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        val dateObj = java.util.Date()
         for (expense in purchases) {
-            val key = dateKeyFormat.format(java.util.Date(expense.date))
+            dateObj.time = expense.date
+            val key = dateKeyFormat.format(dateObj)
             if (result.containsKey(key)) {
                 result[key] = (result[key] ?: 0.0) + expense.amount
             }

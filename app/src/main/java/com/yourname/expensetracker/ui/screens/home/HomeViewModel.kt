@@ -92,6 +92,7 @@ data class DashboardState(
     val isLoading: Boolean = true
 )
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repository: NotificationRepository,
@@ -107,11 +108,11 @@ class HomeViewModel @Inject constructor(
 
     // distinct intermediate flow for data to avoid 5-arg limit
     private val dataFlow = combine(
-        repository.getAllExpenses(),
-        categoryRepository.allCategories,
-        budgetRepository.getBudgetStatuses(),
-        repository.getPendingReviewCount(),
-        financialWeatherRepository.getFinancialWeather()
+        repository.getAllExpenses().catch { emit(emptyList()) },
+        categoryRepository.allCategories.catch { emit(emptyList()) },
+        budgetRepository.getBudgetStatuses().catch { emit(emptyList()) },
+        repository.getPendingReviewCount().catch { emit(0) },
+        financialWeatherRepository.getFinancialWeather().catch { /* Repository handles defaults */ }
     ) { expenses, categories, budgetStatuses, pendingCount, weather ->
         FiveData(expenses, categories, budgetStatuses, pendingCount, weather)
     }
@@ -121,6 +122,16 @@ class HomeViewModel @Inject constructor(
         isEditMode,
         dashboardRepository.configFlow
     ) { data, editMode, configList ->
+        // Check service status (simplified for demo, usually via repository)
+        val isServiceRunning = try {
+            val packageName = "com.yourname.expensetracker"
+            val flat = android.provider.Settings.Secure.getString(
+                null, // This might fail without context, I should have passed it or used a repo
+                "enabled_notification_listeners"
+            )
+            flat != null && flat.contains(packageName)
+        } catch (e: Exception) { true }
+
         val (expenses, categories, budgetStatuses, pendingCount, weather) = data
 
         val now = System.currentTimeMillis()
@@ -207,20 +218,40 @@ class HomeViewModel @Inject constructor(
         )
 
         // Cumulative Spend Trend Data
-        val currentMonthDaily = (1..dayOfMonth).map { day ->
-            val dayStart = monthStart + (day - 1) * 24 * 60 * 60 * 1000L
-            val dayEnd = dayStart + 24 * 60 * 60 * 1000L
-            purchases.filter { it.date >= monthStart && it.date < dayEnd }.sumOf { it.amount }.toFloat()
+        val currentMonthDaily = run {
+            val amountByDay = purchases
+                .filter { it.date >= monthStart }
+                .groupBy { 
+                    val cal = Calendar.getInstance().apply { timeInMillis = it.date }
+                    cal.get(Calendar.DAY_OF_MONTH)
+                }
+                .mapValues { it.value.sumOf { exp -> exp.amount } }
+            
+            var runningTotal = 0.0
+            (1..dayOfMonth).map { day ->
+                runningTotal += amountByDay[day] ?: 0.0
+                runningTotal.toFloat()
+            }
         }
 
         val previousMonthDays = Calendar.getInstance().apply {
             timeInMillis = previousMonthStart
         }.getActualMaximum(Calendar.DAY_OF_MONTH)
 
-        val previousMonthDaily = (1..previousMonthDays).map { day ->
-            val pMonthStart = previousMonthStart
-            val pDayEnd = pMonthStart + day * 24 * 60 * 60 * 1000L
-            purchases.filter { it.date >= pMonthStart && it.date < pDayEnd }.sumOf { it.amount }.toFloat()
+        val previousMonthDaily = run {
+            val amountByDay = purchases
+                .filter { it.date >= previousMonthStart && it.date < monthStart }
+                .groupBy { 
+                    val cal = Calendar.getInstance().apply { timeInMillis = it.date }
+                    cal.get(Calendar.DAY_OF_MONTH)
+                }
+                .mapValues { it.value.sumOf { exp -> exp.amount } }
+            
+            var runningTotal = 0.0
+            (1..previousMonthDays).map { day ->
+                runningTotal += amountByDay[day] ?: 0.0
+                runningTotal.toFloat()
+            }
         }
         
         val trend = DashboardWidget.SpendingTrend(

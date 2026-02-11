@@ -121,8 +121,8 @@ class ReceiptOcrService @Inject constructor(
             }
             BitmapFactory.decodeFile(tempFile.absolutePath, options)
 
-            // Calculate sample size
-            val maxDimension = 2048
+            // Calculate sample size - Optimized: 1024 is plenty for OCR and saves memory/time
+            val maxDimension = 1024
             var sampleSize = 1
             if (options.outWidth > 0 && options.outHeight > 0) {
                 while (options.outWidth / sampleSize > maxDimension ||

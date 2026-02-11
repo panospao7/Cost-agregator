@@ -78,13 +78,13 @@ class BankStatementParser @Inject constructor() {
         
         if (!amountMatcher.find()) return null
         
-        val amountStr = amountMatcher.group(1).replace(" ", "").replace(",", ".")
+        val amountStr = amountMatcher.group(1)!!.replace(" ", "").replace(",", ".")
         val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
         val currency = normalizeCurrency(amountMatcher.group(2) ?: "EUR")
 
         // 3. Extract logic for merchant
         // Usually merchant is the text that is NOT the amount and NOT a date/time
-        var merchant = cleanRow.replace(amountMatcher.group(0), "")
+        var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
             .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Date
             .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "") // Time
             .replace(Regex("""\s{2,}"""), " ") // Double spaces
