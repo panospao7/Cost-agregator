@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.*
 import javax.inject.Inject
@@ -25,6 +26,7 @@ class NotificationRepository @Inject constructor(
     private val pendingReviewDao: PendingReviewDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val sourceStatsDao: SourceStatsDao,
+    private val scannedReceiptDao: ScannedReceiptDao,
     private val parserRegistry: AppParserRegistry,
     private val categorizationEngine: CategorizationEngine,
     private val confidenceRouter: ConfidenceRouter,
@@ -55,7 +57,7 @@ class NotificationRepository @Inject constructor(
         dao.exists(packageName, timestamp, title, text)
 
     // === Review Queue ===
-    fun getPendingReviews(): Flow<List<PendingReview>> = pendingReviewDao.getPendingFlow()
+    fun getPendingReviews(): Flow<List<PendingReviewWithReceipt>> = pendingReviewDao.getPendingFlow()
     fun getPendingReviewCount(): Flow<Int> = pendingReviewDao.getPendingCountFlow()
 
     // === Source Stats ===
@@ -300,17 +302,17 @@ class NotificationRepository @Inject constructor(
         val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "APPROVED")
         if (rowsUpdated == 0) return
 
-        val amount = finalAmount ?: review.suggestedAmount
-        val merchant = finalMerchant ?: review.suggestedMerchant
-        val categoryId = finalCategoryId ?: review.suggestedCategoryId
-        val type = try {
-            TransactionType.valueOf(review.suggestedType)
+        val amount: Double = finalAmount ?: review.suggestedAmount
+        val merchant: String = finalMerchant ?: review.suggestedMerchant
+        val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
+        val type: com.yourname.expensetracker.data.database.entity.TransactionType = try {
+            com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(review.suggestedType)
         } catch (e: Exception) {
-            TransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
         }
 
-        val notification = dao.getById(review.rawNotificationId)
-        val transactionDate = notification?.timestamp ?: review.createdAt
+        val notification = review.rawNotificationId?.let { dao.getById(it) }
+        val transactionDate: Long = review.suggestedDate ?: notification?.timestamp ?: review.createdAt
 
         // Check for duplicates
         val isDuplicate = expenseDao.isDuplicate(
@@ -320,32 +322,39 @@ class NotificationRepository @Inject constructor(
         )
         if (!isDuplicate) {
             // Create the expense
-            val expense = Expense(
-                amount = amount,
-                currency = review.suggestedCurrency,
-                merchant = merchant,
-                transactionType = type,
-                date = transactionDate,
-                rawNotificationId = review.rawNotificationId,
-                categoryId = categoryId,
-                paymentMethod = PaymentMethod.CARD,
-                isManualEntry = false
+            val expense = com.yourname.expensetracker.data.database.entity.Expense(
+                0L,
+                amount,
+                review.suggestedCurrency,
+                merchant,
+                type,
+                transactionDate,
+                review.rawNotificationId, // Index 6 (0-based) - Long?
+                categoryId,                // Index 7 (0-based) - Long?
+                System.currentTimeMillis(),
+                com.yourname.expensetracker.data.database.entity.PaymentMethod.CARD,
+                review.scannedReceiptId != null,
+                if (review.scannedReceiptId != null) "Scanned from receipt" else null
             )
             try {
-                expenseDao.insert(expense)
+                val expenseId = expenseDao.insert(expense)
                 
-                // Only if insert succeeds:
-                dao.markRelevance(review.rawNotificationId, true)
-                sourceStatsDao.incrementAccepted(review.packageName)
-                sourceStatsDao.decrementPending(review.packageName)
+                if (expenseId > 0) {
+                    // Only if insert succeeds:
+                    review.rawNotificationId?.let { dao.markRelevance(it, true) }
+                    sourceStatsDao.incrementAccepted(review.packageName)
+                    sourceStatsDao.decrementPending(review.packageName)
 
-                // Check budgets
-                budgetMonitor.checkBudgets()
+                    // Link to scanned receipt if this was a scan
+                    review.scannedReceiptId?.let { receiptId ->
+                        scannedReceiptDao.linkToExpense(receiptId, expenseId)
+                    }
+
+                    // Check budgets
+                    budgetMonitor.checkBudgets()
+                }
             } catch (e: android.database.sqlite.SQLiteConstraintException) {
-                // If expense insertion fails (e.g. key constraint even though we checked isDuplicate),
-                // we technically approved it but failed to create expense.
-                // Revert status? Or just log? 
-                // Given we already updated status to APPROVED, we leave it.
+                // Ignore
             }
         }
 
@@ -403,7 +412,7 @@ class NotificationRepository @Inject constructor(
         val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "REJECTED")
         if (rowsUpdated == 0) return
 
-        dao.markRelevance(review.rawNotificationId, false)
+        review.rawNotificationId?.let { id -> dao.markRelevance(id, false) }
         sourceStatsDao.incrementRejected(review.packageName)
         sourceStatsDao.decrementPending(review.packageName)
 
@@ -439,8 +448,8 @@ class NotificationRepository @Inject constructor(
     @Transaction
     suspend fun approveAllReview() {
         val pending = pendingReviewDao.getPending()
-        pending.forEach { review ->
-            approveReview(review.id)
+        pending.forEach { item ->
+            approveReview(item.review.id)
         }
     }
 
@@ -491,8 +500,11 @@ class NotificationRepository @Inject constructor(
         pendingReviewDao.deleteAll()
         userCorrectionDao.deleteAll()
         merchantCategoryDao.deleteAll()
-        blockedPackageDao.deleteAll()
         sourceStatsDao.resetAllPendingCounts()
+    }
+
+    suspend fun resetSourceStats() {
+        sourceStatsDao.deleteAll()
     }
 
     suspend fun deleteAllExpenses() = expenseDao.deleteAll()

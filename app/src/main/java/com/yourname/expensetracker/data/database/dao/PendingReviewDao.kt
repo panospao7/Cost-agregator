@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.database.dao
 
 import androidx.room.*
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -16,11 +17,13 @@ interface PendingReviewDao {
     @Delete
     suspend fun delete(review: PendingReview)
 
+    @Transaction
     @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC")
-    fun getPendingFlow(): Flow<List<PendingReview>>
+    fun getPendingFlow(): Flow<List<PendingReviewWithReceipt>>
 
+    @Transaction
     @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC")
-    suspend fun getPending(): List<PendingReview>
+    suspend fun getPending(): List<PendingReviewWithReceipt>
 
     @Query("SELECT COUNT(*) FROM pending_reviews WHERE status = 'PENDING'")
     fun getPendingCountFlow(): Flow<Int>

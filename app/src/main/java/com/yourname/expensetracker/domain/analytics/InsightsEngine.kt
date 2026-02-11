@@ -602,6 +602,23 @@ class InsightsEngine @Inject constructor(
         }.distinct().size
     }
 
+    // === Exposed Suspend Functions for Repository Usage ===
+    
+    suspend fun getSpendingPaceSuspend(): SpendingPace {
+        val now = System.currentTimeMillis()
+        val currentMonth = getMonthPeriod(now)
+        val previousMonth = getPreviousMonthPeriod(currentMonth)
+        
+        // We need "all expenses" to calculate the average baseline
+        // For performance, we could limit this to the last 6 months, but for now we'll fetch all
+        // or just rely on previous month if that's faster.
+        // Let's fetch last 6 months for a good baseline.
+        val sixMonthsAgo = getMonthPeriod(now, -6).startMs
+        val recentExpenses = expenseDao.getExpensesBetween(sixMonthsAgo, now)
+        
+        return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
+    }
+
     private fun fmt(amount: Double): String = String.format("%.2f", amount)
     
     private fun formatDate(dateMs: Long): String {

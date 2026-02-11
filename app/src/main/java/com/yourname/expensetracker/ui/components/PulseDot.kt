@@ -29,7 +29,7 @@ fun PulseDot(
         Box(
             modifier = modifier
                 .size(size)
-                .background(SemanticColors.NeutralGray, CircleShape)
+                .background(SemanticColors.TextMuted, CircleShape)
         )
         return
     }

@@ -10,61 +10,80 @@ This file contains the complete source code from the `src` directory.
 5. [main\java\com\yourname\expensetracker\data\database\entity\Budget.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitybudgetkt)
 6. [main\java\com\yourname\expensetracker\data\database\entity\Category.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitycategorykt)
 7. [main\java\com\yourname\expensetracker\data\database\entity\Expense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityexpensekt)
-8. [main\java\com\yourname\expensetracker\data\database\entity\MerchantCategory.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymerchantcategorykt)
-9. [main\java\com\yourname\expensetracker\data\database\entity\PendingReview.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitypendingreviewkt)
-10. [main\java\com\yourname\expensetracker\data\database\entity\RawNotification.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityrawnotificationkt)
-11. [main\java\com\yourname\expensetracker\data\database\entity\ScannedReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityscannedreceiptkt)
-12. [main\java\com\yourname\expensetracker\data\database\entity\SourceStats.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysourcestatskt)
-13. [main\java\com\yourname\expensetracker\data\database\entity\UserCorrection.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityusercorrectionkt)
-14. [main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategorykt)
-15. [main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
-16. [main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
-17. [main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
-18. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
-19. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
-20. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
-21. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
-22. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
-23. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
-24. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
-25. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
-26. [main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt)
-27. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
-28. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
-29. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
-30. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
-31. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
-32. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
-33. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
-34. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
-35. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
-36. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
-37. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
-38. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
-39. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
-40. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
-41. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
-42. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
-43. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
-44. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
-45. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
-46. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
-47. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
-48. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
-49. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
-50. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
-51. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
-52. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
-53. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
-54. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
-55. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
-56. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
-57. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
-58. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
-59. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
-60. [main\res\values\strings.xml](#mainresvaluesstringsxml)
-61. [main\res\values\themes.xml](#mainresvaluesthemesxml)
-62. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
+8. [main\java\com\yourname\expensetracker\data\database\entity\ManualRecurringExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymanualrecurringexpensekt)
+9. [main\java\com\yourname\expensetracker\data\database\entity\MerchantCategory.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymerchantcategorykt)
+10. [main\java\com\yourname\expensetracker\data\database\entity\PendingReview.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitypendingreviewkt)
+11. [main\java\com\yourname\expensetracker\data\database\entity\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityplannedexpensekt)
+12. [main\java\com\yourname\expensetracker\data\database\entity\RawNotification.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityrawnotificationkt)
+13. [main\java\com\yourname\expensetracker\data\database\entity\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysavingsgoalkt)
+14. [main\java\com\yourname\expensetracker\data\database\entity\ScannedReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityscannedreceiptkt)
+15. [main\java\com\yourname\expensetracker\data\database\entity\SourceStats.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysourcestatskt)
+16. [main\java\com\yourname\expensetracker\data\database\entity\UserCorrection.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityusercorrectionkt)
+17. [main\java\com\yourname\expensetracker\data\database\model\DashboardWidgetConfig.kt](#mainjavacomyournameexpensetrackerdatadatabasemodeldashboardwidgetconfigkt)
+18. [main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategorykt)
+19. [main\java\com\yourname\expensetracker\data\database\model\PendingReviewWithReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelpendingreviewwithreceiptkt)
+20. [main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
+21. [main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
+22. [main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt)
+23. [main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt)
+24. [main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
+25. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
+26. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
+27. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
+28. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
+29. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
+30. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
+31. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
+32. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
+33. [main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt)
+34. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
+35. [main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#mainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
+36. [main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
+37. [main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
+38. [main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#mainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
+39. [main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
+40. [main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
+41. [main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
+42. [main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
+43. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
+44. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
+45. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
+46. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
+47. [main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
+48. [main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
+49. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
+50. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
+51. [main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
+52. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
+53. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
+54. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
+55. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
+56. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
+57. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
+58. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
+59. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
+60. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
+61. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
+62. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
+63. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
+64. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
+65. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
+66. [main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
+67. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
+68. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
+69. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
+70. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
+71. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
+72. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
+73. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
+74. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
+75. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
+76. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
+77. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
+78. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
+79. [main\res\values\strings.xml](#mainresvaluesstringsxml)
+80. [main\res\values\themes.xml](#mainresvaluesthemesxml)
+81. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
 
 ---
 
@@ -163,13 +182,17 @@ import androidx.room.*
         UserCorrection::class,
         SourceStats::class,
         Budget::class,
-        ScannedReceipt::class
+        ScannedReceipt::class,
+        ManualRecurringExpense::class,
+        PlannedExpense::class,
+        SavingsGoal::class
     ],
-    version = 9,
+    version = 13,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
 abstract class AppDatabase : RoomDatabase() {
+    // ... (DAOs)
     abstract fun rawNotificationDao(): RawNotificationDao
     abstract fun blockedPackageDao(): BlockedPackageDao
     abstract fun expenseDao(): ExpenseDao
@@ -180,6 +203,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sourceStatsDao(): SourceStatsDao
     abstract fun budgetDao(): BudgetDao
     abstract fun scannedReceiptDao(): ScannedReceiptDao
+    abstract fun recurringExpenseDao(): RecurringExpenseDao
+    abstract fun plannedExpenseDao(): PlannedExpenseDao
+    abstract fun savingsGoalDao(): SavingsGoalDao
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -239,6 +265,102 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
+            }
+        }
+        val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // To change NOT NULL constraint in SQLite, we must recreate the table
+                database.execSQL("ALTER TABLE pending_reviews RENAME TO pending_reviews_old")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS pending_reviews (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        rawNotificationId INTEGER,
+                        scannedReceiptId INTEGER,
+                        suggestedAmount REAL NOT NULL,
+                        suggestedCurrency TEXT NOT NULL,
+                        suggestedMerchant TEXT NOT NULL,
+                        suggestedType TEXT NOT NULL,
+                        suggestedCategoryId INTEGER,
+                        confidence REAL NOT NULL,
+                        packageName TEXT NOT NULL,
+                        notificationTitle TEXT,
+                        notificationText TEXT,
+                        createdAt INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        FOREIGN KEY(rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                        FOREIGN KEY(scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    INSERT INTO pending_reviews (
+                        id, rawNotificationId, suggestedAmount, suggestedCurrency, 
+                        suggestedMerchant, suggestedType, suggestedCategoryId, 
+                        confidence, packageName, notificationTitle, notificationText, 
+                        createdAt, status
+                    )
+                    SELECT 
+                        id, rawNotificationId, suggestedAmount, suggestedCurrency, 
+                        suggestedMerchant, suggestedType, suggestedCategoryId, 
+                        confidence, packageName, notificationTitle, notificationText, 
+                        createdAt, status
+                    FROM pending_reviews_old
+                """.trimIndent())
+                database.execSQL("DROP TABLE pending_reviews_old")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+            }
+        }
+        val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE pending_reviews ADD COLUMN suggestedDate INTEGER DEFAULT NULL")
+            }
+        }
+        val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS manual_recurring_expenses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        merchant TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        frequency TEXT NOT NULL,
+                        nextDate INTEGER NOT NULL,
+                        note TEXT,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+        val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS planned_expenses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        description TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        date INTEGER NOT NULL,
+                        categoryId INTEGER,
+                        isRecurring INTEGER NOT NULL DEFAULT 0,
+                        priority TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_date ON planned_expenses (date)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_categoryId ON planned_expenses (categoryId)")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS savings_goals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        targetAmount REAL NOT NULL,
+                        currentAmount REAL NOT NULL DEFAULT 0.0,
+                        targetDate INTEGER,
+                        protectionLevel TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
             }
         }
     }
@@ -397,6 +519,29 @@ enum class PaymentMethod {
 
 ---
 
+## main\java\com\yourname\expensetracker\data\database\entity\ManualRecurringExpense.kt <a name="mainjavacomyournameexpensetrackerdatadatabaseentitymanualrecurringexpensekt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.entity
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+@Entity(tableName = "manual_recurring_expenses")
+data class ManualRecurringExpense(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val merchant: String,
+    val amount: Double,
+    val currency: String = "EUR",
+    val frequency: RecurrenceFrequency,
+    val nextDate: Long,
+    val note: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\data\database\entity\MerchantCategory.kt <a name="mainjavacomyournameexpensetrackerdatadatabaseentitymerchantcategorykt"></a>
 ```kotlin
 package com.yourname.expensetracker.data.database.entity
@@ -443,22 +588,31 @@ import androidx.room.PrimaryKey
             parentColumns = ["id"],
             childColumns = ["rawNotificationId"],
             onDelete = ForeignKey.SET_NULL
+        ),
+        ForeignKey(
+            entity = ScannedReceipt::class,
+            parentColumns = ["id"],
+            childColumns = ["scannedReceiptId"],
+            onDelete = ForeignKey.SET_NULL
         )
     ],
     indices = [
         Index(value = ["rawNotificationId"]),
+        Index(value = ["scannedReceiptId"]),
         Index(value = ["status"]),
-        Index(value = ["status", "createdAt"]) // New: for Pending order by date
+        Index(value = ["status", "createdAt"])
     ]
 )
 data class PendingReview(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val rawNotificationId: Long,
+    val rawNotificationId: Long?,
+    val scannedReceiptId: Long? = null,
     val suggestedAmount: Double,
     val suggestedCurrency: String,
     val suggestedMerchant: String,
     val suggestedType: String,          // TransactionType name
     val suggestedCategoryId: Long?,
+    val suggestedDate: Long? = null,    // Added in v11 to preserve parsed date
     val confidence: Float,
     val packageName: String,
     val notificationTitle: String?,
@@ -466,6 +620,49 @@ data class PendingReview(
     val createdAt: Long = System.currentTimeMillis(),
     val status: String = "PENDING"      // PENDING, APPROVED, REJECTED, MODIFIED
 )
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\entity\PlannedExpense.kt <a name="mainjavacomyournameexpensetrackerdatadatabaseentityplannedexpensekt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.entity
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+@Entity(
+    tableName = "planned_expenses",
+    foreignKeys = [
+        ForeignKey(
+            entity = Category::class,
+            parentColumns = ["id"],
+            childColumns = ["categoryId"],
+            onDelete = ForeignKey.SET_NULL
+        )
+    ],
+    indices = [
+        Index(value = ["date"]),
+        Index(value = ["categoryId"])
+    ]
+)
+data class PlannedExpense(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val description: String,
+    val amount: Double,
+    val date: Long, // Planned date
+    val categoryId: Long? = null,
+    val isRecurring: Boolean = false,
+    val priority: PlannedExpensePriority = PlannedExpensePriority.LIKELY,
+    val createdAt: Long = System.currentTimeMillis()
+)
+enum class PlannedExpensePriority {
+    MUST,
+    LIKELY,
+    OPTIONAL
+}
 
 ```
 
@@ -505,6 +702,32 @@ data class RawNotification(
     val isRelevant: Boolean? = null,  // null = unknown, true = expense, false = ignore
     val parseResult: String? = null    // JSON of parsed data or error message
 )
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\entity\SavingsGoal.kt <a name="mainjavacomyournameexpensetrackerdatadatabaseentitysavingsgoalkt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.entity
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+@Entity(tableName = "savings_goals")
+data class SavingsGoal(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val name: String,
+    val targetAmount: Double,
+    val currentAmount: Double = 0.0,
+    val targetDate: Long? = null,
+    val protectionLevel: GoalProtectionLevel = GoalProtectionLevel.WARNING,
+    val createdAt: Long = System.currentTimeMillis()
+)
+enum class GoalProtectionLevel {
+    STRICT,  // Fully reserved from discretionary
+    WARNING, // Noted but not strictly subtracted
+    TRACKING // Just for reference
+}
 
 ```
 
@@ -604,6 +827,19 @@ data class UserCorrection(
 
 ---
 
+## main\java\com\yourname\expensetracker\data\database\model\DashboardWidgetConfig.kt <a name="mainjavacomyournameexpensetrackerdatadatabasemodeldashboardwidgetconfigkt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.model
+data class DashboardWidgetConfig(
+    val id: String,
+    val order: Int,
+    val isVisible: Boolean = true
+)
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory.kt <a name="mainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategorykt"></a>
 ```kotlin
 package com.yourname.expensetracker.data.database.model
@@ -635,6 +871,26 @@ data class ExpenseWithCategory(
         String.format("%.2f %s", expense.amount, expense.currency)
     }
 }
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\model\PendingReviewWithReceipt.kt <a name="mainjavacomyournameexpensetrackerdatadatabasemodelpendingreviewwithreceiptkt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.model
+import androidx.room.Embedded
+import androidx.room.Relation
+import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+data class PendingReviewWithReceipt(
+    @Embedded val review: PendingReview,
+    @Relation(
+        parentColumn = "scannedReceiptId",
+        entityColumn = "id"
+    )
+    val receipt: ScannedReceipt?
+)
 
 ```
 
@@ -812,6 +1068,262 @@ class CategoryRepository @Inject constructor(
 
 ---
 
+## main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt <a name="mainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt"></a>
+```kotlin
+package com.yourname.expensetracker.data.repository
+import android.content.Context
+import android.content.SharedPreferences
+import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
+import dagger.hilt.android.qualifiers.ApplicationContext
+import org.json.JSONArray
+import org.json.JSONObject
+import javax.inject.Inject
+import javax.inject.Singleton
+@Singleton
+class DashboardRepository @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
+    private val prefs: SharedPreferences = context.getSharedPreferences("dashboard_prefs", Context.MODE_PRIVATE)
+    fun getDashboardConfig(): List<DashboardWidgetConfig> {
+        val json = prefs.getString("layout_config", null) ?: return getDefaultConfig()
+        return try {
+            val array = JSONArray(json)
+            val list = mutableListOf<DashboardWidgetConfig>()
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    DashboardWidgetConfig(
+                        id = obj.getString("id"),
+                        order = obj.getInt("order"),
+                        isVisible = obj.optBoolean("isVisible", true)
+                    )
+                )
+            }
+            list.sortedBy { it.order }
+        } catch (e: Exception) {
+            getDefaultConfig()
+        }
+    }
+    fun saveDashboardConfig(config: List<DashboardWidgetConfig>) {
+        val array = JSONArray()
+        config.forEach {
+            val obj = JSONObject()
+            obj.put("id", it.id)
+            obj.put("order", it.order)
+            obj.put("isVisible", it.isVisible)
+            array.put(obj)
+        }
+        prefs.edit().putString("layout_config", array.toString()).apply()
+    }
+    private fun getDefaultConfig(): List<DashboardWidgetConfig> {
+        return listOf(
+            DashboardWidgetConfig("financial_weather", 0),
+            DashboardWidgetConfig("safe_to_spend", 1),
+            DashboardWidgetConfig("spending_pace", 2),
+            DashboardWidgetConfig("review_alert", 3),
+            DashboardWidgetConfig("spending_trend", 4),
+            DashboardWidgetConfig("insight", 5),
+            DashboardWidgetConfig("period_summary", 6),
+            DashboardWidgetConfig("budget_health", 7),
+            DashboardWidgetConfig("top_categories", 8),
+            DashboardWidgetConfig("recent_transactions", 9)
+        )
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt <a name="mainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt"></a>
+```kotlin
+package com.yourname.expensetracker.data.repository
+import com.yourname.expensetracker.domain.analytics.InsightsEngine
+import com.yourname.expensetracker.domain.analytics.PaceStatus
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.logic.NarrativeGenerator
+import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+import com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedPriority
+import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel as EntityGoalProtection
+import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.model.PlannedExpensePriority as DomainPlannedPriority
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel as DomainGoalProtection
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import javax.inject.Inject
+import javax.inject.Singleton
+import java.util.Calendar
+enum class WeatherState {
+    CLEAR_SKIES,      // 🌤️ Comfortable buffer
+    PARTLY_CLOUDY,    // ⛅ Moderate, watch spending
+    CLOUDY,           // ☁️ Tight, limited discretionary
+    RAINY,            // 🌧️ Multiple bills, over pace
+    STORMY,           // ⛈️ Budget danger, immediate action
+    UNKNOWN
+}
+data class FinancialWeather(
+    val state: WeatherState,
+    val headline: String,
+    val summary: String,
+    val icon: String, // Emoji
+    val riskLevel: Int, // 0-100
+    val totalCommitted: Double,
+    val totalLikely: Double,
+    val discretionaryBudget: Double,
+    val pastSpendingPoints: List<Double> = emptyList(),
+    val projectedSpendingPoints: List<Double> = emptyList(),
+    val upcomingItems: List<UpcomingItem> = emptyList(),
+    val totalRecurringCount: Int = 0,
+    val details: List<NarrativeSection> = emptyList()
+)
+@Singleton
+class FinancialWeatherRepository @Inject constructor(
+    private val notificationRepository: NotificationRepository,
+    private val insightsEngine: InsightsEngine,
+    private val budgetRepository: BudgetRepository,
+    private val recurringExpenseEngine: RecurringExpenseEngine,
+    private val recurringExpenseDao: com.yourname.expensetracker.data.database.dao.RecurringExpenseDao,
+    private val plannedExpenseDao: PlannedExpenseDao,
+    private val savingsGoalDao: SavingsGoalDao,
+    private val synthesisEngine: SynthesisEngine,
+    private val narrativeGenerator: NarrativeGenerator
+) {
+    fun getFinancialWeather(): Flow<FinancialWeather> = combine(
+        notificationRepository.getAllExpenses(),
+        budgetRepository.getBudgetStatuses(),
+        getAllRecurringPatterns(),
+        plannedExpenseDao.getAllPlannedExpenses(),
+        savingsGoalDao.getAllGoals()
+    ) { expenses, budgetStatuses, recurringPatterns, plannedEntities, goalEntities ->
+        val plannedExpenses = plannedEntities.map { entity ->
+            PlannedExpense(
+                id = entity.id,
+                description = entity.description,
+                amount = entity.amount,
+                date = entity.date,
+                categoryId = entity.categoryId,
+                isRecurring = entity.isRecurring,
+                priority = when(entity.priority) {
+                    EntityPlannedPriority.MUST -> DomainPlannedPriority.MUST
+                    EntityPlannedPriority.LIKELY -> DomainPlannedPriority.LIKELY
+                    EntityPlannedPriority.OPTIONAL -> DomainPlannedPriority.OPTIONAL
+                }
+            )
+        }
+        val savingsGoals = goalEntities.map { entity ->
+            SavingsGoal(
+                id = entity.id,
+                name = entity.name,
+                targetAmount = entity.targetAmount,
+                currentAmount = entity.currentAmount,
+                targetDate = entity.targetDate,
+                protectionLevel = when(entity.protectionLevel) {
+                    EntityGoalProtection.STRICT -> DomainGoalProtection.STRICT
+                    EntityGoalProtection.WARNING -> DomainGoalProtection.WARNING
+                    EntityGoalProtection.TRACKING -> DomainGoalProtection.TRACKING
+                }
+            )
+        }
+        // 1. Calculate Past Daily Cumulative Spend
+        val now = System.currentTimeMillis()
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        val monthStart = cal.timeInMillis
+        val currentDay = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
+        val purchases = expenses.filter { 
+            it.transactionType == TransactionType.PURCHASE 
+        }
+        val pastSumDaily: List<Double> = (1..currentDay).map { index: Int ->
+            val dayEnd = monthStart + (index.toLong() * 24 * 60 * 60 * 1000L)
+            purchases.filter { it.date >= monthStart && it.date < dayEnd }.sumOf { it.amount }
+        }
+        // 2. Get Engines data
+        val pace = insightsEngine.getSpendingPaceSuspend()
+        // 3. Synthesize Forecast
+        val forecast = synthesisEngine.synthesize(
+            pastSumDaily = pastSumDaily,
+            recurringPatterns = recurringPatterns,
+            plannedExpenses = plannedExpenses,
+            savingsGoals = savingsGoals,
+            budgetStatuses = budgetStatuses,
+            spendingPace = pace
+        )
+        // 4. Generate Narrative
+        val narrative = narrativeGenerator.generate(forecast)
+        // 5. Map to UI Model
+        FinancialWeather(
+            state = narrative.state,
+            headline = narrative.headline,
+            summary = narrative.summary,
+            icon = narrative.icon,
+            riskLevel = when (forecast.components.riskLevel) {
+                RiskLevel.LOW -> 10
+                RiskLevel.MEDIUM -> 40
+                RiskLevel.HIGH -> 70
+                RiskLevel.CRITICAL -> 100
+            },
+            totalCommitted = forecast.components.totalCommitted,
+            totalLikely = forecast.components.totalLikely,
+            discretionaryBudget = forecast.components.discretionaryBudget,
+            pastSpendingPoints = forecast.components.pastSpendingPoints,
+            projectedSpendingPoints = forecast.components.projectedSpendingPoints,
+            upcomingItems = buildUpcomingItems(
+                forecast.components.recurringExpenses,
+                forecast.components.plannedExpenses
+            ),
+            totalRecurringCount = recurringPatterns.size,
+            details = narrative.details
+        )
+    }
+    private fun buildUpcomingItems(
+        recurring: List<RecurringPattern>,
+        planned: List<PlannedExpense>
+    ): List<UpcomingItem> {
+        val now = System.currentTimeMillis()
+        val horizon = now + (31 * 86_400_000L) // Show next 31 days in the list
+        val items = mutableListOf<com.yourname.expensetracker.domain.model.UpcomingItem>()
+        recurring.filter { it.nextExpectedDate in (now + 1)..horizon }
+            .forEach { items.add(UpcomingItem.Recurring(it)) }
+        planned.filter { it.date in (now + 1)..horizon }
+            .forEach { items.add(UpcomingItem.Planned(it)) }
+        return items.sortedBy { it.date }
+    }
+    fun getAllPlannedExpenses(): Flow<List<PlannedExpense>> = plannedExpenseDao.getAllPlannedExpenses()
+        .map { entities ->
+            entities.map { entity ->
+                PlannedExpense(
+                    id = entity.id,
+                    description = entity.description,
+                    amount = entity.amount,
+                    date = entity.date,
+                    categoryId = entity.categoryId,
+                    isRecurring = entity.isRecurring,
+                    priority = when(entity.priority) {
+                        EntityPlannedPriority.MUST -> DomainPlannedPriority.MUST
+                        EntityPlannedPriority.LIKELY -> DomainPlannedPriority.LIKELY
+                        EntityPlannedPriority.OPTIONAL -> DomainPlannedPriority.OPTIONAL
+                    }
+                )
+            }
+        }
+    fun getAllRecurringPatterns(): Flow<List<RecurringPattern>> = recurringExpenseDao.getAllFlow()
+        .map { recurringExpenseEngine.getPatterns() }
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt <a name="mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt"></a>
 ```kotlin
 package com.yourname.expensetracker.data.repository
@@ -827,6 +1339,7 @@ import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.*
 import javax.inject.Inject
@@ -840,6 +1353,7 @@ class NotificationRepository @Inject constructor(
     private val pendingReviewDao: PendingReviewDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val sourceStatsDao: SourceStatsDao,
+    private val scannedReceiptDao: ScannedReceiptDao,
     private val parserRegistry: AppParserRegistry,
     private val categorizationEngine: CategorizationEngine,
     private val confidenceRouter: ConfidenceRouter,
@@ -867,7 +1381,7 @@ class NotificationRepository @Inject constructor(
     suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?): Boolean =
         dao.exists(packageName, timestamp, title, text)
     // === Review Queue ===
-    fun getPendingReviews(): Flow<List<PendingReview>> = pendingReviewDao.getPendingFlow()
+    fun getPendingReviews(): Flow<List<PendingReviewWithReceipt>> = pendingReviewDao.getPendingFlow()
     fun getPendingReviewCount(): Flow<Int> = pendingReviewDao.getPendingCountFlow()
     // === Source Stats ===
     fun getSourceStats(): Flow<List<SourceStats>> = sourceStatsDao.getAllFlow()
@@ -1076,16 +1590,16 @@ class NotificationRepository @Inject constructor(
         // but it's better than double-insertion stats.
         val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "APPROVED")
         if (rowsUpdated == 0) return
-        val amount = finalAmount ?: review.suggestedAmount
-        val merchant = finalMerchant ?: review.suggestedMerchant
-        val categoryId = finalCategoryId ?: review.suggestedCategoryId
-        val type = try {
-            TransactionType.valueOf(review.suggestedType)
+        val amount: Double = finalAmount ?: review.suggestedAmount
+        val merchant: String = finalMerchant ?: review.suggestedMerchant
+        val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
+        val type: com.yourname.expensetracker.data.database.entity.TransactionType = try {
+            com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(review.suggestedType)
         } catch (e: Exception) {
-            TransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
         }
-        val notification = dao.getById(review.rawNotificationId)
-        val transactionDate = notification?.timestamp ?: review.createdAt
+        val notification = review.rawNotificationId?.let { dao.getById(it) }
+        val transactionDate: Long = review.suggestedDate ?: notification?.timestamp ?: review.createdAt
         // Check for duplicates
         val isDuplicate = expenseDao.isDuplicate(
             amount = amount,
@@ -1094,30 +1608,36 @@ class NotificationRepository @Inject constructor(
         )
         if (!isDuplicate) {
             // Create the expense
-            val expense = Expense(
-                amount = amount,
-                currency = review.suggestedCurrency,
-                merchant = merchant,
-                transactionType = type,
-                date = transactionDate,
-                rawNotificationId = review.rawNotificationId,
-                categoryId = categoryId,
-                paymentMethod = PaymentMethod.CARD,
-                isManualEntry = false
+            val expense = com.yourname.expensetracker.data.database.entity.Expense(
+                0L,
+                amount,
+                review.suggestedCurrency,
+                merchant,
+                type,
+                transactionDate,
+                review.rawNotificationId, // Index 6 (0-based) - Long?
+                categoryId,                // Index 7 (0-based) - Long?
+                System.currentTimeMillis(),
+                com.yourname.expensetracker.data.database.entity.PaymentMethod.CARD,
+                review.scannedReceiptId != null,
+                if (review.scannedReceiptId != null) "Scanned from receipt" else null
             )
             try {
-                expenseDao.insert(expense)
-                // Only if insert succeeds:
-                dao.markRelevance(review.rawNotificationId, true)
-                sourceStatsDao.incrementAccepted(review.packageName)
-                sourceStatsDao.decrementPending(review.packageName)
-                // Check budgets
-                budgetMonitor.checkBudgets()
+                val expenseId = expenseDao.insert(expense)
+                if (expenseId > 0) {
+                    // Only if insert succeeds:
+                    review.rawNotificationId?.let { dao.markRelevance(it, true) }
+                    sourceStatsDao.incrementAccepted(review.packageName)
+                    sourceStatsDao.decrementPending(review.packageName)
+                    // Link to scanned receipt if this was a scan
+                    review.scannedReceiptId?.let { receiptId ->
+                        scannedReceiptDao.linkToExpense(receiptId, expenseId)
+                    }
+                    // Check budgets
+                    budgetMonitor.checkBudgets()
+                }
             } catch (e: android.database.sqlite.SQLiteConstraintException) {
-                // If expense insertion fails (e.g. key constraint even though we checked isDuplicate),
-                // we technically approved it but failed to create expense.
-                // Revert status? Or just log? 
-                // Given we already updated status to APPROVED, we leave it.
+                // Ignore
             }
         }
         // Record user correction for learning
@@ -1169,7 +1689,7 @@ class NotificationRepository @Inject constructor(
         // Atomic update check
         val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "REJECTED")
         if (rowsUpdated == 0) return
-        dao.markRelevance(review.rawNotificationId, false)
+        review.rawNotificationId?.let { id -> dao.markRelevance(id, false) }
         sourceStatsDao.incrementRejected(review.packageName)
         sourceStatsDao.decrementPending(review.packageName)
         // Record rejection for learning
@@ -1202,8 +1722,8 @@ class NotificationRepository @Inject constructor(
     @Transaction
     suspend fun approveAllReview() {
         val pending = pendingReviewDao.getPending()
-        pending.forEach { review ->
-            approveReview(review.id)
+        pending.forEach { item ->
+            approveReview(item.review.id)
         }
     }
     // === Classifier Management ===
@@ -1324,8 +1844,10 @@ package com.yourname.expensetracker.data.repository
 import android.net.Uri
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
@@ -1344,6 +1866,7 @@ class ReceiptRepository @Inject constructor(
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
     private val merchantCategoryDao: MerchantCategoryDao,
+    private val pendingReviewDao: PendingReviewDao,
     private val ocrService: ReceiptOcrService,
     private val receiptParser: ReceiptParser,
     private val categorizationEngine: CategorizationEngine,
@@ -1353,8 +1876,14 @@ class ReceiptRepository @Inject constructor(
     val allReceipts: Flow<List<ScannedReceipt>> = scannedReceiptDao.getAllFlow()
     /**
      * Process an image URI: run OCR, parse receipt, save to DB
+     *
+     * @param imageUri URI of the image to process
+     * @param autoCreateReview Whether to automatically create a PendingReview entry (true for batch, false for manual)
      */
-    suspend fun processReceipt(imageUri: Uri): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
+    suspend fun processReceipt(
+        imageUri: Uri,
+        autoCreateReview: Boolean = false
+    ): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
         // 1. Run OCR
         val ocrResult: OcrResult = ocrService.processImage(imageUri)
         // 2. Parse the OCR text
@@ -1377,6 +1906,24 @@ class ReceiptRepository @Inject constructor(
             confidence = parsed.confidence
         )
         val receiptId = scannedReceiptDao.insert(receipt)
+        // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
+        if (autoCreateReview) {
+            val review = PendingReview(
+                rawNotificationId = null,
+                scannedReceiptId = receiptId,
+                suggestedAmount = parsed.total ?: 0.0,
+                suggestedCurrency = parsed.currency,
+                suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant",
+                suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
+                suggestedCategoryId = null, // Auto-detected on approval
+                suggestedDate = parsed.date, // Preserving the date found by parser
+                confidence = parsed.confidence,
+                packageName = "receipt.scan",
+                notificationTitle = "Scanned Receipt",
+                notificationText = ocrResult.fullText.take(200) // Preview snippet
+            )
+            pendingReviewDao.insert(review)
+        }
         return Pair(receipt.copy(id = receiptId), parsed)
     }
     /**
@@ -1451,6 +1998,55 @@ class ReceiptRepository @Inject constructor(
     }
     suspend fun getReceiptCount(): Int {
         return scannedReceiptDao.getCount()
+    }
+    data class BatchResult(
+        val successCount: Int,
+        val failureCount: Int,
+        val errors: List<String>
+    )
+    /**
+     * Process multiple receipts in a loop
+     */
+    suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult {
+        var successes = 0
+        var failures = 0
+        val errors = mutableListOf<String>()
+        uris.forEachIndexed { index, uri ->
+            try {
+                // Batch always creates reviews
+                processReceipt(uri, autoCreateReview = true)
+                successes++
+                onProgress(index + 1, uris.size)
+            } catch (e: Exception) {
+                failures++
+                errors.add("Failed to process $uri: ${e.message}")
+                onProgress(index + 1, uris.size)
+            }
+        }
+        return BatchResult(successes, failures, errors)
+    }
+    suspend fun clearAllScannedReceipts() {
+        val receipts = scannedReceiptDao.getAll()
+        receipts.forEach { ocrService.deleteImage(it.imagePath) }
+        scannedReceiptDao.deleteAll()
+    }
+    /**
+     * Concatenates all raw OCR text from the database for debugging/parsing refinement
+     */
+    suspend fun exportParserDebugData(): String {
+        val receipts = scannedReceiptDao.getAll()
+        val sb = StringBuilder()
+        sb.append("=== EXPORTED PARSER DEBUG DATA (${receipts.size} RECEIPTS) ===\n\n")
+        receipts.forEachIndexed { index, receipt ->
+            sb.append("--- RECEIPT #${index + 1} (ID: ${receipt.id}) ---\n")
+            sb.append("MERCHANT: ${receipt.parsedMerchant ?: "Unknown"}\n")
+            sb.append("TOTAL: ${receipt.parsedTotal ?: "Not Found"}\n")
+            sb.append("DATE: ${receipt.parsedDate ?: "Not Found"}\n")
+            sb.append("RAW OCR TEXT:\n")
+            sb.append(receipt.rawOcrText)
+            sb.append("\n\n")
+        }
+        return sb.toString()
     }
 }
 
@@ -2151,6 +2747,19 @@ class InsightsEngine @Inject constructor(
             cal.timeInMillis = expense.date
             "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}"
         }.distinct().size
+    }
+    // === Exposed Suspend Functions for Repository Usage ===
+    suspend fun getSpendingPaceSuspend(): SpendingPace {
+        val now = System.currentTimeMillis()
+        val currentMonth = getMonthPeriod(now)
+        val previousMonth = getPreviousMonthPeriod(currentMonth)
+        // We need "all expenses" to calculate the average baseline
+        // For performance, we could limit this to the last 6 months, but for now we'll fetch all
+        // or just rely on previous month if that's faster.
+        // Let's fetch last 6 months for a good baseline.
+        val sixMonthsAgo = getMonthPeriod(now, -6).startMs
+        val recentExpenses = expenseDao.getExpensesBetween(sixMonthsAgo, now)
+        return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
     }
     private fun fmt(amount: Double): String = String.format("%.2f", amount)
     private fun formatDate(dateMs: Long): String {
@@ -3171,6 +3780,554 @@ data class ClassifierStats(
 
 ---
 
+## main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt <a name="mainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.logic
+import com.yourname.expensetracker.data.repository.WeatherState
+import com.yourname.expensetracker.domain.model.FinancialForecast
+import com.yourname.expensetracker.domain.model.RiskLevel
+import com.yourname.expensetracker.domain.model.WeatherNarrative
+import com.yourname.expensetracker.domain.model.NarrativeSection
+import com.yourname.expensetracker.domain.model.PlannedExpensePriority
+import javax.inject.Inject
+import javax.inject.Singleton
+@Singleton
+class NarrativeGenerator @Inject constructor() {
+    fun generate(forecast: FinancialForecast): WeatherNarrative {
+        val components = forecast.components
+        val risk = components.riskLevel
+        val discretionary = components.discretionaryBudget
+        val basic = when {
+            risk == RiskLevel.LOW && discretionary > 200.0 -> WeatherNarrative(
+                state = WeatherState.CLEAR_SKIES,
+                icon = "☀️",
+                headline = "Clear Skies",
+                summary = "You have a comfortable buffer of €${String.format("%.2f", discretionary)} for the rest of the month."
+            )
+            risk == RiskLevel.LOW || risk == RiskLevel.MEDIUM -> WeatherNarrative(
+                state = WeatherState.PARTLY_CLOUDY,
+                icon = "⛅",
+                headline = "Partly Cloudy",
+                summary = "Everything is on track, though discretionary buffer is moderate (€${String.format("%.2f", discretionary)})."
+            )
+            risk == RiskLevel.HIGH && discretionary > 0 -> WeatherNarrative(
+                state = WeatherState.CLOUDY,
+                icon = "☁️",
+                headline = "Cloudy Forecast",
+                summary = "Spending is tight. You only have €${String.format("%.2f", discretionary)} remaining for unpredicted expenses."
+            )
+            risk == RiskLevel.HIGH -> WeatherNarrative(
+                state = WeatherState.RAINY,
+                icon = "🌧️",
+                headline = "Rainy Conditions",
+                summary = "Over pace on budgets and high committed costs. Caution is highly advised."
+            )
+            risk == RiskLevel.CRITICAL -> WeatherNarrative(
+                state = WeatherState.STORMY,
+                icon = "⛈️",
+                headline = "Stormy Weather",
+                summary = "⚠️ Immediate action required. Budgets exceeded and no discretionary buffer remains."
+            )
+            else -> WeatherNarrative(
+                state = WeatherState.UNKNOWN,
+                icon = "❓",
+                headline = "Mixed Signals",
+                summary = "Not enough data to provide a clear outlook yet."
+            )
+        }
+        return basic.copy(details = buildDetails(forecast))
+    }
+    private fun buildDetails(forecast: FinancialForecast): List<NarrativeSection> {
+        val sections = mutableListOf<NarrativeSection>()
+        val components = forecast.components
+        // 1. Upcoming Bills Section (Pattern Engine)
+        val highConfidenceRecurring = components.recurringExpenses.filter { it.confidence >= 0.90f }
+        if (highConfidenceRecurring.isNotEmpty()) {
+            sections.add(
+                NarrativeSection(
+                    title = "Known Bills",
+                    icon = "⚡",
+                    items = highConfidenceRecurring.take(3).map { 
+                        "${it.merchantName}: €${String.format("%.0f", it.averageAmount)} expected soon"
+                    }
+                )
+            )
+        }
+        // 2. Intentions Section (Intention Engine)
+        val importantPlans = components.plannedExpenses.filter { 
+            it.priority == PlannedExpensePriority.MUST || 
+            it.priority == PlannedExpensePriority.LIKELY 
+        }
+        if (importantPlans.isNotEmpty()) {
+            sections.add(
+                NarrativeSection(
+                    title = "Planned Intentions",
+                    icon = "📝",
+                    items = importantPlans.take(3).map {
+                        "${it.description}: ~€${String.format("%.0f", it.amount)}"
+                    }
+                )
+            )
+        }
+        // 3. Goal Reserves Section
+        if (components.goalReserves > 0) {
+            sections.add(
+                NarrativeSection(
+                    title = "Goal Protection",
+                    icon = "🛡️",
+                    items = listOf("€${String.format("%.0f", components.goalReserves)} reserved for strict savings goals")
+                )
+            )
+        }
+        return sections
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt <a name="mainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.logic
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.model.RecurringPattern
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlin.math.abs
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
+@Singleton
+class RecurringExpenseEngine @Inject constructor(
+    private val expenseDao: ExpenseDao,
+    private val recurringExpenseDao: RecurringExpenseDao
+) {
+    /**
+     * Analyze all expenses to find recurring patterns and merge with manual overrides.
+     * Returns a list of patterns sorted by confidence (Manual = 1.0).
+     */
+    suspend fun getPatterns(): List<RecurringPattern> {
+        // 1. Fetch Manual Overrides
+        val manualExpenses = recurringExpenseDao.getAll()
+        val manualMap = manualExpenses.associateBy { it.merchant.lowercase() }
+        // 2. Fetch all expenses for detection
+        val allExpenses = expenseDao.getAll()
+        // Group by normalized merchant name
+        val grouped = allExpenses.groupBy { it.merchant }
+        val detectedPatterns = mutableListOf<RecurringPattern>()
+        for ((merchant, expenses) in grouped) {
+            // If we already have a manual rule for this merchant, skip detection
+            if (manualMap.containsKey(merchant.lowercase())) continue
+            // Requirement: At least 3 occurrences to form a pattern
+            if (expenses.size < 3) continue 
+            // Sort by date ascending to calculate intervals
+            val sorted = expenses.sortedBy { it.date }
+            // 1. Amount Stability Check
+            val amounts = sorted.map { it.amount }
+            val avgAmount = amounts.average()
+            val stdDevAmount = calculateStdDev(amounts)
+            // Coefficient of variation: stdDev / mean
+            val amountVariance = if (avgAmount > 0) stdDevAmount / avgAmount else 0.0
+            // If amount varies by more than 20%, likely not a fixed subscription/bill
+            if (amountVariance > 0.20) continue 
+            // 2. Interval Analysis
+            val dates = sorted.map { it.date }
+            val intervals = calculateIntervals(dates)
+            val (frequency, confidence, varianceDays) = determineFrequency(intervals)
+            // Thresholds: Must be a known frequency and have > 65% confidence
+            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.65) {
+                // Predict next date
+                val lastDate = dates.last()
+                val nextDate = lastDate + (frequency.days * 86_400_000L) // days to ms
+                detectedPatterns.add(
+                    RecurringPattern(
+                        merchantName = merchant,
+                        averageAmount = avgAmount,
+                        currency = sorted.first().currency,
+                        frequency = frequency,
+                        periodVarianceDays = varianceDays,
+                        amountVariancePercent = amountVariance,
+                        nextExpectedDate = nextDate,
+                        confidence = confidence.toFloat(),
+                        previousDates = dates.takeLast(5),
+                        categoryId = sorted.first().categoryId
+                    )
+                )
+            }
+        }
+        // 3. Convert Manual Entries to RecurringPattern
+        val manualPatterns = manualExpenses.map { manual ->
+            RecurringPattern(
+                merchantName = manual.merchant,
+                averageAmount = manual.amount,
+                currency = manual.currency,
+                frequency = manual.frequency,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = manual.nextDate,
+                confidence = 1.0f, // Manual is 100% confident
+                previousDates = emptyList(), // No history needed for display
+                categoryId = null // Manual entries don't have categoryId yet
+            )
+        }
+        return (manualPatterns + detectedPatterns).sortedByDescending { it.confidence }
+    }
+    private fun calculateIntervals(dates: List<Long>): List<Long> {
+        if (dates.size < 2) return emptyList()
+        val intervals = mutableListOf<Long>()
+        for (i in 0 until dates.size - 1) {
+            val diff = dates[i+1] - dates[i]
+            intervals.add(diff)
+        }
+        return intervals
+    }
+    private fun calculateStdDev(values: List<Double>): Double {
+        if (values.size < 2) return 0.0
+        val mean = values.average()
+        val sumSq = values.sumOf { (it - mean) * (it - mean) }
+        return sqrt(sumSq / (values.size - 1))
+    }
+    private fun determineFrequency(intervalsMs: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
+        if (intervalsMs.isEmpty()) return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
+        // Convert ms to days (round to nearest integer day)
+        val intervalsDays = intervalsMs.map { (it / 86_400_000.0).roundToInt() }
+        // Find Mode (most common interval)
+        val frequencyMap = intervalsDays.groupingBy { it }.eachCount()
+        val modeEntry = frequencyMap.maxByOrNull { it.value } 
+            ?: return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
+        val mode = modeEntry.key
+        // Map mode to known frequencies with tolerance
+        val frequency = when (mode) {
+             in 6..8 -> RecurrenceFrequency.WEEKLY
+             in 13..15 -> RecurrenceFrequency.BIWEEKLY
+             in 28..31 -> RecurrenceFrequency.MONTHLY // Covers 28, 30, 31 day months
+             in 85..95 -> RecurrenceFrequency.QUARTERLY
+             in 175..190 -> RecurrenceFrequency.SEMI_ANNUALLY
+             in 360..370 -> RecurrenceFrequency.ANNUALLY
+             else -> RecurrenceFrequency.IRREGULAR
+        }
+        if (frequency == RecurrenceFrequency.IRREGULAR) {
+            return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
+        }
+        // Calculate Confidence
+        // Score based on how many intervals are "close" to the mode (within ±10% or ±1 day)
+        val tolerance = (mode * 0.1).coerceAtLeast(1.0)
+        val matchingIntervals = intervalsDays.count { abs(it - mode) <= tolerance }
+        val consistencyScore = matchingIntervals.toDouble() / intervalsDays.size
+        // Calculate Average Deviation (days)
+        val deviations = intervalsDays.map { abs(it - mode) }
+        val avgDeviation = deviations.average()
+        return Triple(frequency, consistencyScore, avgDeviation.roundToInt())
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt <a name="mainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.logic
+import com.yourname.expensetracker.domain.analytics.PaceStatus
+import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.model.*
+import java.time.Instant
+import java.util.*
+import javax.inject.Inject
+import javax.inject.Singleton
+@Singleton
+class SynthesisEngine @Inject constructor() {
+    fun synthesize(
+        pastSumDaily: List<Double>,
+        recurringPatterns: List<RecurringPattern>,
+        plannedExpenses: List<PlannedExpense>,
+        savingsGoals: List<SavingsGoal>,
+        budgetStatuses: List<BudgetStatus>,
+        spendingPace: SpendingPace
+    ): FinancialForecast {
+        val now = System.currentTimeMillis()
+        val calendar = Calendar.getInstance()
+        val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
+        val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(1)
+        val endOfMonthCal = Calendar.getInstance().apply {
+            set(Calendar.DAY_OF_MONTH, daysInMonth)
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        val endOfMonth = endOfMonthCal.timeInMillis
+        // 1. Calculate Committed (Highly likely/Automated/Must happen)
+        val committedUpcomingBills = recurringPatterns.filter { 
+            it.confidence >= 0.90f && it.nextExpectedDate > now && it.nextExpectedDate <= endOfMonth 
+        }.sumOf { it.averageAmount }
+        val committedPlanned = plannedExpenses.filter {
+            it.priority == PlannedExpensePriority.MUST && it.date > now && it.date <= endOfMonth
+        }.sumOf { it.amount }
+        val totalCommitted = committedUpcomingBills + committedPlanned
+        // 2. Calculate Likely (Probable behavior)
+        val likelyUpcomingBills = recurringPatterns.filter { 
+            it.confidence in 0.70f..0.89f && it.nextExpectedDate > now && it.nextExpectedDate <= endOfMonth
+        }.sumOf { it.averageAmount }
+        val likelyPlanned = plannedExpenses.filter {
+            it.priority == PlannedExpensePriority.LIKELY && it.date > now && it.date <= endOfMonth
+        }.sumOf { it.amount }
+        val monthlyRecurringTotal = recurringPatterns.sumOf { it.averageAmount }
+        val typicalDailyDiscretionary = spendingPace.averageMonthlyTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth } 
+            ?: (spendingPace.previousMonthTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth })
+            ?: 0.0
+        val totalLikely = likelyUpcomingBills + likelyPlanned + (typicalDailyDiscretionary * daysRemaining)
+        // 3. Goal Reserves
+        // Strict goals are subtracted from "Available"
+        val goalReserves = savingsGoals
+            .filter { it.protectionLevel == GoalProtectionLevel.STRICT }
+            .sumOf { it.targetAmount - it.currentAmount }
+            .coerceAtLeast(0.0)
+        // 4. Calculate Projected Timeline Points
+        val lastKnownTotal = pastSumDaily.lastOrNull() ?: 0.0
+        val dailyProjectionRate = totalLikely / daysRemaining
+        val projectedPoints = (1..daysRemaining).map { dayIndex ->
+            lastKnownTotal + (dailyProjectionRate * dayIndex)
+        }
+        // 5. Calculate Discretionary (Available)
+        val overallBudget = budgetStatuses.find { it.budget.categoryId == null }?.budget?.amount ?: 0.0
+        val categoryBudgetsSum = budgetStatuses.filter { it.budget.categoryId != null }.sumOf { it.budget.amount }
+        val budgetLimit = if (overallBudget > 0) overallBudget else categoryBudgetsSum
+        val spentSoFar = spendingPace.currentMonthSpent
+        // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
+        val discretionaryBudget = (budgetLimit - (spentSoFar + totalCommitted + totalLikely + goalReserves)).coerceAtLeast(0.0)
+        // 6. Determine Risk Level
+        val riskLevel = determineRiskLevel(
+            spendingPace, 
+            budgetStatuses, 
+            discretionaryBudget, 
+            budgetLimit
+        )
+        return FinancialForecast(
+            horizon = ForecastHorizon.REST_OF_MONTH,
+            generatedAt = Instant.now(),
+            confidence = 0.85, 
+            components = ForecastComponents(
+                recurringExpenses = recurringPatterns,
+                plannedExpenses = plannedExpenses,
+                goalReserves = goalReserves,
+                projectedCategorySpending = emptyMap(),
+                pastSpendingPoints = pastSumDaily,
+                projectedSpendingPoints = projectedPoints,
+                totalCommitted = totalCommitted,
+                totalLikely = totalLikely,
+                discretionaryBudget = discretionaryBudget,
+                riskLevel = riskLevel
+            ),
+            actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, plannedExpenses, savingsGoals)
+        )
+    }
+    private fun determineRiskLevel(
+        pace: SpendingPace,
+        budgets: List<BudgetStatus>,
+        discretionary: Double,
+        limit: Double
+    ): RiskLevel {
+        val criticalBudgets = budgets.count { it.healthStatus == BudgetHealthStatus.CRITICAL || it.healthStatus == BudgetHealthStatus.EXCEEDED }
+        val overPace = pace.paceStatus == PaceStatus.OVER_PACE
+        // Ratio of discretionary to total budget
+        val bufferRatio = if (limit > 0) discretionary / limit else 0.0
+        return when {
+            criticalBudgets > 0 || (overPace && bufferRatio < 0.05) -> RiskLevel.CRITICAL
+            overPace || criticalBudgets > 0 || bufferRatio < 0.1 -> RiskLevel.HIGH
+            bufferRatio < 0.2 -> RiskLevel.MEDIUM
+            else -> RiskLevel.LOW
+        }
+    }
+    private fun buildInsights(
+        risk: RiskLevel,
+        budgets: List<BudgetStatus>,
+        pace: SpendingPace,
+        planned: List<PlannedExpense>,
+        goals: List<SavingsGoal>
+    ): List<String> {
+        val insights = mutableListOf<String>()
+        if (pace.paceStatus == PaceStatus.OVER_PACE) insights.add("Spending pace is higher than usual.")
+        val exceeded = budgets.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
+        if (exceeded > 0) insights.add("$exceeded budgets exceeded.")
+        val strictGoalCount = goals.count { it.protectionLevel == GoalProtectionLevel.STRICT }
+        if (strictGoalCount > 0) insights.add("$strictGoalCount strict savings goals active.")
+        val mustPlannedCount = planned.count { it.priority == PlannedExpensePriority.MUST }
+        if (mustPlannedCount > 0) insights.add("$mustPlannedCount must-pay planned expenses this month.")
+        return insights
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt <a name="mainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.model
+import java.time.Instant
+data class FinancialForecast(
+    val horizon: ForecastHorizon,
+    val generatedAt: Instant,
+    val confidence: Double, // 0.0 - 1.0
+    val components: ForecastComponents,
+    val actionableInsights: List<String>
+)
+enum class ForecastHorizon(val days: Int, val displayName: String) {
+    NEXT_7_DAYS(7, "Next 7 Days"),
+    NEXT_30_DAYS(30, "Next 30 Days"),
+    REST_OF_MONTH(0, "Rest of Month") // 0 means calculate based on calendar
+}
+data class ForecastComponents(
+    val recurringExpenses: List<RecurringPattern>,
+    val plannedExpenses: List<PlannedExpense> = emptyList(), // Manual intentions
+    val goalReserves: Double = 0.0, // Money locked in goals
+    val projectedCategorySpending: Map<Long, Double>, // Category ID to amount
+    // Timeline Data
+    val pastSpendingPoints: List<Double>, // Cumulative daily spend up to today
+    val projectedSpendingPoints: List<Double>, // Projected cumulative daily spend for rest of month
+    // Synthesis Metrics
+    val totalCommitted: Double,        // High confidence (bills, manual)
+    val totalLikely: Double,           // Medium confidence (patterns, avg)
+    val discretionaryBudget: Double,   // "Safe-to-Spend"
+    val riskLevel: RiskLevel
+)
+enum class RiskLevel {
+    LOW,
+    MEDIUM,
+    HIGH,
+    CRITICAL
+}
+data class WeatherNarrative(
+    val state: com.yourname.expensetracker.data.repository.WeatherState,
+    val icon: String,
+    val headline: String,
+    val summary: String,
+    val details: List<NarrativeSection> = emptyList()
+)
+data class NarrativeSection(
+    val title: String,
+    val icon: String,
+    val items: List<String>
+)
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt <a name="mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.model
+data class PlannedExpense(
+    val id: Long,
+    val description: String,
+    val amount: Double,
+    val date: Long,
+    val categoryId: Long?,
+    val isRecurring: Boolean,
+    val priority: PlannedExpensePriority
+)
+enum class PlannedExpensePriority {
+    MUST,
+    LIKELY,
+    OPTIONAL
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt <a name="mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.model
+import java.time.LocalDate
+data class RecurringPattern(
+    val merchantName: String,
+    val averageAmount: Double,
+    val currency: String,
+    val frequency: RecurrenceFrequency,
+    val periodVarianceDays: Int, // e.g. ±2 days
+    val amountVariancePercent: Double, // e.g. 0.05 (5%)
+    val nextExpectedDate: Long, // Epoch millis
+    val confidence: Float, // 0.0 - 1.0
+    val previousDates: List<Long>, // For debugging/UI visualization
+    val categoryId: Long? = null
+)
+enum class RecurrenceFrequency(val days: Int) {
+    WEEKLY(7),
+    BIWEEKLY(14),
+    MONTHLY(30),
+    QUARTERLY(90),
+    SEMI_ANNUALLY(180),
+    ANNUALLY(365),
+    IRREGULAR(0);
+    val intervalInMs: Long
+        get() = days * 86_400_000L
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt <a name="mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.model
+data class SavingsGoal(
+    val id: Long,
+    val name: String,
+    val targetAmount: Double,
+    val currentAmount: Double,
+    val targetDate: Long?,
+    val protectionLevel: GoalProtectionLevel
+)
+enum class GoalProtectionLevel {
+    STRICT,
+    WARNING,
+    TRACKING
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt <a name="mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.model
+sealed class UpcomingItem {
+    abstract val id: String
+    abstract val description: String
+    abstract val amount: Double
+    abstract val date: Long
+    abstract val categoryId: Long?
+    data class Recurring(
+        val pattern: RecurringPattern
+    ) : UpcomingItem() {
+        override val id: String = "recurring_${pattern.merchantName}"
+        override val description: String = pattern.merchantName
+        override val amount: Double = pattern.averageAmount
+        override val date: Long = pattern.nextExpectedDate
+        override val categoryId: Long? = pattern.categoryId
+    }
+    data class Planned(
+        val expense: PlannedExpense
+    ) : UpcomingItem() {
+        override val id: String = "planned_${expense.id}"
+        override val description: String = expense.description
+        override val amount: Double = expense.amount
+        override val date: Long = expense.date
+        override val categoryId: Long? = expense.categoryId
+    }
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt <a name="mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt"></a>
 ```kotlin
 package com.yourname.expensetracker.domain.receipt
@@ -3211,26 +4368,30 @@ class ReceiptOcrService @Inject constructor(
      * Also saves a compressed copy of the image for future reference.
      */
     suspend fun processImage(imageUri: Uri): OcrResult {
-        // 1. Load and prepare the image
-        val bitmap = loadAndCorrectBitmap(imageUri)
-            ?: throw IllegalArgumentException("Could not load image from URI")
-        // 2. Save compressed copy
-        val savedPath = saveReceiptImage(bitmap)
-        // 3. Run ML Kit OCR
-        val inputImage = InputImage.fromBitmap(bitmap, 0)
-        val visionText = recognizeText(inputImage)
-        // 4. Extract blocks
-        val blocks = visionText.textBlocks.map { block ->
-            TextBlock(
-                text = block.text,
-                confidence = block.lines.firstOrNull()?.confidence
+        // 1. Load and prepare the image (throws if fail)
+        val bitmap = loadAndCorrectBitmap(imageUri)!!
+        try {
+            // 2. Save compressed copy
+            val savedPath = saveReceiptImage(bitmap)
+            // 3. Run ML Kit OCR
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            val visionText = recognizeText(inputImage)
+            // 4. Extract blocks
+            val blocks = visionText.textBlocks.map { block ->
+                TextBlock(
+                    text = block.text,
+                    confidence = block.lines.firstOrNull()?.confidence
+                )
+            }
+            return OcrResult(
+                fullText = visionText.text,
+                blocks = blocks,
+                savedImagePath = savedPath
             )
+        } finally {
+            // CRITICAL: Prevent memory leaks during batch processing
+            bitmap.recycle()
         }
-        return OcrResult(
-            fullText = visionText.text,
-            blocks = blocks,
-            savedImagePath = savedPath
-        )
     }
     private suspend fun recognizeText(
         image: InputImage
@@ -3246,61 +4407,74 @@ class ReceiptOcrService @Inject constructor(
         }
     }
     /**
-     * Load bitmap from URI with EXIF rotation correction
+     * Load bitmap from URI with EXIF rotation correction.
+     * Copies to a temp file first to ensure reliable multi-read access.
      */
     private fun loadAndCorrectBitmap(uri: Uri): Bitmap? {
+        val tempFile = File(context.cacheDir, "temp_ocr_${System.nanoTime()}.jpg")
         return try {
-            val inputStream: InputStream = context.contentResolver.openInputStream(uri)
-                ?: return null
-            // Decode with size limits to avoid OOM
+            // Copy URI to temp file
+            val inputStream = context.contentResolver.openInputStream(uri)
+                ?: throw IllegalStateException("Could not open input stream for $uri")
+            inputStream.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (!tempFile.exists() || tempFile.length() == 0L) {
+                throw IllegalStateException("Temp file creation failed or empty for $uri")
+            }
+            // 1. Get dimensions
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
-            BitmapFactory.decodeStream(inputStream, null, options)
-            inputStream.close()
-            // Calculate sample size for images larger than 2048px
+            BitmapFactory.decodeFile(tempFile.absolutePath, options)
+            // Calculate sample size
             val maxDimension = 2048
             var sampleSize = 1
-            while (options.outWidth / sampleSize > maxDimension ||
-                options.outHeight / sampleSize > maxDimension
-            ) {
-                sampleSize *= 2
+            if (options.outWidth > 0 && options.outHeight > 0) {
+                while (options.outWidth / sampleSize > maxDimension ||
+                    options.outHeight / sampleSize > maxDimension
+                ) {
+                    sampleSize *= 2
+                }
             }
-            // Decode actual bitmap
+            // 2. Decode actual bitmap
             val decodeOptions = BitmapFactory.Options().apply {
                 inSampleSize = sampleSize
             }
-            val decodedStream = context.contentResolver.openInputStream(uri)
-                ?: return null
-            val bitmap = BitmapFactory.decodeStream(decodedStream, null, decodeOptions)
-            decodedStream.close()
-            // Apply EXIF rotation if needed
-            bitmap?.let { correctRotation(it, uri) } ?: bitmap
-        } catch (e: Exception) {
-            null
-        }
-    }
-    private fun correctRotation(bitmap: Bitmap, uri: Uri): Bitmap {
-        return try {
-            val inputStream = context.contentResolver.openInputStream(uri) ?: return bitmap
-            val exif = ExifInterface(inputStream)
-            inputStream.close()
+            val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath, decodeOptions)
+                ?: throw IllegalStateException("Bitmap decode failed for $uri (Sample: $sampleSize)")
+            // 3. Apply EXIF rotation
+            val exif = ExifInterface(tempFile.absolutePath)
             val orientation = exif.getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
                 ExifInterface.ORIENTATION_NORMAL
             )
             val matrix = Matrix()
+            var needsRotate = true
             when (orientation) {
                 ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
                 ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
                 ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
                 ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
                 ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
-                else -> return bitmap
+                else -> needsRotate = false
             }
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            if (needsRotate) {
+                val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                if (rotated != bitmap) {
+                    bitmap.recycle() // Clean up original if rotated
+                }
+                rotated
+            } else {
+                bitmap
+            }
         } catch (e: Exception) {
-            bitmap
+            android.util.Log.e("ReceiptOcrService", "Error loading bitmap from $uri", e)
+            throw IllegalStateException("Failed to load image: ${e.message}", e)
+        } finally {
+            if (tempFile.exists()) tempFile.delete()
         }
     }
     /**
@@ -3418,6 +4592,7 @@ fun MainScreen() {
     val haptic = rememberHapticFeedback()
     var showAddExpense by remember { mutableStateOf(false) }
     var showScanReceipt by remember { mutableStateOf(false) }
+    var showRecurringExpenses by remember { mutableStateOf(false) }
     var isFabExpanded by remember { mutableStateOf(false) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -3503,7 +4678,10 @@ fun MainScreen() {
                 label = "TabTransition"
             ) { targetTab ->
                 when (targetTab) {
-                    0 -> HomeScreen()
+                    0 -> HomeScreen(
+                        onNavigateToReview = { selectedTab = 2 },
+                        onNavigateToRecurring = { showRecurringExpenses = true }
+                    )
                     1 -> TransactionsScreen()
                     2 -> ReviewScreen()
                     3 -> BudgetScreen()
@@ -3528,6 +4706,11 @@ fun MainScreen() {
             if (showScanReceipt) {
                 com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen(
                     onDismiss = { showScanReceipt = false }
+                )
+            }
+            if (showRecurringExpenses) {
+                com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen(
+                    onNavigateBack = { showRecurringExpenses = false }
                 )
             }
         }
@@ -3665,24 +4848,29 @@ class MainViewModel @Inject constructor(
 ## main\java\com\yourname\expensetracker\ui\components\BentoCard.kt <a name="mainjavacomyournameexpensetrackeruicomponentsbentocardkt"></a>
 ```kotlin
 package com.yourname.expensetracker.ui.components
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.ui.theme.SemanticColors
 /**
  * Atomic BentoCard — the building block for the Bento Grid layout.
+ * Features: Glassmorphism (semi-transparency + hairline border).
  */
 @Composable
 fun BentoCard(
     modifier: Modifier = Modifier,
-    containerColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-    cornerRadius: Dp = 20.dp,
+    containerColor: Color = SemanticColors.GlassSurface,
+    cornerRadius: Dp = 24.dp, // Modern, rounder look
     contentPadding: PaddingValues = PaddingValues(16.dp),
+    border: BorderStroke = BorderStroke(1.dp, SemanticColors.GlassBorder),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -3691,6 +4879,7 @@ fun BentoCard(
             modifier = modifier,
             shape = RoundedCornerShape(cornerRadius),
             colors = CardDefaults.cardColors(containerColor = containerColor),
+            border = border,
             onClick = onClick
         ) {
             Column(
@@ -3703,6 +4892,7 @@ fun BentoCard(
             modifier = modifier,
             shape = RoundedCornerShape(cornerRadius),
             colors = CardDefaults.cardColors(containerColor = containerColor),
+            border = border
         ) {
             Column(
                 modifier = Modifier.padding(contentPadding),
@@ -3712,36 +4902,48 @@ fun BentoCard(
     }
 }
 /**
- * Hero BentoCard — larger, primary-colored, for the main metric
+ * Hero BentoCard — larger, primary-colored gradient, for the main metric.
  */
 @Composable
 fun HeroBentoCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    // Gradient for a more vibrant Hero card
+    val heroGradient = Brush.linearGradient(
+        colors = listOf(
+            SemanticColors.PrimaryIndigo.copy(alpha = 0.4f),
+            SemanticColors.PrimaryLight.copy(alpha = 0.2f)
+        )
+    )
     BentoCard(
         modifier = modifier,
-        containerColor = MaterialTheme.colorScheme.primaryContainer,
-        cornerRadius = 24.dp,
+        containerColor = Color.Transparent, // Overridden by custom modifier or nested content if needed
+        cornerRadius = 28.dp,
         contentPadding = PaddingValues(24.dp),
-        content = content
-    )
+        border = BorderStroke(1.dp, SemanticColors.PrimaryLight.copy(alpha = 0.2f))
+    ) {
+        // We use a Surface/Box inside if we want a complex gradient background, 
+        // but for now, the BentoCard's containerColor is our base.
+        // Let's refine the BentoCard to support custom backgrounds better or just use containerColor.
+        content()
+    }
 }
 /**
- * Compact stat label used inside BentoCards
+ * Compact stat label used inside BentoCards.
  */
 @Composable
 fun StatLabel(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
-    valueColor: Color = MaterialTheme.colorScheme.onSurface
+    valueColor: Color = SemanticColors.TextPrimary
 ) {
     Column(modifier = modifier) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = SemanticColors.TextSecondary
         )
         Text(
             text = value,
@@ -3754,7 +4956,7 @@ fun StatLabel(
     }
 }
 /**
- * Amount text with tabular figures
+ * Amount text with tabular figures and premium weights.
  */
 @Composable
 fun AmountText(
@@ -3762,15 +4964,530 @@ fun AmountText(
     currency: String = "€",
     modifier: Modifier = Modifier,
     style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.displaySmall,
-    color: Color = MaterialTheme.colorScheme.onSurface
+    color: Color = SemanticColors.TextPrimary
 ) {
     Text(
         text = "$currency${String.format("%.2f", amount)}",
         style = style.copy(fontFeatureSettings = "tnum"),
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.ExtraBold, // More premium weight
         color = color,
         modifier = modifier
     )
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt <a name="mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.components
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.yourname.expensetracker.data.repository.WeatherState
+import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.model.UpcomingItem
+import com.yourname.expensetracker.domain.model.PlannedExpensePriority
+import com.yourname.expensetracker.ui.theme.SemanticColors
+import java.text.SimpleDateFormat
+import java.util.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.EventNote
+@Composable
+fun FinancialWeatherCard(
+    state: WeatherState,
+    headline: String,
+    summary: String,
+    icon: String,
+    totalCommitted: Double,
+    totalLikely: Double,
+    discretionaryBudget: Double,
+    pastSpendingPoints: List<Double> = emptyList(),
+    projectedSpendingPoints: List<Double> = emptyList(),
+    upcomingItems: List<UpcomingItem> = emptyList(),
+    details: List<com.yourname.expensetracker.domain.model.NarrativeSection> = emptyList(),
+    totalRecurringCount: Int = 0,
+    onManageClick: () -> Unit = {},
+    onPlanClick: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val gradient = when (state) {
+        WeatherState.CLEAR_SKIES -> Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFF4CAF50).copy(alpha = 0.1f),
+                Color(0xFF4CAF50).copy(alpha = 0.05f)
+            )
+        )
+        WeatherState.PARTLY_CLOUDY -> Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFF8BC34A).copy(alpha = 0.1f),
+                Color(0xFF8BC34A).copy(alpha = 0.05f)
+            )
+        )
+        WeatherState.CLOUDY -> Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFFFFC107).copy(alpha = 0.1f),
+                Color(0xFFFFC107).copy(alpha = 0.05f)
+            )
+        )
+        WeatherState.RAINY -> Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFFFF9800).copy(alpha = 0.12f),
+                Color(0xFFFF9800).copy(alpha = 0.06f)
+            )
+        )
+        WeatherState.STORMY -> Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFFFF5722).copy(alpha = 0.15f),
+                Color(0xFFFF5722).copy(alpha = 0.05f)
+            )
+        )
+        WeatherState.UNKNOWN -> Brush.verticalGradient(
+            colors = listOf(
+                SemanticColors.GlassSurface,
+                SemanticColors.GlassSurface
+            )
+        )
+    }
+    val textColor = when (state) {
+        WeatherState.CLEAR_SKIES -> SemanticColors.SuccessGreen
+        WeatherState.PARTLY_CLOUDY -> Color(0xFF8BC34A)
+        WeatherState.CLOUDY -> SemanticColors.WarningOrange
+        WeatherState.RAINY -> Color(0xFFFF9800)
+        WeatherState.STORMY -> SemanticColors.DangerRed
+        WeatherState.UNKNOWN -> SemanticColors.TextSecondary
+    }
+    BentoCard(
+        modifier = modifier.background(gradient, RoundedCornerShape(24.dp)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize()
+        ) {
+            // Header Row
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Weather Icon Circle
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(textColor.copy(alpha = 0.1f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = icon, fontSize = 28.sp)
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column {
+                    Text(
+                        text = "FINANCIAL WEATHER",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextSecondary,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = headline.uppercase(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Black,
+                        color = textColor
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodyMedium,
+                color = SemanticColors.TextPrimary,
+                lineHeight = 20.sp
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            // Forecast Metrics Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                ForecastMetric("COMMITTED", totalCommitted, SemanticColors.TextSecondary)
+                ForecastMetric("LIKELY", totalLikely, SemanticColors.TextSecondary)
+                ForecastMetric("AVAILABLE", discretionaryBudget, textColor)
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+            // Forecast Trajectory Chart (Full Width)
+            ForecastTimeline(
+                pastPoints = pastSpendingPoints,
+                projectedPoints = projectedSpendingPoints,
+                budgetLimit = totalCommitted + totalLikely + discretionaryBudget,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (details.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(24.dp))
+                OutlinedButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = SemanticColors.PrimaryIndigo
+                    )
+                ) {
+                    Text(
+                        text = if (expanded) "HIDE BREAKDOWN" else "SEE BREAKDOWN",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                androidx.compose.animation.AnimatedVisibility(visible = expanded) {
+                    Column(modifier = Modifier.padding(top = 16.dp)) {
+                        details.forEach { section ->
+                            DetailSection(section)
+                            Spacer(modifier = Modifier.height(16.dp))
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+            HorizontalDivider(color = SemanticColors.GlassBorder, thickness = 1.dp)
+            Spacer(modifier = Modifier.height(12.dp))
+            // Management Section
+            if (upcomingItems.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "UPCOMING (NEXT 30 DAYS)",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextSecondary,
+                        letterSpacing = 0.5.sp
+                    )
+                    Row {
+                        TextButton(
+                            onClick = onPlanClick,
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "PLAN", 
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticColors.PrimaryIndigo
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = onManageClick,
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Text(
+                                "MANAGE ALL", 
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticColors.PrimaryIndigo
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                upcomingItems.take(3).forEach { item ->
+                    UpcomingRow(item)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "$totalRecurringCount RECURRING ITEMS TRACKED",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextSecondary,
+                        letterSpacing = 0.5.sp
+                    )
+                    Row {
+                        TextButton(
+                            onClick = onPlanClick,
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "PLAN", 
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticColors.PrimaryIndigo
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = onManageClick,
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Text(
+                                "MANAGE RECURRING", 
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticColors.PrimaryIndigo
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+@Composable
+fun ForecastMetric(label: String, amount: Double, color: Color) {
+    Column {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = SemanticColors.TextMuted,
+            letterSpacing = 0.5.sp
+        )
+        Text(
+            text = "€${String.format(Locale.US, "%.0f", amount)}",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = color
+        )
+    }
+}
+@Composable
+fun UpcomingRow(item: UpcomingItem) {
+    val dateFormat = remember { SimpleDateFormat("EEE, MMM d", Locale.getDefault()) }
+    val daysUntil = ((item.date - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)).toInt()
+    val dateLabel = when {
+        daysUntil <= 0 -> "Today"
+        daysUntil == 1 -> "Tomorrow"
+        else -> dateFormat.format(Date(item.date))
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+            // Distinction Icon
+            val icon = if (item is UpcomingItem.Recurring) Icons.Default.Repeat else Icons.Default.EventNote
+            val badgeText = if (item is UpcomingItem.Recurring) {
+                item.pattern.frequency.name.lowercase().capitalize()
+            } else {
+                "Planned"
+            }
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .background(SemanticColors.GlassBorder, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon, 
+                    contentDescription = null, 
+                    modifier = Modifier.size(16.dp),
+                    tint = SemanticColors.TextSecondary
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = item.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SemanticColors.TextPrimary
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = dateLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (daysUntil <= 1) SemanticColors.WarningOrange else SemanticColors.TextSecondary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "• $badgeText",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SemanticColors.TextMuted
+                    )
+                }
+            }
+        }
+        Text(
+            text = "€${String.format(Locale.US, "%.0f", item.amount)}",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            color = SemanticColors.TextPrimary
+        )
+    }
+}
+@Composable
+fun DetailSection(section: com.yourname.expensetracker.domain.model.NarrativeSection) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .background(SemanticColors.PrimaryIndigo.copy(alpha = 0.1f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = section.icon, fontSize = 14.sp)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = section.title.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = SemanticColors.TextSecondary,
+                letterSpacing = 0.5.sp
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        section.items.forEach { item ->
+            Row(
+                modifier = Modifier
+                    .padding(start = 36.dp, bottom = 4.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.Top
+            ) {
+                Text(
+                    text = "•",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextMuted,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text(
+                    text = item,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextPrimary,
+                    lineHeight = 16.sp
+                )
+            }
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt <a name="mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.components
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
+import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
+import com.patrykandpatrick.vico.compose.chart.Chart
+import com.patrykandpatrick.vico.compose.chart.line.lineChart
+import com.patrykandpatrick.vico.core.chart.line.LineChart
+import com.patrykandpatrick.vico.core.entry.FloatEntry
+import com.patrykandpatrick.vico.core.entry.ChartEntryModel
+import com.patrykandpatrick.vico.core.entry.entryModelOf
+import com.yourname.expensetracker.ui.theme.SemanticColors
+@Composable
+fun ForecastTimeline(
+    pastPoints: List<Double>,
+    projectedPoints: List<Double>,
+    budgetLimit: Double,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = "FORECAST TRAJECTORY",
+            style = MaterialTheme.typography.labelSmall,
+            color = SemanticColors.TextMuted,
+            letterSpacing = 0.5.sp
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        if (pastPoints.isEmpty() && projectedPoints.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                Text("No data available", style = MaterialTheme.typography.labelSmall)
+            }
+            return
+        }
+        // Vico model creation
+        val pastEntries = pastPoints.mapIndexed { index, value -> 
+            FloatEntry(index.toFloat(), value.toFloat()) 
+        }
+        val projectionEntries = projectedPoints.mapIndexed { index, value -> 
+            FloatEntry((pastPoints.size + index).toFloat(), value.toFloat()) 
+        }
+        val chartEntryModel: ChartEntryModel = remember(pastEntries, projectionEntries) {
+            entryModelOf(pastEntries, projectionEntries)
+        }
+        Chart(
+            chart = lineChart(
+                lines = listOf(
+                    LineChart.LineSpec(
+                        lineColor = SemanticColors.PrimaryIndigo.toArgb(),
+                    ),
+                    LineChart.LineSpec(
+                        lineColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f).toArgb(),
+                    )
+                )
+            ),
+            model = chartEntryModel,
+            startAxis = rememberStartAxis(),
+            bottomAxis = rememberBottomAxis(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+             LegendItem("Actual", SemanticColors.PrimaryIndigo)
+             Spacer(modifier = Modifier.width(16.dp))
+             LegendItem("Projected", SemanticColors.PrimaryIndigo.copy(alpha = 0.3f))
+        }
+    }
+}
+@Composable
+private fun LegendItem(label: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.foundation.Canvas(modifier = Modifier.size(8.dp)) {
+            drawCircle(color)
+        }
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = SemanticColors.TextSecondary)
+    }
 }
 
 ```
@@ -3808,7 +5525,7 @@ fun PulseDot(
         Box(
             modifier = modifier
                 .size(size)
-                .background(SemanticColors.NeutralGray, CircleShape)
+                .background(SemanticColors.TextMuted, CircleShape)
         )
         return
     }
@@ -3860,8 +5577,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -3871,6 +5589,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -3880,38 +5599,38 @@ fun SpendingPaceGauge(
     modifier: Modifier = Modifier
 ) {
     val paceColor = when (pace.paceStatus) {
-        PaceStatus.UNDER_PACE -> SemanticColors.UnderPace
-        PaceStatus.ON_PACE -> SemanticColors.OnPace
-        PaceStatus.OVER_PACE -> SemanticColors.OverPace
-        PaceStatus.NO_BASELINE -> SemanticColors.NeutralGray
+        PaceStatus.UNDER_PACE -> SemanticColors.SuccessGreen
+        PaceStatus.ON_PACE -> SemanticColors.PrimaryIndigo
+        PaceStatus.OVER_PACE -> SemanticColors.WarningOrange
+        PaceStatus.NO_BASELINE -> SemanticColors.TextMuted
     }
-    // Animate the sweep angle
+    // Animate the sweep angle (240 degree range)
     val targetSweep = (pace.pacePercentage / 200f).coerceIn(0f, 1f) * 240f
     val animatedSweep by animateFloatAsState(
         targetValue = targetSweep,
-        animationSpec = tween(1000),
+        animationSpec = tween(1200), // Slightly slower, more premium animation
         label = "pace_sweep"
     )
     val statusLabel = when (pace.paceStatus) {
         PaceStatus.UNDER_PACE -> "Under pace"
         PaceStatus.ON_PACE -> "On track"
         PaceStatus.OVER_PACE -> "Over pace"
-        PaceStatus.NO_BASELINE -> "No data yet"
+        PaceStatus.NO_BASELINE -> "Calculating..."
     }
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.size(120.dp),
+            modifier = Modifier.size(130.dp), // Slightly larger
             contentAlignment = Alignment.Center
         ) {
-            val trackColor = MaterialTheme.colorScheme.surfaceVariant
-            Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-                val strokeWidth = 12.dp.toPx()
+            val trackColor = SemanticColors.SurfaceLight.copy(alpha = 0.5f)
+            Canvas(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+                val strokeWidth = 10.dp.toPx()
                 val arcSize = Size(size.width - strokeWidth, size.height - strokeWidth)
                 val topLeft = Offset(strokeWidth / 2, strokeWidth / 2)
-                // Background arc (240° sweep, centered at bottom)
+                // Background arc
                 drawArc(
                     color = trackColor,
                     startAngle = 150f,
@@ -3921,7 +5640,7 @@ fun SpendingPaceGauge(
                     size = arcSize,
                     style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
                 )
-                // Foreground arc
+                // Foreground arc (Current Pace)
                 drawArc(
                     color = paceColor,
                     startAngle = 150f,
@@ -3932,33 +5651,121 @@ fun SpendingPaceGauge(
                     style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
                 )
             }
-            // Center text
+            // Center metric
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "${pace.pacePercentage.toInt()}%",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = paceColor
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = SemanticColors.TextPrimary
                 )
                 Text(
                     text = "Day ${pace.daysElapsed}/${pace.daysInMonth}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = SemanticColors.TextSecondary
                 )
             }
         }
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = statusLabel,
-            style = MaterialTheme.typography.labelMedium,
-            color = paceColor,
-            fontWeight = FontWeight.Medium
-        )
-        if (pace.projectedTotal > 0) {
+        Spacer(modifier = Modifier.height(8.dp))
+        Surface(
+            color = paceColor.copy(alpha = 0.15f),
+            shape = CircleShape
+        ) {
             Text(
-                text = "Projected: €${String.format("%.0f", pace.projectedTotal)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = statusLabel.uppercase(),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = paceColor,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt <a name="mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.components
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
+import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
+import com.patrykandpatrick.vico.compose.chart.Chart
+import com.patrykandpatrick.vico.compose.chart.line.lineChart
+import com.patrykandpatrick.vico.core.entry.entryModelOf
+import com.patrykandpatrick.vico.core.entry.entryOf
+import com.yourname.expensetracker.ui.theme.SemanticColors
+@Composable
+fun SpendingTrendChart(
+    currentMonthData: List<Float>,
+    previousMonthData: List<Float>,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    "TREND", 
+                    style = MaterialTheme.typography.labelSmall, 
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextSecondary,
+                    letterSpacing = 1.sp
+                )
+                Text(
+                    "This month vs Last", 
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextMuted
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        if (currentMonthData.isEmpty() && previousMonthData.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                Text("No data", style = MaterialTheme.typography.bodySmall)
+            }
+        } else {
+            val chartEntryModel = remember(currentMonthData, previousMonthData) {
+                entryModelOf(
+                    currentMonthData.mapIndexed { index, value -> entryOf(index, value) }, 
+                    previousMonthData.mapIndexed { index, value -> entryOf(index, value) }
+                )
+            }
+            Chart(
+                chart = lineChart(
+                    lines = listOf(
+                        com.patrykandpatrick.vico.compose.chart.line.lineSpec(lineColor = SemanticColors.PrimaryIndigo),
+                        com.patrykandpatrick.vico.compose.chart.line.lineSpec(lineColor = SemanticColors.TextMuted.copy(alpha = 0.5f))
+                    )
+                ),
+                model = chartEntryModel,
+                startAxis = rememberStartAxis(
+                    label = null,
+                    tick = null,
+                    guideline = null,
+                    axis = null
+                ),
+                bottomAxis = rememberBottomAxis(
+                    label = null,
+                    tick = null,
+                    guideline = null,
+                    axis = null
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp)
             )
         }
     }
@@ -3974,6 +5781,7 @@ package com.yourname.expensetracker.ui.screens.addexpense
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -4221,6 +6029,51 @@ fun AddExpenseSheet(
                         minLines = 2,
                         maxLines = 4
                     )
+                }
+                // === Recurring Options ===
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "Repeat Transaction?",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Switch(
+                        checked = state.isRecurring,
+                        onCheckedChange = { viewModel.toggleRecurring() }
+                    )
+                }
+                AnimatedVisibility(visible = state.isRecurring) {
+                    Column {
+                        Text(
+                            "Frequency",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        // Simple horizontal scroll for frequencies
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            com.yourname.expensetracker.domain.model.RecurrenceFrequency.values()
+                                .filter { it != com.yourname.expensetracker.domain.model.RecurrenceFrequency.IRREGULAR }
+                                .forEach { freq ->
+                                    FilterChip(
+                                        selected = state.recurrenceFrequency == freq,
+                                        onClick = { viewModel.setRecurrenceFrequency(freq) },
+                                        label = { 
+                                            Text(freq.name.lowercase().replaceFirstChar { it.uppercase() }) 
+                                        }
+                                    )
+                                }
+                        }
+                    }
                 }
                 // === Error Messages ===
                 when (val result = state.saveResult) {
@@ -4534,11 +6387,14 @@ package com.yourname.expensetracker.ui.screens.addexpense
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
+import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -4560,6 +6416,8 @@ data class AddExpenseState(
     val notes: String = "",
     val showNotes: Boolean = false,
     val showTransactionType: Boolean = false,
+    val isRecurring: Boolean = false,
+    val recurrenceFrequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY,
     val suggestions: List<MerchantSuggestion> = emptyList(),
     val showSuggestions: Boolean = false,
     val isSaving: Boolean = false,
@@ -4575,7 +6433,8 @@ sealed class SaveResult {
 @HiltViewModel
 class AddExpenseViewModel @Inject constructor(
     private val repository: NotificationRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val recurringExpenseDao: RecurringExpenseDao
 ) : ViewModel() {
     private val _state = MutableStateFlow(AddExpenseState())
     val state: StateFlow<AddExpenseState> = _state.asStateFlow()
@@ -4654,6 +6513,12 @@ class AddExpenseViewModel @Inject constructor(
     fun toggleTransactionType() {
         _state.update { it.copy(showTransactionType = !it.showTransactionType) }
     }
+    fun toggleRecurring() {
+        _state.update { it.copy(isRecurring = !it.isRecurring) }
+    }
+    fun setRecurrenceFrequency(frequency: RecurrenceFrequency) {
+        _state.update { it.copy(recurrenceFrequency = frequency) }
+    }
     fun save() {
         val currentState = _state.value
         // Validate
@@ -4675,6 +6540,7 @@ class AddExpenseViewModel @Inject constructor(
         _state.update { it.copy(isSaving = true, saveResult = null) }
         viewModelScope.launch {
             try {
+                // 1. Save the actual transaction
                 val result = repository.addManualExpense(
                     merchant = merchantTrimmed,
                     amount = amount,
@@ -4690,6 +6556,10 @@ class AddExpenseViewModel @Inject constructor(
                         it.copy(isSaving = false, saveResult = SaveResult.Duplicate)
                     }
                 } else {
+                    // 2. If recurring, save the rule
+                    if (currentState.isRecurring) {
+                        saveRecurringRule(merchantTrimmed, amount, currentState.recurrenceFrequency, currentState.date)
+                    }
                     _state.update {
                         it.copy(isSaving = false, saveResult = SaveResult.Success)
                     }
@@ -4703,6 +6573,24 @@ class AddExpenseViewModel @Inject constructor(
                 }
             }
         }
+    }
+    private suspend fun saveRecurringRule(
+        merchant: String, 
+        amount: Double, 
+        frequency: RecurrenceFrequency, 
+        lastDate: Long
+    ) {
+        // Calculate next date based on frequency
+        val nextDate = lastDate + (frequency.days * 86_400_000L)
+        val rule = ManualRecurringExpense(
+            merchant = merchant,
+            amount = amount,
+            currency = "EUR",
+            frequency = frequency,
+            nextDate = nextDate,
+            note = "Created from manual entry"
+        )
+        recurringExpenseDao.insert(rule)
     }
     fun reset() {
         _state.value = AddExpenseState()
@@ -6636,6 +8524,7 @@ class DebugViewModel @Inject constructor(
 ## main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt <a name="mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt"></a>
 ```kotlin
 package com.yourname.expensetracker.ui.screens.home
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -6657,9 +8546,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.rounded.*
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -6668,33 +8560,58 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
+    onNavigateToReview: () -> Unit,
+    onNavigateToRecurring: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
     var showQuickSettings by remember { mutableStateOf(false) }
     var showCategories by remember { mutableStateOf(false) }
     var showDebug by remember { mutableStateOf(false) }
+    var showAddPlannedExpenseDialog by remember { mutableStateOf(false) }
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = { 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         PulseDot(isActive = state.isServiceRunning)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Dashboard", style = MaterialTheme.typography.titleLarge)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            "DASHBOARD", 
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 2.sp,
+                            color = SemanticColors.TextPrimary
+                        )
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showQuickSettings = true }) {
-                        Icon(Icons.Rounded.Settings, contentDescription = "Settings")
+                    IconButton(onClick = { viewModel.toggleEditMode() }) {
+                        Icon(
+                            if (state.isEditMode) Icons.Rounded.Check else Icons.Rounded.EditAttributes, 
+                            contentDescription = "Edit Layout",
+                            tint = if (state.isEditMode) SemanticColors.SuccessGreen else SemanticColors.TextSecondary
+                        )
                     }
-                }
+                    IconButton(onClick = { showQuickSettings = true }) {
+                        Icon(
+                            Icons.Rounded.Settings, 
+                            contentDescription = "Settings",
+                            tint = SemanticColors.TextSecondary
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
             )
         }
     ) { padding ->
         if (state.isLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
             }
         } else {
             LazyVerticalGrid(
@@ -6703,118 +8620,221 @@ fun HomeScreen(
                     .fillMaxSize()
                     .padding(padding),
                 contentPadding = PaddingValues(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                state.widgets.forEach { widget ->
-                    when (widget) {
-                        is DashboardWidget.SafeToSpend -> {
-                            item(span = { GridItemSpan(2) }) {
+                items(
+                    items = state.widgets,
+                    key = { getWidgetId(it) },
+                    span = { widget ->
+                        GridItemSpan(if (isFullSpan(widget)) 2 else 1)
+                    }
+                ) { widget ->
+                    WidgetWrapper(
+                        widget = widget,
+                        isEditMode = state.isEditMode,
+                        onMoveUp = { viewModel.moveWidget(getWidgetId(widget), true) },
+                        onMoveDown = { viewModel.moveWidget(getWidgetId(widget), false) },
+                        onToggleVisibility = { viewModel.toggleWidgetVisibility(getWidgetId(widget)) }
+                    ) {
+                        when (widget) {
+                            is DashboardWidget.SafeToSpend -> {
                                 HeroBentoCard {
                                     Text(
-                                        text = if (widget.totalBudget != null) "Safe to spend" else "Spent this month",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                        text = "SAFE TO SPEND",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.PrimaryLight,
+                                        letterSpacing = 1.sp
                                     )
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     AmountText(
                                         amount = widget.amount,
                                         style = MaterialTheme.typography.displayMedium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        color = SemanticColors.TextPrimary
                                     )
                                     if (widget.totalBudget != null) {
                                         LinearProgressIndicator(
-                                            progress = { ( (widget.totalBudget - widget.amount) / widget.totalBudget ).toFloat().coerceIn(0f, 1f) },
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).height(8.dp).clip(CircleShape),
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f)
+                                            progress = { ((widget.totalBudget - widget.amount) / widget.totalBudget).toFloat().coerceIn(0f, 1f) },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 12.dp)
+                                                .height(8.dp)
+                                                .clip(CircleShape),
+                                            color = SemanticColors.PrimaryIndigo,
+                                            trackColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
                                         )
                                         Text(
-                                            "${widget.daysRemaining} days remaining in month",
+                                            "${widget.daysRemaining} DAYS REMAINING",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                                            color = SemanticColors.TextSecondary,
+                                            letterSpacing = 0.5.sp
                                         )
                                     }
                                 }
                             }
-                        }
-                        is DashboardWidget.SpendingPaceWidget -> {
-                            item {
+                            is DashboardWidget.SpendingPaceWidget -> {
                                 BentoCard {
-                                    Text("Spending Pace", style = MaterialTheme.typography.labelMedium)
-                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        "PACE", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
                                     SpendingPaceGauge(pace = widget.pace)
                                 }
                             }
-                        }
-                        is DashboardWidget.NaturalLanguageInsight -> {
-                            item(span = { GridItemSpan(2) }) {
-                                BentoCard(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)) {
+                            is DashboardWidget.PendingReviewAlert -> {
+                                val badgeColor = if (widget.count > 0) SemanticColors.WarningOrange else SemanticColors.TextMuted
+                                BentoCard(
+                                    containerColor = if (widget.count > 0) 
+                                        SemanticColors.WarningOrange.copy(alpha = 0.05f) 
+                                        else SemanticColors.GlassSurface,
+                                    border = BorderStroke(
+                                        1.dp, 
+                                        if (widget.count > 0) SemanticColors.WarningOrange.copy(alpha = 0.3f) 
+                                        else SemanticColors.GlassBorder
+                                    ),
+                                    onClick = onNavigateToReview
+                                ) {
+                                    Text(
+                                        "REVIEW", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.Center,
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            "${widget.count}", 
+                                            style = MaterialTheme.typography.displaySmall, 
+                                            fontWeight = FontWeight.ExtraBold, 
+                                            color = badgeColor
+                                        )
+                                        Text(
+                                            "PENDING", 
+                                            style = MaterialTheme.typography.labelSmall, 
+                                            color = badgeColor,
+                                            letterSpacing = 1.sp
+                                        )
+                                    }
+                                }
+                            }
+                            is DashboardWidget.SpendingTrend -> {
+                                BentoCard {
+                                    SpendingTrendChart(
+                                        currentMonthData = widget.currentMonthData,
+                                        previousMonthData = widget.previousMonthData
+                                    )
+                                }
+                            }
+                            is DashboardWidget.NaturalLanguageInsight -> {
+                                BentoCard(
+                                    containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
+                                    border = BorderStroke(1.dp, SemanticColors.PrimaryIndigo.copy(alpha = 0.2f))
+                                ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(widget.icon, fontSize = 24.sp)
-                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Surface(
+                                            modifier = Modifier.size(40.dp),
+                                            shape = CircleShape,
+                                            color = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(widget.icon, fontSize = 20.sp)
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(16.dp))
                                         Text(
                                             text = widget.text,
                                             style = MaterialTheme.typography.bodyMedium,
+                                            color = SemanticColors.TextPrimary,
                                             fontWeight = FontWeight.Medium
                                         )
                                     }
                                 }
                             }
-                        }
-                        is DashboardWidget.PeriodSummary -> {
-                            item {
+                            is DashboardWidget.PeriodSummary -> {
                                 BentoCard {
-                                    Text("Overview", style = MaterialTheme.typography.labelMedium)
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    StatLabel("Today", "€${String.format("%.2f", widget.todaySpent)}")
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    StatLabel("This Week", "€${String.format("%.2f", widget.weekSpent)}")
-                                }
-                            }
-                        }
-                        is DashboardWidget.PendingReviewAlert -> {
-                            item {
-                                BentoCard(
-                                    containerColor = SemanticColors.WarningOrange.copy(alpha = 0.15f),
-                                    onClick = { /* Navigate to review */ }
-                                ) {
-                                    Text("Pending Review", style = MaterialTheme.typography.labelMedium, color = SemanticColors.WarningOrange)
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("${widget.count}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = SemanticColors.WarningOrange)
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("items", style = MaterialTheme.typography.bodySmall, color = SemanticColors.WarningOrange)
+                                    Text(
+                                        "PERIOD SUMMARY", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        StatLabel("TODAY", "€${String.format("%.2f", widget.todaySpent)}", modifier = Modifier.weight(1f))
+                                        StatLabel("WEEK", "€${String.format("%.2f", widget.weekSpent)}", modifier = Modifier.weight(1f))
+                                        StatLabel("MONTH", "€${String.format("%.2f", widget.monthSpent)}", modifier = Modifier.weight(1f))
                                     }
-                                    Text("Tap to verify", style = MaterialTheme.typography.labelSmall, color = SemanticColors.WarningOrange.copy(alpha = 0.8f))
                                 }
                             }
-                        }
-                        is DashboardWidget.BudgetHealthWidget -> {
-                            item(span = { GridItemSpan(2) }) {
+                            is DashboardWidget.BudgetHealthWidget -> {
                                 BentoCard {
-                                    Text("Budget Health", style = MaterialTheme.typography.labelMedium)
+                                    Text(
+                                        "BUDGET HEALTH", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    Text(widget.summary ?: "All good", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                    // Could add a small bar or dots here
+                                    Text(
+                                        widget.summary ?: "ALL BUDGETS ON TRACK", 
+                                        style = MaterialTheme.typography.titleMedium, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (widget.summary?.contains("exceeded", ignoreCase = true) == true) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                                    )
                                 }
                             }
-                        }
-                        is DashboardWidget.TopCategories -> {
-                            item(span = { GridItemSpan(2) }) {
+                            is DashboardWidget.TopCategories -> {
                                 BentoCard {
-                                    Text("Top Categories", style = MaterialTheme.typography.labelMedium)
-                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        "TOP CATEGORIES", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
                                     widget.categories.forEach { CategorySpendingRow(it) }
                                 }
                             }
-                        }
-                        is DashboardWidget.RecentTransactions -> {
-                            item(span = { GridItemSpan(2) }) {
+                            is DashboardWidget.RecentTransactions -> {
                                 BentoCard {
-                                    Text("Recent Transactions", style = MaterialTheme.typography.labelMedium)
-                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        "RECENT ACTIVITY", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
                                     widget.expenses.forEach { RecentExpenseRow(it) }
                                 }
+                            }
+                            is DashboardWidget.FinancialWeatherWidget -> {
+                                FinancialWeatherCard(
+                                    state = widget.weather.state,
+                                    headline = widget.weather.headline,
+                                    summary = widget.weather.summary,
+                                    icon = widget.weather.icon,
+                                    totalCommitted = widget.weather.totalCommitted,
+                                    totalLikely = widget.weather.totalLikely,
+                                    discretionaryBudget = widget.weather.discretionaryBudget,
+                                    pastSpendingPoints = widget.weather.pastSpendingPoints,
+                                    projectedSpendingPoints = widget.weather.projectedSpendingPoints,
+                                    upcomingItems = widget.weather.upcomingItems,
+                                    totalRecurringCount = widget.weather.totalRecurringCount,
+                                    details = widget.weather.details,
+                                    onManageClick = onNavigateToRecurring,
+                                    onPlanClick = { showAddPlannedExpenseDialog = true }
+                                )
                             }
                         }
                     }
@@ -6844,7 +8864,70 @@ fun HomeScreen(
                 onDismiss = { showDebug = false }
             )
         }
+        if (showAddPlannedExpenseDialog) {
+            AddPlannedExpenseDialog(
+                onDismiss = { showAddPlannedExpenseDialog = false },
+                onConfirm = { desc, amount, date, catId, priority ->
+                    viewModel.addPlannedExpense(desc, amount, date, catId, priority)
+                    showAddPlannedExpenseDialog = false
+                }
+            )
+        }
     }
+}
+@Composable
+fun WidgetWrapper(
+    widget: DashboardWidget,
+    isEditMode: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onToggleVisibility: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        content()
+        if (isEditMode) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(24.dp))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onMoveUp) {
+                        Icon(Icons.Rounded.ArrowUpward, "Move Up", tint = Color.White)
+                    }
+                    IconButton(onClick = onToggleVisibility) {
+                        Icon(Icons.Rounded.VisibilityOff, "Hide", tint = Color.White)
+                    }
+                    IconButton(onClick = onMoveDown) {
+                        Icon(Icons.Rounded.ArrowDownward, "Move Down", tint = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
+    is DashboardWidget.SafeToSpend -> "safe_to_spend"
+    is DashboardWidget.SpendingPaceWidget -> "spending_pace"
+    is DashboardWidget.PendingReviewAlert -> "review_alert"
+    is DashboardWidget.SpendingTrend -> "spending_trend"
+    is DashboardWidget.NaturalLanguageInsight -> "insight"
+    is DashboardWidget.PeriodSummary -> "period_summary"
+    is DashboardWidget.BudgetHealthWidget -> "budget_health"
+    is DashboardWidget.TopCategories -> "top_categories"
+    is DashboardWidget.RecentTransactions -> "recent_transactions"
+    is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
+}
+private fun isFullSpan(widget: DashboardWidget): Boolean = when (widget) {
+    is DashboardWidget.SpendingPaceWidget,
+    is DashboardWidget.PendingReviewAlert -> false
+    else -> true
 }
 @Composable
 fun QuickSettingsDialog(
@@ -7008,6 +9091,92 @@ fun StatusBadge(label: String, count: Int, color: Color) {
         Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
     }
 }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddPlannedExpenseDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String, Double, Long, Long?, PlannedExpensePriority) -> Unit
+) {
+    var description by remember { mutableStateOf("") }
+    var amount by remember { mutableStateOf("") }
+    var priority by remember { mutableStateOf(PlannedExpensePriority.LIKELY) }
+    val date = remember { System.currentTimeMillis() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { 
+            Text(
+                "PLAN AN EXPENSE", 
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black,
+                color = SemanticColors.PrimaryIndigo
+            ) 
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("What are you planning?") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = SemanticColors.PrimaryIndigo,
+                        unfocusedBorderColor = SemanticColors.GlassBorder
+                    )
+                )
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it },
+                    label = { Text("Amount (€)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = SemanticColors.PrimaryIndigo,
+                        unfocusedBorderColor = SemanticColors.GlassBorder
+                    )
+                )
+                Column {
+                    Text(
+                        "PRIORITY", 
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SemanticColors.TextSecondary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PlannedExpensePriority.values().forEach { p ->
+                            FilterChip(
+                                selected = priority == p,
+                                onClick = { priority = p },
+                                label = { Text(p.name) }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val amt = amount.toDoubleOrNull() ?: 0.0
+                    if (description.isNotBlank() && amt > 0) {
+                        onConfirm(description, amt, date, null, priority)
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)
+            ) {
+                Text("ADD TO FORECAST")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", color = SemanticColors.TextSecondary)
+            }
+        },
+        containerColor = SemanticColors.BaseNavy,
+        shape = RoundedCornerShape(28.dp)
+    )
+}
 
 ```
 
@@ -7024,14 +9193,22 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.data.repository.DashboardRepository
+import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
+import com.yourname.expensetracker.data.repository.FinancialWeather
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
+import com.yourname.expensetracker.data.database.entity.PlannedExpense as PlannedExpenseEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 import java.util.Calendar
 import javax.inject.Inject
 // === State Widget sealed class for Bento Grid ===
@@ -7066,6 +9243,13 @@ sealed class DashboardWidget {
         val text: String,
         val icon: String
     ) : DashboardWidget()
+    data class SpendingTrend(
+        val currentMonthData: List<Float>,
+        val previousMonthData: List<Float>
+    ) : DashboardWidget()
+    data class FinancialWeatherWidget(
+        val weather: FinancialWeather
+    ) : DashboardWidget()
 }
 data class CategorySpending(
     val category: Category,
@@ -7077,6 +9261,7 @@ data class DashboardState(
     val totalSpent: Double = 0.0,
     val transactionCount: Int = 0,
     val isServiceRunning: Boolean = true, // For pulse dot
+    val isEditMode: Boolean = false,
     val isLoading: Boolean = true
 )
 @HiltViewModel
@@ -7084,14 +9269,27 @@ class HomeViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
     private val budgetRepository: BudgetRepository,
-    private val insightsEngine: InsightsEngine
+    private val dashboardRepository: DashboardRepository,
+    private val insightsEngine: InsightsEngine,
+    private val financialWeatherRepository: FinancialWeatherRepository,
+    private val plannedExpenseDao: PlannedExpenseDao
 ) : ViewModel() {
-    val dashboard: StateFlow<DashboardState> = combine(
+    private val isEditMode = MutableStateFlow(false)
+    // distinct intermediate flow for data to avoid 5-arg limit
+    private val dataFlow = combine(
         repository.getAllExpenses(),
         categoryRepository.allCategories,
         budgetRepository.getBudgetStatuses(),
-        repository.getPendingReviewCount()
-    ) { expenses, categories, budgetStatuses, pendingCount ->
+        repository.getPendingReviewCount(),
+        financialWeatherRepository.getFinancialWeather()
+    ) { expenses, categories, budgetStatuses, pendingCount, weather ->
+        FiveData(expenses, categories, budgetStatuses, pendingCount, weather)
+    }
+    val dashboard: StateFlow<DashboardState> = combine(
+        dataFlow,
+        isEditMode
+    ) { data, editMode ->
+        val (expenses, categories, budgetStatuses, pendingCount, weather) = data
         val now = System.currentTimeMillis()
         val cal = Calendar.getInstance()
         // Time boundaries
@@ -7119,7 +9317,7 @@ class HomeViewModel @Inject constructor(
         val daysRemaining = daysInMonth - dayOfMonth
         // Overall budget (if set)
         val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
-        val safeToSpend = overallBudget?.remainingAmount ?: (0.0) 
+        val safeToSpend = weather.discretionaryBudget 
         // Category totals
         val categoryTotals = purchases
             .groupBy { it.categoryId }
@@ -7159,6 +9357,24 @@ class HomeViewModel @Inject constructor(
                 else -> PaceStatus.ON_PACE
             }
         )
+        // Cumulative Spend Trend Data
+        val currentMonthDaily = (1..dayOfMonth).map { day ->
+            val dayStart = monthStart + (day - 1) * 24 * 60 * 60 * 1000L
+            val dayEnd = dayStart + 24 * 60 * 60 * 1000L
+            purchases.filter { it.date >= monthStart && it.date < dayEnd }.sumOf { it.amount }.toFloat()
+        }
+        val previousMonthDays = Calendar.getInstance().apply {
+            timeInMillis = previousMonthStart
+        }.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val previousMonthDaily = (1..previousMonthDays).map { day ->
+            val pMonthStart = previousMonthStart
+            val pDayEnd = pMonthStart + day * 24 * 60 * 60 * 1000L
+            purchases.filter { it.date >= pMonthStart && it.date < pDayEnd }.sumOf { it.amount }.toFloat()
+        }
+        val trend = DashboardWidget.SpendingTrend(
+            currentMonthData = currentMonthDaily,
+            previousMonthData = previousMonthDaily
+        )
         // Natural language insight
         val insightText = buildNaturalLanguageInsight(
             monthSpent, previousMonthTotal, todaySpent, purchases.size
@@ -7170,6 +9386,8 @@ class HomeViewModel @Inject constructor(
         } else null
         // === Build widget list ===
         val widgets = mutableListOf<DashboardWidget>()
+        // Financial Weather (Always added, visibility controlled by config)
+        widgets.add(DashboardWidget.FinancialWeatherWidget(weather))
         // Hero: Safe-to-Spend (or total spent if no overall budget)
         widgets.add(
             DashboardWidget.SafeToSpend(
@@ -7182,6 +9400,8 @@ class HomeViewModel @Inject constructor(
         if (pace.paceStatus != PaceStatus.NO_BASELINE) {
             widgets.add(DashboardWidget.SpendingPaceWidget(pace))
         }
+        // Spending Trend
+        widgets.add(trend)
         // Pending Review Alert
         if (pendingCount > 0) {
             widgets.add(DashboardWidget.PendingReviewAlert(pendingCount))
@@ -7204,16 +9424,60 @@ class HomeViewModel @Inject constructor(
         if (purchases.isNotEmpty()) {
             widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
         }
+        // === Apply Custom Layout ===
+        val config = dashboardRepository.getDashboardConfig()
+        val sortedWidgets = config
+            .filter { it.isVisible || editMode } // Show all in edit mode, otherwise filter
+            .mapNotNull { conf ->
+                widgets.find { w -> getWidgetId(w) == conf.id }
+            }
         DashboardState(
-            widgets = widgets,
+            widgets = sortedWidgets,
             totalSpent = totalSpent,
             transactionCount = purchases.size,
+            isEditMode = editMode,
             isLoading = false
         )
     }
         .debounce(300)
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState())
+    fun toggleEditMode() {
+        isEditMode.value = !isEditMode.value
+    }
+    fun moveWidget(widgetId: String, moveUp: Boolean) {
+        val currentConfig = dashboardRepository.getDashboardConfig().toMutableList()
+        val index = currentConfig.indexOfFirst { it.id == widgetId }
+        if (index == -1) return
+        val newIndex = if (moveUp) index - 1 else index + 1
+        if (newIndex !in currentConfig.indices) return
+        val temp = currentConfig[index]
+        currentConfig[index] = currentConfig[newIndex].copy(order = index)
+        currentConfig[newIndex] = temp.copy(order = newIndex)
+        dashboardRepository.saveDashboardConfig(currentConfig.sortedBy { it.order })
+        // Trigger recomposition by refreshing dashboard flow (implicitly via combining with a triggered state if needed)
+        // Here we can just nudge the isEditMode or use a dedicated Refresh trigger
+        isEditMode.value = isEditMode.value 
+    }
+    fun toggleWidgetVisibility(widgetId: String) {
+        val currentConfig = dashboardRepository.getDashboardConfig().map {
+            if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
+        }
+        dashboardRepository.saveDashboardConfig(currentConfig)
+        isEditMode.value = isEditMode.value
+    }
+    private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
+        is DashboardWidget.SafeToSpend -> "safe_to_spend"
+        is DashboardWidget.SpendingPaceWidget -> "spending_pace"
+        is DashboardWidget.PendingReviewAlert -> "review_alert"
+        is DashboardWidget.SpendingTrend -> "spending_trend"
+        is DashboardWidget.NaturalLanguageInsight -> "insight"
+        is DashboardWidget.PeriodSummary -> "period_summary"
+        is DashboardWidget.BudgetHealthWidget -> "budget_health"
+        is DashboardWidget.TopCategories -> "top_categories"
+        is DashboardWidget.RecentTransactions -> "recent_transactions"
+        is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
+    }
     private fun buildNaturalLanguageInsight(
         monthSpent: Double,
         previousMonthTotal: Double,
@@ -7242,7 +9506,33 @@ class HomeViewModel @Inject constructor(
         }
         return null
     }
+    fun addPlannedExpense(
+        description: String,
+        amount: Double,
+        date: Long,
+        categoryId: Long?,
+        priority: PlannedExpensePriority
+    ) {
+        viewModelScope.launch {
+            plannedExpenseDao.insertPlannedExpense(
+                PlannedExpenseEntity(
+                    description = description,
+                    amount = amount,
+                    date = date,
+                    categoryId = categoryId,
+                    priority = priority
+                )
+            )
+        }
+    }
 }
+data class FiveData(
+    val expenses: List<Expense>,
+    val categories: List<Category>,
+    val budgetStatuses: List<BudgetStatus>,
+    val pendingCount: Int,
+    val weather: FinancialWeather
+)
 
 ```
 
@@ -7956,10 +10246,12 @@ class ReceiptScanViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
-                val (receipt, parsed) = receiptRepository.processReceipt(uri)
+                // Manual scans do NOT auto-create review items (User confirms in this UI)
+                val (receipt, parsed) = receiptRepository.processReceipt(uri, autoCreateReview = false)
                 _state.update {
                     it.copy(
                         step = ScanStep.REVIEW,
+                        imageUri = Uri.fromFile(java.io.File(receipt.imagePath)),
                         parsedReceipt = parsed,
                         receiptId = receipt.id,
                         rawOcrText = receipt.rawOcrText,
@@ -8077,9 +10369,262 @@ class ReceiptScanViewModel @Inject constructor(
 
 ---
 
+## main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt <a name="mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.screens.recurring
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
+import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
+import com.yourname.expensetracker.domain.model.RecurringPattern
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import javax.inject.Inject
+@HiltViewModel
+class RecurringExpensesViewModel @Inject constructor(
+    private val repository: FinancialWeatherRepository,
+    private val recurringExpenseDao: RecurringExpenseDao,
+    private val plannedExpenseDao: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+) : ViewModel() {
+    // Helper flow to trigger updates
+    private val refreshTrigger = MutableStateFlow(0)
+    val patterns: StateFlow<List<RecurringPattern>> = combine(
+        repository.getFinancialWeather(), // This already emits on db changes if set up correctly, but let's see
+        refreshTrigger
+    ) { weather, _ ->
+        // We actually need the full list, not just upcomingBills from weather.
+        // But repository exposes upcomingBills via weather. 
+        // Ideally we expose all patterns separately.
+        // For now, let's assume we add a method to Repo or use Engine directly if needed.
+        // To be simpler, let's expose patterns from Repo.
+        emptyList<RecurringPattern>() // Placeholder until Repo updated
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // Better approach: Expose patterns flow from Repository
+    val allPatterns = repository.getAllRecurringPatterns()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val plannedExpenses = repository.getAllPlannedExpenses()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    fun deleteManualRule(pattern: RecurringPattern) {
+        viewModelScope.launch {
+            // Find by merchant (heuristic for now, real ID would be better)
+            val rules = recurringExpenseDao.getAll()
+            val rule = rules.find { it.merchant == pattern.merchantName }
+            if (rule != null) {
+                recurringExpenseDao.delete(rule)
+                refreshTrigger.value += 1
+            }
+        }
+    }
+    fun deletePlannedExpense(planned: com.yourname.expensetracker.domain.model.PlannedExpense) {
+        viewModelScope.launch {
+            plannedExpenseDao.deletePlannedExpenseById(planned.id)
+            refreshTrigger.value += 1
+        }
+    }
+}
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RecurringExpensesScreen(
+    onNavigateBack: () -> Unit,
+    viewModel: RecurringExpensesViewModel = hiltViewModel()
+) {
+    val patterns by viewModel.allPatterns.collectAsState()
+    val planned by viewModel.plannedExpenses.collectAsState()
+    var selectedTabIndex by remember { mutableStateOf(0) }
+    val tabs = listOf("Recurring", "Planned")
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Manage Upcoming") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding)) {
+            TabRow(
+                selectedTabIndex = selectedTabIndex,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            ) {
+                tabs.forEachIndexed { index, title ->
+                    Tab(
+                        selected = selectedTabIndex == index,
+                        onClick = { selectedTabIndex = index },
+                        text = { Text(title) }
+                    )
+                }
+            }
+            if (selectedTabIndex == 0) {
+                // Recurring Tab
+                if (patterns.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No recurring expenses found.")
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(patterns) { pattern ->
+                            RecurringExpenseItem(
+                                pattern = pattern,
+                                onDelete = { viewModel.deleteManualRule(pattern) }
+                            )
+                        }
+                    }
+                }
+            } else {
+                // Planned Tab
+                if (planned.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No planned expenses found.")
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(planned) { item ->
+                            PlannedExpenseItem(
+                                expense = item,
+                                onDelete = { viewModel.deletePlannedExpense(item) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+@Composable
+fun PlannedExpenseItem(
+    expense: com.yourname.expensetracker.domain.model.PlannedExpense,
+    onDelete: () -> Unit
+) {
+    Card(
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = expense.description,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "€${String.format("%.2f", expense.amount)} • ${expense.priority.name.lowercase().capitalize()}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+                Text(
+                    text = "Date: ${dateFormat.format(Date(expense.date))}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Default.Delete, 
+                    contentDescription = "Delete Planned",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+}
+@Composable
+fun RecurringExpenseItem(
+    pattern: RecurringPattern,
+    onDelete: () -> Unit
+) {
+    val isManual = pattern.confidence >= 0.99f // Check based on confidence
+    Card(
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = pattern.merchantName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "${String.format("%.2f", pattern.averageAmount)} ${pattern.currency} • ${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+                Text(
+                    text = "Next: ${dateFormat.format(Date(pattern.nextExpectedDate))}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (isManual) {
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Default.Delete, 
+                        contentDescription = "Delete Rule",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            } else {
+                SuggestionChip(
+                    onClick = { /* TODO: Confirm/Convert to Manual */ },
+                    label = { Text("Detected") }
+                )
+            }
+        }
+    }
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt <a name="mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt"></a>
 ```kotlin
 package com.yourname.expensetracker.ui.screens.review
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -8094,19 +10639,29 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.ui.components.AmountText
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import java.text.SimpleDateFormat
 import java.util.*
+import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
+import coil.compose.AsyncImage
+import java.io.File
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.draw.clip
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReviewScreen(
@@ -8119,6 +10674,18 @@ fun ReviewScreen(
     val haptic = rememberHapticFeedback()
     val snackbarHostState = remember { SnackbarHostState() }
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val isBatchProcessing by viewModel.isBatchProcessing.collectAsState()
+    val batchProgress by viewModel.batchProgress.collectAsState()
+    val clipboardManager = LocalClipboardManager.current
+    val coroutineScope = rememberCoroutineScope()
+    var showDebugMenu by remember { mutableStateOf(false) }
+    val batchLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+    ) { uris ->
+        if (uris != null && uris.isNotEmpty()) {
+            viewModel.processBatch(uris)
+        }
+    }
     LaunchedEffect(errorMessage) {
         errorMessage?.let {
             snackbarHostState.showSnackbar(it)
@@ -8126,10 +10693,73 @@ fun ReviewScreen(
         }
     }
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Review Queue ($pendingCount)") }
+                title = { 
+                    Text(
+                        "REVIEW QUEUE ($pendingCount)", 
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp,
+                        color = SemanticColors.TextPrimary
+                    ) 
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                ),
+                actions = {
+                    Box {
+                        IconButton(onClick = { showDebugMenu = !showDebugMenu }) {
+                            Icon(Icons.Rounded.MoreVert, "Debug Options")
+                        }
+                        DropdownMenu(
+                            expanded = showDebugMenu,
+                            onDismissRequest = { showDebugMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Mass Insert (Batch)") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    batchLauncher.launch(
+                                        androidx.activity.result.PickVisualMediaRequest(
+                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                        )
+                                    )
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.Layers, null) }
+                            )
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Export Parser Data") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    coroutineScope.launch {
+                                        val data = viewModel.getDebugExportData()
+                                        clipboardManager.setText(AnnotatedString(data))
+                                        snackbarHostState.showSnackbar("Parser info copied to clipboard")
+                                    }
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.ContentCopy, null) }
+                            )
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Clear Scanned Data") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    viewModel.clearScannedData()
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.DeleteSweep, null) },
+                                colors = MenuDefaults.itemColors(
+                                    textColor = MaterialTheme.colorScheme.error,
+                                    leadingIconColor = MaterialTheme.colorScheme.error
+                                )
+                            )
+                        }
+                    }
+                }
             )
         }
     ) { padding ->
@@ -8170,18 +10800,18 @@ fun ReviewScreen(
                         modifier = Modifier.padding(horizontal = 4.dp)
                     )
                 }
-                items(pendingReviews, key = { it.id }) { review ->
+                items(pendingReviews, key = { it.review.id }) { item ->
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { dismissValue ->
                             when (dismissValue) {
                                 SwipeToDismissBoxValue.StartToEnd -> {
                                     haptic(HapticType.Success)
-                                    viewModel.approveReview(review.id)
+                                    viewModel.approveReview(item.review.id)
                                     true
                                 }
                                 SwipeToDismissBoxValue.EndToStart -> {
                                     haptic(HapticType.Error)
-                                    viewModel.rejectReview(review.id)
+                                    viewModel.rejectReview(item.review.id)
                                     true
                                 }
                                 else -> false
@@ -8218,10 +10848,10 @@ fun ReviewScreen(
                         },
                         content = {
                             ReviewCard(
-                                review = review,
-                                onApprove = { viewModel.approveReview(review.id) },
-                                onReject = { viewModel.rejectReview(review.id) },
-                                onEdit = { editingReview = review }
+                                item = item,
+                                onApprove = { viewModel.approveReview(item.review.id) },
+                                onReject = { viewModel.rejectReview(item.review.id) },
+                                onEdit = { editingReview = item.review }
                             )
                         }
                     )
@@ -8244,15 +10874,51 @@ fun ReviewScreen(
                 }
             )
         }
+        // Batch processing overlay
+        if (isBatchProcessing) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.7f),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(color = SemanticColors.PrimaryLight)
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(
+                        "PROCESSING BATCH...",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    batchProgress?.let { (current, total) ->
+                        Text(
+                            "$current / $total",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LinearProgressIndicator(
+                            progress = { current.toFloat() / total },
+                            modifier = Modifier.width(200.dp),
+                            color = SemanticColors.PrimaryIndigo
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 @Composable
 fun ReviewCard(
-    review: PendingReview,
+    item: PendingReviewWithReceipt,
     onApprove: () -> Unit,
     onReject: () -> Unit,
     onEdit: () -> Unit
 ) {
+    val review = item.review
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
     var showTrustSignal by remember { mutableStateOf(false) }
     val haptic = rememberHapticFeedback()
@@ -8263,9 +10929,9 @@ fun ReviewCard(
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface),
+        border = BorderStroke(1.dp, SemanticColors.GlassBorder)
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
@@ -8282,55 +10948,75 @@ fun ReviewCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
                 Surface(
-                    color = confidenceColor.copy(alpha = 0.1f),
-                    shape = RoundedCornerShape(8.dp)
+                    color = confidenceColor.copy(alpha = 0.15f),
+                    shape = androidx.compose.foundation.shape.CircleShape
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(confidenceColor, androidx.compose.foundation.shape.CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "${(review.confidence * 100).toInt()}% Match",
+                            text = "${(review.confidence * 100).toInt()}% CONFIDENCE",
                             style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = confidenceColor
+                            fontWeight = FontWeight.ExtraBold,
+                            color = confidenceColor,
+                            letterSpacing = 0.5.sp
                         )
                     }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = review.suggestedMerchant,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = dateFormat.format(Date(review.createdAt)),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "€${String.format("%.2f", review.suggestedAmount)}",
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(20.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                // Receipt Thumbnail if available
+                if (item.receipt != null) {
+                    Card(
+                        modifier = Modifier
+                            .size(100.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                        border = BorderStroke(1.dp, SemanticColors.GlassBorder)
+                    ) {
+                        AsyncImage(
+                            model = File(item.receipt.imagePath),
+                            contentDescription = "Receipt Thumbnail",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = review.suggestedMerchant,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = dateFormat.format(Date(review.createdAt)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SemanticColors.TextSecondary,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    AmountText(
+                        amount = review.suggestedAmount,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = SemanticColors.TextPrimary
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
             // Trust Signal / Detailed Evidence
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                        RoundedCornerShape(12.dp)
+                        SemanticColors.BaseNavy.copy(alpha = 0.5f),
+                        RoundedCornerShape(16.dp)
                     )
+                    .border(1.dp, SemanticColors.GlassBorder.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
                     .clickable { 
                         haptic(HapticType.Standard)
                         showTrustSignal = !showTrustSignal 
@@ -8343,29 +11029,27 @@ fun ReviewCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "🔍 View Source Evidence",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold
+                        "RAW SOURCE EVIDENCE",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextSecondary,
+                        letterSpacing = 1.sp
                     )
                     Icon(
-                        if (showTrustSignal) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        if (showTrustSignal) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
                         null,
-                        modifier = Modifier.size(16.dp)
+                        tint = SemanticColors.TextMuted,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
                 AnimatedVisibility(visible = showTrustSignal) {
-                    Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Column(modifier = Modifier.padding(top = 16.dp)) {
                         Text(
-                            "Extracted from notification:",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "\"${review.notificationText ?: "No raw text available"}\"",
+                            text = review.notificationText ?: "No raw data captured.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                            color = SemanticColors.TextPrimary,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            lineHeight = 18.sp
                         )
                     }
                 }
@@ -8532,7 +11216,9 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
+// ...
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -8544,11 +11230,16 @@ import javax.inject.Inject
 @HiltViewModel
 class ReviewViewModel @Inject constructor(
     private val repository: NotificationRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val receiptRepository: com.yourname.expensetracker.data.repository.ReceiptRepository
 ) : ViewModel() {
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage = _errorMessage.asStateFlow()
-    val pendingReviews: StateFlow<List<PendingReview>> = repository
+    private val _batchProgress = MutableStateFlow<Pair<Int, Int>?>(null) // current, total
+    val batchProgress = _batchProgress.asStateFlow()
+    private val _isBatchProcessing = MutableStateFlow(false)
+    val isBatchProcessing = _isBatchProcessing.asStateFlow()
+    val pendingReviews: StateFlow<List<PendingReviewWithReceipt>> = repository
         .getPendingReviews()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val pendingCount: StateFlow<Int> = repository
@@ -8601,6 +11292,40 @@ class ReviewViewModel @Inject constructor(
             }
         }
     }
+    fun processBatch(uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                _isBatchProcessing.value = true
+                _batchProgress.value = Pair(0, uris.size)
+                val result = receiptRepository.processBatch(uris) { current, total ->
+                    _batchProgress.value = Pair(current, total)
+                }
+                if (result.failureCount > 0) {
+                    val firstError = result.errors.firstOrNull()?.let { 
+                        if (it.length > 60) it.take(57) + "..." else it 
+                    }
+                    _errorMessage.value = "Processed ${result.successCount} ok. ${result.failureCount} failed: $firstError"
+                } else {
+                    _errorMessage.value = "Successfully processed all ${result.successCount} receipts!"
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "Batch failed: ${e.message}"
+            } finally {
+                _isBatchProcessing.value = false
+                _batchProgress.value = null
+            }
+        }
+    }
+    suspend fun getDebugExportData(): String {
+        return receiptRepository.exportParserDebugData()
+    }
+    fun clearScannedData() {
+        viewModelScope.launch {
+            receiptRepository.clearAllScannedReceipts()
+            _errorMessage.value = "All scanned debug data cleared."
+        }
+    }
 }
 
 ```
@@ -8632,7 +11357,52 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
-import java.util.*
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import androidx.compose.material.icons.filled.Repeat
+import java.util.Locale
+@Composable
+fun RecurrencePickerDialog(
+    onDismiss: () -> Unit,
+    onFrequencySelected: (RecurrenceFrequency) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select Frequency") },
+        text = {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(RecurrenceFrequency.values()) { frequency ->
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onFrequencySelected(frequency) },
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = frequency.name.replace("_", " ").lowercase()
+                                    .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() },
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransactionsScreen(
@@ -8643,6 +11413,7 @@ fun TransactionsScreen(
     var showAddExpense by remember { mutableStateOf(false) }
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
+    var expenseToRecurring by remember { mutableStateOf<Expense?>(null) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -8691,7 +11462,8 @@ fun TransactionsScreen(
                     TransactionItem(
                         transaction = item,
                         onDelete = { expenseToDelete = item.expense },
-                        onEditCategory = { expenseToCategorize = item.expense }
+                        onEditCategory = { expenseToCategorize = item.expense },
+                        onMarkRecurring = { expenseToRecurring = item.expense }
                     )
                 }
             }
@@ -8723,6 +11495,16 @@ fun TransactionsScreen(
                     TextButton(onClick = { expenseToDelete = null }) {
                         Text("Cancel")
                     }
+                }
+            )
+        }
+        // Recurrence Picker Dialog
+        if (expenseToRecurring != null) {
+            RecurrencePickerDialog(
+                onDismiss = { expenseToRecurring = null },
+                onFrequencySelected = { frequency ->
+                    expenseToRecurring?.let { viewModel.markAsRecurring(it, frequency) }
+                    expenseToRecurring = null
                 }
             )
         }
@@ -8784,7 +11566,8 @@ fun CategoryPickerDialog(
 fun TransactionItem(
     transaction: ExpenseWithCategory,
     onDelete: () -> Unit,
-    onEditCategory: () -> Unit
+    onEditCategory: () -> Unit,
+    onMarkRecurring: () -> Unit
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -8872,6 +11655,15 @@ fun TransactionItem(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(end = 8.dp)
             )
+            // Recurring Action
+            IconButton(onClick = onMarkRecurring) {
+                Icon(
+                    Icons.Default.Repeat,
+                    contentDescription = "Mark as Recurring",
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             // Delete Action
             IconButton(onClick = onDelete) {
                 Icon(
@@ -8907,7 +11699,8 @@ import javax.inject.Inject
 @HiltViewModel
 class TransactionsViewModel @Inject constructor(
     private val repository: NotificationRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val recurringExpenseDao: com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
 ) : ViewModel() {
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -8927,6 +11720,17 @@ class TransactionsViewModel @Inject constructor(
     fun updateCategory(expense: Expense, categoryId: Long) {
         viewModelScope.launch {
             repository.updateExpenseCategory(expense, categoryId)
+        }
+    }
+    fun markAsRecurring(expense: Expense, frequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency) {
+        viewModelScope.launch {
+            val rule = com.yourname.expensetracker.data.database.entity.ManualRecurringExpense(
+                merchant = expense.merchant,
+                amount = expense.amount,
+                frequency = frequency,
+                nextDate = System.currentTimeMillis() + frequency.intervalInMs
+            )
+            recurringExpenseDao.insert(rule)
         }
     }
 }
@@ -8953,27 +11757,33 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
-// === Semantic Colors (used across light/dark) ===
+// === Semantic Colors (optimized for Midnight Navy) ===
 object SemanticColors {
-    val WarningOrange = Color(0xFFFF9800)
-    val ActionIndigo = Color(0xFF5C6BC0)
-    val SuccessGreen = Color(0xFF4CAF50)
-    val DangerRed = Color(0xFFFF5722)
-    val CriticalAmber = Color(0xFFFFC107)
-    val NeutralGray = Color(0xFF9E9E9E)
+    val BaseNavy = Color(0xFF0F172A)
+    val SurfaceLight = Color(0xFF1E293B)
+    val PrimaryIndigo = Color(0xFF6366F1)
+    val PrimaryLight = Color(0xFF818CF8)
+    val SuccessGreen = Color(0xFF10B981)
+    val WarningOrange = Color(0xFFF97316)
+    val DangerRed = Color(0xFFEF4444)
+    val TextPrimary = Color(0xFFF1F5F9)
+    val TextSecondary = Color(0xFF94A3B8)
+    val TextMuted = Color(0x9994A3B8) // 60% alpha
+    val GlassSurface = Color(0x661E293B) // 40% alpha SurfaceLight
+    val GlassBorder = Color(0x1A94A3B8)   // 10% alpha TextSecondary
     // Budget health
-    val OnTrack = Color(0xFF4CAF50)
-    val Warning = Color(0xFFFFC107)
-    val Critical = Color(0xFFFF9800)
+    val OnTrack = SuccessGreen
+    val Warning = WarningOrange
+    val Critical = DangerRed
     val Exceeded = Color(0xFFFF5722)
     // Pace
-    val UnderPace = Color(0xFF4CAF50)
-    val OnPace = Color(0xFF2196F3)
-    val OverPace = Color(0xFFFF5722)
+    val UnderPace = SuccessGreen
+    val OnPace = PrimaryIndigo
+    val OverPace = WarningOrange
     // Confidence
     fun confidenceColor(confidence: Float): Color = when {
-        confidence >= 0.75f -> SuccessGreen
-        confidence >= 0.60f -> CriticalAmber
+        confidence >= 0.85f -> SuccessGreen
+        confidence >= 0.65f -> WarningOrange
         else -> DangerRed
     }
 }
@@ -8984,110 +11794,128 @@ val ExpenseTypography = Typography(
         fontSize = 57.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 64.sp,
-        fontFeatureSettings = "tnum"
+        fontFeatureSettings = "tnum",
+        color = SemanticColors.TextPrimary
     ),
     displayMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 45.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 52.sp,
-        fontFeatureSettings = "tnum"
+        fontFeatureSettings = "tnum",
+        color = SemanticColors.TextPrimary
     ),
     displaySmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 36.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 44.sp,
-        fontFeatureSettings = "tnum"
+        fontFeatureSettings = "tnum",
+        color = SemanticColors.TextPrimary
     ),
     headlineLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 32.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 40.sp
+        lineHeight = 40.sp,
+        color = SemanticColors.TextPrimary
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 28.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 36.sp
+        lineHeight = 36.sp,
+        color = SemanticColors.TextPrimary
     ),
     headlineSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 24.sp,
         fontWeight = FontWeight.SemiBold,
         lineHeight = 32.sp,
-        fontFeatureSettings = "tnum"
+        fontFeatureSettings = "tnum",
+        color = SemanticColors.TextPrimary
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 22.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 28.sp
+        lineHeight = 28.sp,
+        color = SemanticColors.TextPrimary
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 16.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 24.sp
+        lineHeight = 24.sp,
+        color = SemanticColors.TextPrimary
     ),
     titleSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 20.sp
+        lineHeight = 20.sp,
+        color = SemanticColors.TextSecondary
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 16.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 24.sp
+        lineHeight = 24.sp,
+        color = SemanticColors.TextPrimary
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 20.sp
+        lineHeight = 20.sp,
+        color = SemanticColors.TextPrimary
     ),
     bodySmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 12.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 16.sp
+        lineHeight = 16.sp,
+        color = SemanticColors.TextSecondary
     ),
     labelLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 20.sp
+        lineHeight = 20.sp,
+        color = SemanticColors.TextPrimary
     ),
     labelMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 16.sp
+        lineHeight = 16.sp,
+        color = SemanticColors.TextSecondary
     ),
     labelSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 16.sp
+        lineHeight = 16.sp,
+        color = SemanticColors.TextMuted
     )
 )
 private val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFFD0BCFF),
-    secondary = Color(0xFFCCC2DC),
-    tertiary = Color(0xFFEFB8C8),
-    surface = Color(0xFF1C1B1F),
-    surfaceVariant = Color(0xFF49454F)
+    primary = SemanticColors.PrimaryIndigo,
+    onPrimary = Color.White,
+    primaryContainer = Color(0x336366F1), // PrimaryIndigo @ 20%
+    onPrimaryContainer = SemanticColors.PrimaryLight,
+    secondary = SemanticColors.SurfaceLight,
+    onSecondary = SemanticColors.TextPrimary,
+    background = SemanticColors.BaseNavy,
+    onBackground = SemanticColors.TextPrimary,
+    surface = SemanticColors.SurfaceLight,
+    onSurface = SemanticColors.TextPrimary,
+    surfaceVariant = SemanticColors.GlassSurface,
+    onSurfaceVariant = SemanticColors.TextSecondary,
+    outline = SemanticColors.GlassBorder,
+    error = SemanticColors.DangerRed
 )
-private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFF6750A4),
-    secondary = Color(0xFF625B71),
-    tertiary = Color(0xFF7D5260),
-    surface = Color(0xFFFFFBFE),
-    surfaceVariant = Color(0xFFE7E0EC)
-)
+private val LightColorScheme = DarkColorScheme // Focusing on the Midnight Theme as requested
 @Composable
 fun ExpenseTrackerTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),

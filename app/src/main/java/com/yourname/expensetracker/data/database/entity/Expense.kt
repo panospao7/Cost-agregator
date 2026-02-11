@@ -45,6 +45,7 @@ data class Expense(
     
     val rawNotificationId: Long? = null, // Link to source
     
+    
     val categoryId: Long? = null, // Link to category
     
     val createdAt: Long = System.currentTimeMillis(),

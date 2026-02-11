@@ -103,11 +103,13 @@ class ReceiptScanViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                val (receipt, parsed) = receiptRepository.processReceipt(uri)
+                // Manual scans do NOT auto-create review items (User confirms in this UI)
+                val (receipt, parsed) = receiptRepository.processReceipt(uri, autoCreateReview = false)
 
                 _state.update {
                     it.copy(
                         step = ScanStep.REVIEW,
+                        imageUri = Uri.fromFile(java.io.File(receipt.imagePath)),
                         parsedReceipt = parsed,
                         receiptId = receipt.id,
                         rawOcrText = receipt.rawOcrText,

@@ -179,6 +179,18 @@ fun DebugScreen(
                     ) {
                         Text("Reset All Budgets")
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = { viewModel.resetSourceStats() },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Text("Reset Trust Scores")
+                    }
                 }
             }
 

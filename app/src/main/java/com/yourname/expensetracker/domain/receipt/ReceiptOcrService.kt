@@ -41,30 +41,34 @@ class ReceiptOcrService @Inject constructor(
      * Also saves a compressed copy of the image for future reference.
      */
     suspend fun processImage(imageUri: Uri): OcrResult {
-        // 1. Load and prepare the image
-        val bitmap = loadAndCorrectBitmap(imageUri)
-            ?: throw IllegalArgumentException("Could not load image from URI")
+        // 1. Load and prepare the image (throws if fail)
+        val bitmap = loadAndCorrectBitmap(imageUri)!!
 
-        // 2. Save compressed copy
-        val savedPath = saveReceiptImage(bitmap)
+        try {
+            // 2. Save compressed copy
+            val savedPath = saveReceiptImage(bitmap)
 
-        // 3. Run ML Kit OCR
-        val inputImage = InputImage.fromBitmap(bitmap, 0)
-        val visionText = recognizeText(inputImage)
+            // 3. Run ML Kit OCR
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            val visionText = recognizeText(inputImage)
 
-        // 4. Extract blocks
-        val blocks = visionText.textBlocks.map { block ->
-            TextBlock(
-                text = block.text,
-                confidence = block.lines.firstOrNull()?.confidence
+            // 4. Extract blocks
+            val blocks = visionText.textBlocks.map { block ->
+                TextBlock(
+                    text = block.text,
+                    confidence = block.lines.firstOrNull()?.confidence
+                )
+            }
+
+            return OcrResult(
+                fullText = visionText.text,
+                blocks = blocks,
+                savedImagePath = savedPath
             )
+        } finally {
+            // CRITICAL: Prevent memory leaks during batch processing
+            bitmap.recycle()
         }
-
-        return OcrResult(
-            fullText = visionText.text,
-            blocks = blocks,
-            savedImagePath = savedPath
-        )
     }
 
     private suspend fun recognizeText(
@@ -82,69 +86,82 @@ class ReceiptOcrService @Inject constructor(
     }
 
     /**
-     * Load bitmap from URI with EXIF rotation correction
+     * Load bitmap from URI with EXIF rotation correction.
+     * Copies to a temp file first to ensure reliable multi-read access.
      */
     private fun loadAndCorrectBitmap(uri: Uri): Bitmap? {
+        val tempFile = File(context.cacheDir, "temp_ocr_${System.nanoTime()}.jpg")
         return try {
-            val inputStream: InputStream = context.contentResolver.openInputStream(uri)
-                ?: return null
+            // Copy URI to temp file
+            val inputStream = context.contentResolver.openInputStream(uri)
+                ?: throw IllegalStateException("Could not open input stream for $uri")
+            
+            inputStream.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
 
-            // Decode with size limits to avoid OOM
+            if (!tempFile.exists() || tempFile.length() == 0L) {
+                throw IllegalStateException("Temp file creation failed or empty for $uri")
+            }
+
+            // 1. Get dimensions
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
-            BitmapFactory.decodeStream(inputStream, null, options)
-            inputStream.close()
+            BitmapFactory.decodeFile(tempFile.absolutePath, options)
 
-            // Calculate sample size for images larger than 2048px
+            // Calculate sample size
             val maxDimension = 2048
             var sampleSize = 1
-            while (options.outWidth / sampleSize > maxDimension ||
-                options.outHeight / sampleSize > maxDimension
-            ) {
-                sampleSize *= 2
+            if (options.outWidth > 0 && options.outHeight > 0) {
+                while (options.outWidth / sampleSize > maxDimension ||
+                    options.outHeight / sampleSize > maxDimension
+                ) {
+                    sampleSize *= 2
+                }
             }
 
-            // Decode actual bitmap
+            // 2. Decode actual bitmap
             val decodeOptions = BitmapFactory.Options().apply {
                 inSampleSize = sampleSize
             }
-            val decodedStream = context.contentResolver.openInputStream(uri)
-                ?: return null
-            val bitmap = BitmapFactory.decodeStream(decodedStream, null, decodeOptions)
-            decodedStream.close()
+            val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath, decodeOptions)
+                ?: throw IllegalStateException("Bitmap decode failed for $uri (Sample: $sampleSize)")
 
-            // Apply EXIF rotation if needed
-            bitmap?.let { correctRotation(it, uri) } ?: bitmap
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun correctRotation(bitmap: Bitmap, uri: Uri): Bitmap {
-        return try {
-            val inputStream = context.contentResolver.openInputStream(uri) ?: return bitmap
-            val exif = ExifInterface(inputStream)
-            inputStream.close()
-
+            // 3. Apply EXIF rotation
+            val exif = ExifInterface(tempFile.absolutePath)
             val orientation = exif.getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
                 ExifInterface.ORIENTATION_NORMAL
             )
 
             val matrix = Matrix()
+            var needsRotate = true
             when (orientation) {
                 ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
                 ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
                 ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
                 ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
                 ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
-                else -> return bitmap
+                else -> needsRotate = false
             }
 
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            if (needsRotate) {
+                val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                if (rotated != bitmap) {
+                    bitmap.recycle() // Clean up original if rotated
+                }
+                rotated
+            } else {
+                bitmap
+            }
         } catch (e: Exception) {
-            bitmap
+            android.util.Log.e("ReceiptOcrService", "Error loading bitmap from $uri", e)
+            throw IllegalStateException("Failed to load image: ${e.message}", e)
+        } finally {
+            if (tempFile.exists()) tempFile.delete()
         }
     }
 

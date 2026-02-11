@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.ui.screens.review
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -14,19 +16,29 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.ui.components.AmountText
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import java.text.SimpleDateFormat
 import java.util.*
+import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
+import coil.compose.AsyncImage
+import java.io.File
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.draw.clip
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +53,20 @@ fun ReviewScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val isBatchProcessing by viewModel.isBatchProcessing.collectAsState()
+    val batchProgress by viewModel.batchProgress.collectAsState()
+    
+    val clipboardManager = LocalClipboardManager.current
+    val coroutineScope = rememberCoroutineScope()
+    var showDebugMenu by remember { mutableStateOf(false) }
+
+    val batchLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+    ) { uris ->
+        if (uris != null && uris.isNotEmpty()) {
+            viewModel.processBatch(uris)
+        }
+    }
 
     LaunchedEffect(errorMessage) {
         errorMessage?.let {
@@ -50,10 +76,73 @@ fun ReviewScreen(
     }
 
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Review Queue ($pendingCount)") }
+                title = { 
+                    Text(
+                        "REVIEW QUEUE ($pendingCount)", 
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp,
+                        color = SemanticColors.TextPrimary
+                    ) 
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                ),
+                actions = {
+                    Box {
+                        IconButton(onClick = { showDebugMenu = !showDebugMenu }) {
+                            Icon(Icons.Rounded.MoreVert, "Debug Options")
+                        }
+                        DropdownMenu(
+                            expanded = showDebugMenu,
+                            onDismissRequest = { showDebugMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Mass Insert (Batch)") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    batchLauncher.launch(
+                                        androidx.activity.result.PickVisualMediaRequest(
+                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                        )
+                                    )
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.Layers, null) }
+                            )
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Export Parser Data") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    coroutineScope.launch {
+                                        val data = viewModel.getDebugExportData()
+                                        clipboardManager.setText(AnnotatedString(data))
+                                        snackbarHostState.showSnackbar("Parser info copied to clipboard")
+                                    }
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.ContentCopy, null) }
+                            )
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Clear Scanned Data") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    viewModel.clearScannedData()
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.DeleteSweep, null) },
+                                colors = MenuDefaults.itemColors(
+                                    textColor = MaterialTheme.colorScheme.error,
+                                    leadingIconColor = MaterialTheme.colorScheme.error
+                                )
+                            )
+                        }
+                    }
+                }
             )
         }
     ) { padding ->
@@ -95,18 +184,18 @@ fun ReviewScreen(
                     )
                 }
 
-                items(pendingReviews, key = { it.id }) { review ->
+                items(pendingReviews, key = { it.review.id }) { item ->
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { dismissValue ->
                             when (dismissValue) {
                                 SwipeToDismissBoxValue.StartToEnd -> {
                                     haptic(HapticType.Success)
-                                    viewModel.approveReview(review.id)
+                                    viewModel.approveReview(item.review.id)
                                     true
                                 }
                                 SwipeToDismissBoxValue.EndToStart -> {
                                     haptic(HapticType.Error)
-                                    viewModel.rejectReview(review.id)
+                                    viewModel.rejectReview(item.review.id)
                                     true
                                 }
                                 else -> false
@@ -145,10 +234,10 @@ fun ReviewScreen(
                         },
                         content = {
                             ReviewCard(
-                                review = review,
-                                onApprove = { viewModel.approveReview(review.id) },
-                                onReject = { viewModel.rejectReview(review.id) },
-                                onEdit = { editingReview = review }
+                                item = item,
+                                onApprove = { viewModel.approveReview(item.review.id) },
+                                onReject = { viewModel.rejectReview(item.review.id) },
+                                onEdit = { editingReview = item.review }
                             )
                         }
                     )
@@ -172,16 +261,53 @@ fun ReviewScreen(
                 }
             )
         }
+
+        // Batch processing overlay
+        if (isBatchProcessing) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.7f),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(color = SemanticColors.PrimaryLight)
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(
+                        "PROCESSING BATCH...",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    batchProgress?.let { (current, total) ->
+                        Text(
+                            "$current / $total",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LinearProgressIndicator(
+                            progress = { current.toFloat() / total },
+                            modifier = Modifier.width(200.dp),
+                            color = SemanticColors.PrimaryIndigo
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
 fun ReviewCard(
-    review: PendingReview,
+    item: PendingReviewWithReceipt,
     onApprove: () -> Unit,
     onReject: () -> Unit,
     onEdit: () -> Unit
 ) {
+    val review = item.review
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
     var showTrustSignal by remember { mutableStateOf(false) }
     val haptic = rememberHapticFeedback()
@@ -194,9 +320,9 @@ fun ReviewCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface),
+        border = BorderStroke(1.dp, SemanticColors.GlassBorder)
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
@@ -214,24 +340,19 @@ fun ReviewCard(
                 )
                 
                 Surface(
-                    color = confidenceColor.copy(alpha = 0.1f),
-                    shape = RoundedCornerShape(8.dp)
+                    color = confidenceColor.copy(alpha = 0.15f),
+                    shape = androidx.compose.foundation.shape.CircleShape
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(confidenceColor, androidx.compose.foundation.shape.CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "${(review.confidence * 100).toInt()}% Match",
+                            text = "${(review.confidence * 100).toInt()}% CONFIDENCE",
                             style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = confidenceColor
+                            fontWeight = FontWeight.ExtraBold,
+                            color = confidenceColor,
+                            letterSpacing = 0.5.sp
                         )
                     }
                 }
@@ -239,37 +360,63 @@ fun ReviewCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Text(
-                text = review.suggestedMerchant,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            
-            Text(
-                text = dateFormat.format(Date(review.createdAt)),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                // Receipt Thumbnail if available
+                if (item.receipt != null) {
+                    Card(
+                        modifier = Modifier
+                            .size(100.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                        border = BorderStroke(1.dp, SemanticColors.GlassBorder)
+                    ) {
+                        AsyncImage(
+                            model = File(item.receipt.imagePath),
+                            contentDescription = "Receipt Thumbnail",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                }
 
-            Spacer(modifier = Modifier.height(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = review.suggestedMerchant,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    
+                    Text(
+                        text = dateFormat.format(Date(review.createdAt)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SemanticColors.TextSecondary,
+                        letterSpacing = 0.5.sp
+                    )
 
-            Text(
-                text = "€${String.format("%.2f", review.suggestedAmount)}",
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
+                    Spacer(modifier = Modifier.height(8.dp))
 
-            Spacer(modifier = Modifier.height(20.dp))
+                    AmountText(
+                        amount = review.suggestedAmount,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = SemanticColors.TextPrimary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Trust Signal / Detailed Evidence
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                        RoundedCornerShape(12.dp)
+                        SemanticColors.BaseNavy.copy(alpha = 0.5f),
+                        RoundedCornerShape(16.dp)
                     )
+                    .border(1.dp, SemanticColors.GlassBorder.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
                     .clickable { 
                         haptic(HapticType.Standard)
                         showTrustSignal = !showTrustSignal 
@@ -282,30 +429,28 @@ fun ReviewCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "🔍 View Source Evidence",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold
+                        "RAW SOURCE EVIDENCE",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextSecondary,
+                        letterSpacing = 1.sp
                     )
                     Icon(
-                        if (showTrustSignal) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        if (showTrustSignal) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
                         null,
-                        modifier = Modifier.size(16.dp)
+                        tint = SemanticColors.TextMuted,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
                 
                 AnimatedVisibility(visible = showTrustSignal) {
-                    Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Column(modifier = Modifier.padding(top = 16.dp)) {
                         Text(
-                            "Extracted from notification:",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "\"${review.notificationText ?: "No raw text available"}\"",
+                            text = review.notificationText ?: "No raw data captured.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                            color = SemanticColors.TextPrimary,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            lineHeight = 18.sp
                         )
                     }
                 }

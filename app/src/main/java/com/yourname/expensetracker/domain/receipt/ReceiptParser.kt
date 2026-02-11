@@ -3,7 +3,9 @@ package com.yourname.expensetracker.domain.receipt
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
+import java.util.Locale
 import java.util.regex.Pattern
+import java.text.SimpleDateFormat
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,29 +32,19 @@ class ReceiptParser @Inject constructor() {
 
     // Total amount patterns (Greek + English receipts)
     private val totalPatterns = listOf(
-        // Greek patterns
+        // Greek patterns with fuzzy space and comma handling
         Pattern.compile(
-            """(?:ΣΥΝΟΛΟ|ΤΕΛΙΚΟ|ΠΛΗΡΩΤΕΟ|ΓΕΝΙΚΟ\s*ΣΥΝΟΛΟ|TOTAL)\s*[:\s]*€?\s*(\d+[.,]\d{2})""",
+            """(?:ΣΥΝΟΛΟ|ΤΕΛΙΚΟ|ΠΛΗΡΩΤΕΟ|ΠΟΣΟ|ΑΞΙΑ|ΓΕΝΙΚΟ\s*ΣΥΝΟΛΟ|ΛΟΓΑΡΙΑΣΜΟ[ΣΖ]|TOTAL|AMOUNT)\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
-        ),
-        // English patterns
-        Pattern.compile(
-            """(?:TOTAL|GRAND\s*TOTAL|AMOUNT\s*DUE|BALANCE\s*DUE|NET\s*TOTAL)\s*[:\s]*[€$£]?\s*(\d+[.,]\d{2})""",
-            Pattern.CASE_INSENSITIVE
         ),
         // Amount with currency symbol at end
         Pattern.compile(
-            """(?:TOTAL|ΣΥΝΟΛΟ)\s*[:\s]*(\d+[.,]\d{2})\s*(?:€|EUR)""",
+            """(?:TOTAL|ΣΥΝΟΛΟ|ΠΟΣΟ)\s*[:\s]*(\d+[\s.,]\s*\d{2})\s*(?:€|EUR)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         ),
-        // Amount at bottom (common format) - standalone € amount
+        // Standalone large amount at the very bottom (common for Lidl/Sklavenitis)
         Pattern.compile(
-            """(?:€|EUR)\s*(\d+[.,]\d{2})\s*$""",
-            Pattern.MULTILINE
-        ),
-        // Standalone large amount near end of text
-        Pattern.compile(
-            """^\s*(\d+[.,]\d{2})\s*€?\s*$""",
+            """(?:€|EUR)\s*(\d+[\s.,]\s*\d{2})\s*$""",
             Pattern.MULTILINE
         )
     )
@@ -60,32 +52,27 @@ class ReceiptParser @Inject constructor() {
     // Tax patterns
     private val taxPatterns = listOf(
         Pattern.compile(
-            """(?:ΦΠΑ|Φ\.?Π\.?Α\.?|VAT|TAX|TVA)\s*[\d%]*\s*[:\s]*€?\s*(\d+[.,]\d{2})""",
+            """(?:Φ\.?Π\.?Α\.?|VAT|TAX|TVA)\s*[\d%]*\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
-        ),
-        Pattern.compile(
-            """(?:TAX|VAT)\s*(?:\d+%?)?\s*[:\s]*[€$£]?\s*(\d+[.,]\d{2})""",
-            Pattern.CASE_INSENSITIVE
         )
     )
 
     // Date patterns
     private val datePatterns = listOf(
-        Pattern.compile("""(\d{2})[/\-.](\d{2})[/\-.](\d{4})"""),  // DD/MM/YYYY
-        Pattern.compile("""(\d{4})[/\-.](\d{2})[/\-.](\d{2})"""),  // YYYY/MM/DD
-        Pattern.compile("""(\d{2})[/\-.](\d{2})[/\-.](\d{2})""")   // DD/MM/YY
+        Pattern.compile("""(\d{2})[/\-.](\d{2})[/\-.](\d{4}|\d{2})"""),  // DD/MM/YYYY or DD/MM/YY
+        Pattern.compile("""(\d{4})[/\-.](\d{2})[/\-.](\d{2})""")   // YYYY/MM/DD
     )
 
     // Line item pattern: "description  price" with at least 2 spaces or tab
     private val lineItemPatterns = listOf(
-        // "Item description    12.50" or "Item description    12,50€"
+        // "Item description    12.50" (fuzzy spaces in amount)
         Pattern.compile(
-            """^(.{3,40}?)\s{2,}(\d+[.,]\d{2})\s*€?\s*$""",
+            """^(.{3,40}?)\s{2,}(\d+[\s.,]\s*\d{2})\s*€?\s*$""",
             Pattern.MULTILINE
         ),
-        // "1 x Item description  12.50"
+        // "Quantity x Description   Sum"
         Pattern.compile(
-            """^(\d+)\s*[xX×]\s*(.{3,35}?)\s{2,}(\d+[.,]\d{2})\s*€?\s*$""",
+            """^(\d+)\s*x\s*(.{3,40}?)\s{2,}(\d+[\s.,]\s*\d{2})\s*€?\s*$""",
             Pattern.MULTILINE
         )
     )
@@ -93,7 +80,7 @@ class ReceiptParser @Inject constructor() {
     // Subtotal patterns (to distinguish from total)
     private val subtotalPatterns = listOf(
         Pattern.compile(
-            """(?:SUBTOTAL|SUB\s*TOTAL|ΥΠΟΣΥΝΟΛΟ|ΥΠΟ\s*ΣΥΝΟΛΟ|ΜΕΡΙΚΟ)\s*[:\s]*€?\s*(\d+[.,]\d{2})""",
+            """(?:SUBTOTAL|SUB\s*TOTAL|ΥΠΟΣΥΝΟΛΟ|ΥΠΟ\s*ΣΥΝΟΛΟ|ΜΕΡΙΚΟ|ΚΑΘΑΡΗ\s*ΑΞΙΑ)\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     )
@@ -101,40 +88,42 @@ class ReceiptParser @Inject constructor() {
     // Discount patterns
     private val discountPatterns = listOf(
         Pattern.compile(
-            """(?:DISCOUNT|ΕΚΠΤΩΣΗ|SAVINGS?)\s*[:\s]*-?\s*€?\s*(\d+[.,]\d{2})""",
+            """(?:DISCOUNT|ΕΚΠΤΩΣΗ|SAVINGS?|ΜΕΙΟΝ|ΕΚΠΤ)\s*[:\s]*-?\s*€?\s*(\d+[\s.,]\s*\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     )
 
-    fun parse(ocrText: String): ParsedReceipt {
-        val lines = ocrText.lines().map { it.trim() }.filter { it.isNotBlank() }
+    fun parse(rawText: String): ParsedReceipt {
+        // 1. Pre-process text to fix OCR spacing issues and Greek characters
+        val cleanedText = normalizeGreekOcr(rawText)
+        val lines = cleanedText.lines().filter { it.isNotBlank() }
 
-        // 1. Extract merchant (usually first 1-3 lines)
+        // 2. Extract merchant
         val merchant = extractMerchant(lines)
 
-        // 2. Extract total (scan from bottom up — total is usually at the end)
-        val total = extractTotal(ocrText)
+        // 3. Extract date
+        val date = extractDate(cleanedText)
 
-        // 3. Extract subtotal
-        val subtotal = extractSubtotal(ocrText)
+        // 4. Extract total
+        val total = extractTotal(lines)
 
-        // 4. Extract tax
-        val tax = extractTax(ocrText)
+        // 5. Extract subtotal (using original text as fallback or new logic if needed)
+        val subtotal = extractSubtotal(cleanedText)
 
-        // 5. Extract date
-        val date = extractDate(ocrText)
+        // 6. Extract tax
+        val tax = extractTax(cleanedText)
 
-        // 6. Extract line items
-        val lineItems = extractLineItems(ocrText)
+        // 7. Extract line items
+        val lineItems = extractLineItems(cleanedText)
 
-        // 7. Cross-validate: if we found items but no total, sum them
+        // 8. Cross-validate
         val finalTotal = total ?: lineItems.sumOf { it.totalPrice }.takeIf { it > 0 }
 
-        // 8. Calculate subtotal if we have total and tax
+        // 9. Calculate subtotal
         val finalSubtotal = subtotal
             ?: if (finalTotal != null && tax != null) finalTotal - tax else null
 
-        // 9. Confidence based on what we found
+        // 10. Confidence
         val confidence = calculateConfidence(merchant, finalTotal, date, lineItems, tax)
 
         return ParsedReceipt(
@@ -143,59 +132,169 @@ class ReceiptParser @Inject constructor() {
             subtotal = finalSubtotal,
             tax = tax,
             date = date,
-            currency = detectCurrency(ocrText),
+            currency = detectCurrency(cleanedText),
             lineItems = lineItems,
             confidence = confidence
         )
     }
 
-    private fun extractMerchant(lines: List<String>): String? {
-        // Skip noise patterns commonly found at top of receipts
-        val skipPatterns = listOf(
-            Regex("""(?i)(ΑΦΜ|ΔΟΥ|ΤΗΛ|TEL|FAX|VAT|RECEIPT|ΑΠΟΔΕΙΞΗ|ΤΙΜΟΛΟΓΙΟ)"""),
-            Regex("""(?i)(www\.|http|@|\.com|\.gr)"""),
-            Regex("""^\d{5,}$"""),  // Long number (phone, tax ID)
-            Regex("""^\d+[/\-.]"""),  // Date-like
-            Regex("""^[\d\s.,€$£]+$"""),  // Just numbers/currency
-            Regex("""(?i)(ΤΑΜΕΙΟ|CASHIER|REGISTER|ΤΑΜΕΙΑΚΗ)"""),
-            Regex("""^\*+$""")  // Just asterisks
-        )
+    /**
+     * Normalizes Greek OCR errors and cleans up number formatting.
+     */
+    private fun normalizeGreekOcr(text: String): String {
+        return text.uppercase()
+            // --- 1. CRITICAL: Fix Numbers broken by spaces (e.g., "55, 00" -> "55,00") ---
+            .replace(Regex("(\\d+)[.,]\\s+(\\d{2})"), "$1.$2") 
+            .replace(Regex("(\\d+)\\s+[.,](\\d{2})"), "$1.$2")
 
-        val candidateLines = mutableListOf<String>()
+            // --- 2. Fix Total Keywords ---
+            .replace(Regex(".*[ΠN]O[SZ]O.*AMOUNT.*"), "TOTAL_KEY")
+            .replace(Regex(".*[ΠN]O[SZ]O.*"), "TOTAL_KEY")
+            .replace(Regex(".*[ΣE2ZXY]YN.*[AΛV][O0Ω].*"), "TOTAL_KEY") // ΣΥΝΟΛΟ variants
+            .replace("NAHPQTEO", "TOTAL_KEY")
+            .replace("AMOUNT", "TOTAL_KEY")
+            .replace("TOTAL", "TOTAL_KEY")
 
-        for (line in lines.take(7)) {
-            val cleaned = line.trim()
-            if (cleaned.length < 3) continue
-            if (skipPatterns.any { it.containsMatchIn(cleaned) }) continue
-            candidateLines.add(cleaned)
-            if (candidateLines.size >= 2) break  // Usually merchant is 1-2 lines
-        }
+            // --- 3. Fix Dates ---
+            .replace(Regex("(\\d{2})-[D0O]-(\\d{2})"), "$1-04-$2") // Fix "16-D4-2017"
+            .replace("HM/NIA", "ΗΜΕΡΟΜΗΝΙΑ")
 
-        return if (candidateLines.isNotEmpty()) {
-            candidateLines.joinToString(" ").take(50).trim()
-        } else null
+            // --- 4. Currency & Noise Cleaning ---
+            .replace("EVP9", "") 
+            .replace("EVP", "")
+            .replace("EUR", "")
+            .replace("€", "")
     }
 
-    private fun extractTotal(text: String): Double? {
-        val allMatches = mutableListOf<Pair<Double, Int>>() // value, position
+    // --- MERCHANT EXTRACTION ---
+    private fun extractMerchant(lines: List<String>): String? {
+        // Skip common non-merchant headers
+        val invalidHeaders = listOf(
+            "APODEIXI", "AIOAEIEH", "ANOD", "NOMIMH", "ENARXI", "START", 
+            "EAPA", "ADDRESS", "THL", "TEL", "AFM", "AOM"
+        )
 
-        for (pattern in totalPatterns) {
-            val matcher = pattern.matcher(text)
-            while (matcher.find()) {
-                val amount = matcher.group(1)?.replace(",", ".")?.toDoubleOrNull()
-                if (amount != null && amount > 0 && amount < 50000) {
-                    allMatches.add(Pair(amount, matcher.start()))
+        // Find anchors: Address, Tax ID, Phone
+        val headerMarkers = listOf("ΑΦΜ", "AOM", "ΤΗΛ", "THA", "STR.", "ΟΔΟΣ", "TK", "Τ.Κ", "VAT", "TEL")
+
+        for ((index, line) in lines.withIndex()) {
+            if (index > 8) break // Merchant is usually in top 8 lines
+            
+            // Check if this line is an anchor
+            if (headerMarkers.any { line.contains(it) }) {
+                // If we found an anchor, the merchant is likely ABOVE it.
+                // Scan upwards for the first valid line.
+                for (j in index - 1 downTo 0) {
+                    val candidate = lines[j]
+                    if (isValidMerchantLine(candidate, invalidHeaders)) {
+                        return cleanMerchantName(candidate)
+                    }
+                }
+            }
+        }
+        
+        // Fallback: Just return the first valid line if no anchors found
+        for (line in lines.take(5)) {
+            if (isValidMerchantLine(line, invalidHeaders)) {
+                return cleanMerchantName(line)
+            }
+        }
+        return null
+    }
+
+    private fun isValidMerchantLine(line: String, invalidHeaders: List<String>): Boolean {
+        if (line.length < 3) return false
+        if (line.all { !it.isLetter() }) return false // Must have letters
+        if (invalidHeaders.any { line.contains(it) }) return false
+        return true
+    }
+
+    private fun cleanMerchantName(raw: String): String {
+        return raw.replace(Regex("[^a-zA-Zα-ωΑ-Ω0-9\\s&.-]"), "").trim()
+    }
+
+    private fun extractTotal(lines: List<String>): Double? {
+        // Regex: Matches 12.50, 12,50, 1.250,00
+        // Strictly avoids numbers followed by % (VAT rates)
+        val amountRegex = Regex("""(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})(?!\s?%)""")
+
+        // --- STRATEGY 1: Explicit "TOTAL" Keyword (Highest Confidence) ---
+        // Scan backwards (bottom-up) for the word "TOTAL_KEY"
+        val totalLineIndex = lines.indexOfLast { it.contains("TOTAL_KEY") }
+        
+        if (totalLineIndex != -1) {
+            // Check the exact line
+            val amountInLine = extractAmountFromLine(lines[totalLineIndex], amountRegex)
+            if (amountInLine != null) return amountInLine
+
+            // Check the NEXT line (common in POS receipts: Label then Value)
+            if (totalLineIndex + 1 < lines.size) {
+                val amountNext = extractAmountFromLine(lines[totalLineIndex + 1], amountRegex)
+                if (amountNext != null) return amountNext
+            }
+        }
+
+        // --- STRATEGY 2: Fallback (Smart Max) ---
+        // If no keyword found, find the LARGEST plausible number.
+        var maxAmount = 0.0
+        
+        // Only scan the bottom 70% of the receipt (Price is rarely at the top)
+        val searchStart = (lines.size * 0.3).toInt() 
+        
+        for (i in searchStart until lines.size) {
+            val line = lines[i]
+
+            // FILTER: Ignore lines that definitely aren't the total
+            if (line.contains("%")) continue // Ignore VAT lines (13,00%)
+            if (line.contains("METPHTA") || line.contains("CASH")) continue // Ignore Cash Given (Receipt #18)
+            if (line.contains("RESTA") || line.contains("ΡΕΣΤΑ")) continue // Ignore Change
+            if (line.contains("KARTA") || line.contains("CARD")) continue // Ignore "Card" references unless parsed carefully
+
+            // Extract numbers from this line
+            val matches = amountRegex.findAll(line)
+            for (match in matches) {
+                val rawVal = match.groupValues[1]
+                val amount = parseAmount(rawVal)
+
+                // SANITY CHECKS:
+                // 1. Amount must be < 5000 (Avoids phone numbers/Tax IDs misread as price)
+                // 2. Amount must not look like a Year (e.g., 2024, 2025)
+                // 3. Amount must not look like Time (e.g., 14.24 in Receipt #6)
+                if (isValidAmount(amount, line)) {
+                    if (amount > maxAmount) {
+                        maxAmount = amount
+                    }
                 }
             }
         }
 
-        if (allMatches.isEmpty()) return null
+        return if (maxAmount > 0.0) maxAmount else null
+    }
 
-        // Strategy: prefer matches closer to the bottom of the text
-        // If multiple "TOTAL" matches, the LAST one is usually the grand total
-        return allMatches
-            .sortedByDescending { it.second }  // Bottom of receipt first
-            .firstOrNull()?.first
+    private fun isValidAmount(amount: Double, line: String): Boolean {
+        if (amount > 5000) return false
+        if (amount == 0.0) return false
+        
+        // Year check: 2020-2030 usually represents date, not price
+        if (amount >= 2020 && amount <= 2035 && amount % 1 == 0.0) return false
+        
+        // Time check: If line contains "ORA" or matches HH:MM pattern logic
+        if (line.contains("QPA") || line.contains("ORA")) return false
+        
+        return true
+    }
+
+    private fun parseAmount(rawAmount: String): Double {
+        // Standardize: "1.250,50" -> "1250.50"
+        // Standardize: "12,50" -> "12.50"
+        val clean = rawAmount.replace(".", "").replace(",", ".")
+        return clean.toDoubleOrNull() ?: 0.0
+    }
+    
+    private fun extractAmountFromLine(line: String, regex: Regex): Double? {
+        // If line has multiple numbers, we generally want the LAST one (Net... VAT... Total)
+        val matches = regex.findAll(line)
+        return matches.lastOrNull()?.groupValues?.get(1)?.let { parseAmount(it) }
     }
 
     private fun extractSubtotal(text: String): Double? {
@@ -218,45 +317,29 @@ class ReceiptParser @Inject constructor() {
         return null
     }
 
+    // --- DATE EXTRACTION ---
     private fun extractDate(text: String): Long? {
-        for (pattern in datePatterns) {
-            val matcher = pattern.matcher(text)
-            if (matcher.find()) {
-                return try {
-                    val groups = (1..matcher.groupCount()).map { matcher.group(it) }
-                    val cal = Calendar.getInstance()
+        // Regex handles: dd/MM/yyyy, dd-MM-yyyy, dd.MM.yyyy
+        val datePatterns = listOf(
+            Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(20\d{2})"""),
+            Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(\d{2})""")
+        )
 
-                    when {
-                        groups[0].length == 4 -> { // YYYY/MM/DD
-                            val year = groups[0].toInt()
-                            val month = groups[1].toInt()
-                            val day = groups[2].toInt()
-                            if (month in 1..12 && day in 1..31) {
-                                cal.set(year, month - 1, day, 0, 0, 0)
-                                cal.timeInMillis
-                            } else null
-                        }
-                        groups[2].length == 4 -> { // DD/MM/YYYY
-                            val day = groups[0].toInt()
-                            val month = groups[1].toInt()
-                            val year = groups[2].toInt()
-                            if (month in 1..12 && day in 1..31 && year in 2000..2099) {
-                                cal.set(year, month - 1, day, 0, 0, 0)
-                                cal.timeInMillis
-                            } else null
-                        }
-                        else -> { // DD/MM/YY
-                            val day = groups[0].toInt()
-                            val month = groups[1].toInt()
-                            val year = 2000 + groups[2].toInt()
-                            if (month in 1..12 && day in 1..31) {
-                                cal.set(year, month - 1, day, 0, 0, 0)
-                                cal.timeInMillis
-                            } else null
-                        }
-                    }
-                } catch (e: Exception) {
-                    null
+        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
+        sdf.isLenient = false
+
+        for (pattern in datePatterns) {
+            pattern.find(text)?.let { match ->
+                val (d, m, y) = match.destructured
+                val year = if (y.length == 2) "20$y" else y
+                
+                // SANITY CHECK: Year must be reasonable (e.g., 2020-2030)
+                // Fixes Receipt #8 where OCR read 2058
+                val yearInt = year.toIntOrNull() ?: 0
+                if (yearInt in 2020..2030) { 
+                    try {
+                        return sdf.parse("$d/$m/$year")?.time
+                    } catch (e: Exception) { }
                 }
             }
         }

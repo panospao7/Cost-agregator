@@ -16,7 +16,8 @@ import javax.inject.Inject
 @HiltViewModel
 class TransactionsViewModel @Inject constructor(
     private val repository: NotificationRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val recurringExpenseDao: com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
 ) : ViewModel() {
     
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
@@ -40,6 +41,18 @@ class TransactionsViewModel @Inject constructor(
     fun updateCategory(expense: Expense, categoryId: Long) {
         viewModelScope.launch {
             repository.updateExpenseCategory(expense, categoryId)
+        }
+    }
+
+    fun markAsRecurring(expense: Expense, frequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency) {
+        viewModelScope.launch {
+            val rule = com.yourname.expensetracker.data.database.entity.ManualRecurringExpense(
+                merchant = expense.merchant,
+                amount = expense.amount,
+                frequency = frequency,
+                nextDate = System.currentTimeMillis() + frequency.intervalInMs
+            )
+            recurringExpenseDao.insert(rule)
         }
     }
 }

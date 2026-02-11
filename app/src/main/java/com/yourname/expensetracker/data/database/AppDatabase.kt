@@ -15,13 +15,17 @@ import androidx.room.*
         UserCorrection::class,
         SourceStats::class,
         Budget::class,
-        ScannedReceipt::class
+        ScannedReceipt::class,
+        ManualRecurringExpense::class,
+        PlannedExpense::class,
+        SavingsGoal::class
     ],
-    version = 9,
+    version = 13,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
 abstract class AppDatabase : RoomDatabase() {
+    // ... (DAOs)
     abstract fun rawNotificationDao(): RawNotificationDao
     abstract fun blockedPackageDao(): BlockedPackageDao
     abstract fun expenseDao(): ExpenseDao
@@ -32,6 +36,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sourceStatsDao(): SourceStatsDao
     abstract fun budgetDao(): BudgetDao
     abstract fun scannedReceiptDao(): ScannedReceiptDao
+    abstract fun recurringExpenseDao(): RecurringExpenseDao
+    abstract fun plannedExpenseDao(): PlannedExpenseDao
+    abstract fun savingsGoalDao(): SavingsGoalDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -94,6 +101,110 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
+            }
+        }
+
+        val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // To change NOT NULL constraint in SQLite, we must recreate the table
+                database.execSQL("ALTER TABLE pending_reviews RENAME TO pending_reviews_old")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS pending_reviews (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        rawNotificationId INTEGER,
+                        scannedReceiptId INTEGER,
+                        suggestedAmount REAL NOT NULL,
+                        suggestedCurrency TEXT NOT NULL,
+                        suggestedMerchant TEXT NOT NULL,
+                        suggestedType TEXT NOT NULL,
+                        suggestedCategoryId INTEGER,
+                        confidence REAL NOT NULL,
+                        packageName TEXT NOT NULL,
+                        notificationTitle TEXT,
+                        notificationText TEXT,
+                        createdAt INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        FOREIGN KEY(rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                        FOREIGN KEY(scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    INSERT INTO pending_reviews (
+                        id, rawNotificationId, suggestedAmount, suggestedCurrency, 
+                        suggestedMerchant, suggestedType, suggestedCategoryId, 
+                        confidence, packageName, notificationTitle, notificationText, 
+                        createdAt, status
+                    )
+                    SELECT 
+                        id, rawNotificationId, suggestedAmount, suggestedCurrency, 
+                        suggestedMerchant, suggestedType, suggestedCategoryId, 
+                        confidence, packageName, notificationTitle, notificationText, 
+                        createdAt, status
+                    FROM pending_reviews_old
+                """.trimIndent())
+                
+                database.execSQL("DROP TABLE pending_reviews_old")
+                
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+            }
+        }
+
+        val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE pending_reviews ADD COLUMN suggestedDate INTEGER DEFAULT NULL")
+            }
+        }
+
+        val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS manual_recurring_expenses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        merchant TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        frequency TEXT NOT NULL,
+                        nextDate INTEGER NOT NULL,
+                        note TEXT,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+
+        val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS planned_expenses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        description TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        date INTEGER NOT NULL,
+                        categoryId INTEGER,
+                        isRecurring INTEGER NOT NULL DEFAULT 0,
+                        priority TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_date ON planned_expenses (date)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_categoryId ON planned_expenses (categoryId)")
+
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS savings_goals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        targetAmount REAL NOT NULL,
+                        currentAmount REAL NOT NULL DEFAULT 0.0,
+                        targetDate INTEGER,
+                        protectionLevel TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
             }
         }
     }

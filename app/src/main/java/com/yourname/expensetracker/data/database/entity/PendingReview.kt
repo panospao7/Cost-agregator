@@ -13,22 +13,31 @@ import androidx.room.PrimaryKey
             parentColumns = ["id"],
             childColumns = ["rawNotificationId"],
             onDelete = ForeignKey.SET_NULL
+        ),
+        ForeignKey(
+            entity = ScannedReceipt::class,
+            parentColumns = ["id"],
+            childColumns = ["scannedReceiptId"],
+            onDelete = ForeignKey.SET_NULL
         )
     ],
     indices = [
         Index(value = ["rawNotificationId"]),
+        Index(value = ["scannedReceiptId"]),
         Index(value = ["status"]),
-        Index(value = ["status", "createdAt"]) // New: for Pending order by date
+        Index(value = ["status", "createdAt"])
     ]
 )
 data class PendingReview(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val rawNotificationId: Long,
+    val rawNotificationId: Long?,
+    val scannedReceiptId: Long? = null,
     val suggestedAmount: Double,
     val suggestedCurrency: String,
     val suggestedMerchant: String,
     val suggestedType: String,          // TransactionType name
     val suggestedCategoryId: Long?,
+    val suggestedDate: Long? = null,    // Added in v11 to preserve parsed date
     val confidence: Float,
     val packageName: String,
     val notificationTitle: String?,

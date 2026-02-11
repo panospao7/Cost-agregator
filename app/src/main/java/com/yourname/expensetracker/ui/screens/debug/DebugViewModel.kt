@@ -103,6 +103,12 @@ class DebugViewModel @Inject constructor(
             repository.retrainClassifier()
         }
     }
+
+    fun resetSourceStats() {
+        viewModelScope.launch {
+            repository.resetSourceStats()
+        }
+    }
     
     @Inject
     lateinit var seeder: com.yourname.expensetracker.domain.debug.NotificationSeeder

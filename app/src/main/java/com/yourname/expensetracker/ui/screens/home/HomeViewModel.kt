@@ -8,14 +8,22 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.data.repository.DashboardRepository
+import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
+import com.yourname.expensetracker.data.repository.FinancialWeather
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
+import com.yourname.expensetracker.data.database.entity.PlannedExpense as PlannedExpenseEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 import java.util.Calendar
 import javax.inject.Inject
 
@@ -58,6 +66,15 @@ sealed class DashboardWidget {
         val text: String,
         val icon: String
     ) : DashboardWidget()
+
+    data class SpendingTrend(
+        val currentMonthData: List<Float>,
+        val previousMonthData: List<Float>
+    ) : DashboardWidget()
+
+    data class FinancialWeatherWidget(
+        val weather: FinancialWeather
+    ) : DashboardWidget()
 }
 
 data class CategorySpending(
@@ -71,6 +88,7 @@ data class DashboardState(
     val totalSpent: Double = 0.0,
     val transactionCount: Int = 0,
     val isServiceRunning: Boolean = true, // For pulse dot
+    val isEditMode: Boolean = false,
     val isLoading: Boolean = true
 )
 
@@ -79,15 +97,30 @@ class HomeViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
     private val budgetRepository: BudgetRepository,
-    private val insightsEngine: InsightsEngine
+    private val dashboardRepository: DashboardRepository,
+    private val insightsEngine: InsightsEngine,
+    private val financialWeatherRepository: FinancialWeatherRepository,
+    private val plannedExpenseDao: PlannedExpenseDao
 ) : ViewModel() {
 
-    val dashboard: StateFlow<DashboardState> = combine(
+    private val isEditMode = MutableStateFlow(false)
+
+    // distinct intermediate flow for data to avoid 5-arg limit
+    private val dataFlow = combine(
         repository.getAllExpenses(),
         categoryRepository.allCategories,
         budgetRepository.getBudgetStatuses(),
-        repository.getPendingReviewCount()
-    ) { expenses, categories, budgetStatuses, pendingCount ->
+        repository.getPendingReviewCount(),
+        financialWeatherRepository.getFinancialWeather()
+    ) { expenses, categories, budgetStatuses, pendingCount, weather ->
+        FiveData(expenses, categories, budgetStatuses, pendingCount, weather)
+    }
+
+    val dashboard: StateFlow<DashboardState> = combine(
+        dataFlow,
+        isEditMode
+    ) { data, editMode ->
+        val (expenses, categories, budgetStatuses, pendingCount, weather) = data
 
         val now = System.currentTimeMillis()
         val cal = Calendar.getInstance()
@@ -122,7 +155,7 @@ class HomeViewModel @Inject constructor(
 
         // Overall budget (if set)
         val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
-        val safeToSpend = overallBudget?.remainingAmount ?: (0.0) 
+        val safeToSpend = weather.discretionaryBudget 
 
         // Category totals
         val categoryTotals = purchases
@@ -167,6 +200,28 @@ class HomeViewModel @Inject constructor(
             }
         )
 
+        // Cumulative Spend Trend Data
+        val currentMonthDaily = (1..dayOfMonth).map { day ->
+            val dayStart = monthStart + (day - 1) * 24 * 60 * 60 * 1000L
+            val dayEnd = dayStart + 24 * 60 * 60 * 1000L
+            purchases.filter { it.date >= monthStart && it.date < dayEnd }.sumOf { it.amount }.toFloat()
+        }
+
+        val previousMonthDays = Calendar.getInstance().apply {
+            timeInMillis = previousMonthStart
+        }.getActualMaximum(Calendar.DAY_OF_MONTH)
+
+        val previousMonthDaily = (1..previousMonthDays).map { day ->
+            val pMonthStart = previousMonthStart
+            val pDayEnd = pMonthStart + day * 24 * 60 * 60 * 1000L
+            purchases.filter { it.date >= pMonthStart && it.date < pDayEnd }.sumOf { it.amount }.toFloat()
+        }
+        
+        val trend = DashboardWidget.SpendingTrend(
+            currentMonthData = currentMonthDaily,
+            previousMonthData = previousMonthDaily
+        )
+
         // Natural language insight
         val insightText = buildNaturalLanguageInsight(
             monthSpent, previousMonthTotal, todaySpent, purchases.size
@@ -181,6 +236,9 @@ class HomeViewModel @Inject constructor(
         // === Build widget list ===
         val widgets = mutableListOf<DashboardWidget>()
 
+        // Financial Weather (Always added, visibility controlled by config)
+        widgets.add(DashboardWidget.FinancialWeatherWidget(weather))
+
         // Hero: Safe-to-Spend (or total spent if no overall budget)
         widgets.add(
             DashboardWidget.SafeToSpend(
@@ -194,6 +252,9 @@ class HomeViewModel @Inject constructor(
         if (pace.paceStatus != PaceStatus.NO_BASELINE) {
             widgets.add(DashboardWidget.SpendingPaceWidget(pace))
         }
+
+        // Spending Trend
+        widgets.add(trend)
 
         // Pending Review Alert
         if (pendingCount > 0) {
@@ -223,16 +284,68 @@ class HomeViewModel @Inject constructor(
             widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
         }
 
+        // === Apply Custom Layout ===
+        val config = dashboardRepository.getDashboardConfig()
+        val sortedWidgets = config
+            .filter { it.isVisible || editMode } // Show all in edit mode, otherwise filter
+            .mapNotNull { conf ->
+                widgets.find { w -> getWidgetId(w) == conf.id }
+            }
+
         DashboardState(
-            widgets = widgets,
+            widgets = sortedWidgets,
             totalSpent = totalSpent,
             transactionCount = purchases.size,
+            isEditMode = editMode,
             isLoading = false
         )
     }
         .debounce(300)
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState())
+
+    fun toggleEditMode() {
+        isEditMode.value = !isEditMode.value
+    }
+
+    fun moveWidget(widgetId: String, moveUp: Boolean) {
+        val currentConfig = dashboardRepository.getDashboardConfig().toMutableList()
+        val index = currentConfig.indexOfFirst { it.id == widgetId }
+        if (index == -1) return
+
+        val newIndex = if (moveUp) index - 1 else index + 1
+        if (newIndex !in currentConfig.indices) return
+
+        val temp = currentConfig[index]
+        currentConfig[index] = currentConfig[newIndex].copy(order = index)
+        currentConfig[newIndex] = temp.copy(order = newIndex)
+        
+        dashboardRepository.saveDashboardConfig(currentConfig.sortedBy { it.order })
+        // Trigger recomposition by refreshing dashboard flow (implicitly via combining with a triggered state if needed)
+        // Here we can just nudge the isEditMode or use a dedicated Refresh trigger
+        isEditMode.value = isEditMode.value 
+    }
+
+    fun toggleWidgetVisibility(widgetId: String) {
+        val currentConfig = dashboardRepository.getDashboardConfig().map {
+            if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
+        }
+        dashboardRepository.saveDashboardConfig(currentConfig)
+        isEditMode.value = isEditMode.value
+    }
+
+    private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
+        is DashboardWidget.SafeToSpend -> "safe_to_spend"
+        is DashboardWidget.SpendingPaceWidget -> "spending_pace"
+        is DashboardWidget.PendingReviewAlert -> "review_alert"
+        is DashboardWidget.SpendingTrend -> "spending_trend"
+        is DashboardWidget.NaturalLanguageInsight -> "insight"
+        is DashboardWidget.PeriodSummary -> "period_summary"
+        is DashboardWidget.BudgetHealthWidget -> "budget_health"
+        is DashboardWidget.TopCategories -> "top_categories"
+        is DashboardWidget.RecentTransactions -> "recent_transactions"
+        is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
+    }
 
     private fun buildNaturalLanguageInsight(
         monthSpent: Double,
@@ -262,4 +375,31 @@ class HomeViewModel @Inject constructor(
         }
         return null
     }
+
+    fun addPlannedExpense(
+        description: String,
+        amount: Double,
+        date: Long,
+        categoryId: Long?,
+        priority: PlannedExpensePriority
+    ) {
+        viewModelScope.launch {
+            plannedExpenseDao.insertPlannedExpense(
+                PlannedExpenseEntity(
+                    description = description,
+                    amount = amount,
+                    date = date,
+                    categoryId = categoryId,
+                    priority = priority
+                )
+            )
+        }
+    }
 }
+data class FiveData(
+    val expenses: List<Expense>,
+    val categories: List<Category>,
+    val budgetStatuses: List<BudgetStatus>,
+    val pendingCount: Int,
+    val weather: FinancialWeather
+)

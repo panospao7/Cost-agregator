@@ -79,6 +79,7 @@ fun MainScreen() {
 
     var showAddExpense by remember { mutableStateOf(false) }
     var showScanReceipt by remember { mutableStateOf(false) }
+    var showRecurringExpenses by remember { mutableStateOf(false) }
     var isFabExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -165,7 +166,10 @@ fun MainScreen() {
                 label = "TabTransition"
             ) { targetTab ->
                 when (targetTab) {
-                    0 -> HomeScreen()
+                    0 -> HomeScreen(
+                        onNavigateToReview = { selectedTab = 2 },
+                        onNavigateToRecurring = { showRecurringExpenses = true }
+                    )
                     1 -> TransactionsScreen()
                     2 -> ReviewScreen()
                     3 -> BudgetScreen()
@@ -194,6 +198,12 @@ fun MainScreen() {
             if (showScanReceipt) {
                 com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen(
                     onDismiss = { showScanReceipt = false }
+                )
+            }
+
+            if (showRecurringExpenses) {
+                com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen(
+                    onNavigateBack = { showRecurringExpenses = false }
                 )
             }
         }

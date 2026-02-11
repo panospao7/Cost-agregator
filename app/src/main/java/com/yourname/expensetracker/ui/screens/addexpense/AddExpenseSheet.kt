@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.addexpense
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -264,6 +265,54 @@ fun AddExpenseSheet(
                         minLines = 2,
                         maxLines = 4
                     )
+                }
+
+                // === Recurring Options ===
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "Repeat Transaction?",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Switch(
+                        checked = state.isRecurring,
+                        onCheckedChange = { viewModel.toggleRecurring() }
+                    )
+                }
+                
+                AnimatedVisibility(visible = state.isRecurring) {
+                    Column {
+                        Text(
+                            "Frequency",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        // Simple horizontal scroll for frequencies
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            com.yourname.expensetracker.domain.model.RecurrenceFrequency.values()
+                                .filter { it != com.yourname.expensetracker.domain.model.RecurrenceFrequency.IRREGULAR }
+                                .forEach { freq ->
+                                    FilterChip(
+                                        selected = state.recurrenceFrequency == freq,
+                                        onClick = { viewModel.setRecurrenceFrequency(freq) },
+                                        label = { 
+                                            Text(freq.name.lowercase().replaceFirstChar { it.uppercase() }) 
+                                        }
+                                    )
+                                }
+                        }
+                    }
                 }
 
                 // === Error Messages ===

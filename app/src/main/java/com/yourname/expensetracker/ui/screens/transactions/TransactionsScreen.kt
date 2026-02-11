@@ -22,7 +22,53 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
-import java.util.*
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import androidx.compose.material.icons.filled.Repeat
+import java.util.Locale
+
+@Composable
+fun RecurrencePickerDialog(
+    onDismiss: () -> Unit,
+    onFrequencySelected: (RecurrenceFrequency) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select Frequency") },
+        text = {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(RecurrenceFrequency.values()) { frequency ->
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onFrequencySelected(frequency) },
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = frequency.name.replace("_", " ").lowercase()
+                                    .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() },
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,6 +81,7 @@ fun TransactionsScreen(
     var showAddExpense by remember { mutableStateOf(false) }
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
+    var expenseToRecurring by remember { mutableStateOf<Expense?>(null) }
 
     Scaffold(
         topBar = {
@@ -84,7 +131,8 @@ fun TransactionsScreen(
                     TransactionItem(
                         transaction = item,
                         onDelete = { expenseToDelete = item.expense },
-                        onEditCategory = { expenseToCategorize = item.expense }
+                        onEditCategory = { expenseToCategorize = item.expense },
+                        onMarkRecurring = { expenseToRecurring = item.expense }
                     )
                 }
             }
@@ -118,6 +166,17 @@ fun TransactionsScreen(
                     TextButton(onClick = { expenseToDelete = null }) {
                         Text("Cancel")
                     }
+                }
+            )
+        }
+
+        // Recurrence Picker Dialog
+        if (expenseToRecurring != null) {
+            RecurrencePickerDialog(
+                onDismiss = { expenseToRecurring = null },
+                onFrequencySelected = { frequency ->
+                    expenseToRecurring?.let { viewModel.markAsRecurring(it, frequency) }
+                    expenseToRecurring = null
                 }
             )
         }
@@ -182,7 +241,8 @@ fun CategoryPickerDialog(
 fun TransactionItem(
     transaction: ExpenseWithCategory,
     onDelete: () -> Unit,
-    onEditCategory: () -> Unit
+    onEditCategory: () -> Unit,
+    onMarkRecurring: () -> Unit
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -275,6 +335,16 @@ fun TransactionItem(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(end = 8.dp)
             )
+
+            // Recurring Action
+            IconButton(onClick = onMarkRecurring) {
+                Icon(
+                    Icons.Default.Repeat,
+                    contentDescription = "Mark as Recurring",
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
 
             // Delete Action
             IconButton(onClick = onDelete) {

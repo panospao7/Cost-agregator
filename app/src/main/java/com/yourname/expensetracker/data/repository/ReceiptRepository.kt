@@ -3,8 +3,10 @@ package com.yourname.expensetracker.data.repository
 import android.net.Uri
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
@@ -24,6 +26,7 @@ class ReceiptRepository @Inject constructor(
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
     private val merchantCategoryDao: MerchantCategoryDao,
+    private val pendingReviewDao: PendingReviewDao,
     private val ocrService: ReceiptOcrService,
     private val receiptParser: ReceiptParser,
     private val categorizationEngine: CategorizationEngine,
@@ -34,8 +37,14 @@ class ReceiptRepository @Inject constructor(
 
     /**
      * Process an image URI: run OCR, parse receipt, save to DB
+     *
+     * @param imageUri URI of the image to process
+     * @param autoCreateReview Whether to automatically create a PendingReview entry (true for batch, false for manual)
      */
-    suspend fun processReceipt(imageUri: Uri): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
+    suspend fun processReceipt(
+        imageUri: Uri,
+        autoCreateReview: Boolean = false
+    ): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
         // 1. Run OCR
         val ocrResult: OcrResult = ocrService.processImage(imageUri)
 
@@ -62,6 +71,25 @@ class ReceiptRepository @Inject constructor(
         )
 
         val receiptId = scannedReceiptDao.insert(receipt)
+
+        // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
+        if (autoCreateReview) {
+            val review = PendingReview(
+                rawNotificationId = null,
+                scannedReceiptId = receiptId,
+                suggestedAmount = parsed.total ?: 0.0,
+                suggestedCurrency = parsed.currency,
+                suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant",
+                suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
+                suggestedCategoryId = null, // Auto-detected on approval
+                suggestedDate = parsed.date, // Preserving the date found by parser
+                confidence = parsed.confidence,
+                packageName = "receipt.scan",
+                notificationTitle = "Scanned Receipt",
+                notificationText = ocrResult.fullText.take(200) // Preview snippet
+            )
+            pendingReviewDao.insert(review)
+        }
 
         return Pair(receipt.copy(id = receiptId), parsed)
     }
@@ -150,5 +178,59 @@ class ReceiptRepository @Inject constructor(
 
     suspend fun getReceiptCount(): Int {
         return scannedReceiptDao.getCount()
+    }
+
+    data class BatchResult(
+        val successCount: Int,
+        val failureCount: Int,
+        val errors: List<String>
+    )
+
+    /**
+     * Process multiple receipts in a loop
+     */
+    suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult {
+        var successes = 0
+        var failures = 0
+        val errors = mutableListOf<String>()
+
+        uris.forEachIndexed { index, uri ->
+            try {
+                // Batch always creates reviews
+                processReceipt(uri, autoCreateReview = true)
+                successes++
+                onProgress(index + 1, uris.size)
+            } catch (e: Exception) {
+                failures++
+                errors.add("Failed to process $uri: ${e.message}")
+                onProgress(index + 1, uris.size)
+            }
+        }
+        return BatchResult(successes, failures, errors)
+    }
+
+    suspend fun clearAllScannedReceipts() {
+        val receipts = scannedReceiptDao.getAll()
+        receipts.forEach { ocrService.deleteImage(it.imagePath) }
+        scannedReceiptDao.deleteAll()
+    }
+
+    /**
+     * Concatenates all raw OCR text from the database for debugging/parsing refinement
+     */
+    suspend fun exportParserDebugData(): String {
+        val receipts = scannedReceiptDao.getAll()
+        val sb = StringBuilder()
+        sb.append("=== EXPORTED PARSER DEBUG DATA (${receipts.size} RECEIPTS) ===\n\n")
+        receipts.forEachIndexed { index, receipt ->
+            sb.append("--- RECEIPT #${index + 1} (ID: ${receipt.id}) ---\n")
+            sb.append("MERCHANT: ${receipt.parsedMerchant ?: "Unknown"}\n")
+            sb.append("TOTAL: ${receipt.parsedTotal ?: "Not Found"}\n")
+            sb.append("DATE: ${receipt.parsedDate ?: "Not Found"}\n")
+            sb.append("RAW OCR TEXT:\n")
+            sb.append(receipt.rawOcrText)
+            sb.append("\n\n")
+        }
+        return sb.toString()
     }
 }

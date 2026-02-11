@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.home
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,9 +22,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.rounded.*
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -32,6 +36,8 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
+    onNavigateToReview: () -> Unit,
+    onNavigateToRecurring: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
@@ -39,28 +45,51 @@ fun HomeScreen(
     var showQuickSettings by remember { mutableStateOf(false) }
     var showCategories by remember { mutableStateOf(false) }
     var showDebug by remember { mutableStateOf(false) }
+    var showAddPlannedExpenseDialog by remember { mutableStateOf(false) }
 
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = { 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         PulseDot(isActive = state.isServiceRunning)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Dashboard", style = MaterialTheme.typography.titleLarge)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            "DASHBOARD", 
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 2.sp,
+                            color = SemanticColors.TextPrimary
+                        )
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showQuickSettings = true }) {
-                        Icon(Icons.Rounded.Settings, contentDescription = "Settings")
+                    IconButton(onClick = { viewModel.toggleEditMode() }) {
+                        Icon(
+                            if (state.isEditMode) Icons.Rounded.Check else Icons.Rounded.EditAttributes, 
+                            contentDescription = "Edit Layout",
+                            tint = if (state.isEditMode) SemanticColors.SuccessGreen else SemanticColors.TextSecondary
+                        )
                     }
-                }
+                    IconButton(onClick = { showQuickSettings = true }) {
+                        Icon(
+                            Icons.Rounded.Settings, 
+                            contentDescription = "Settings",
+                            tint = SemanticColors.TextSecondary
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
             )
         }
     ) { padding ->
         if (state.isLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
             }
         } else {
             LazyVerticalGrid(
@@ -69,125 +98,221 @@ fun HomeScreen(
                     .fillMaxSize()
                     .padding(padding),
                 contentPadding = PaddingValues(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                state.widgets.forEach { widget ->
-                    when (widget) {
-                        is DashboardWidget.SafeToSpend -> {
-                            item(span = { GridItemSpan(2) }) {
+                items(
+                    items = state.widgets,
+                    key = { getWidgetId(it) },
+                    span = { widget ->
+                        GridItemSpan(if (isFullSpan(widget)) 2 else 1)
+                    }
+                ) { widget ->
+                    WidgetWrapper(
+                        widget = widget,
+                        isEditMode = state.isEditMode,
+                        onMoveUp = { viewModel.moveWidget(getWidgetId(widget), true) },
+                        onMoveDown = { viewModel.moveWidget(getWidgetId(widget), false) },
+                        onToggleVisibility = { viewModel.toggleWidgetVisibility(getWidgetId(widget)) }
+                    ) {
+                        when (widget) {
+                            is DashboardWidget.SafeToSpend -> {
                                 HeroBentoCard {
                                     Text(
-                                        text = if (widget.totalBudget != null) "Safe to spend" else "Spent this month",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                        text = "SAFE TO SPEND",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.PrimaryLight,
+                                        letterSpacing = 1.sp
                                     )
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     AmountText(
                                         amount = widget.amount,
                                         style = MaterialTheme.typography.displayMedium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        color = SemanticColors.TextPrimary
                                     )
                                     if (widget.totalBudget != null) {
                                         LinearProgressIndicator(
-                                            progress = { ( (widget.totalBudget - widget.amount) / widget.totalBudget ).toFloat().coerceIn(0f, 1f) },
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).height(8.dp).clip(CircleShape),
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f)
+                                            progress = { ((widget.totalBudget - widget.amount) / widget.totalBudget).toFloat().coerceIn(0f, 1f) },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 12.dp)
+                                                .height(8.dp)
+                                                .clip(CircleShape),
+                                            color = SemanticColors.PrimaryIndigo,
+                                            trackColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
                                         )
                                         Text(
-                                            "${widget.daysRemaining} days remaining in month",
+                                            "${widget.daysRemaining} DAYS REMAINING",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                                            color = SemanticColors.TextSecondary,
+                                            letterSpacing = 0.5.sp
                                         )
                                     }
                                 }
                             }
-                        }
-
-                        is DashboardWidget.SpendingPaceWidget -> {
-                            item {
+                            is DashboardWidget.SpendingPaceWidget -> {
                                 BentoCard {
-                                    Text("Spending Pace", style = MaterialTheme.typography.labelMedium)
-                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        "PACE", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
                                     SpendingPaceGauge(pace = widget.pace)
                                 }
                             }
-                        }
-
-                        is DashboardWidget.NaturalLanguageInsight -> {
-                            item(span = { GridItemSpan(2) }) {
-                                BentoCard(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)) {
+                            is DashboardWidget.PendingReviewAlert -> {
+                                val badgeColor = if (widget.count > 0) SemanticColors.WarningOrange else SemanticColors.TextMuted
+                                BentoCard(
+                                    containerColor = if (widget.count > 0) 
+                                        SemanticColors.WarningOrange.copy(alpha = 0.05f) 
+                                        else SemanticColors.GlassSurface,
+                                    border = BorderStroke(
+                                        1.dp, 
+                                        if (widget.count > 0) SemanticColors.WarningOrange.copy(alpha = 0.3f) 
+                                        else SemanticColors.GlassBorder
+                                    ),
+                                    onClick = onNavigateToReview
+                                ) {
+                                    Text(
+                                        "REVIEW", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.Center,
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            "${widget.count}", 
+                                            style = MaterialTheme.typography.displaySmall, 
+                                            fontWeight = FontWeight.ExtraBold, 
+                                            color = badgeColor
+                                        )
+                                        Text(
+                                            "PENDING", 
+                                            style = MaterialTheme.typography.labelSmall, 
+                                            color = badgeColor,
+                                            letterSpacing = 1.sp
+                                        )
+                                    }
+                                }
+                            }
+                            is DashboardWidget.SpendingTrend -> {
+                                BentoCard {
+                                    SpendingTrendChart(
+                                        currentMonthData = widget.currentMonthData,
+                                        previousMonthData = widget.previousMonthData
+                                    )
+                                }
+                            }
+                            is DashboardWidget.NaturalLanguageInsight -> {
+                                BentoCard(
+                                    containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
+                                    border = BorderStroke(1.dp, SemanticColors.PrimaryIndigo.copy(alpha = 0.2f))
+                                ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(widget.icon, fontSize = 24.sp)
-                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Surface(
+                                            modifier = Modifier.size(40.dp),
+                                            shape = CircleShape,
+                                            color = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(widget.icon, fontSize = 20.sp)
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(16.dp))
                                         Text(
                                             text = widget.text,
                                             style = MaterialTheme.typography.bodyMedium,
+                                            color = SemanticColors.TextPrimary,
                                             fontWeight = FontWeight.Medium
                                         )
                                     }
                                 }
                             }
-                        }
-
-                        is DashboardWidget.PeriodSummary -> {
-                            item {
+                            is DashboardWidget.PeriodSummary -> {
                                 BentoCard {
-                                    Text("Overview", style = MaterialTheme.typography.labelMedium)
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    StatLabel("Today", "€${String.format("%.2f", widget.todaySpent)}")
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    StatLabel("This Week", "€${String.format("%.2f", widget.weekSpent)}")
-                                }
-                            }
-                        }
-
-                        is DashboardWidget.PendingReviewAlert -> {
-                            item {
-                                BentoCard(
-                                    containerColor = SemanticColors.WarningOrange.copy(alpha = 0.15f),
-                                    onClick = { /* Navigate to review */ }
-                                ) {
-                                    Text("Pending Review", style = MaterialTheme.typography.labelMedium, color = SemanticColors.WarningOrange)
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("${widget.count}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = SemanticColors.WarningOrange)
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("items", style = MaterialTheme.typography.bodySmall, color = SemanticColors.WarningOrange)
+                                    Text(
+                                        "PERIOD SUMMARY", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        StatLabel("TODAY", "€${String.format("%.2f", widget.todaySpent)}", modifier = Modifier.weight(1f))
+                                        StatLabel("WEEK", "€${String.format("%.2f", widget.weekSpent)}", modifier = Modifier.weight(1f))
+                                        StatLabel("MONTH", "€${String.format("%.2f", widget.monthSpent)}", modifier = Modifier.weight(1f))
                                     }
-                                    Text("Tap to verify", style = MaterialTheme.typography.labelSmall, color = SemanticColors.WarningOrange.copy(alpha = 0.8f))
                                 }
                             }
-                        }
-
-                        is DashboardWidget.BudgetHealthWidget -> {
-                            item(span = { GridItemSpan(2) }) {
+                            is DashboardWidget.BudgetHealthWidget -> {
                                 BentoCard {
-                                    Text("Budget Health", style = MaterialTheme.typography.labelMedium)
+                                    Text(
+                                        "BUDGET HEALTH", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    Text(widget.summary ?: "All good", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                    // Could add a small bar or dots here
+                                    Text(
+                                        widget.summary ?: "ALL BUDGETS ON TRACK", 
+                                        style = MaterialTheme.typography.titleMedium, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (widget.summary?.contains("exceeded", ignoreCase = true) == true) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                                    )
                                 }
                             }
-                        }
-
-                        is DashboardWidget.TopCategories -> {
-                            item(span = { GridItemSpan(2) }) {
+                            is DashboardWidget.TopCategories -> {
                                 BentoCard {
-                                    Text("Top Categories", style = MaterialTheme.typography.labelMedium)
-                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        "TOP CATEGORIES", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
                                     widget.categories.forEach { CategorySpendingRow(it) }
                                 }
                             }
-                        }
-
-                        is DashboardWidget.RecentTransactions -> {
-                            item(span = { GridItemSpan(2) }) {
+                            is DashboardWidget.RecentTransactions -> {
                                 BentoCard {
-                                    Text("Recent Transactions", style = MaterialTheme.typography.labelMedium)
-                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        "RECENT ACTIVITY", 
+                                        style = MaterialTheme.typography.labelSmall, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
                                     widget.expenses.forEach { RecentExpenseRow(it) }
                                 }
+                            }
+                            is DashboardWidget.FinancialWeatherWidget -> {
+                                FinancialWeatherCard(
+                                    state = widget.weather.state,
+                                    headline = widget.weather.headline,
+                                    summary = widget.weather.summary,
+                                    icon = widget.weather.icon,
+                                    totalCommitted = widget.weather.totalCommitted,
+                                    totalLikely = widget.weather.totalLikely,
+                                    discretionaryBudget = widget.weather.discretionaryBudget,
+                                    pastSpendingPoints = widget.weather.pastSpendingPoints,
+                                    projectedSpendingPoints = widget.weather.projectedSpendingPoints,
+                                    upcomingItems = widget.weather.upcomingItems,
+                                    totalRecurringCount = widget.weather.totalRecurringCount,
+                                    details = widget.weather.details,
+                                    onManageClick = onNavigateToRecurring,
+                                    onPlanClick = { showAddPlannedExpenseDialog = true }
+                                )
                             }
                         }
                     }
@@ -220,7 +345,75 @@ fun HomeScreen(
                 onDismiss = { showDebug = false }
             )
         }
+
+        if (showAddPlannedExpenseDialog) {
+            AddPlannedExpenseDialog(
+                onDismiss = { showAddPlannedExpenseDialog = false },
+                onConfirm = { desc, amount, date, catId, priority ->
+                    viewModel.addPlannedExpense(desc, amount, date, catId, priority)
+                    showAddPlannedExpenseDialog = false
+                }
+            )
+        }
     }
+}
+
+@Composable
+fun WidgetWrapper(
+    widget: DashboardWidget,
+    isEditMode: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onToggleVisibility: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        content()
+        
+        if (isEditMode) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(24.dp))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onMoveUp) {
+                        Icon(Icons.Rounded.ArrowUpward, "Move Up", tint = Color.White)
+                    }
+                    IconButton(onClick = onToggleVisibility) {
+                        Icon(Icons.Rounded.VisibilityOff, "Hide", tint = Color.White)
+                    }
+                    IconButton(onClick = onMoveDown) {
+                        Icon(Icons.Rounded.ArrowDownward, "Move Down", tint = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
+    is DashboardWidget.SafeToSpend -> "safe_to_spend"
+    is DashboardWidget.SpendingPaceWidget -> "spending_pace"
+    is DashboardWidget.PendingReviewAlert -> "review_alert"
+    is DashboardWidget.SpendingTrend -> "spending_trend"
+    is DashboardWidget.NaturalLanguageInsight -> "insight"
+    is DashboardWidget.PeriodSummary -> "period_summary"
+    is DashboardWidget.BudgetHealthWidget -> "budget_health"
+    is DashboardWidget.TopCategories -> "top_categories"
+    is DashboardWidget.RecentTransactions -> "recent_transactions"
+    is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
+}
+
+private fun isFullSpan(widget: DashboardWidget): Boolean = when (widget) {
+    is DashboardWidget.SpendingPaceWidget,
+    is DashboardWidget.PendingReviewAlert -> false
+    else -> true
 }
 
 @Composable
@@ -389,4 +582,94 @@ fun StatusBadge(label: String, count: Int, color: Color) {
         }
         Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddPlannedExpenseDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String, Double, Long, Long?, PlannedExpensePriority) -> Unit
+) {
+    var description by remember { mutableStateOf("") }
+    var amount by remember { mutableStateOf("") }
+    var priority by remember { mutableStateOf(PlannedExpensePriority.LIKELY) }
+    val date = remember { System.currentTimeMillis() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { 
+            Text(
+                "PLAN AN EXPENSE", 
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black,
+                color = SemanticColors.PrimaryIndigo
+            ) 
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("What are you planning?") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = SemanticColors.PrimaryIndigo,
+                        unfocusedBorderColor = SemanticColors.GlassBorder
+                    )
+                )
+
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it },
+                    label = { Text("Amount (€)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = SemanticColors.PrimaryIndigo,
+                        unfocusedBorderColor = SemanticColors.GlassBorder
+                    )
+                )
+
+                Column {
+                    Text(
+                        "PRIORITY", 
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SemanticColors.TextSecondary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PlannedExpensePriority.values().forEach { p ->
+                            FilterChip(
+                                selected = priority == p,
+                                onClick = { priority = p },
+                                label = { Text(p.name) }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val amt = amount.toDoubleOrNull() ?: 0.0
+                    if (description.isNotBlank() && amt > 0) {
+                        onConfirm(description, amt, date, null, priority)
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)
+            ) {
+                Text("ADD TO FORECAST")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", color = SemanticColors.TextSecondary)
+            }
+        },
+        containerColor = SemanticColors.BaseNavy,
+        shape = RoundedCornerShape(28.dp)
+    )
 }

@@ -16,30 +16,39 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 
-// === Semantic Colors (used across light/dark) ===
+// === Semantic Colors (optimized for Midnight Navy) ===
 object SemanticColors {
-    val WarningOrange = Color(0xFFFF9800)
-    val ActionIndigo = Color(0xFF5C6BC0)
-    val SuccessGreen = Color(0xFF4CAF50)
-    val DangerRed = Color(0xFFFF5722)
-    val CriticalAmber = Color(0xFFFFC107)
-    val NeutralGray = Color(0xFF9E9E9E)
+    val BaseNavy = Color(0xFF0F172A)
+    val SurfaceLight = Color(0xFF1E293B)
+    val PrimaryIndigo = Color(0xFF6366F1)
+    val PrimaryLight = Color(0xFF818CF8)
+    
+    val SuccessGreen = Color(0xFF10B981)
+    val WarningOrange = Color(0xFFF97316)
+    val DangerRed = Color(0xFFEF4444)
+    
+    val TextPrimary = Color(0xFFF1F5F9)
+    val TextSecondary = Color(0xFF94A3B8)
+    val TextMuted = Color(0x9994A3B8) // 60% alpha
+    
+    val GlassSurface = Color(0x661E293B) // 40% alpha SurfaceLight
+    val GlassBorder = Color(0x1A94A3B8)   // 10% alpha TextSecondary
 
     // Budget health
-    val OnTrack = Color(0xFF4CAF50)
-    val Warning = Color(0xFFFFC107)
-    val Critical = Color(0xFFFF9800)
+    val OnTrack = SuccessGreen
+    val Warning = WarningOrange
+    val Critical = DangerRed
     val Exceeded = Color(0xFFFF5722)
 
     // Pace
-    val UnderPace = Color(0xFF4CAF50)
-    val OnPace = Color(0xFF2196F3)
-    val OverPace = Color(0xFFFF5722)
+    val UnderPace = SuccessGreen
+    val OnPace = PrimaryIndigo
+    val OverPace = WarningOrange
 
     // Confidence
     fun confidenceColor(confidence: Float): Color = when {
-        confidence >= 0.75f -> SuccessGreen
-        confidence >= 0.60f -> CriticalAmber
+        confidence >= 0.85f -> SuccessGreen
+        confidence >= 0.65f -> WarningOrange
         else -> DangerRed
     }
 }
@@ -51,112 +60,130 @@ val ExpenseTypography = Typography(
         fontSize = 57.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 64.sp,
-        fontFeatureSettings = "tnum"
+        fontFeatureSettings = "tnum",
+        color = SemanticColors.TextPrimary
     ),
     displayMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 45.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 52.sp,
-        fontFeatureSettings = "tnum"
+        fontFeatureSettings = "tnum",
+        color = SemanticColors.TextPrimary
     ),
     displaySmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 36.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 44.sp,
-        fontFeatureSettings = "tnum"
+        fontFeatureSettings = "tnum",
+        color = SemanticColors.TextPrimary
     ),
     headlineLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 32.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 40.sp
+        lineHeight = 40.sp,
+        color = SemanticColors.TextPrimary
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 28.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 36.sp
+        lineHeight = 36.sp,
+        color = SemanticColors.TextPrimary
     ),
     headlineSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 24.sp,
         fontWeight = FontWeight.SemiBold,
         lineHeight = 32.sp,
-        fontFeatureSettings = "tnum"
+        fontFeatureSettings = "tnum",
+        color = SemanticColors.TextPrimary
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 22.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 28.sp
+        lineHeight = 28.sp,
+        color = SemanticColors.TextPrimary
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 16.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 24.sp
+        lineHeight = 24.sp,
+        color = SemanticColors.TextPrimary
     ),
     titleSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 20.sp
+        lineHeight = 20.sp,
+        color = SemanticColors.TextSecondary
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 16.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 24.sp
+        lineHeight = 24.sp,
+        color = SemanticColors.TextPrimary
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 20.sp
+        lineHeight = 20.sp,
+        color = SemanticColors.TextPrimary
     ),
     bodySmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 12.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 16.sp
+        lineHeight = 16.sp,
+        color = SemanticColors.TextSecondary
     ),
     labelLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 20.sp
+        lineHeight = 20.sp,
+        color = SemanticColors.TextPrimary
     ),
     labelMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 16.sp
+        lineHeight = 16.sp,
+        color = SemanticColors.TextSecondary
     ),
     labelSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 16.sp
+        lineHeight = 16.sp,
+        color = SemanticColors.TextMuted
     )
 )
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFFD0BCFF),
-    secondary = Color(0xFFCCC2DC),
-    tertiary = Color(0xFFEFB8C8),
-    surface = Color(0xFF1C1B1F),
-    surfaceVariant = Color(0xFF49454F)
+    primary = SemanticColors.PrimaryIndigo,
+    onPrimary = Color.White,
+    primaryContainer = Color(0x336366F1), // PrimaryIndigo @ 20%
+    onPrimaryContainer = SemanticColors.PrimaryLight,
+    secondary = SemanticColors.SurfaceLight,
+    onSecondary = SemanticColors.TextPrimary,
+    background = SemanticColors.BaseNavy,
+    onBackground = SemanticColors.TextPrimary,
+    surface = SemanticColors.SurfaceLight,
+    onSurface = SemanticColors.TextPrimary,
+    surfaceVariant = SemanticColors.GlassSurface,
+    onSurfaceVariant = SemanticColors.TextSecondary,
+    outline = SemanticColors.GlassBorder,
+    error = SemanticColors.DangerRed
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFF6750A4),
-    secondary = Color(0xFF625B71),
-    tertiary = Color(0xFF7D5260),
-    surface = Color(0xFFFFFBFE),
-    surfaceVariant = Color(0xFFE7E0EC)
-)
+private val LightColorScheme = DarkColorScheme // Focusing on the Midnight Theme as requested
 
 @Composable
 fun ExpenseTrackerTheme(
