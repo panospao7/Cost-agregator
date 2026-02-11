@@ -116,24 +116,28 @@ class FinancialWeatherRepository @Inject constructor(
             it.transactionType == TransactionType.PURCHASE 
         }
         
-        val pastSumDaily = run {
-            val amountByDay = purchases
-                .filter { it.date >= monthStart }
-                .groupBy { 
-                    val c = Calendar.getInstance().apply { timeInMillis = it.date }
-                    c.get(Calendar.DAY_OF_MONTH)
+        // 1. Calculate Past Daily Cumulative Spend - Optimized single pass
+        val calInstance = Calendar.getInstance()
+        val amountByDay = DoubleArray(currentDay + 1)
+        
+        for (expense in purchases) {
+            if (expense.date >= monthStart) {
+                calInstance.timeInMillis = expense.date
+                val day = calInstance.get(Calendar.DAY_OF_MONTH)
+                if (day <= currentDay) {
+                    amountByDay[day] += expense.amount
                 }
-                .mapValues { it.value.sumOf { exp -> exp.amount } }
-            
-            var runningTotal = 0.0
-            (1..currentDay).map { day ->
-                runningTotal += amountByDay[day] ?: 0.0
-                runningTotal
             }
         }
+        
+        var runningTotal = 0.0
+        val pastSumDaily = (1..currentDay).map { day ->
+            runningTotal += amountByDay[day]
+            runningTotal
+        }
 
-        // 2. Get Engines data
-        val pace = insightsEngine.getSpendingPaceSuspend()
+        // 2. Get Engines data - Reusing already fetched expenses to avoid redundant DB queries
+        val pace = insightsEngine.getSpendingPaceSuspend(expenses)
         
         // 3. Synthesize Forecast
         val forecast = synthesisEngine.synthesize(

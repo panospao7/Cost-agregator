@@ -217,41 +217,37 @@ class HomeViewModel @Inject constructor(
             }
         )
 
-        // Cumulative Spend Trend Data
-        val currentMonthDaily = run {
-            val amountByDay = purchases
-                .filter { it.date >= monthStart }
-                .groupBy { 
-                    val cal = Calendar.getInstance().apply { timeInMillis = it.date }
-                    cal.get(Calendar.DAY_OF_MONTH)
-                }
-                .mapValues { it.value.sumOf { exp -> exp.amount } }
-            
-            var runningTotal = 0.0
-            (1..dayOfMonth).map { day ->
-                runningTotal += amountByDay[day] ?: 0.0
-                runningTotal.toFloat()
+        // Cumulative Spend Trend Data - Optimized single pass
+        val calInstance = Calendar.getInstance()
+        val previousMonthDays = calInstance.apply { 
+            timeInMillis = previousMonthStart 
+        }.getActualMaximum(Calendar.DAY_OF_MONTH)
+        
+        val currentAmountByDay = DoubleArray(dayOfMonth + 1)
+        val previousAmountByDay = DoubleArray(previousMonthDays + 1)
+
+        for (expense in purchases) {
+            if (expense.date >= monthStart) {
+                calInstance.timeInMillis = expense.date
+                val day = calInstance.get(Calendar.DAY_OF_MONTH)
+                if (day <= dayOfMonth) currentAmountByDay[day] += expense.amount
+            } else if (expense.date >= previousMonthStart && expense.date < monthStart) {
+                calInstance.timeInMillis = expense.date
+                val day = calInstance.get(Calendar.DAY_OF_MONTH)
+                if (day <= previousMonthDays) previousAmountByDay[day] += expense.amount
             }
         }
 
-        val previousMonthDays = Calendar.getInstance().apply {
-            timeInMillis = previousMonthStart
-        }.getActualMaximum(Calendar.DAY_OF_MONTH)
+        var runningTotalCur = 0.0
+        val currentMonthDaily = (1..dayOfMonth).map { day ->
+            runningTotalCur += currentAmountByDay[day]
+            runningTotalCur.toFloat()
+        }
 
-        val previousMonthDaily = run {
-            val amountByDay = purchases
-                .filter { it.date >= previousMonthStart && it.date < monthStart }
-                .groupBy { 
-                    val cal = Calendar.getInstance().apply { timeInMillis = it.date }
-                    cal.get(Calendar.DAY_OF_MONTH)
-                }
-                .mapValues { it.value.sumOf { exp -> exp.amount } }
-            
-            var runningTotal = 0.0
-            (1..previousMonthDays).map { day ->
-                runningTotal += amountByDay[day] ?: 0.0
-                runningTotal.toFloat()
-            }
+        var runningTotalPrev = 0.0
+        val previousMonthDaily = (1..previousMonthDays).map { day ->
+            runningTotalPrev += previousAmountByDay[day]
+            runningTotalPrev.toFloat()
         }
         
         val trend = DashboardWidget.SpendingTrend(

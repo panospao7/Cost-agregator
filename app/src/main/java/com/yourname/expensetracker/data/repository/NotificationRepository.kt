@@ -301,12 +301,11 @@ class NotificationRepository @Inject constructor(
         finalCategoryId: Long? = null
     ) {
         val review = pendingReviewDao.getById(reviewId) ?: return
-
-        // Race condition check: ensure we are the first to handle this
-        // We set status to APPROVED first to lock it. If insertion fails, we're in a bit of a bind,
-        // but it's better than double-insertion stats.
-        val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "APPROVED")
-        if (rowsUpdated == 0) return
+        
+        // Critical Fix: Check status specifically to avoid double-processing
+        // We do this instead of updateStatusIfPending at the start to ensure we don't
+        // mark it as APPROVED if the subsequent DB operations fail.
+        if (review.status != "PENDING") return
 
         val amount: Double = finalAmount ?: review.suggestedAmount
         val merchant: String = finalMerchant ?: review.suggestedMerchant
@@ -327,6 +326,9 @@ class NotificationRepository @Inject constructor(
             merchant = merchant,
             date = transactionDate
         )
+        
+        var operationSuccessful = true
+        
         if (!isDuplicate) {
             // Create the expense
             val expense = com.yourname.expensetracker.data.database.entity.Expense(
@@ -336,18 +338,18 @@ class NotificationRepository @Inject constructor(
                 merchant,
                 type,
                 transactionDate,
-                review.rawNotificationId, // Index 6 (0-based) - Long?
-                categoryId,                // Index 7 (0-based) - Long?
+                review.rawNotificationId,
+                categoryId,
                 System.currentTimeMillis(),
                 com.yourname.expensetracker.data.database.entity.PaymentMethod.CARD,
                 review.scannedReceiptId != null,
                 if (review.scannedReceiptId != null) "Scanned from receipt" else null
             )
+            
             try {
                 val expenseId = expenseDao.insert(expense)
                 
                 if (expenseId > 0) {
-                    // Only if insert succeeds:
                     review.rawNotificationId?.let { dao.markRelevance(it, true) }
                     sourceStatsDao.incrementAccepted(review.packageName)
                     sourceStatsDao.decrementPending(review.packageName)
@@ -359,50 +361,61 @@ class NotificationRepository @Inject constructor(
 
                     // Check budgets
                     budgetMonitor.checkBudgets()
+                } else {
+                    // Insertion failed (likely IGNORE strategy due to same ID, which shouldn't happen here as ID is 0L)
+                    operationSuccessful = false
                 }
             } catch (e: android.database.sqlite.SQLiteConstraintException) {
-                // Ignore
+                // Unexpected constraint error, fail the operation
+                operationSuccessful = false
             }
+        } else {
+             // It's a duplicate, we treat this as "processed" to clear the review
+             sourceStatsDao.decrementPending(review.packageName)
         }
 
-        // Record user correction for learning
-        val correction = UserCorrection(
-            packageName = review.packageName,
-            originalMerchant = review.suggestedMerchant,
-            correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
-                finalMerchant else null,
-            originalAmount = review.suggestedAmount,
-            correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
-                finalAmount else null,
-            originalCategoryId = review.suggestedCategoryId,
-            correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
-                finalCategoryId else null,
-            wasRejected = false,
-            wasApproved = true,
-            notificationTitle = review.notificationTitle,
-            notificationText = review.notificationText
-        )
-        userCorrectionDao.insert(correction)
+        if (operationSuccessful) {
+            // ONLY set status to APPROVED if all core steps succeeded OR it was a duplicate we decided to skip
+            pendingReviewDao.updateStatusIfPending(reviewId, "APPROVED")
+            
+            // Record user correction for learning
+            val correction = UserCorrection(
+                packageName = review.packageName,
+                originalMerchant = review.suggestedMerchant,
+                correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
+                    finalMerchant else null,
+                originalAmount = review.suggestedAmount,
+                correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
+                    finalAmount else null,
+                originalCategoryId = review.suggestedCategoryId,
+                correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
+                    finalCategoryId else null,
+                wasRejected = false,
+                wasApproved = true,
+                notificationTitle = review.notificationTitle,
+                notificationText = review.notificationText
+            )
+            userCorrectionDao.insert(correction)
 
-        // Train classifier: user approved = positive
-        // LOG-003 Fix: Use retrainFromCorrections to ensure consistency and "un-learn" previous mistakes
-        try {
-            classifier.retrainFromCorrections()
-        } catch (e: Exception) {
-            android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
-        }
+            // Retrain classifier
+            try {
+                classifier.retrainFromCorrections()
+            } catch (e: Exception) {
+                android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
+            }
 
-        // Learn merchant → category mapping if category was set
-        if (categoryId != null) {
-            val pattern = categorizationEngine.normalize(merchant)
-            if (pattern.isNotEmpty()) {
-                merchantCategoryDao.insert(
-                    MerchantCategory(
-                        merchantPattern = pattern,
-                        categoryId = categoryId,
-                        confidence = 1.0f
+            // Learn mapping
+            if (categoryId != null) {
+                val pattern = categorizationEngine.normalize(merchant)
+                if (pattern.isNotEmpty()) {
+                    merchantCategoryDao.insert(
+                        MerchantCategory(
+                            merchantPattern = pattern,
+                            categoryId = categoryId,
+                            confidence = 1.0f
+                        )
                     )
-                )
+                }
             }
         }
     }

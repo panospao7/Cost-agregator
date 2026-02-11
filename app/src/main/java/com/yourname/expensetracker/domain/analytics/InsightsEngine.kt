@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import java.util.Calendar
 import javax.inject.Inject
@@ -348,11 +349,16 @@ class InsightsEngine @Inject constructor(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod,
         allExpenses: List<Expense>
-    ): SpendingPace {
+    ): SpendingPace = coroutineScope {
         val now = System.currentTimeMillis()
-        val currentSpent = expenseDao.getTotalForPeriod(currentMonth.startMs, currentMonth.endMs)
-        val previousTotal = expenseDao.getTotalForPeriod(previousMonth.startMs, previousMonth.endMs)
-        val previousCount = expenseDao.getCountForPeriod(previousMonth.startMs, previousMonth.endMs)
+        
+        val currentSpentDeferred = async { expenseDao.getTotalForPeriod(currentMonth.startMs, currentMonth.endMs) }
+        val previousTotalDeferred = async { expenseDao.getTotalForPeriod(previousMonth.startMs, previousMonth.endMs) }
+        val previousCountDeferred = async { expenseDao.getCountForPeriod(previousMonth.startMs, previousMonth.endMs) }
+
+        val currentSpent = currentSpentDeferred.await()
+        val previousTotal = previousTotalDeferred.await()
+        val previousCount = previousCountDeferred.await()
 
         val cal = Calendar.getInstance()
         cal.timeInMillis = now
@@ -380,7 +386,7 @@ class InsightsEngine @Inject constructor(
             else -> PaceStatus.ON_PACE
         }
 
-        return SpendingPace(
+        SpendingPace(
             currentMonthSpent = currentSpent,
             daysElapsed = dayOfMonth,
             daysInMonth = daysInMonth,
@@ -418,44 +424,39 @@ class InsightsEngine @Inject constructor(
     private suspend fun findAnomalies(
         currentMonth: MonthPeriod,
         categoryMap: Map<Long, Category>
-    ): List<AnomalyTransaction> {
+    ): List<AnomalyTransaction> = coroutineScope {
         val merchantStats = expenseDao.getMerchantStats() // only merchants with 2+ tx
         val statsMap = merchantStats.associateBy { it.merchant }
-
-        val anomalies = mutableListOf<AnomalyTransaction>()
 
         // Check top merchants this month for outliers
         val topMerchants = expenseDao.getTopMerchantsForPeriod(
             currentMonth.startMs, currentMonth.endMs, 100
         )
 
-        for (merchantStat in topMerchants) {
-            val historicalStats = statsMap[merchantStat.merchant] ?: continue
-            // We need 3+ transactions historically to have a reliable average
-            if (historicalStats.txCount < 3) continue
+        val deferredAnomalies: List<kotlinx.coroutines.Deferred<AnomalyTransaction?>> = topMerchants.mapNotNull { merchantStat ->
+            val historicalStats = statsMap[merchantStat.merchant] ?: return@mapNotNull null
+            if (historicalStats.txCount < 3) return@mapNotNull null
 
-            // If the max amount this month is > 3x the historical average (LOG-015 Fix: Increased from 2x)
+            // If the max amount this month is > 3x the historical average
             if (merchantStat.maxAmount > historicalStats.avgAmount * 3.0) {
-                // Find the actual expense (largest for this merchant this month)
-                // Find the actual expense (largest for THIS merchant this month)
-                val expense = expenseDao.getLargestExpenseForMerchant(
-                    merchantStat.merchant, currentMonth.startMs, currentMonth.endMs
-                )
-                // Filter specifically for this merchant
-                if (expense != null) {
-                     anomalies.add(
+                async {
+                    expenseDao.getLargestExpenseForMerchant(
+                        merchantStat.merchant, currentMonth.startMs, currentMonth.endMs
+                    )?.let { expense ->
                         AnomalyTransaction(
                             expense = expense,
                             merchantAvg = historicalStats.avgAmount,
                             deviationMultiple = (expense.amount / historicalStats.avgAmount).toFloat(),
                             category = expense.categoryId?.let { categoryMap[it] }
                         )
-                    )
+                    }
                 }
-            }
+            } else null
         }
 
-        return anomalies.sortedByDescending { it.deviationMultiple }.take(5)
+        deferredAnomalies.awaitAll().filterNotNull()
+            .sortedByDescending { it.deviationMultiple }
+            .take(5)
     }
 
     // === Recurring Expenses ===
@@ -609,17 +610,16 @@ class InsightsEngine @Inject constructor(
 
     // === Exposed Suspend Functions for Repository Usage ===
     
-    suspend fun getSpendingPaceSuspend(): SpendingPace {
+    suspend fun getSpendingPaceSuspend(expenses: List<Expense>? = null): SpendingPace {
         val now = System.currentTimeMillis()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
         
-        // We need "all expenses" to calculate the average baseline
-        // For performance, we could limit this to the last 6 months, but for now we'll fetch all
-        // or just rely on previous month if that's faster.
-        // Let's fetch last 6 months for a good baseline.
-        val sixMonthsAgo = getMonthPeriod(now, -6).startMs
-        val recentExpenses = expenseDao.getExpensesBetween(sixMonthsAgo, now)
+        // Use provided expenses or fetch from DB if null
+        val recentExpenses = expenses ?: run {
+            val sixMonthsAgo = getMonthPeriod(now, -6).startMs
+            expenseDao.getExpensesBetween(sixMonthsAgo, now)
+        }
         
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
     }

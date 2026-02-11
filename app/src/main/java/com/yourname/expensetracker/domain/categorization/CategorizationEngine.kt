@@ -13,6 +13,7 @@ class CategorizationEngine @Inject constructor(
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
+    private var cachedMappingsMap: Map<String, MerchantCategory>? = null
     private var lastCacheTime = 0L
     private val CACHE_EXPIRY_MS = 300_000 // 5 minutes
     
@@ -26,23 +27,22 @@ class CategorizationEngine @Inject constructor(
         val exactMatch = merchantCategoryDao.getCategoryForMerchant(normalized)
         if (exactMatch != null) return exactMatch.categoryId
 
-        // 2. Substring match — check if any known merchant pattern is contained in this merchant
-        val sortedMappings = getMappings() // Already sorted by length descending (LOG-022)
+        // 2. Substring match
+        val (sortedMappings, mappingsMap) = getCache()
         
         val paddedNormalized = " $normalized "
         
         for (mapping in sortedMappings) {
-            if (mapping.merchantPattern.length >= 5) { // Adjusted for " pattern "
+            if (mapping.merchantPattern.length >= 5) {
                 if (paddedNormalized.contains(mapping.merchantPattern)) {
                     return mapping.categoryId
                 }
             }
         }
 
-        // 3. Word-level match — split merchant into words and check each
+        // 3. Word-level match
         val words = normalized.split(" ").filter { it.length >= 4 }
         if (words.isNotEmpty()) {
-            val mappingsMap = sortedMappings.associateBy { it.merchantPattern }
             for (word in words) {
                 val match = mappingsMap[word]
                 if (match != null) return match.categoryId
@@ -59,24 +59,25 @@ class CategorizationEngine @Inject constructor(
             .replace(cleanupRegex2, " ")
     }
 
-    private suspend fun getMappings(): List<MerchantCategory> {
+    private suspend fun getCache(): Pair<List<MerchantCategory>, Map<String, MerchantCategory>> {
         cacheMutex.withLock {
             val now = System.currentTimeMillis()
-            if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
-                // LOG-022 Fix: Sort by pattern length descending ONCE during cache population
-                // This avoids sorting on every analyze call
-                cachedMappings = merchantCategoryDao.getAll()
-                    .map { it.copy(merchantPattern = " ${it.merchantPattern} ") }
+            if (cachedMappings == null || cachedMappingsMap == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
+                val all = merchantCategoryDao.getAll()
+                cachedMappings = all.map { it.copy(merchantPattern = " ${it.merchantPattern} ") }
                     .sortedByDescending { it.merchantPattern.length }
+                
+                cachedMappingsMap = all.associateBy { it.merchantPattern }
                 lastCacheTime = now
             }
-            return cachedMappings!!
+            return Pair(cachedMappings!!, cachedMappingsMap!!)
         }
     }
 
     suspend fun invalidateCache() {
         cacheMutex.withLock {
             cachedMappings = null
+            cachedMappingsMap = null
             lastCacheTime = 0
         }
     }

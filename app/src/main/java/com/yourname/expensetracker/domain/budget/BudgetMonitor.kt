@@ -149,20 +149,26 @@ class BudgetMonitor @Inject constructor(
             }
             BudgetPeriod.MONTHLY -> {
                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-                val currentDay = cal.get(Calendar.DAY_OF_MONTH)
-
-                // If we haven't reached the anchor day this month, the cycle started last month
-                if (currentDay < anchorDay) {
-                    cal.add(Calendar.MONTH, -1)
-                }
                 
-                // Set day, handling shorter months (e.g. 31st vs Feb 28th)
-                val maxDays = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(maxDays))
+                // Set to start of current month first
+                cal.set(Calendar.DAY_OF_MONTH, 1)
+                val currentMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(currentMonthMax))
+                
+                if (evaluationTime < cal.timeInMillis) {
+                    // If evaluation time is before the start of this month's cycle, the cycle started last month
+                    cal.add(Calendar.MONTH, -1)
+                    val prevMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(prevMonthMax))
+                }
 
                 val start = cal.timeInMillis
+                
+                // To find the end, go to the start of the next cycle
                 cal.add(Calendar.MONTH, 1)
-                // Note: Standard add(MONTH, 1) handles month length variations (Jan 31 -> Feb 28/29)
+                val nextMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(nextMonthMax))
+                
                 val end = cal.timeInMillis
                 Pair(start, end)
             }
