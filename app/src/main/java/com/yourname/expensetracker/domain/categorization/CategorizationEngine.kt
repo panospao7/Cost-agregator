@@ -23,13 +23,13 @@ class CategorizationEngine @Inject constructor(
     suspend fun categorize(merchant: String): Long? {
         val normalized = normalize(merchant)
 
-        // 1. Exact match
-        val exactMatch = merchantCategoryDao.getCategoryForMerchant(normalized)
-        if (exactMatch != null) return exactMatch.categoryId
+        // Ensure cache is loaded
+        val (sortedMappings, mappingsMap) = getCache()
+
+        // 1. Exact match (from cache)
+        mappingsMap[normalized]?.let { return it.categoryId }
 
         // 2. Substring match
-        val (sortedMappings, mappingsMap) = getCache()
-        
         val paddedNormalized = " $normalized "
         
         for (mapping in sortedMappings) {

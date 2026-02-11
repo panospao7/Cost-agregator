@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -23,14 +24,23 @@ class TransactionsViewModel @Inject constructor(
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val transactions: StateFlow<List<ExpenseWithCategory>> = repository
-        .getExpensesWithCategory(limit = 200)
+    private val _limit = MutableStateFlow(20)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val transactions: StateFlow<List<ExpenseWithCategory>> = _limit
+        .flatMapLatest { limit ->
+            repository.getExpensesWithCategory(limit = limit)
+        }
         .flowOn(Dispatchers.Default)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
+
+    fun loadMore() {
+        _limit.value += 20
+    }
 
     fun deleteExpense(expense: Expense) {
         viewModelScope.launch {

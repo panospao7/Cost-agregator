@@ -29,7 +29,10 @@ import androidx.room.PrimaryKey
         Index(value = ["date", "transactionType"]), // For dashboard totals
         Index(value = ["merchant", "date"]),        // For merchant analytics/anomalies
         Index(value = ["categoryId", "date"]),      // For category breakdown
-        Index(value = ["amount", "merchant", "date"])
+        Index(value = ["amount", "merchant", "date"]),
+        // Optimized indices
+        Index(value = ["transactionType", "merchant"]),
+        Index(value = ["transactionType", "categoryId", "date"])
     ]
 )
 data class Expense(

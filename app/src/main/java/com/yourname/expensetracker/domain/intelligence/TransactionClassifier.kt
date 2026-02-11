@@ -22,7 +22,7 @@ import kotlin.math.ln
  * No TensorFlow needed. Learns from user corrections.
  */
 @Singleton
-class TransactionClassifier @Inject constructor(
+open class TransactionClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
     private val userCorrectionDao: UserCorrectionDao
 ) {
@@ -87,7 +87,7 @@ class TransactionClassifier @Inject constructor(
         }
     }
 
-    suspend fun predict(text: String): Float {
+    open suspend fun predict(text: String): Float {
         if (!isLoaded) initialize()
 
         if (totalPositive + totalNegative < MIN_TRAINING_SAMPLES) {
@@ -169,7 +169,7 @@ class TransactionClassifier @Inject constructor(
         }
     }
 
-    fun getStats(): ClassifierStats {
+    open fun getStats(): ClassifierStats {
         return ClassifierStats(
             totalPositive = totalPositive,
             totalNegative = totalNegative,

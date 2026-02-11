@@ -43,20 +43,21 @@ class AnalyticsViewModel @Inject constructor(
     private val _selectedPeriod = MutableStateFlow(TimePeriod.MONTH)
 
     init {
-        combine(
-            repository.getAllExpenses(),
-            categoryRepository.allCategories,
-            _selectedPeriod
-        ) { expenses, categories, period ->
-            Triple(expenses, categories, period)
+        viewModelScope.launch {
+            combine(
+                repository.getAllExpenses(),
+                categoryRepository.allCategories,
+                _selectedPeriod
+            ) { expenses, categories, period ->
+                Triple(expenses, categories, period)
+            }
+            .debounce(300)
+            .flowOn(Dispatchers.Default)
+            .collectLatest { (expenses, categories, period) ->
+                _state.update { it.copy(isLoading = true, selectedPeriod = period) }
+                computeAnalytics(expenses, categories, period)
+            }
         }
-        .debounce(300)
-        .onEach { (expenses, categories, period) ->
-            _state.update { it.copy(isLoading = true, selectedPeriod = period) }
-            computeAnalytics(expenses, categories, period)
-        }
-        .flowOn(Dispatchers.Default)
-        .launchIn(viewModelScope)
     }
 
     fun selectPeriod(period: TimePeriod) {

@@ -22,6 +22,10 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
     fun getAllWithCategoryFlow(limit: Int = 200): Flow<List<ExpenseWithCategory>>
 
+    @Transaction
+    @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit OFFSET :offset")
+    suspend fun getExpensesWithCategoryPaged(limit: Int, offset: Int): List<ExpenseWithCategory>
+
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     suspend fun getAll(): List<Expense>
     

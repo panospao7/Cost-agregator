@@ -137,6 +137,7 @@ class HomeViewModel @Inject constructor(
     ) { expenses, categories, budgetStatuses, pendingCount, weather ->
         FiveData(expenses, categories, budgetStatuses, pendingCount, weather)
     }
+    .debounce(300)
 
     // Optimized: Process heavy data separately and cache the result
     private val processedDataFlow = dataFlow.map { data ->

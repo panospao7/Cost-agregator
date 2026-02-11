@@ -45,7 +45,8 @@ fun DebugScreen(
     val selectedFilter by viewModel.selectedPackageFilter.collectAsState()
     
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
-    
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault()) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -319,6 +320,7 @@ fun DebugScreen(
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         NotificationCard(
                             notification = notification,
+                            dateFormat = dateFormat,
                             isExpanded = expandedNotificationId == notification.id,
                             onClick = {
                                 expandedNotificationId = 
@@ -339,14 +341,13 @@ fun DebugScreen(
 @Composable
 fun NotificationCard(
     notification: RawNotification,
+    dateFormat: SimpleDateFormat,
     isExpanded: Boolean,
     onClick: () -> Unit,
     onMarkRelevant: () -> Unit,
     onMarkIrrelevant: () -> Unit,
     onBlockPackage: () -> Unit
 ) {
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault()) }
-    
     val relevanceColor = when (notification.isRelevant) {
         true -> Color(0xFF4CAF50).copy(alpha = 0.1f)
         false -> Color(0xFFF44336).copy(alpha = 0.1f)

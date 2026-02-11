@@ -8,7 +8,8 @@ import androidx.room.PrimaryKey
     tableName = "raw_notifications",
     indices = [
         Index(value = ["packageName", "timestamp"]),
-        Index(value = ["capturedAt"]) // New: for sorting in Debug screen
+        Index(value = ["capturedAt"]), // New: for sorting in Debug screen
+        Index(value = ["isRelevant"]) // Optimized for filtering
     ]
 )
 data class RawNotification(
