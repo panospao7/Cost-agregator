@@ -28,6 +28,7 @@ class TransactionClassifier @Inject constructor(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var saveJob: Job? = null
+    private var retrainJob: Job? = null
 
     companion object {
         private const val TAG = "TxClassifier"
@@ -107,9 +108,13 @@ class TransactionClassifier @Inject constructor(
         }
     }
 
-    suspend fun retrainFromCorrections() {
-        mutex.withLock {
-            retrainFromCorrectionsInternal()
+    fun retrainFromCorrections() {
+        retrainJob?.cancel()
+        retrainJob = scope.launch {
+            delay(2000) // Debounce for 2 seconds
+            mutex.withLock {
+                retrainFromCorrectionsInternal()
+            }
         }
     }
 

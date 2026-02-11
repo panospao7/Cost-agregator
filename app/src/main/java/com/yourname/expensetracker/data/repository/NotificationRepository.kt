@@ -22,11 +22,12 @@ class NotificationRepository @Inject constructor(
     private val dao: RawNotificationDao,
     private val blockedPackageDao: BlockedPackageDao,
     private val expenseDao: ExpenseDao,
-    private val merchantCategoryDao: MerchantCategoryDao,
+    private val merchantCategoryRepository: MerchantCategoryRepository,
     private val pendingReviewDao: PendingReviewDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val sourceStatsDao: SourceStatsDao,
     private val scannedReceiptDao: ScannedReceiptDao,
+
     private val parserRegistry: AppParserRegistry,
     private val categorizationEngine: CategorizationEngine,
     private val confidenceRouter: ConfidenceRouter,
@@ -97,6 +98,12 @@ class NotificationRepository @Inject constructor(
         date: Long = System.currentTimeMillis(),
         notes: String? = null
     ): Long {
+        // Fix 4.12: Large amount validation
+        if (amount > 1000000.0) {
+            android.util.Log.w("NotificationRepo", "Manual expense amount too large: $amount")
+            return -1L
+        }
+
         // 1. Normalize merchant name
         val normalizedMerchant = merchantNormalizer.applyUserCorrections(merchant)
 
@@ -134,16 +141,7 @@ class NotificationRepository @Inject constructor(
 
         // 6. Learn the merchant→category mapping for future auto-categorization
         if (finalCategoryId != null && id > 0) {
-            val pattern = categorizationEngine.normalize(normalizedMerchant)
-            if (pattern.isNotEmpty()) {
-                merchantCategoryDao.insert(
-                    MerchantCategory(
-                        merchantPattern = pattern,
-                        categoryId = finalCategoryId,
-                        confidence = 1.0f
-                    )
-                )
-            }
+            merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
         }
 
         return id
@@ -192,22 +190,28 @@ class NotificationRepository @Inject constructor(
             return
         }
 
-        // 5. Apply merchant normalization & user corrections
-        val correctedMerchant = merchantNormalizer.applyUserCorrections(parsed.merchant)
-
         // 6. Build full notification text for ML classifier
         val fullNotificationText = listOfNotNull(
             notification.title,
             notification.text,
             notification.bigText
         ).joinToString(" ")
-
-        // 7. Route through confidence system (now includes ML)
-        val routingResult = confidenceRouter.route(
+        
+        // 7. Route through confidence system (includes source stats + ML)
+        var routingResult = confidenceRouter.route(
             parsed = parsed,
             packageName = notification.packageName,
             notificationText = fullNotificationText
         )
+
+        // Fix 4.12: Large amount validation -> Force Needs Review
+        if (parsed.amount > 1000000.0 && routingResult.decision == RoutingDecision.AUTO_ACCEPT) {
+            android.util.Log.w("NotificationRepo", "Auto-accept suppressed due to large amount: ${parsed.amount}")
+            routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
+        }
+
+        // 8. Apply merchant normalization & user corrections
+        val correctedMerchant = merchantNormalizer.applyUserCorrections(parsed.merchant)
 
         when (routingResult.decision) {
             RoutingDecision.AUTO_ACCEPT -> {
@@ -268,7 +272,8 @@ class NotificationRepository @Inject constructor(
                     confidence = routingResult.adjustedConfidence,
                     packageName = notification.packageName,
                     notificationTitle = notification.title,
-                    notificationText = notification.text ?: notification.bigText
+                    notificationText = notification.text ?: notification.bigText,
+                    suggestedDate = parsed.date // Fix 1.10: Pass the parsed date if available
                 )
                 pendingReviewDao.insert(review)
                 sourceStatsDao.incrementPending(notification.packageName)
@@ -321,10 +326,12 @@ class NotificationRepository @Inject constructor(
         val transactionDate: Long = review.suggestedDate ?: notification?.timestamp ?: review.createdAt
 
         // Check for duplicates
+        // Fix 1.1: Use consistent 60s window for manual/review approvals
         val isDuplicate = expenseDao.isDuplicate(
             amount = amount,
             merchant = merchant,
-            date = transactionDate
+            date = transactionDate,
+            windowMs = 60000
         )
         
         var operationSuccessful = true
@@ -375,7 +382,9 @@ class NotificationRepository @Inject constructor(
         }
 
         if (operationSuccessful) {
-            // ONLY set status to APPROVED if all core steps succeeded OR it was a duplicate we decided to skip
+            // Fix 1.19 status update: We update it to APPROVED even if it was a duplicate
+            // so it leaves the queue. If it truly failed insertion (operationSuccessful = false),
+            // we should probably still mark it as something else or just skip it for now.
             pendingReviewDao.updateStatusIfPending(reviewId, "APPROVED")
             
             // Record user correction for learning
@@ -406,16 +415,7 @@ class NotificationRepository @Inject constructor(
 
             // Learn mapping
             if (categoryId != null) {
-                val pattern = categorizationEngine.normalize(merchant)
-                if (pattern.isNotEmpty()) {
-                    merchantCategoryDao.insert(
-                        MerchantCategory(
-                            merchantPattern = pattern,
-                            categoryId = categoryId,
-                            confidence = 1.0f
-                        )
-                    )
-                }
+                merchantCategoryRepository.learnPattern(merchant, categoryId)
             }
         }
     }
@@ -514,7 +514,7 @@ class NotificationRepository @Inject constructor(
         expenseDao.deleteAll()
         pendingReviewDao.deleteAll()
         userCorrectionDao.deleteAll()
-        merchantCategoryDao.deleteAll()
+        // merchantCategoryDao.deleteAll() // Removed as part of refactoring
         sourceStatsDao.resetAllPendingCounts()
     }
 
@@ -528,16 +528,7 @@ class NotificationRepository @Inject constructor(
 
     suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long) {
         expenseDao.updateCategory(expense.id, newCategoryId)
-        val pattern = categorizationEngine.normalize(expense.merchant)
-        if (pattern.isNotEmpty()) {
-            merchantCategoryDao.insert(
-                MerchantCategory(
-                    merchantPattern = pattern,
-                    categoryId = newCategoryId,
-                    confidence = 1.0f
-                )
-            )
-        }
+        merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
 
         // Also record as a correction for learning
         val correction = UserCorrection(
@@ -562,6 +553,7 @@ class NotificationRepository @Inject constructor(
         if (pendingReview != null && pendingReview.status == "PENDING") {
             sourceStatsDao.decrementPending(notification.packageName)
         }
+        pendingReviewDao.deleteByRawId(notification.id) // Fix 1.20: Clean up orphaned reviews
         dao.delete(notification)
     }
 

@@ -6,86 +6,113 @@ This file contains the complete source code from the `src` directory.
 1. [main\AndroidManifest.xml](#mainandroidmanifestxml)
 2. [main\java\com\yourname\expensetracker\ExpenseTrackerApp.kt](#mainjavacomyournameexpensetrackerexpensetrackerappkt)
 3. [main\java\com\yourname\expensetracker\data\database\AppDatabase.kt](#mainjavacomyournameexpensetrackerdatadatabaseappdatabasekt)
-4. [main\java\com\yourname\expensetracker\data\database\entity\BlockedPackage.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityblockedpackagekt)
-5. [main\java\com\yourname\expensetracker\data\database\entity\Budget.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitybudgetkt)
-6. [main\java\com\yourname\expensetracker\data\database\entity\Category.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitycategorykt)
-7. [main\java\com\yourname\expensetracker\data\database\entity\Expense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityexpensekt)
-8. [main\java\com\yourname\expensetracker\data\database\entity\ManualRecurringExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymanualrecurringexpensekt)
-9. [main\java\com\yourname\expensetracker\data\database\entity\MerchantCategory.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymerchantcategorykt)
-10. [main\java\com\yourname\expensetracker\data\database\entity\PendingReview.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitypendingreviewkt)
-11. [main\java\com\yourname\expensetracker\data\database\entity\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityplannedexpensekt)
-12. [main\java\com\yourname\expensetracker\data\database\entity\RawNotification.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityrawnotificationkt)
-13. [main\java\com\yourname\expensetracker\data\database\entity\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysavingsgoalkt)
-14. [main\java\com\yourname\expensetracker\data\database\entity\ScannedReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityscannedreceiptkt)
-15. [main\java\com\yourname\expensetracker\data\database\entity\SourceStats.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysourcestatskt)
-16. [main\java\com\yourname\expensetracker\data\database\entity\UserCorrection.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityusercorrectionkt)
-17. [main\java\com\yourname\expensetracker\data\database\model\DashboardWidgetConfig.kt](#mainjavacomyournameexpensetrackerdatadatabasemodeldashboardwidgetconfigkt)
-18. [main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategorykt)
-19. [main\java\com\yourname\expensetracker\data\database\model\PendingReviewWithReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelpendingreviewwithreceiptkt)
-20. [main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
-21. [main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
-22. [main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt)
-23. [main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt)
-24. [main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
-25. [main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt)
-26. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
-27. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
-28. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
-29. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
-30. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
-31. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
-32. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
-33. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
-34. [main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt)
-35. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
-36. [main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#mainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
-37. [main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
-38. [main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
-39. [main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#mainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
-40. [main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
-41. [main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
-42. [main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
-43. [main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
-44. [main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
-45. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
-46. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
-47. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
-48. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
-49. [main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
-50. [main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
-51. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
-52. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
-53. [main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
-54. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
-55. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
-56. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
-57. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
-58. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
-59. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
-60. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
-61. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
-62. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
-63. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
-64. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
-65. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
-66. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
-67. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
-68. [main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
-69. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
-70. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
-71. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
-72. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
-73. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
-74. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
-75. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
-76. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
-77. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
-78. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
-79. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
-80. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
-81. [main\res\values\strings.xml](#mainresvaluesstringsxml)
-82. [main\res\values\themes.xml](#mainresvaluesthemesxml)
-83. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
+4. [main\java\com\yourname\expensetracker\data\database\converter\Converters.kt](#mainjavacomyournameexpensetrackerdatadatabaseconverterconverterskt)
+5. [main\java\com\yourname\expensetracker\data\database\dao\BlockedPackageDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaoblockedpackagedaokt)
+6. [main\java\com\yourname\expensetracker\data\database\dao\BudgetDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaobudgetdaokt)
+7. [main\java\com\yourname\expensetracker\data\database\dao\CategoryDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaocategorydaokt)
+8. [main\java\com\yourname\expensetracker\data\database\dao\ExpenseDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaoexpensedaokt)
+9. [main\java\com\yourname\expensetracker\data\database\dao\MerchantCategoryDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaomerchantcategorydaokt)
+10. [main\java\com\yourname\expensetracker\data\database\dao\PendingReviewDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaopendingreviewdaokt)
+11. [main\java\com\yourname\expensetracker\data\database\dao\PlannedExpenseDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaoplannedexpensedaokt)
+12. [main\java\com\yourname\expensetracker\data\database\dao\RawNotificationDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaorawnotificationdaokt)
+13. [main\java\com\yourname\expensetracker\data\database\dao\RecurringExpenseDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaorecurringexpensedaokt)
+14. [main\java\com\yourname\expensetracker\data\database\dao\SavingsGoalDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaosavingsgoaldaokt)
+15. [main\java\com\yourname\expensetracker\data\database\dao\ScannedReceiptDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaoscannedreceiptdaokt)
+16. [main\java\com\yourname\expensetracker\data\database\dao\SourceStatsDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaosourcestatsdaokt)
+17. [main\java\com\yourname\expensetracker\data\database\dao\UserCorrectionDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaousercorrectiondaokt)
+18. [main\java\com\yourname\expensetracker\data\database\entity\BlockedPackage.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityblockedpackagekt)
+19. [main\java\com\yourname\expensetracker\data\database\entity\Budget.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitybudgetkt)
+20. [main\java\com\yourname\expensetracker\data\database\entity\Category.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitycategorykt)
+21. [main\java\com\yourname\expensetracker\data\database\entity\Expense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityexpensekt)
+22. [main\java\com\yourname\expensetracker\data\database\entity\ManualRecurringExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymanualrecurringexpensekt)
+23. [main\java\com\yourname\expensetracker\data\database\entity\MerchantCategory.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymerchantcategorykt)
+24. [main\java\com\yourname\expensetracker\data\database\entity\PendingReview.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitypendingreviewkt)
+25. [main\java\com\yourname\expensetracker\data\database\entity\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityplannedexpensekt)
+26. [main\java\com\yourname\expensetracker\data\database\entity\RawNotification.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityrawnotificationkt)
+27. [main\java\com\yourname\expensetracker\data\database\entity\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysavingsgoalkt)
+28. [main\java\com\yourname\expensetracker\data\database\entity\ScannedReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityscannedreceiptkt)
+29. [main\java\com\yourname\expensetracker\data\database\entity\SourceStats.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysourcestatskt)
+30. [main\java\com\yourname\expensetracker\data\database\entity\UserCorrection.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityusercorrectionkt)
+31. [main\java\com\yourname\expensetracker\data\database\model\DashboardWidgetConfig.kt](#mainjavacomyournameexpensetrackerdatadatabasemodeldashboardwidgetconfigkt)
+32. [main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategorykt)
+33. [main\java\com\yourname\expensetracker\data\database\model\PendingReviewWithReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelpendingreviewwithreceiptkt)
+34. [main\java\com\yourname\expensetracker\data\provider\MerchantCategoryProvider.kt](#mainjavacomyournameexpensetrackerdataprovidermerchantcategoryproviderkt)
+35. [main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
+36. [main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
+37. [main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt)
+38. [main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt)
+39. [main\java\com\yourname\expensetracker\data\repository\MerchantCategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorymerchantcategoryrepositorykt)
+40. [main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
+41. [main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt)
+42. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
+43. [main\java\com\yourname\expensetracker\di\AppModule.kt](#mainjavacomyournameexpensetrackerdiappmodulekt)
+44. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
+45. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
+46. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
+47. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
+48. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
+49. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
+50. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
+51. [main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt)
+52. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
+53. [main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#mainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
+54. [main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
+55. [main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
+56. [main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#mainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
+57. [main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
+58. [main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
+59. [main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
+60. [main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
+61. [main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#mainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
+62. [main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#mainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
+63. [main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
+64. [main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
+65. [main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
+66. [main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#mainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
+67. [main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
+68. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
+69. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
+70. [main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#mainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
+71. [main\java\com\yourname\expensetracker\receiver\BootReceiver.kt](#mainjavacomyournameexpensetrackerreceiverbootreceiverkt)
+72. [main\java\com\yourname\expensetracker\service\NotificationCaptureService.kt](#mainjavacomyournameexpensetrackerservicenotificationcaptureservicekt)
+73. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
+74. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
+75. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
+76. [main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
+77. [main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
+78. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
+79. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
+80. [main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
+81. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
+82. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
+83. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
+84. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
+85. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
+86. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
+87. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
+88. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
+89. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
+90. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
+91. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
+92. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
+93. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
+94. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
+95. [main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
+96. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
+97. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
+98. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
+99. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
+100. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
+101. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
+102. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
+103. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
+104. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
+105. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
+106. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
+107. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
+108. [main\res\values\strings.xml](#mainresvaluesstringsxml)
+109. [main\res\values\themes.xml](#mainresvaluesthemesxml)
+110. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
 
 ---
 
@@ -211,7 +238,7 @@ import androidx.room.*
         PlannedExpense::class,
         SavingsGoal::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -393,7 +420,807 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
             }
         }
+        val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS source_stats (
+                        packageName TEXT PRIMARY KEY NOT NULL,
+                        totalNotifications INTEGER NOT NULL DEFAULT 0,
+                        acceptedAsExpense INTEGER NOT NULL DEFAULT 0,
+                        rejectedByUser INTEGER NOT NULL DEFAULT 0,
+                        autoRejected INTEGER NOT NULL DEFAULT 0,
+                        pendingReview INTEGER NOT NULL DEFAULT 0,
+                        lastSeen INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+            }
+        }
     }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\converter\Converters.kt <a name="mainjavacomyournameexpensetrackerdatadatabaseconverterconverterskt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.converter
+import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import androidx.room.TypeConverter
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.PaymentMethod
+class Converters {
+    @TypeConverter
+    fun fromTransactionType(value: TransactionType): String {
+        return value.name
+    }
+    @TypeConverter
+    fun toTransactionType(value: String): TransactionType {
+        return try {
+            TransactionType.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            TransactionType.UNKNOWN
+        }
+    }
+    @TypeConverter
+    fun fromPaymentMethod(value: PaymentMethod): String {
+        return value.name
+    }
+    @TypeConverter
+    fun toPaymentMethod(value: String): PaymentMethod {
+        return try {
+            PaymentMethod.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            PaymentMethod.UNKNOWN
+        }
+    }
+    @TypeConverter
+    fun fromBudgetPeriod(value: com.yourname.expensetracker.data.database.entity.BudgetPeriod): String {
+        return value.name
+    }
+    @TypeConverter
+    fun toBudgetPeriod(value: String): com.yourname.expensetracker.data.database.entity.BudgetPeriod {
+        return try {
+            com.yourname.expensetracker.data.database.entity.BudgetPeriod.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            com.yourname.expensetracker.data.database.entity.BudgetPeriod.MONTHLY
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\BlockedPackageDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaoblockedpackagedaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.BlockedPackage
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface BlockedPackageDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun block(blockedPackage: BlockedPackage)
+    @Delete
+    suspend fun unblock(blockedPackage: BlockedPackage)
+    @Query("DELETE FROM blocked_packages WHERE packageName = :packageName")
+    suspend fun unblock(packageName: String)
+    @Query("SELECT * FROM blocked_packages")
+    fun getAllFlow(): Flow<List<BlockedPackage>>
+    @Query("SELECT packageName FROM blocked_packages")
+    fun getAllPackageNamesFlow(): Flow<List<String>>
+    @Query("SELECT EXISTS(SELECT 1 FROM blocked_packages WHERE packageName = :packageName)")
+    suspend fun isBlocked(packageName: String): Boolean
+    @Query("DELETE FROM blocked_packages")
+    suspend fun deleteAll()
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\BudgetDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaobudgetdaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.Budget
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface BudgetDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(budget: Budget): Long
+    @Update
+    suspend fun update(budget: Budget)
+    @Delete
+    suspend fun delete(budget: Budget)
+    @Query("SELECT * FROM budgets WHERE id = :id")
+    suspend fun getById(id: Long): Budget?
+    @Query("SELECT * FROM budgets")
+    suspend fun getAll(): List<Budget>
+    @Query("SELECT * FROM budgets")
+    fun getAllFlow(): Flow<List<Budget>>
+    @Query("SELECT * FROM budgets WHERE isActive = 1")
+    suspend fun getActiveBudgets(): List<Budget>
+    @Query("SELECT * FROM budgets WHERE isActive = 1")
+    fun getActiveBudgetsFlow(): Flow<List<Budget>>
+    @Query("SELECT * FROM budgets WHERE categoryId IS NULL AND isActive = 1 LIMIT 1")
+    suspend fun getOverallBudget(): Budget?
+    @Query("SELECT * FROM budgets WHERE categoryId = :categoryId AND isActive = 1 LIMIT 1")
+    suspend fun getByCategory(categoryId: Long): Budget?
+    @Query("UPDATE budgets SET lastWarningNotifiedAt = :timestamp WHERE id = :id")
+    suspend fun updateWarningNotification(id: Long, timestamp: Long)
+    @Query("UPDATE budgets SET lastCriticalNotifiedAt = :timestamp WHERE id = :id")
+    suspend fun updateCriticalNotification(id: Long, timestamp: Long)
+    @Query("UPDATE budgets SET lastExceededNotifiedAt = :timestamp WHERE id = :id")
+    suspend fun updateExceededNotification(id: Long, timestamp: Long)
+    @Query("UPDATE budgets SET isActive = :isActive WHERE id = :id")
+    suspend fun setActive(id: Long, isActive: Boolean)
+    @Query("DELETE FROM budgets")
+    suspend fun deleteAll()
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\CategoryDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaocategorydaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
+import com.yourname.expensetracker.data.database.entity.Category
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface CategoryDao {
+    @Query("SELECT * FROM categories ORDER BY isDefault DESC, name ASC")
+    fun getAllFlow(): Flow<List<Category>>
+    @Query("SELECT * FROM categories WHERE id = :id")
+    suspend fun getById(id: Long): Category?
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(category: Category): Long
+    @Update
+    suspend fun update(category: Category)
+    @Delete
+    suspend fun delete(category: Category)
+    @Query("SELECT COUNT(*) FROM categories")
+    suspend fun getCount(): Int
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(categories: List<Category>)
+    @Query("SELECT * FROM categories ORDER BY isDefault DESC, name ASC")
+    suspend fun getAll(): List<Category>
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\ExpenseDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaoexpensedaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import androidx.room.*
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface ExpenseDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(expense: Expense): Long
+    @Query("SELECT * FROM expenses ORDER BY date DESC")
+    fun getAllFlow(): Flow<List<Expense>>
+    @Transaction
+    @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
+    fun getAllWithCategoryFlow(limit: Int = 200): Flow<List<ExpenseWithCategory>>
+    @Query("SELECT * FROM expenses ORDER BY date DESC")
+    suspend fun getAll(): List<Expense>
+    @Query("SELECT SUM(amount) FROM expenses WHERE UPPER(transactionType) = 'PURCHASE'")
+    fun getTotalSpentFlow(): Flow<Double?>
+    @Query("DELETE FROM expenses")
+    suspend fun deleteAll()
+    @Delete
+    suspend fun delete(expense: Expense)
+    @Query("UPDATE expenses SET categoryId = :categoryId WHERE id = :expenseId")
+    suspend fun updateCategory(expenseId: Long, categoryId: Long)
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM expenses 
+            WHERE ABS(amount - :amount) < 0.001 
+            AND merchant = :merchant 
+            AND ABS(date - :date) <= :windowMs
+        )
+    """)
+    suspend fun isDuplicate(amount: Double, merchant: String, date: Long, windowMs: Long = 300000): Boolean
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0.0) FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND categoryId = :categoryId 
+        AND date >= :startMs AND date < :endMs
+    """)
+    suspend fun getCategorySpentInPeriod(categoryId: Long, startMs: Long, endMs: Long): Double
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0.0) FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND categoryId = :categoryId 
+        AND date >= :startMs AND date < :endMs
+    """)
+    fun getCategorySpentInPeriodFlow(categoryId: Long, startMs: Long, endMs: Long): Flow<Double>
+    // === Merchant Search for Manual Entry ===
+    @Query("""
+        SELECT merchant, categoryId, AVG(amount) as avgAmount, COUNT(*) as txCount
+        FROM expenses
+        WHERE UPPER(merchant) LIKE '%' || UPPER(:query) || '%'
+        GROUP BY UPPER(merchant)
+        ORDER BY txCount DESC
+        LIMIT 10
+    """)
+    suspend fun searchMerchants(query: String): List<MerchantSuggestion>
+    @Query("""
+        SELECT DISTINCT merchant
+        FROM expenses
+        ORDER BY date DESC
+        LIMIT 100
+    """)
+    suspend fun getRecentMerchantNames(): List<String>
+    // === Analytics Queries ===
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense>
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
+    @Query("""
+        SELECT SUM(amount) FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startDate AND date <= :endDate
+    """)
+    suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
+    @Query("""
+        SELECT merchant, SUM(amount) as total, COUNT(*) as cnt 
+        FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startDate AND date <= :endDate
+        GROUP BY UPPER(merchant)
+        ORDER BY total DESC
+    """)
+    suspend fun getMerchantTotalsBetween(startDate: Long, endDate: Long): List<MerchantTotal>
+    @Query("""
+        SELECT categoryId, SUM(amount) as total, COUNT(*) as txCount
+        FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startDate AND date <= :endDate
+        AND categoryId IS NOT NULL
+        GROUP BY categoryId
+        ORDER BY total DESC
+    """)
+    suspend fun getCategoryTotalsBetween(startDate: Long, endDate: Long): List<CategoryTotal>
+    @Query("SELECT COUNT(*) FROM expenses WHERE UPPER(transactionType) = 'PURCHASE'")
+    suspend fun getPurchaseCount(): Int
+    @Query("SELECT MIN(date) FROM expenses")
+    suspend fun getOldestExpenseDate(): Long?
+    // === Tier 1 & 2 Analytics Queries ===
+    // Monthly total for a specific month range
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0.0) FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startMs AND date < :endMs
+    """)
+    suspend fun getTotalForPeriod(startMs: Long, endMs: Long): Double
+    // Count for a period
+    @Query("""
+        SELECT COUNT(*) FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startMs AND date < :endMs
+    """)
+    suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int
+    // Category totals for a period
+    @Query("""
+        SELECT categoryId, SUM(amount) as total, COUNT(*) as txCount
+        FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startMs AND date < :endMs
+        AND categoryId IS NOT NULL
+        GROUP BY categoryId
+        ORDER BY total DESC
+    """)
+    suspend fun getCategoryTotalsForPeriod(startMs: Long, endMs: Long): List<CategoryTotal>
+    // Merchant averages (merchants with 2+ transactions)
+    @Query("""
+        SELECT merchant, AVG(amount) as avgAmount, 
+               MIN(amount) as minAmount, MAX(amount) as maxAmount,
+               COUNT(*) as txCount, SUM(amount) as totalAmount
+        FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE'
+        GROUP BY merchant
+        HAVING txCount >= 2
+        ORDER BY totalAmount DESC
+    """)
+    suspend fun getMerchantStats(): List<MerchantStats>
+    // All merchant stats (including single-transaction merchants)
+    @Query("""
+        SELECT merchant, AVG(amount) as avgAmount, 
+               MIN(amount) as minAmount, MAX(amount) as maxAmount,
+               COUNT(*) as txCount, SUM(amount) as totalAmount
+        FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE'
+        GROUP BY merchant
+        ORDER BY totalAmount DESC
+    """)
+    suspend fun getAllMerchantStats(): List<MerchantStats>
+    // Top merchants by total spending for a period
+    @Query("""
+        SELECT merchant, AVG(amount) as avgAmount, 
+               MIN(amount) as minAmount, MAX(amount) as maxAmount,
+               COUNT(*) as txCount, SUM(amount) as totalAmount
+        FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startMs AND date < :endMs
+        GROUP BY merchant
+        ORDER BY totalAmount DESC
+        LIMIT :limit
+    """)
+    suspend fun getTopMerchantsForPeriod(startMs: Long, endMs: Long, limit: Int = 10): List<MerchantStats>
+    // Largest single transaction in a period
+    @Query("""
+        SELECT * FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startMs AND date < :endMs
+        ORDER BY amount DESC
+        LIMIT 1
+    """)
+    suspend fun getLargestExpenseForPeriod(startMs: Long, endMs: Long): Expense?
+    // Largest single transaction for a specific merchant in a period
+    @Query("""
+        SELECT * FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startMs AND date < :endMs
+        AND merchant = :merchant
+        ORDER BY amount DESC
+        LIMIT 1
+    """)
+    suspend fun getLargestExpenseForMerchant(merchant: String, startMs: Long, endMs: Long): Expense?
+    // Daily spending totals for a period (for pace calculation)
+    @Query("""
+        SELECT (date / 86400000) as dayEpoch, SUM(amount) as total, COUNT(*) as txCount
+        FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE' 
+        AND date >= :startMs AND date < :endMs
+        GROUP BY dayEpoch
+        ORDER BY dayEpoch ASC
+    """)
+    suspend fun getDailyTotalsForPeriod(startMs: Long, endMs: Long): List<DailyTotal>
+    // Recurring candidates: merchants that appear in multiple distinct months
+    @Query("""
+        SELECT merchant, 
+               AVG(amount) as avgAmount, 
+               MIN(amount) as minAmount, 
+               MAX(amount) as maxAmount,
+               COUNT(*) as txCount, 
+               SUM(amount) as totalAmount
+        FROM expenses 
+        WHERE UPPER(transactionType) = 'PURCHASE'
+        GROUP BY merchant
+        HAVING txCount >= 2 
+        AND (maxAmount - minAmount) < (avgAmount * 0.15)
+        ORDER BY txCount DESC
+    """)
+    suspend fun getRecurringCandidates(): List<MerchantStats>
+    // Day-of-week spending pattern
+    @Query("""
+        SELECT 
+            CAST(((date / 1000 + 259200) % 604800) / 86400 AS INTEGER) as dayOfWeek,
+            SUM(amount) as total,
+            COUNT(*) as txCount,
+            AVG(amount) as avgAmount
+        FROM expenses
+        WHERE UPPER(transactionType) = 'PURCHASE'
+        AND date >= :startMs AND date < :endMs
+        GROUP BY dayOfWeek
+        ORDER BY dayOfWeek ASC
+    """)
+    suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long): List<DayOfWeekTotal>
+}
+data class MerchantSuggestion(
+    val merchant: String,
+    val categoryId: Long?,
+    val avgAmount: Double,
+    val txCount: Int
+)
+data class MerchantTotal(
+    val merchant: String,
+    val total: Double,
+    val cnt: Int
+)
+data class CategoryTotal(
+    val categoryId: Long,
+    val total: Double,
+    val txCount: Int = 0 
+)
+data class MerchantStats(
+    val merchant: String,
+    val avgAmount: Double,
+    val minAmount: Double,
+    val maxAmount: Double,
+    val txCount: Int,
+    val totalAmount: Double
+)
+data class DailyTotal(
+    val dayEpoch: Long,
+    val total: Double,
+    val txCount: Int
+)
+data class DayOfWeekTotal(
+    val dayOfWeek: Int,
+    val total: Double,
+    val txCount: Int,
+    val avgAmount: Double
+)
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\MerchantCategoryDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaomerchantcategorydaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import com.yourname.expensetracker.data.database.entity.MerchantCategory
+@Dao
+interface MerchantCategoryDao {
+    @Query("SELECT * FROM merchant_categories WHERE merchantPattern = :merchantPattern")
+    suspend fun getCategoryForMerchant(merchantPattern: String): MerchantCategory?
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(merchantCategory: MerchantCategory)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(merchantCategories: List<MerchantCategory>)
+    @Query("SELECT * FROM merchant_categories")
+    suspend fun getAll(): List<MerchantCategory>
+    @Query("DELETE FROM merchant_categories")
+    suspend fun deleteAll()
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\PendingReviewDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaopendingreviewdaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface PendingReviewDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(review: PendingReview): Long
+    @Update
+    suspend fun update(review: PendingReview)
+    @Delete
+    suspend fun delete(review: PendingReview)
+    @Transaction
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT :limit")
+    fun getPendingFlow(limit: Int = 100): Flow<List<PendingReviewWithReceipt>>
+    @Transaction
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun getPending(limit: Int = 500): List<PendingReviewWithReceipt>
+    @Query("SELECT COUNT(*) FROM pending_reviews WHERE status = 'PENDING'")
+    fun getPendingCountFlow(): Flow<Int>
+    @Query("SELECT * FROM pending_reviews WHERE id = :id")
+    suspend fun getById(id: Long): PendingReview?
+    @Query("SELECT * FROM pending_reviews WHERE rawNotificationId = :rawId")
+    suspend fun getByRawId(rawId: Long): PendingReview?
+    @Query("UPDATE pending_reviews SET status = :status WHERE id = :id")
+    suspend fun updateStatus(id: Long, status: String)
+    @Query("UPDATE pending_reviews SET status = :status WHERE id = :id AND status = 'PENDING'")
+    suspend fun updateStatusIfPending(id: Long, status: String): Int
+    @Query("SELECT * FROM pending_reviews ORDER BY createdAt DESC")
+    fun getAllFlow(): Flow<List<PendingReview>>
+    @Query("DELETE FROM pending_reviews WHERE status != 'PENDING'")
+    suspend fun clearResolved()
+    @Query("DELETE FROM pending_reviews")
+    suspend fun deleteAll()
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\PlannedExpenseDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaoplannedexpensedaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.PlannedExpense
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface PlannedExpenseDao {
+    @Query("SELECT * FROM planned_expenses ORDER BY date ASC")
+    fun getAllPlannedExpenses(): Flow<List<PlannedExpense>>
+    @Query("SELECT * FROM planned_expenses WHERE date BETWEEN :startMs AND :endMs")
+    fun getPlannedExpensesForPeriod(startMs: Long, endMs: Long): Flow<List<PlannedExpense>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPlannedExpense(expense: PlannedExpense): Long
+    @Delete
+    suspend fun deletePlannedExpense(expense: PlannedExpense)
+    @Query("DELETE FROM planned_expenses WHERE id = :id")
+    suspend fun deletePlannedExpenseById(id: Long)
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\RawNotificationDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaorawnotificationdaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.RawNotification
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface RawNotificationDao {
+    @Insert
+    suspend fun insert(notification: RawNotification): Long
+    @Query("SELECT * FROM raw_notifications WHERE id = :id")
+    suspend fun getById(id: Long): RawNotification?
+    @Query("SELECT * FROM raw_notifications ORDER BY capturedAt DESC")
+    fun getAllFlow(): Flow<List<RawNotification>>
+    @Query("SELECT * FROM raw_notifications ORDER BY capturedAt DESC LIMIT :limit")
+    fun getRecentFlow(limit: Int): Flow<List<RawNotification>>
+    @Query("SELECT * FROM raw_notifications WHERE packageName = :packageName ORDER BY capturedAt DESC")
+    fun getByPackageFlow(packageName: String): Flow<List<RawNotification>>
+    @Query("SELECT DISTINCT packageName FROM raw_notifications ORDER BY packageName")
+    fun getAllPackagesFlow(): Flow<List<String>>
+    @Query("SELECT COUNT(*) FROM raw_notifications")
+    fun getCountFlow(): Flow<Int>
+    @Query("DELETE FROM raw_notifications")
+    suspend fun deleteAll()
+    @Delete
+    suspend fun delete(notification: RawNotification)
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM raw_notifications 
+            WHERE packageName = :packageName 
+            AND timestamp = :timestamp 
+            AND (title = :title OR (:title IS NULL AND title IS NULL))
+            AND (text = :text OR (:text IS NULL AND text IS NULL))
+        )
+    """)
+    suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?): Boolean
+    @Query("UPDATE raw_notifications SET isRelevant = :isRelevant WHERE id = :id")
+    suspend fun markRelevance(id: Long, isRelevant: Boolean)
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\RecurringExpenseDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaorecurringexpensedaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface RecurringExpenseDao {
+    @Query("SELECT * FROM manual_recurring_expenses ORDER BY nextDate ASC")
+    fun getAllFlow(): Flow<List<ManualRecurringExpense>>
+    @Query("SELECT * FROM manual_recurring_expenses")
+    suspend fun getAll(): List<ManualRecurringExpense>
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(expense: ManualRecurringExpense): Long
+    @Update
+    suspend fun update(expense: ManualRecurringExpense)
+    @Delete
+    suspend fun delete(expense: ManualRecurringExpense)
+    @Query("SELECT * FROM manual_recurring_expenses WHERE merchant = :merchant LIMIT 1")
+    suspend fun getByMerchant(merchant: String): ManualRecurringExpense?
+    @Query("DELETE FROM manual_recurring_expenses WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\SavingsGoalDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaosavingsgoaldaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface SavingsGoalDao {
+    @Query("SELECT * FROM savings_goals")
+    fun getAllGoals(): Flow<List<SavingsGoal>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGoal(goal: SavingsGoal): Long
+    @Delete
+    suspend fun deleteGoal(goal: SavingsGoal)
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\ScannedReceiptDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaoscannedreceiptdaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface ScannedReceiptDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(receipt: ScannedReceipt): Long
+    @Update
+    suspend fun update(receipt: ScannedReceipt)
+    @Delete
+    suspend fun delete(receipt: ScannedReceipt)
+    @Query("SELECT * FROM scanned_receipts ORDER BY createdAt DESC")
+    fun getAllFlow(): Flow<List<ScannedReceipt>>
+    @Query("SELECT * FROM scanned_receipts ORDER BY createdAt DESC")
+    suspend fun getAll(): List<ScannedReceipt>
+    @Query("SELECT * FROM scanned_receipts WHERE id = :id")
+    suspend fun getById(id: Long): ScannedReceipt?
+    @Query("SELECT * FROM scanned_receipts WHERE expenseId = :expenseId")
+    suspend fun getByExpenseId(expenseId: Long): ScannedReceipt?
+    @Query("SELECT COUNT(*) FROM scanned_receipts")
+    suspend fun getCount(): Int
+    @Query("DELETE FROM scanned_receipts")
+    suspend fun deleteAll()
+    @Query("UPDATE scanned_receipts SET expenseId = :expenseId WHERE id = :receiptId")
+    suspend fun linkToExpense(receiptId: Long, expenseId: Long)
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\SourceStatsDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaosourcestatsdaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.SourceStats
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface SourceStatsDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfNotExists(stats: SourceStats)
+    @Query("SELECT * FROM source_stats WHERE packageName = :packageName")
+    suspend fun getByPackage(packageName: String): SourceStats?
+    @Query("SELECT * FROM source_stats ORDER BY totalNotifications DESC")
+    fun getAllFlow(): Flow<List<SourceStats>>
+    @Query("SELECT * FROM source_stats ORDER BY totalNotifications DESC")
+    suspend fun getAll(): List<SourceStats>
+    @Query("""
+        UPDATE source_stats 
+        SET totalNotifications = totalNotifications + 1, 
+            lastSeen = :now 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementTotal(packageName: String, now: Long = System.currentTimeMillis())
+    @Query("""
+        UPDATE source_stats 
+        SET acceptedAsExpense = acceptedAsExpense + 1 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementAccepted(packageName: String)
+    @Query("""
+        UPDATE source_stats 
+        SET rejectedByUser = rejectedByUser + 1 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementRejected(packageName: String)
+    @Query("""
+        UPDATE source_stats 
+        SET autoRejected = autoRejected + 1 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementAutoRejected(packageName: String)
+    @Query("""
+        UPDATE source_stats 
+        SET pendingReview = pendingReview + 1 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementPending(packageName: String)
+    @Query("""
+        UPDATE source_stats 
+        SET pendingReview = MAX(0, pendingReview - 1) 
+        WHERE packageName = :packageName
+    """)
+    suspend fun decrementPending(packageName: String)
+    @Query("UPDATE source_stats SET pendingReview = 0")
+    suspend fun resetAllPendingCounts()
+    @Query("DELETE FROM source_stats")
+    suspend fun deleteAll()
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\UserCorrectionDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaousercorrectiondaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.UserCorrection
+import kotlinx.coroutines.flow.Flow
+@Dao
+interface UserCorrectionDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(correction: UserCorrection): Long
+    @Query("SELECT * FROM user_corrections ORDER BY createdAt DESC")
+    fun getAllFlow(): Flow<List<UserCorrection>>
+    @Query("SELECT * FROM user_corrections ORDER BY createdAt DESC")
+    suspend fun getAll(): List<UserCorrection>
+    @Query("SELECT COUNT(*) FROM user_corrections")
+    suspend fun getCount(): Int
+    // Get all corrections for a specific package (to learn its patterns)
+    @Query("SELECT * FROM user_corrections WHERE packageName = :packageName")
+    suspend fun getByPackage(packageName: String): List<UserCorrection>
+    // Get rejection rate for a package
+    @Query("""
+        SELECT COUNT(*) FROM user_corrections 
+        WHERE packageName = :packageName AND wasRejected = 1
+    """)
+    suspend fun getRejectionCount(packageName: String): Int
+    @Query("""
+        SELECT COUNT(*) FROM user_corrections 
+        WHERE packageName = :packageName
+    """)
+    suspend fun getTotalCorrections(packageName: String): Int
+    // Find merchant name corrections (user always renames X to Y)
+    @Query("""
+        SELECT correctedMerchant 
+        FROM user_corrections 
+        WHERE originalMerchant = :originalMerchant 
+        AND correctedMerchant IS NOT NULL 
+        AND correctedMerchant != originalMerchant
+        GROUP BY correctedMerchant 
+        ORDER BY COUNT(*) DESC 
+        LIMIT 1
+    """)
+    suspend fun getMostCommonMerchantCorrection(originalMerchant: String): String?
+    @Query("""
+        SELECT COUNT(*) FROM user_corrections 
+        WHERE originalMerchant = :merchant
+    """)
+    suspend fun getMerchantTotalCorrections(merchant: String): Int
+    @Query("""
+        SELECT COUNT(*) FROM user_corrections 
+        WHERE originalMerchant = :merchant AND wasRejected = 1
+    """)
+    suspend fun getMerchantRejectionCount(merchant: String): Int
+    @Query("""
+        SELECT correctedCategoryId 
+        FROM user_corrections 
+        WHERE originalMerchant = :merchant 
+        AND correctedCategoryId IS NOT NULL
+        GROUP BY correctedCategoryId 
+        ORDER BY COUNT(*) DESC 
+        LIMIT 1
+    """)
+    suspend fun getMostCommonCategoryForMerchant(merchant: String): Long?
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM user_corrections 
+            WHERE packageName = :packageName 
+            AND originalMerchant = :merchant 
+            AND wasApproved = 1
+        )
+    """)
+    suspend fun hasPreviousApprovals(merchant: String, packageName: String): Boolean
+    @Query("DELETE FROM user_corrections")
+    suspend fun deleteAll()
 }
 
 ```
@@ -510,8 +1337,10 @@ import androidx.room.PrimaryKey
         Index(value = ["rawNotificationId"]),
         Index(value = ["date"]),
         Index(value = ["categoryId"]),
-        Index(value = ["transactionType"]), // New: for type filtering
-        Index(value = ["categoryId", "date"]), // New: for category breakdown
+        Index(value = ["transactionType"]),
+        Index(value = ["date", "transactionType"]), // For dashboard totals
+        Index(value = ["merchant", "date"]),        // For merchant analytics/anomalies
+        Index(value = ["categoryId", "date"]),      // For category breakdown
         Index(value = ["amount", "merchant", "date"])
     ]
 )
@@ -940,6 +1769,1153 @@ data class PendingReviewWithReceipt(
 
 ---
 
+## main\java\com\yourname\expensetracker\data\provider\MerchantCategoryProvider.kt <a name="mainjavacomyournameexpensetrackerdataprovidermerchantcategoryproviderkt"></a>
+```kotlin
+package com.yourname.expensetracker.data.provider
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.MerchantCategory
+object MerchantCategoryProvider {
+    // Default Categories (ID mapping presumed or we look them up)
+    // Actually we will map by Name to be safe, then Repository will resolve IDs.
+    val categoryBlueprints = listOf(
+        Category(name = "Groceries", icon = "🛒", color = "#4CAF50", isDefault = true),
+        Category(name = "Transport", icon = "🚗", color = "#2196F3", isDefault = true),
+        Category(name = "Food", icon = "🍽️", color = "#FF9800", isDefault = true), // Restaurants/Cafe
+        Category(name = "Entertainment", icon = "🎬", color = "#9C27B0", isDefault = true),
+        Category(name = "Shopping", icon = "🛍️", color = "#E91E63", isDefault = true),
+        Category(name = "Health", icon = "💊", color = "#00BCD4", isDefault = true),
+        Category(name = "Utilities", icon = "🏠", color = "#607D8B", isDefault = true),
+        Category(name = "Subscriptions", icon = "📱", color = "#673AB7", isDefault = true),
+        Category(name = "Travel", icon = "✈️", color = "#009688", isDefault = true), // Changed color slightly
+        Category(name = "Electronics", icon = "💻", color = "#795548", isDefault = true),
+        Category(name = "Education", icon = "📚", color = "#3F51B5", isDefault = true),
+        Category(name = "Fitness", icon = "💪", color = "#8BC34A", isDefault = true),
+        Category(name = "Beauty", icon = "💄", color = "#FF4081", isDefault = true),
+        Category(name = "Pets", icon = "🐾", color = "#A1887F", isDefault = true),
+        Category(name = "Home", icon = "🛋️", color = "#FF5722", isDefault = true), // New from list
+        Category(name = "Kids", icon = "🧸", color = "#FFEB3B", isDefault = true), // New from list
+        Category(name = "Gifts", icon = "🎁", color = "#F44336", isDefault = true), // New from list
+        Category(name = "Banking", icon = "🏦", color = "#37474F", isDefault = true), // Fees etc
+        Category(name = "Legal & Gov", icon = "⚖️", color = "#9E9E9E", isDefault = true)
+    )
+    // Map of Merchant Name (or keyword) -> Category Name
+    val merchantToCategoryMap = mapOf(
+        // ═══════════════════════════════════════════════════════════════
+        // 🛒 GROCERIES - Supermarkets, Bakeries, Butchers
+        // ═══════════════════════════════════════════════════════════════
+        // AB Vassilopoulos (all variations)
+        "AB Βασιλόπουλος" to "Groceries", "AB Vasilopoulos" to "Groceries", 
+        "AB BASILOPOULOS" to "Groceries", "AB SHOP" to "Groceries", 
+        "A.B." to "Groceries", "ALFA BETA" to "Groceries",
+        "AB FOOD MARKET" to "Groceries", "DELHAIZE" to "Groceries",
+        "ΑΛΦΑ ΒΗΤΑ" to "Groceries", "TROFO" to "Groceries",
+        // Sklavenitis
+        "Σκλαβενίτης" to "Groceries", "Sklavenitis" to "Groceries", 
+        "SKLAVENITIS" to "Groceries", "ELLINIKES YPERAGORES" to "Groceries",
+        "ΣΚΛΑΒΕΝΙΤΗΣ" to "Groceries", "I & S SKLAVENITIS" to "Groceries",
+        // Lidl
+        "Lidl" to "Groceries", "LIDL HELLAS" to "Groceries", 
+        "LIDL ELLAS" to "Groceries", "LIDL STIFTUNG" to "Groceries",
+        // My Market
+        "My Market" to "Groceries", "MY MARKET" to "Groceries", 
+        "MYMARKET" to "Groceries", "METRO AEBE" to "Groceries",
+        "METRO MY MARKET" to "Groceries",
+        // Masoutis
+        "Μασούτης" to "Groceries", "Masoutis" to "Groceries", 
+        "MASOUTIS" to "Groceries", "MASOYTHS" to "Groceries",
+        "DIAMANTIS MASOUTIS" to "Groceries",
+        // Other Greek Supermarkets
+        "Γαλαξίας" to "Groceries", "Galaxias" to "Groceries", 
+        "GALAXIAS" to "Groceries", "PENTE SA" to "Groceries",
+        "Κρητικός" to "Groceries", "Kritikos" to "Groceries", 
+        "KRITIKOS" to "Groceries", "ANEDIK KRITIKOS" to "Groceries",
+        "Bazaar" to "Groceries", "BAZAAR" to "Groceries", 
+        "BAZAAR SM" to "Groceries",
+        "Market In" to "Groceries", "MARKET IN" to "Groceries", 
+        "MARKETIN" to "Groceries", "VEROUKAS" to "Groceries",
+        "The Mart" to "Groceries", "THE MART" to "Groceries", 
+        "THEMART" to "Groceries", "MAKRO" to "Groceries",
+        "METRO CASH" to "Groceries",
+        // European Chains
+        "Aldi" to "Groceries", "ALDI SUD" to "Groceries", 
+        "ALDI NORD" to "Groceries",
+        "Kaufland" to "Groceries", "KAUFLAND" to "Groceries",
+        "Carrefour" to "Groceries", "CARREFOUR" to "Groceries",
+        "CARREFOUR EXPRESS" to "Groceries", "CARREFOUR CITY" to "Groceries",
+        "Penny Market" to "Groceries", "PENNY" to "Groceries",
+        "Tesco" to "Groceries", "TESCO" to "Groceries",
+        "Sainsbury" to "Groceries", "SAINSBURYS" to "Groceries",
+        "Waitrose" to "Groceries", "WAITROSE" to "Groceries",
+        "Marks Spencer Food" to "Groceries", "M&S FOOD" to "Groceries",
+        "Migros" to "Groceries", "MIGROS" to "Groceries",
+        "Coop" to "Groceries", "COOP" to "Groceries",
+        "Spar" to "Groceries", "SPAR" to "Groceries",
+        "Rewe" to "Groceries", "REWE" to "Groceries",
+        "Edeka" to "Groceries", "EDEKA" to "Groceries",
+        // Regional Greek Supermarkets
+        "PLUS Super Discount" to "Groceries", "PLUS SUPERMARKET" to "Groceries",
+        "Χαλκιαδάκης" to "Groceries", "Chalkiadakis" to "Groceries", 
+        "HALKIADAKIS" to "Groceries", "XALKIADAKIS" to "Groceries",
+        "OK! Anytime" to "Groceries", "OK MARKET" to "Groceries", 
+        "OK ANYTIME MARKETS" to "Groceries",
+        "Σάββας" to "Groceries", "Savvas" to "Groceries", 
+        "SAVVAS CASH" to "Groceries",
+        "3Α" to "Groceries", "3A" to "Groceries", "ΤΡΙΑ ΑΛΦΑ" to "Groceries",
+        "Discount Markt" to "Groceries", "DISCOUNT MARKT" to "Groceries",
+        "Arvanitidis" to "Groceries", "ΑΡΒΑΝΙΤΙΔΗΣ" to "Groceries",
+        "Atlantic" to "Groceries", "ATLANTIC" to "Groceries",
+        "Synka" to "Groceries", "SYNKA" to "Groceries", "ΣΥΝΚΑ" to "Groceries",
+        "Xynos" to "Groceries", "ΞΥΝΟΣ" to "Groceries",
+        "Ena Cash" to "Groceries", "ENA CASH CARRY" to "Groceries",
+        "Smile Markets" to "Groceries", "SMILE MARKETS" to "Groceries",
+        "Karamolegos" to "Groceries", "ΚΑΡΑΜΟΛΕΓΚΟΣ" to "Groceries",
+        // Bio/Organic Stores
+        "Bio Agora" to "Groceries", "BIO AGORA" to "Groceries",
+        "Ελαία" to "Groceries", "Elaia" to "Groceries",
+        "Avocado" to "Groceries", "AVOCADO STORES" to "Groceries",
+        "Green Family" to "Groceries", "GREEN FAMILY" to "Groceries",
+        "Organic" to "Groceries", "ORGANIC SHOP" to "Groceries",
+        "Bio" to "Groceries", "BIOLOGIKA" to "Groceries",
+        "Herbs" to "Groceries", "HERBS STORE" to "Groceries",
+        // Convenience & Local
+        "Mini Market" to "Groceries", "Minimarket" to "Groceries", 
+        "Μινι Μαρκετ" to "Groceries",
+        "Kiosk" to "Groceries", "Periptero" to "Groceries", 
+        "Περίπτερο" to "Groceries", "PERIPTERO" to "Groceries",
+        "Psilika" to "Groceries", "Ψιλικα" to "Groceries",
+        "Pantopoleio" to "Groceries", "Παντοπωλείο" to "Groceries",
+        "Grocery" to "Groceries", "GROCERY STORE" to "Groceries",
+        "Bakaliko" to "Groceries", "Μπακάλικο" to "Groceries",
+        "Express Market" to "Groceries", "EXPRESS" to "Groceries",
+        // Bakeries
+        "Bakery" to "Groceries", "Baker" to "Groceries", 
+        "Φούρνος" to "Groceries", "Fournos" to "Groceries", 
+        "Artopoiio" to "Groceries", "Αρτοποιείο" to "Groceries",
+        "ARTOS" to "Groceries", "Bread" to "Groceries",
+        "Veneti" to "Groceries", "ΒΕΝΕΤΗ" to "Groceries", "VENETIS" to "Groceries",
+        "Terkenlis" to "Groceries", "ΤΕΡΚΕΝΛΗΣ" to "Groceries",
+        "Asimakopoulou" to "Groceries", "ΑΣΗΜΑΚΟΠΟΥΛΟΥ" to "Groceries",
+        "Konstantinidis" to "Groceries", "ΚΩΝΣΤΑΝΤΙΝΙΔΗΣ" to "Groceries",
+        "Chatzis" to "Groceries", "ΧΑΤΖΗΣ" to "Groceries",
+        "Blé" to "Groceries", "BLE" to "Groceries",
+        "Pain Quotidien" to "Groceries", "PAIN QUOTIDIEN" to "Groceries",
+        // Butcher/Meat
+        "Butcher" to "Groceries", "Kreopoleio" to "Groceries", 
+        "Κρεοπωλείο" to "Groceries", "KREAS" to "Groceries",
+        "Meat" to "Groceries", "MEAT SHOP" to "Groceries",
+        "Chiros" to "Groceries", "Pork Shop" to "Groceries",
+        "Salami" to "Groceries", "Allantika" to "Groceries",
+        "ΑΛΛΑΝΤΙΚΑ" to "Groceries",
+        // Fish
+        "Fish Shop" to "Groceries", "Ixthiopolio" to "Groceries", 
+        "Ιχθυοπωλείο" to "Groceries", "ΨΑΡΑΓΟΡΑ" to "Groceries",
+        "Fish Market" to "Groceries", "Psaradiko" to "Groceries",
+        "Seafood" to "Groceries",
+        // Produce
+        "Greengrocer" to "Groceries", "Manaviko" to "Groceries", 
+        "Μανάβικο" to "Groceries", "ΛΑΪΚΗ" to "Groceries",
+        "Laiki Agora" to "Groceries", "Farmers Market" to "Groceries",
+        "ΑΓΟΡΑ" to "Groceries", "Varvakios" to "Groceries",
+        "ΒΑΡΒΑΚΕΙΟΣ" to "Groceries",
+        // Specialty
+        "Cheese Shop" to "Groceries", "Tyrokomeio" to "Groceries",
+        "Delicatessen" to "Groceries", "Deli" to "Groceries",
+        "Kafekopeio" to "Groceries", "ΚΑΦΕΚΟΠΤΕΙΟ" to "Groceries",
+        "Wine Shop" to "Groceries", "Kava" to "Groceries", "ΚΑΒΑ" to "Groceries",
+        "Cellar" to "Groceries",
+        // ═══════════════════════════════════════════════════════════════
+        // 🚗 TRANSPORT - FUEL & MOBILITY
+        // ═══════════════════════════════════════════════════════════════
+        // Fuel Stations
+        "Shell" to "Transport", "SHELL HELLAS" to "Transport", 
+        "SEHL" to "Transport", "CORAL AE" to "Transport",
+        "BP" to "Transport", "BP HELLAS" to "Transport", 
+        "BRITISH PETROLEUM" to "Transport",
+        "EKO" to "Transport", "EKO ABEE" to "Transport", 
+        "EKO KALYPSO" to "Transport", "HELLENIC PETROLEUM" to "Transport",
+        "ELPE" to "Transport", "ΕΛΠΕ" to "Utilities", // Note: ELPE can be heating oil/utility too, but keeping as fuel here or user preference
+        "Aegean" to "Transport", "Aegean Oil" to "Transport", 
+        "AEGEAN OIL" to "Transport",
+        "Avin" to "Transport", "AVIN OIL" to "Transport", 
+        "MOTOR OIL" to "Transport",
+        "Ελίν" to "Transport", "Elin" to "Transport", 
+        "ELIN OIL" to "Transport", "ELINOIL" to "Transport",
+        "Revoil" to "Transport", "REVOIL" to "Transport", 
+        "Jet Oil" to "Transport", "JETOIL" to "Transport",
+        "Cyclon" to "Transport", "CYCLON" to "Transport", 
+        "Coral Gas" to "Transport", "CORAL GAS" to "Transport",
+        "Eteka" to "Transport", "ETEKA" to "Transport",
+        "Mamidoil" to "Transport", "MAMIDOIL" to "Transport",
+        "Silk Oil" to "Transport", "SILK OIL" to "Transport",
+        "Naoumidis" to "Transport", "ΝΑΟΥΜΙΔΗΣ" to "Transport",
+        // International Fuel
+        "Total" to "Transport", "TOTAL ENERGIES" to "Transport",
+        "Esso" to "Transport", "ESSO" to "Transport",
+        "Texaco" to "Transport", "TEXACO" to "Transport",
+        "Q8" to "Transport", "KUWAIT PETROLEUM" to "Transport",
+        "Cepsa" to "Transport", "CEPSA" to "Transport",
+        "Repsol" to "Transport", "REPSOL" to "Transport",
+        "OMV" to "Transport", "OMV" to "Transport",
+        "MOL" to "Transport", "MOL" to "Transport",
+        // Generic Fuel
+        "Gas Station" to "Transport", "Fuel Station" to "Transport", 
+        "Πρατήριο" to "Transport", "Benzinadiko" to "Transport",
+        "Βενζινάδικο" to "Transport", "PRATIRIO" to "Transport",
+        "Petrol" to "Transport", "PETROL" to "Transport",
+        "Diesel" to "Transport", "DIESEL" to "Transport",
+        "LPG" to "Transport", "AUTOGAS" to "Transport",
+        "Charging Station" to "Transport", "EV CHARGE" to "Transport",
+        // Ride Hailing
+        "Uber" to "Transport", "UBER TRIP" to "Transport", 
+        "UBER BV" to "Transport", "UBER PAYMENTS" to "Transport",
+        "Beat" to "Transport", "BEAT APP" to "Transport", 
+        "BEAT RIDE" to "Transport",
+        "FREE NOW" to "Transport", "NOOW" to "Transport", 
+        "FREENOW" to "Transport", "MYTAXI" to "Transport",
+        "Bolt" to "Transport", "BOLT EU" to "Transport",
+        "BOLT OPERATIONS" to "Transport",
+        "Lyft" to "Transport", "LYFT" to "Transport",
+        "Didi" to "Transport", "DIDI" to "Transport",
+        // Taxis
+        "Taxi" to "Transport", "Ταξί" to "Transport", 
+        "Cab" to "Transport", "ΤΑΞΙ" to "Transport",
+        "Taxiplon" to "Transport", "TAXIPLON" to "Transport",
+        "Radio Taxi" to "Transport", "RADIO TAXI" to "Transport",
+        "TAXI ATHINON" to "Transport", "ΡΑΔΙΟΤΑΞΙ" to "Transport",
+        // Public Transport Athens
+        "OASA" to "Transport", "ΟΑΣΑ" to "Transport", 
+        "ATH.ENA TICKET" to "Transport", "ATHENA CARD" to "Transport",
+        "STASY" to "Transport", "ΣΤΑΣΥ" to "Transport", 
+        "URBAN RAIL" to "Transport",
+        "Metro Athens" to "Transport", "ΜΕΤΡΟ" to "Transport",
+        "ATTIKO METRO" to "Transport",
+        "Tram" to "Transport", "Τραμ" to "Transport", "ΤΡΑΜ" to "Transport",
+        "ISAP" to "Transport", "ΗΣΑΠ" to "Transport", 
+        "Ηλεκτρικός" to "Transport", "HLEKTRIKOS" to "Transport",
+        "Proastiakos" to "Transport", "ΠΡΟΑΣΤΙΑΚΟΣ" to "Transport",
+        // Public Transport Thessaloniki
+        "OASTH" to "Transport", "ΟΑΣΘ" to "Transport",
+        "THESSALONIKI METRO" to "Transport",
+        // Buses
+        "KTEL" to "Transport", "ΚΤΕΛ" to "Transport", 
+        "KTEL ATTIKIS" to "Transport", "KTEL MACEDONIA" to "Transport",
+        "KTEL PELOPONNISOU" to "Transport", "KTEL KRITIS" to "Transport",
+        "KTEL THESSALONIKH" to "Transport", "KTEL LARISAS" to "Transport",
+        "KTEL PATRON" to "Transport", "KTEL VOLOU" to "Transport",
+        "KTEL EVIA" to "Transport", "KTEL IRAKLEIOU" to "Transport",
+        "KTEL CHANION" to "Transport", "KTEL RODOU" to "Transport",
+        "Flixbus" to "Transport", "FLIXBUS" to "Transport",
+        // Trains
+        "Hellenic Train" to "Transport", "TRAINOSE" to "Transport", 
+        "ΤΡΕΝΟΣΕ" to "Transport", "OSE" to "Transport", "ΟΣΕ" to "Transport",
+        "HELLENICTRAIN" to "Transport", "ΕΛΛΗΝΙΚΟΣ" to "Transport",
+        "Eurostar" to "Transport", "EUROSTAR" to "Transport",
+        "Thalys" to "Transport", "TGV" to "Transport",
+        "Deutsche Bahn" to "Transport", "DB" to "Transport",
+        "OBB" to "Transport", "SNCF" to "Transport",
+        "Trenitalia" to "Transport", "ITALO" to "Transport",
+        // Parking
+        "Parking" to "Transport", "Parkin" to "Transport", 
+        "Parkingmycity" to "Transport", "Cityzen" to "Transport", 
+        "Polis Park" to "Transport",
+        "Athens Parking" to "Transport", "APCOA" to "Transport",
+        "Q-Park" to "Transport", "INTERPARKING" to "Transport",
+        "SABA" to "Transport", "ΣΤΑΘΜΕΥΣΗ" to "Transport",
+        "Valet" to "Transport", "VALET PARKING" to "Transport",
+        // Tolls
+        "E-pass" to "Transport", "EPASS" to "Transport", 
+        "Attiki Odos" to "Transport", "ATTIKI ODOS" to "Transport",
+        "ATTIKES DIADROMES" to "Transport",
+        "Nea Odos" to "Transport", "NEA ODOS" to "Transport",
+        "Olympia Odos" to "Transport", "OLYMPIA ODOS" to "Transport",
+        "Egnatia Odos" to "Transport", "EGNATIA ODOS" to "Transport",
+        "Moreas" to "Transport", "MOREAS" to "Transport", 
+        "Kentriki Odos" to "Transport", "KENTRIKI ODOS" to "Transport",
+        "Gefyra" to "Transport", "GEFYRA" to "Transport", 
+        "Rio Antirio" to "Transport", "RIO ANTIRIO" to "Transport",
+        "DIODIA" to "Transport", "Διόδια" to "Transport",
+        "Aktor" to "Transport", "AKTOR CONCESSIONS" to "Transport",
+        "Autohellas" to "Transport", "AUTOKINITODROMO" to "Transport",
+        // Micromobility
+        "Lime" to "Transport", "LIME SCOOTER" to "Transport",
+        "Tier" to "Transport", "TIER MOBILITY" to "Transport",
+        "Bird" to "Transport", "BIRD SCOOTER" to "Transport",
+        "Voi" to "Transport", "VOI" to "Transport",
+        "Dott" to "Transport", "DOTT" to "Transport",
+        "Spin" to "Transport", "SPIN" to "Transport",
+        "Bike" to "Transport", "BIKE RENTAL" to "Transport",
+        "E-scooter" to "Transport", "ESCOOTER" to "Transport",
+        // ═══════════════════════════════════════════════════════════════
+        // ✈️ TRAVEL - Airlines, Hotels, Ferries
+        // ═══════════════════════════════════════════════════════════════
+        // Greek Airlines
+        "Aegean Airlines" to "Travel", "AEGEAN AIR" to "Travel", 
+        "AEGEAN AIRLINES" to "Travel", "A3" to "Travel",
+        "Olympic Air" to "Travel", "OLYMPIC AIR" to "Travel", 
+        "OLYMPIC AIRLINES" to "Travel",
+        "Sky Express" to "Travel", "SKY EXPRESS" to "Travel",
+        "SKYEXPRESS" to "Travel",
+        // European Low Cost
+        "Ryanair" to "Travel", "RYANAIR" to "Travel", 
+        "RYANAIR DAC" to "Travel", "FR" to "Travel",
+        "EasyJet" to "Travel", "EASYJET" to "Travel", 
+        "U2" to "Travel",
+        "Wizz Air" to "Travel", "WIZZAIR" to "Travel", 
+        "W6" to "Travel",
+        "Volotea" to "Travel", "VOLOTEA" to "Travel",
+        "Vueling" to "Travel", "VUELING" to "Travel",
+        "Transavia" to "Travel", "TRANSAVIA" to "Travel",
+        "Norwegian" to "Travel", "NORWEGIAN AIR" to "Travel",
+        "Eurowings" to "Travel", "EUROWINGS" to "Travel",
+        "Lauda" to "Travel", "LAUDA EUROPE" to "Travel",
+        "Buzz" to "Travel", "BUZZ POLAND" to "Travel",
+        "Malta Air" to "Travel", "MALTA AIR" to "Travel",
+        // Major Airlines
+        "Lufthansa" to "Travel", "LUFTHANSA" to "Travel", "LH" to "Travel",
+        "Swiss Air" to "Travel", "SWISS" to "Travel", "LX" to "Travel",
+        "Austrian" to "Travel", "AUSTRIAN AIRLINES" to "Travel",
+        "British Airways" to "Travel", "BRITISH AIRWAYS" to "Travel", "BA" to "Travel",
+        "Air France" to "Travel", "AIRFRANCE" to "Travel", "AF" to "Travel",
+        "KLM" to "Travel", "KLM ROYAL" to "Travel",
+        "Iberia" to "Travel", "IBERIA" to "Travel",
+        "TAP" to "Travel", "TAP PORTUGAL" to "Travel",
+        "Alitalia" to "Travel", "ITA AIRWAYS" to "Travel",
+        "SAS" to "Travel", "SCANDINAVIAN" to "Travel",
+        "Finnair" to "Travel", "FINNAIR" to "Travel",
+        "LOT" to "Travel", "LOT POLISH" to "Travel",
+        "Czech Airlines" to "Travel", "CSA" to "Travel",
+        "Croatia Airlines" to "Travel", "CROATIA AIR" to "Travel",
+        "Turkish Airlines" to "Travel", "TURKISH" to "Travel", "TK" to "Travel",
+        "Emirates" to "Travel", "EMIRATES" to "Travel", "EK" to "Travel",
+        "Qatar Airways" to "Travel", "QATAR" to "Travel", "QR" to "Travel",
+        "Etihad" to "Travel", "ETIHAD" to "Travel",
+        "Singapore Airlines" to "Travel", "SINGAPORE AIR" to "Travel",
+        "Cathay Pacific" to "Travel", "CATHAY" to "Travel",
+        "United" to "Travel", "UNITED AIRLINES" to "Travel",
+        "Delta" to "Travel", "DELTA AIRLINES" to "Travel",
+        "American Airlines" to "Travel", "AMERICAN AIR" to "Travel",
+        // Ferries - Greece
+        "Blue Star" to "Travel", "BLUE STAR FERRIES" to "Travel",
+        "BLUESTAR" to "Travel", "ATTICA GROUP" to "Travel",
+        "ANEK" to "Travel", "ANEK LINES" to "Travel",
+        "Minoan" to "Travel", "MINOAN LINES" to "Travel",
+        "Hellenic Seaways" to "Travel", "HSW" to "Travel",
+        "HELLENIC SEAWAYS" to "Travel",
+        "Seajets" to "Travel", "SEAJETS" to "Travel", "SEA JETS" to "Travel",
+        "Golden Star" to "Travel", "GOLDEN STAR FERRIES" to "Travel",
+        "Fast Ferries" to "Travel", "FAST FERRIES" to "Travel",
+        "Superfast" to "Travel", "SUPERFAST FERRIES" to "Travel",
+        "Aegean Speed Lines" to "Travel", "AEGEAN SPEED" to "Travel",
+        "Zante Ferries" to "Travel", "ZANTE FERRIES" to "Travel",
+        "Levante Ferries" to "Travel", "LEVANTE" to "Travel",
+        "Saronic Ferries" to "Travel", "SARONIC" to "Travel",
+        "Anes Ferries" to "Travel", "ANES" to "Travel",
+        "NEL Lines" to "Travel", "NEL" to "Travel",
+        "Sky Island Ferries" to "Travel", "SKYISLAND" to "Travel",
+        "Dodekanisos Seaways" to "Travel", "DODEKANISOS" to "Travel",
+        "Small Cyclades" to "Travel", "EXPRESS SKOPELITIS" to "Travel",
+        "Triton" to "Travel", "TRITON FERRIES" to "Travel",
+        "Ferry" to "Travel", "FERRY TICKET" to "Travel",
+        "ΠΛΟΙΟ" to "Travel", "ΑΚΤΟΠΛΟΙΚΑ" to "Travel",
+        // International Ferries
+        "Grimaldi" to "Travel", "GRIMALDI LINES" to "Travel",
+        "Grandi Navi" to "Travel", "GNV" to "Travel",
+        "Moby" to "Travel", "MOBY LINES" to "Travel",
+        "Tirrenia" to "Travel", "TIRRENIA" to "Travel",
+        "Jadrolinija" to "Travel", "JADROLINIJA" to "Travel",
+        "Corsica Ferries" to "Travel", "CORSICA" to "Travel",
+        "Brittany Ferries" to "Travel", "BRITTANY" to "Travel",
+        "P&O Ferries" to "Travel", "P&O" to "Travel",
+        "DFDS" to "Travel", "DFDS SEAWAYS" to "Travel",
+        "Stena Line" to "Travel", "STENA" to "Travel",
+        "Viking Line" to "Travel", "VIKING LINE" to "Travel",
+        "Tallink" to "Travel", "TALLINK SILJA" to "Travel",
+        // Car Rental
+        "Hertz" to "Travel", "HERTZ" to "Travel", "HERTZ HELLAS" to "Travel",
+        "Avis" to "Travel", "AVIS" to "Travel", "AVIS RENT" to "Travel",
+        "Europcar" to "Travel", "EUROPCAR" to "Travel",
+        "Enterprise" to "Travel", "ENTERPRISE" to "Travel",
+        "Budget" to "Travel", "BUDGET" to "Travel",
+        "Sixt" to "Travel", "SIXT" to "Travel", "SIXT RENT" to "Travel",
+        "National" to "Travel", "NATIONAL CAR" to "Travel",
+        "Alamo" to "Travel", "ALAMO" to "Travel",
+        "Thrifty" to "Travel", "THRIFTY" to "Travel",
+        "Dollar" to "Travel", "DOLLAR RENT" to "Travel",
+        "Green Motion" to "Travel", "GREEN MOTION" to "Travel",
+        "Goldcar" to "Travel", "GOLDCAR" to "Travel",
+        "Firefly" to "Travel", "FIREFLY CAR" to "Travel",
+        "Maggiore" to "Travel", "MAGGIORE RENT" to "Travel",
+        "Autohellas" to "Travel", "AUTOHELLAS" to "Travel",
+        "Avance" to "Travel", "AVANCE RENT" to "Travel",
+        "Car Rental" to "Travel", "RENT A CAR" to "Travel",
+        "ΕΝΟΙΚΙΑΣΗ" to "Travel",
+        // Hotels & Accommodation
+        "Booking.com" to "Travel", "BOOKING" to "Travel", 
+        "BOOKING.COM" to "Travel", "BOOKINGCOM" to "Travel",
+        "Airbnb" to "Travel", "AIRBNB" to "Travel", 
+        "AIR BNB" to "Travel",
+        "Hotels.com" to "Travel", "HOTELS.COM" to "Travel",
+        "Expedia" to "Travel", "EXPEDIA" to "Travel",
+        "Trivago" to "Travel", "TRIVAGO" to "Travel",
+        "Agoda" to "Travel", "AGODA" to "Travel",
+        "Trip.com" to "Travel", "TRIP.COM" to "Travel", 
+        "CTRIP" to "Travel",
+        "Hostelworld" to "Travel", "HOSTELWORLD" to "Travel",
+        "Vrbo" to "Travel", "VRBO" to "Travel", 
+        "HOMEAWAY" to "Travel",
+        "TripAdvisor" to "Travel", "TRIPADVISOR" to "Travel",
+        "Kayak" to "Travel", "KAYAK" to "Travel",
+        "Skyscanner" to "Travel", "SKYSCANNER" to "Travel",
+        "Google Flights" to "Travel", "GOOGLE FLIGHTS" to "Travel",
+        "Momondo" to "Travel", "MOMONDO" to "Travel",
+        "Kiwi" to "Travel", "KIWI.COM" to "Travel",
+        "Lastminute" to "Travel", "LASTMINUTE" to "Travel",
+        "Opodo" to "Travel", "OPODO" to "Travel",
+        "eDreams" to "Travel", "EDREAMS" to "Travel",
+        "Gotogate" to "Travel", "GOTOGATE" to "Travel",
+        "Hotel" to "Travel", "HOTEL" to "Travel", 
+        "ΞΕΝΟΔΟΧΕΙΟ" to "Travel", "Xenodocheio" to "Travel",
+        "Hostel" to "Travel", "HOSTEL" to "Travel",
+        "Resort" to "Travel", "RESORT" to "Travel",
+        "Pension" to "Travel", "PENSION" to "Travel",
+        "Motel" to "Travel", "MOTEL" to "Travel",
+        // Greek Hotel Chains
+        "Grecotel" to "Travel", "GRECOTEL" to "Travel",
+        "Mitsis" to "Travel", "MITSIS HOTELS" to "Travel",
+        "Aldemar" to "Travel", "ALDEMAR" to "Travel",
+        "Porto Carras" to "Travel", "PORTO CARRAS" to "Travel",
+        "Sani Resort" to "Travel", "SANI" to "Travel",
+        "Ikos" to "Travel", "IKOS RESORTS" to "Travel",
+        "Costa Navarino" to "Travel", "COSTA NAVARINO" to "Travel",
+        "Divani" to "Travel", "DIVANI HOTELS" to "Travel",
+        "Electra" to "Travel", "ELECTRA HOTELS" to "Travel",
+        "Makedonia Palace" to "Travel", "MAKEDONIA PALACE" to "Travel",
+        "Grande Bretagne" to "Travel", "GRANDE BRETAGNE" to "Travel",
+        "King George" to "Travel", "KING GEORGE" to "Travel",
+        "St George Lycabettus" to "Travel", "ST GEORGE" to "Travel",
+        "Hilton Athens" to "Travel", "HILTON" to "Travel",
+        "Marriott" to "Travel", "MARRIOTT" to "Travel",
+        "Sofitel" to "Travel", "SOFITEL" to "Travel",
+        "Intercontinental" to "Travel", "INTERCONTINENTAL" to "Travel",
+        "Four Seasons" to "Travel", "FOUR SEASONS" to "Travel",
+        "Radisson" to "Travel", "RADISSON BLU" to "Travel",
+        "Wyndham" to "Travel", "WYNDHAM" to "Travel",
+        "Novotel" to "Travel", "NOVOTEL" to "Travel",
+        "Ibis" to "Travel", "IBIS" to "Travel",
+        "Accor" to "Travel", "ACCOR" to "Travel",
+        "Best Western" to "Travel", "BEST WESTERN" to "Travel",
+        "Holiday Inn" to "Travel", "HOLIDAY INN" to "Travel",
+        "Crowne Plaza" to "Travel", "CROWNE PLAZA" to "Travel",
+        // Tour Operators
+        "TUI" to "Travel", "TUI HELLAS" to "Travel",
+        "Thomas Cook" to "Travel", "THOMAS COOK" to "Travel",
+        "Mouzenidis" to "Travel", "MOUZENIDIS TRAVEL" to "Travel",
+        "Zorpidis" to "Travel", "ZORPIDIS TRAVEL" to "Travel",
+        "Amphitrion" to "Travel", "AMPHITRION" to "Travel",
+        "Travelplanet24" to "Travel", "TRAVELPLANET" to "Travel",
+        "Pamediakopes" to "Travel", "PAME DIAKOPES" to "Travel",
+        "Discover Greece" to "Travel", "DISCOVER" to "Travel",
+        "Aegean Holidays" to "Travel", "AEGEAN HOLIDAYS" to "Travel",
+        "Travel Agency" to "Travel", "TRAVEL AGENCY" to "Travel",
+        "ΤΑΞΙΔΙΩΤΙΚΟ" to "Travel", "Tour" to "Travel",
+        // Activities & Experiences
+        "GetYourGuide" to "Travel", "GETYOURGUIDE" to "Travel",
+        "Viator" to "Travel", "VIATOR" to "Travel",
+        "Klook" to "Travel", "KLOOK" to "Travel",
+        "Musement" to "Travel", "MUSEMENT" to "Travel",
+        "Tiqets" to "Travel", "TIQETS" to "Travel",
+        "Civitatis" to "Travel", "CIVITATIS" to "Travel",
+        "Headout" to "Travel", "HEADOUT" to "Travel",
+        // ═══════════════════════════════════════════════════════════════
+        // 🍽️ FOOD & RESTAURANTS
+        // ═══════════════════════════════════════════════════════════════
+        // Coffee Chains - Greek
+        "Gregorys" to "Food", "GREGORYS" to "Food", 
+        "GRIGORIS" to "Food", "Γρηγόρης" to "Food", 
+        "MΙΚΡΟΓΕΥΜΑΤΑ" to "Food", "ΓΡΗΓΟΡΗΣ" to "Food",
+        "Everest" to "Food", "EVEREST" to "Food",
+        "Mikel" to "Food", "MIKEL" to "Food", 
+        "MIKEL COFFEE" to "Food",
+        "Coffee Island" to "Food", "COFFEE ISLAND" to "Food", 
+        "KAFEKOPTEIO" to "Food",
+        "Coffee Lab" to "Food", "COFFEE LAB" to "Food",
+        "Flocafe" to "Food", "FLOCAFE" to "Food",
+        "Coffee Berry" to "Food", "COFFEE BERRY" to "Food",
+        "Bruno" to "Food", "BRUNO COFFEE" to "Food", 
+        "Cultivos" to "Food", "CULTIVOS" to "Food",
+        "Taf" to "Food", "TAF COFFEE" to "Food",
+        "Holy Spirit" to "Food", "HOLY SPIRIT" to "Food",
+        "Brew Lab" to "Food", "BREW LAB" to "Food",
+        "Mokka" to "Food", "MOKKA COFFEE" to "Food",
+        "The Underdog" to "Food", "UNDERDOG" to "Food",
+        "Little Tree" to "Food", "LITTLE TREE" to "Food",
+        "Seven Grams" to "Food", "SEVEN GRAMS" to "Food",
+        "Mind the Cup" to "Food", "MIND THE CUP" to "Food",
+        // Coffee Chains - International
+        "Starbucks" to "Food", "STARBUCKS" to "Food", 
+        "STARBUCKS COFFEE" to "Food",
+        "Costa Coffee" to "Food", "COSTA COFFEE" to "Food",
+        "McCafe" to "Food", "MCCAFE" to "Food",
+        "Caffè Nero" to "Food", "CAFFE NERO" to "Food",
+        "Pret" to "Food", "PRET A MANGER" to "Food",
+        "Dunkin" to "Food", "DUNKIN DONUTS" to "Food",
+        "Tim Hortons" to "Food", "TIM HORTONS" to "Food",
+        "Gloria Jeans" to "Food", "GLORIA JEANS" to "Food",
+        "Lavazza" to "Food", "LAVAZZA" to "Food",
+        "Illy" to "Food", "ILLY CAFFE" to "Food",
+        "Segafredo" to "Food", "SEGAFREDO" to "Food",
+        // Fast Food - Global
+        "McDonalds" to "Food", "MCDONALDS" to "Food", 
+        "MCD" to "Food", "MC DONALDS" to "Food",
+        "Burger King" to "Food", "BURGER KING" to "Food", "BK" to "Food",
+        "KFC" to "Food", "KENTUCKY FRIED CHICKEN" to "Food",
+        "Subway" to "Food", "SUBWAY" to "Food",
+        "Pizza Hut" to "Food", "PIZZA HUT" to "Food",
+        "Dominos" to "Food", "DOMINOS" to "Food", 
+        "DOMINO'S" to "Food", "DOMINOS PIZZA" to "Food",
+        "Papa Johns" to "Food", "PAPA JOHNS" to "Food",
+        "Wendys" to "Food", "WENDYS" to "Food",
+        "Taco Bell" to "Food", "TACO BELL" to "Food",
+        "Chick-fil-A" to "Food", "CHICK FIL A" to "Food",
+        "Five Guys" to "Food", "FIVE GUYS" to "Food",
+        "Shake Shack" to "Food", "SHAKE SHACK" to "Food",
+        "Popeyes" to "Food", "POPEYES" to "Food",
+        "Chipotle" to "Food", "CHIPOTLE" to "Food",
+        // Fast Food - Greek
+        "Goodys" to "Food", "Goody's" to "Food", 
+        "GOODYS" to "Food", "GOODY'S BURGER HOUSE" to "Food",
+        "Pizza Fan" to "Food", "PIZZA FAN" to "Food",
+        "Roma Pizza" to "Food", "ROMA PIZZA" to "Food",
+        "L'Artigiano" to "Food", "LARTIGIANO" to "Food",
+        "Palmie Bistro" to "Food", "PALMIE" to "Food",
+        "Bufala Gelato" to "Food", "BUFALA" to "Food",
+        // Casual Dining
+        "TGI Fridays" to "Food", "TGI FRIDAYS" to "Food", 
+        "FRIDAYS" to "Food",
+        "Hard Rock" to "Food", "HARD ROCK CAFE" to "Food",
+        "Wagamama" to "Food", "WAGAMAMA" to "Food", 
+        "Noodle Bar" to "Food", "NOODLE BAR" to "Food",
+        "Applebees" to "Food", "APPLEBEES" to "Food",
+        "Chillis" to "Food", "CHILIS" to "Food",
+        "Olive Garden" to "Food", "OLIVE GARDEN" to "Food",
+        "PF Changs" to "Food", "PF CHANGS" to "Food",
+        "Vapiano" to "Food", "VAPIANO" to "Food",
+        "Bills" to "Food", "BILLS" to "Food",
+        "The Breakfast Club" to "Food", "BREAKFAST CLUB" to "Food",
+        // Greek Food Categories
+        "Souvlaki" to "Food", "Σουβλάκι" to "Food", 
+        "ΣΟΥΒΛΑΚΙ" to "Food", "SOUVLATZIDIKO" to "Food",
+        "Psistaria" to "Food", "Ψησταριά" to "Food", 
+        "ΨΗΣΤΑΡΙΑ" to "Food",
+        "Grill" to "Food", "GRILL" to "Food", "ΣΧΑΡΑΣ" to "Food",
+        "Gyros" to "Food", "ΓΥΡΟΣ" to "Food",
+        "Kebab" to "Food", "KEBAB" to "Food",
+        "Taverna" to "Food", "Ταβέρνα" to "Food", 
+        "ΤΑΒΕΡΝΑ" to "Food",
+        "Mezedopolio" to "Food", "Μεζεδοπωλείο" to "Food",
+        "Ouzeri" to "Food", "Ουζερί" to "Food",
+        "Tsipouradiko" to "Food", "Τσιπουράδικο" to "Food",
+        "Psarotaverna" to "Food", "Ψαροταβέρνα" to "Food",
+        "Estiatorio" to "Food", "Εστιατόριο" to "Food",
+        "Restaurant" to "Food", "RESTAURANT" to "Food",
+        // Cafes & Bars
+        "Cafe" to "Food", "Καφέ" to "Food", "ΚΑΦΕ" to "Food",
+        "Kafeneio" to "Food", "Καφενείο" to "Food",
+        "Bar" to "Food", "BAR" to "Food", "ΜΠΑΡ" to "Food",
+        "Club" to "Food", "CLUB" to "Food", "ΚΛΑΜΠ" to "Food",
+        "Pub" to "Food", "PUB" to "Food",
+        "Lounge" to "Food", "LOUNGE" to "Food",
+        "Bistro" to "Food", "BISTRO" to "Food",
+        "Brasserie" to "Food", "BRASSERIE" to "Food",
+        "Cocktail" to "Food", "COCKTAIL BAR" to "Food",
+        "Wine Bar" to "Food", "WINE BAR" to "Food",
+        // Food Delivery Apps
+        "efood" to "Food", "E-FOOD" to "Food", 
+        "EFOOD" to "Food", "ONLINE DELIVERY" to "Food",
+        "E FOOD SA" to "Food", "EFOOD GR" to "Food",
+        "Wolt" to "Food", "WOLT" to "Food", 
+        "WOLT GREECE" to "Food", "WOLT ENTERPRISES" to "Food",
+        "Box" to "Food", "BOX DELIVERY" to "Food", 
+        "BOX NOW" to "Food",
+        "Uber Eats" to "Food", "UBER EATS" to "Food", 
+        "UBEREATS" to "Food",
+        "Glovo" to "Food", "GLOVO" to "Food", 
+        "GLOVOAPP" to "Food",
+        "Just Eat" to "Food", "JUST EAT" to "Food",
+        "Deliveroo" to "Food", "DELIVEROO" to "Food",
+        "Doordash" to "Food", "DOORDASH" to "Food",
+        "Getir" to "Food", "GETIR" to "Food",
+        "Gorillas" to "Food", "GORILLAS" to "Food",
+        "Flink" to "Food", "FLINK" to "Food",
+        "Delivery" to "Food", "DELIVERY" to "Food",
+        "Take away" to "Food", "TAKEAWAY" to "Food",
+        // Ice Cream & Desserts
+        "Haagen Dazs" to "Food", "HAAGEN DAZS" to "Food",
+        "Ben Jerry" to "Food", "BEN JERRYS" to "Food",
+        "Baskin Robbins" to "Food", "BASKIN ROBBINS" to "Food",
+        "Gelato" to "Food", "GELATO" to "Food",
+        "Pagoto" to "Food", "Παγωτό" to "Food",
+        "Dodoni" to "Food", "ΔΩΔΩΝΗ" to "Food",
+        "Kayak" to "Food", "KAYAK ICECREAM" to "Food",
+        "Cremeria" to "Food", "CREMERIA" to "Food",
+        "Patisserie" to "Food", "PATISSERIE" to "Food",
+        "Zacharoplasteio" to "Food", "Ζαχαροπλαστείο" to "Food",
+        "Sweets" to "Food", "ΓΛΥΚΑ" to "Food",
+        "Crepe" to "Food", "CREPE" to "Food",
+        "Waffle" to "Food", "WAFFLE" to "Food",
+        "Churros" to "Food", "CHURROS" to "Food",
+        "Donuts" to "Food", "DONUT" to "Food",
+        // ═══════════════════════════════════════════════════════════════
+        // 🛍️ SHOPPING
+        // ═══════════════════════════════════════════════════════════════
+        // Inditex Group (Zara parent)
+        "Zara" to "Shopping", "ZARA" to "Shopping", 
+        "ZARA HELLAS" to "Shopping", "ITX HELLAS" to "Shopping",
+        "Pull&Bear" to "Shopping", "PULL AND BEAR" to "Shopping", 
+        "PULL&BEAR" to "Shopping",
+        "Bershka" to "Shopping", "BERSHKA" to "Shopping", 
+        "Stradivarius" to "Shopping", "STRADIVARIUS" to "Shopping",
+        "Massimo Dutti" to "Shopping", "MASSIMO DUTTI" to "Shopping",
+        "Oysho" to "Shopping", "OYSHO" to "Shopping",
+        "Zara Home" to "Shopping", "ZARA HOME" to "Shopping",
+        "Uterque" to "Shopping", "UTERQUE" to "Shopping",
+        // H&M Group
+        "H&M" to "Shopping", "H & M" to "Shopping", 
+        "H AND M" to "Shopping", "HENNES" to "Shopping",
+        "COS" to "Shopping", "COS STORES" to "Shopping",
+        "& Other Stories" to "Shopping", "OTHER STORIES" to "Shopping",
+        "Arket" to "Shopping", "ARKET" to "Shopping",
+        "Weekday" to "Shopping", "WEEKDAY" to "Shopping",
+        "Monki" to "Shopping", "MONKI" to "Shopping",
+        // Calzedonia Group
+        "Intimissimi" to "Shopping", "INTIMISSIMI" to "Shopping",
+        "Calzedonia" to "Shopping", "CALZEDONIA" to "Shopping",
+        "Tezenis" to "Shopping", "TEZENIS" to "Shopping",
+        "Falconeri" to "Shopping", "FALCONERI" to "Shopping",
+        // Fashion - International
+        "Mango" to "Shopping", "MANGO" to "Shopping", "MNG" to "Shopping",
+        "Uniqlo" to "Shopping", "UNIQLO" to "Shopping",
+        "Gap" to "Shopping", "GAP" to "Shopping",
+        "Old Navy" to "Shopping", "OLD NAVY" to "Shopping",
+        "Banana Republic" to "Shopping", "BANANA REPUBLIC" to "Shopping",
+        "Primark" to "Shopping", "PRIMARK" to "Shopping",
+        "C&A" to "Shopping", "C AND A" to "Shopping",
+        "New Yorker" to "Shopping", "NEW YORKER" to "Shopping",
+        "Reserved" to "Shopping", "RESERVED" to "Shopping",
+        "Sinsay" to "Shopping", "SINSAY" to "Shopping",
+        "House" to "Shopping", "HOUSE BRAND" to "Shopping",
+        "Cropp" to "Shopping", "CROPP" to "Shopping",
+        "Mohito" to "Shopping", "MOHITO" to "Shopping",
+        "Forever 21" to "Shopping", "FOREVER21" to "Shopping",
+        "Topshop" to "Shopping", "TOPSHOP" to "Shopping",
+        "River Island" to "Shopping", "RIVER ISLAND" to "Shopping",
+        "Asos" to "Shopping", "ASOS" to "Shopping",
+        "Boohoo" to "Shopping", "BOOHOO" to "Shopping",
+        "Shein" to "Shopping", "SHEIN" to "Shopping",
+        "Temu" to "Shopping", "TEMU" to "Shopping",
+        "Wish" to "Shopping", "WISH COM" to "Shopping",
+        // Premium Fashion
+        "Tommy Hilfiger" to "Shopping", "TOMMY HILFIGER" to "Shopping",
+        "Calvin Klein" to "Shopping", "CALVIN KLEIN" to "Shopping",
+        "Ralph Lauren" to "Shopping", "POLO RALPH" to "Shopping",
+        "Lacoste" to "Shopping", "LACOSTE" to "Shopping",
+        "Hugo Boss" to "Shopping", "HUGO BOSS" to "Shopping",
+        "Gant" to "Shopping", "GANT" to "Shopping",
+        "Armani" to "Shopping", "ARMANI EXCHANGE" to "Shopping",
+        "Michael Kors" to "Shopping", "MICHAEL KORS" to "Shopping",
+        "Coach" to "Shopping", "COACH" to "Shopping",
+        "Kate Spade" to "Shopping", "KATE SPADE" to "Shopping",
+        "Guess" to "Shopping", "GUESS" to "Shopping",
+        "Diesel" to "Shopping", "DIESEL" to "Shopping",
+        "Replay" to "Shopping", "REPLAY" to "Shopping",
+        "Levis" to "Shopping", "LEVIS" to "Shopping", "LEVI STRAUSS" to "Shopping",
+        "Wrangler" to "Shopping", "WRANGLER" to "Shopping",
+        "Lee" to "Shopping", "LEE JEANS" to "Shopping",
+        // Sports Brands
+        "Nike" to "Shopping", "NIKE" to "Shopping", 
+        "NIKE RETAIL" to "Shopping", "NIKE STORE" to "Shopping",
+        "Adidas" to "Shopping", "ADIDAS" to "Shopping",
+        "Puma" to "Shopping", "PUMA" to "Shopping", 
+        "Reebok" to "Shopping", "REEBOK" to "Shopping",
+        "Under Armour" to "Shopping", "UNDER ARMOUR" to "Shopping",
+        "New Balance" to "Shopping", "NEW BALANCE" to "Shopping",
+        "Asics" to "Shopping", "ASICS" to "Shopping",
+        "Converse" to "Shopping", "CONVERSE" to "Shopping",
+        "Vans" to "Shopping", "VANS" to "Shopping",
+        "Fila" to "Shopping", "FILA" to "Shopping",
+        "Champion" to "Shopping", "CHAMPION" to "Shopping",
+        "Skechers" to "Shopping", "SKECHERS" to "Shopping",
+        "Timberland" to "Shopping", "TIMBERLAND" to "Shopping",
+        "Columbia" to "Shopping", "COLUMBIA SPORTSWEAR" to "Shopping",
+        "North Face" to "Shopping", "THE NORTH FACE" to "Shopping",
+        "Patagonia" to "Shopping", "PATAGONIA" to "Shopping",
+        "Helly Hansen" to "Shopping", "HELLY HANSEN" to "Shopping",
+        "Jack Wolfskin" to "Shopping", "JACK WOLFSKIN" to "Shopping",
+        "Salomon" to "Shopping", "SALOMON" to "Shopping",
+        "Arc'teryx" to "Shopping", "ARCTERYX" to "Shopping",
+        // Sports Retailers
+        "Intersport" to "Shopping", "INTERSPORT" to "Shopping",
+        "Cosmos Sport" to "Shopping", "COSMOS SPORT" to "Shopping",
+        "Zakcret" to "Shopping", "ZAKCRET" to "Shopping", 
+        "Sports Factory" to "Shopping", "SPORTS FACTORY" to "Shopping",
+        "Foot Locker" to "Shopping", "FOOTLOCKER" to "Shopping",
+        "JD Sports" to "Shopping", "JD SPORTS" to "Shopping",
+        "Snipes" to "Shopping", "SNIPES" to "Shopping",
+        "Sportsdirect" to "Shopping", "SPORTSDIRECT" to "Shopping",
+        "Decathlon" to "Shopping", "DECATHLON" to "Shopping",
+        "Athletes Foot" to "Shopping", "ATHLETES FOOT" to "Shopping",
+        "Stadium" to "Shopping", "STADIUM" to "Shopping",
+        "XXL Sport" to "Shopping", "XXL SPORT" to "Shopping",
+        // Department Stores
+        "Attica" to "Shopping", "ATTICA" to "Shopping", 
+        "ATTICA DEPT" to "Shopping", "ATTICA GOLDEN HALL" to "Shopping",
+        "Notos" to "Shopping", "NOTOS GALLERIES" to "Shopping",
+        "Fokas" to "Shopping", "FOKAS" to "Shopping",
+        "Galeries Lafayette" to "Shopping", "GALERIES LAFAYETTE" to "Shopping",
+        "Harrods" to "Shopping", "HARRODS" to "Shopping",
+        "Selfridges" to "Shopping", "SELFRIDGES" to "Shopping",
+        "Harvey Nichols" to "Shopping", "HARVEY NICHOLS" to "Shopping",
+        "El Corte Ingles" to "Shopping", "EL CORTE INGLES" to "Shopping",
+        "Printemps" to "Shopping", "PRINTEMPS" to "Shopping",
+        "KaDeWe" to "Shopping", "KADEWE" to "Shopping",
+        "Breuninger" to "Shopping", "BREUNINGER" to "Shopping",
+        "Nordstrom" to "Shopping", "NORDSTROM" to "Shopping",
+        "Bloomingdales" to "Shopping", "BLOOMINGDALES" to "Shopping",
+        "Macys" to "Shopping", "MACYS" to "Shopping",
+        // Outlets
+        "Factory Outlet" to "Shopping", "FACTORY OUTLET" to "Shopping",
+        "McArthurGlen" to "Shopping", "DESIGNER OUTLET" to "Shopping",
+        "MCARTHURGLEN ATHENS" to "Shopping",
+        "Outlet" to "Shopping", "OUTLET STORE" to "Shopping",
+        "Smart Park" to "Shopping", "SMART PARK" to "Shopping",
+        "The Mall Athens" to "Shopping", "THE MALL" to "Shopping",
+        "Golden Hall" to "Shopping", "GOLDEN HALL" to "Shopping",
+        "Athens Metro Mall" to "Shopping", "METRO MALL" to "Shopping",
+        "Mediterranean Cosmos" to "Shopping", "MED COSMOS" to "Shopping",
+        // Shoes
+        "Kalogirou" to "Shopping", "KALOGIROU" to "Shopping",
+        "Tsakiris Mallas" to "Shopping", "TSAKIRIS MALLAS" to "Shopping",
+        "Mourtzi" to "Shopping", "MOURTZI" to "Shopping",
+        "Migato" to "Shopping", "MIGATO" to "Shopping",
+        "Seven" to "Shopping", "SEVEN SHOES" to "Shopping",
+        "Topshoes" to "Shopping", "TOPSHOES" to "Shopping",
+        "Shoe Cult" to "Shopping", "SHOE CULT" to "Shopping",
+        "Sante" to "Shopping", "SANTE" to "Shopping",
+        "Bozikis" to "Shopping", "BOZIKIS" to "Shopping",
+        "Clarks" to "Shopping", "CLARKS" to "Shopping",
+        "Ecco" to "Shopping", "ECCO" to "Shopping",
+        "Geox" to "Shopping", "GEOX" to "Shopping",
+        "Camper" to "Shopping", "CAMPER" to "Shopping",
+        "Birkenstock" to "Shopping", "BIRKENSTOCK" to "Shopping",
+        "Crocs" to "Shopping", "CROCS" to "Shopping",
+        "Dr Martens" to "Shopping", "DR MARTENS" to "Shopping",
+        "UGG" to "Shopping", "UGG" to "Shopping",
+        "Stuart Weitzman" to "Shopping", "STUART WEITZMAN" to "Shopping",
+        "Jimmy Choo" to "Shopping", "JIMMY CHOO" to "Shopping",
+        // Jewelry & Accessories
+        "Pandora" to "Shopping", "PANDORA" to "Shopping",
+        "Swarovski" to "Shopping", "SWAROVSKI" to "Shopping",
+        "Tous" to "Shopping", "TOUS" to "Shopping",
+        "Folli Follie" to "Shopping", "FOLLI FOLLIE" to "Shopping",
+        "Links of London" to "Shopping", "LINKS OF LONDON" to "Shopping",
+        "Thomas Sabo" to "Shopping", "THOMAS SABO" to "Shopping",
+        "Trollbeads" to "Shopping", "TROLLBEADS" to "Shopping",
+        "Alex and Ani" to "Shopping", "ALEX AND ANI" to "Shopping",
+        "Nomination" to "Shopping", "NOMINATION" to "Shopping",
+        "Accessorize" to "Shopping", "ACCESSORIZE" to "Shopping",
+        "Bijou Brigitte" to "Shopping", "BIJOU BRIGITTE" to "Shopping",
+        "Oriflame" to "Shopping", "ORIFLAME" to "Shopping",
+        "Rolex" to "Shopping", "ROLEX" to "Shopping",
+        "Omega" to "Shopping", "OMEGA WATCHES" to "Shopping",
+        "Tag Heuer" to "Shopping", "TAG HEUER" to "Shopping",
+        "Longines" to "Shopping", "LONGINES" to "Shopping",
+        "Tissot" to "Shopping", "TISSOT" to "Shopping",
+        "Casio" to "Shopping", "CASIO" to "Shopping",
+        "Swatch" to "Shopping", "SWATCH" to "Shopping",
+        "Fossil" to "Shopping", "FOSSIL" to "Shopping",
+        "Daniel Wellington" to "Shopping", "DANIEL WELLINGTON" to "Shopping",
+        "Jewelry" to "Shopping", "JEWELRY" to "Shopping",
+        "Κοσμήματα" to "Shopping", "KOSMIMATA" to "Shopping",
+        "Watch" to "Shopping", "WATCH STORE" to "Shopping",
+        // ═══════════════════════════════════════════════════════════════
+        // 💻 ELECTRONICS & TECH
+        // ═══════════════════════════════════════════════════════════════
+        // Greek E-commerce & Retail
+        "Skroutz" to "Electronics", "SKROUTZ" to "Electronics", 
+        "SKROUTZ.GR" to "Electronics", "PAYMENTS SKROUTZ" to "Electronics",
+        "SKROUTZ MARKETPLACE" to "Electronics",
+        "Public" to "Electronics", "PUBLIC" to "Electronics", 
+        "PUBLIC RETAIL" to "Electronics", "PUBLIC.GR" to "Electronics",
+        "Plaisio" to "Electronics", "PLAISIO" to "Electronics", 
+        "PLAISIO COMPUTERS" to "Electronics",
+        "Kotsovolos" to "Electronics", "KOTSOVOLOS" to "Electronics", 
+        "DIXONS" to "Electronics", "SOUTH EAST EUROPE" to "Electronics",
+        "Media Markt" to "Electronics", "MEDIA MARKT" to "Electronics",
+        "Germanos" to "Electronics", "GERMANOS" to "Electronics", 
+        "COSMOTE E-VALUE" to "Electronics",
+        "E-shop" to "Electronics", "E-SHOP" to "Electronics", 
+        "E-SHOP.GR" to "Electronics",
+        "You.gr" to "Electronics", "YOU.GR" to "Electronics",
+        "BestPrice" to "Electronics", "BESTPRICE" to "Electronics",
+        "Electronet" to "Electronics", "ELECTRONET" to "Electronics",
+        "Mediamarkt" to "Electronics", "MEDIAMARKT" to "Electronics",
+        "Kaizer" to "Electronics", "KAIZER" to "Electronics",
+        "Info Quest" to "Electronics", "INFOQUEST" to "Electronics",
+        "Multirama" to "Electronics", "MULTIRAMA" to "Electronics",
+        // Global E-commerce
+        "Amazon" to "Electronics", "AMAZON" to "Electronics", 
+        "AMZN" to "Electronics", "AMAZON.DE" to "Electronics",
+        "AMAZON.CO.UK" to "Electronics", "AMAZON.ES" to "Electronics",
+        "AMAZON.FR" to "Electronics", "AMAZON.IT" to "Electronics",
+        "AMAZON.COM" to "Electronics", "AWS" to "Electronics",
+        "AMAZON PRIME" to "Subscriptions", "PRIME VIDEO" to "Subscriptions",
+        "Ebay" to "Electronics", "EBAY" to "Electronics", 
+        "PAYPAL EBAY" to "Electronics",
+        "AliExpress" to "Electronics", "ALIEXPRESS" to "Electronics",
+        "ALIBABA" to "Electronics",
+        "Banggood" to "Electronics", "BANGGOOD" to "Electronics",
+        "Gearbest" to "Electronics", "GEARBEST" to "Electronics",
+        "DHgate" to "Electronics", "DHGATE" to "Electronics",
+        "JD.com" to "Electronics", "JD COM" to "Electronics",
+        "Newegg" to "Electronics", "NEWEGG" to "Electronics",
+        "CDW" to "Electronics",
+        // Apple
+        "Apple" to "Electronics", "APPLE STORE" to "Electronics", 
+        "APPLE.COM" to "Electronics", "APPLE INC" to "Electronics",
+        "Apple Store" to "Electronics", "APPLE RETAIL" to "Electronics",
+        "iTunes" to "Subscriptions", "ITUNES" to "Subscriptions",
+        "App Store" to "Subscriptions", "APPLE.COM/BILL" to "Subscriptions",
+        // Other Brands
+        "Samsung" to "Electronics", "SAMSUNG" to "Electronics",
+        "SAMSUNG ELECTRONICS" to "Electronics",
+        "Xiaomi" to "Electronics", "MI STORE" to "Electronics", 
+        "XIAOMI" to "Electronics",
+        "Huawei" to "Electronics", "HUAWEI" to "Electronics",
+        "OnePlus" to "Electronics", "ONEPLUS" to "Electronics",
+        "Oppo" to "Electronics", "OPPO" to "Electronics",
+        "Vivo" to "Electronics", "VIVO" to "Electronics",
+        "Realme" to "Electronics", "REALME" to "Electronics",
+        "Google Store" to "Electronics", "GOOGLE STORE" to "Electronics",
+        "Google" to "Subscriptions", "GOOGLE" to "Subscriptions",
+        "Microsoft" to "Electronics", "MICROSOFT STORE" to "Electronics",
+        "Sony" to "Electronics", "SONY" to "Electronics", 
+        "SONY CENTER" to "Electronics",
+        "LG" to "Electronics", "LG ELECTRONICS" to "Electronics",
+        "Philips" to "Electronics", "PHILIPS" to "Electronics",
+        "Panasonic" to "Electronics", "PANASONIC" to "Electronics",
+        "Bose" to "Electronics", "BOSE" to "Electronics",
+        "Bang Olufsen" to "Electronics", "BANG OLUFSEN" to "Electronics",
+        "Harman Kardon" to "Electronics", "HARMAN" to "Electronics",
+        "JBL" to "Electronics", "JBL" to "Electronics",
+        "Beats" to "Electronics", "BEATS" to "Electronics",
+        "Sennheiser" to "Electronics", "SENNHEISER" to "Electronics",
+        "DJI" to "Electronics", "DJI STORE" to "Electronics",
+        "GoPro" to "Electronics", "GOPRO" to "Electronics",
+        "Canon" to "Electronics", "CANON" to "Electronics",
+        "Nikon" to "Electronics", "NIKON" to "Electronics",
+        "Sony Alpha" to "Electronics", "SONY ALPHA" to "Electronics",
+        "Fujifilm" to "Electronics", "FUJIFILM" to "Electronics",
+        "Olympus" to "Electronics", "OLYMPUS" to "Electronics",
+        "Nintendo" to "Electronics", "NINTENDO" to "Electronics",
+        "PlayStation" to "Electronics", "PLAYSTATION STORE" to "Electronics",
+        "Xbox" to "Electronics", "XBOX STORE" to "Electronics",
+        // Telecom Shops
+        "Cosmote" to "Electronics", "COSMOTE" to "Electronics",
+        "COSMOTE SHOP" to "Electronics",
+        "Vodafone" to "Electronics", "VODAFONE SHOP" to "Electronics",
+        "Wind" to "Electronics", "WIND SHOP" to "Electronics",
+        "Nova" to "Electronics", "NOVA SHOP" to "Electronics",
+        "Phone" to "Electronics", "PHONE STORE" to "Electronics",
+        "Mobile" to "Electronics", "MOBILE SHOP" to "Electronics",
+        "Service Mobile" to "Electronics", "REPAIR SHOP" to "Electronics",
+        "iRepair" to "Electronics", "IREPAIR" to "Electronics",
+        // ═══════════════════════════════════════════════════════════════
+        // 📺 SUBSCRIPTIONS - Streaming, Cloud, Software, AI
+        // ═══════════════════════════════════════════════════════════════
+        // Video Streaming
+        "Netflix" to "Subscriptions", "NETFLIX" to "Subscriptions", 
+        "NETFLIX.COM" to "Subscriptions",
+        "Disney+" to "Subscriptions", "DISNEY PLUS" to "Subscriptions", 
+        "DISNEY+" to "Subscriptions", "DISNEYPLUS" to "Subscriptions",
+        "HBO" to "Subscriptions", "HBO MAX" to "Subscriptions", 
+        "WARNER BROS" to "Subscriptions",
+        "Hulu" to "Subscriptions", "HULU" to "Subscriptions",
+        "Amazon Prime" to "Subscriptions", "PRIME VIDEO" to "Subscriptions", 
+        "AMAZONPRIME" to "Subscriptions",
+        "Apple TV" to "Subscriptions", "APPLE TV+" to "Subscriptions",
+        "Paramount+" to "Subscriptions", "PARAMOUNT" to "Subscriptions",
+        "Peacock" to "Subscriptions", "PEACOCK TV" to "Subscriptions",
+        "Discovery+" to "Subscriptions", "DISCOVERY PLUS" to "Subscriptions",
+        "Rakuten TV" to "Subscriptions", "RAKUTEN" to "Subscriptions",
+        "Mubi" to "Subscriptions", "MUBI" to "Subscriptions",
+        // Greek TV & Streaming
+        "Cosmote TV" to "Subscriptions", "COSMOTE TV" to "Subscriptions",
+        "Nova" to "Subscriptions", "NOVA" to "Subscriptions", 
+        "Eon" to "Subscriptions", "EON TV" to "Subscriptions",
+        "Vodafone TV" to "Subscriptions", "VODAFONE TV" to "Subscriptions",
+        "Ertflix" to "Subscriptions", "ERTFLIX" to "Subscriptions",
+        "Ant1+" to "Subscriptions", "ANT1 PLUS" to "Subscriptions",
+        "Cinobo" to "Subscriptions", "CINOBO" to "Subscriptions",
+        // Music Streaming
+        "Spotify" to "Subscriptions", "SPOTIFY" to "Subscriptions", 
+        "SPOTIFY LUXEMBOURG" to "Subscriptions",
+        "Apple Music" to "Subscriptions", "APPLE.COM/BILL" to "Subscriptions",
+        "Youtube Music" to "Subscriptions", "YOUTUBE PREMIUM" to "Subscriptions",
+        "Deezer" to "Subscriptions", "DEEZER" to "Subscriptions",
+        "Tidal" to "Subscriptions", "TIDAL" to "Subscriptions",
+        "Soundcloud" to "Subscriptions", "SOUNDCLOUD" to "Subscriptions",
+        "Qobuz" to "Subscriptions", "QOBUZ" to "Subscriptions",
+        // Cloud & Storage
+        "Google One" to "Subscriptions", "GOOGLE ONE" to "Subscriptions", 
+        "GOOGLE STORAGE" to "Subscriptions", "GOOGLE CLOUD" to "Subscriptions",
+        "iCloud" to "Subscriptions", "APPLE ICLOUD" to "Subscriptions",
+        "Dropbox" to "Subscriptions", "DROPBOX" to "Subscriptions",
+        "OneDrive" to "Subscriptions", "MICROSOFT STORAGE" to "Subscriptions",
+        "Box.com" to "Subscriptions", "BOX" to "Subscriptions",
+        "Mega.nz" to "Subscriptions", "MEGA" to "Subscriptions",
+        "Nextcloud" to "Subscriptions", "NEXTCLOUD" to "Subscriptions",
+        // Productivity & Software
+        "Microsoft 365" to "Subscriptions", "OFFICE 365" to "Subscriptions", 
+        "MSFT" to "Subscriptions",
+        "Adobe" to "Subscriptions", "ADOBE" to "Subscriptions", 
+        "CREATIVE CLOUD" to "Subscriptions",
+        "Canva" to "Subscriptions", "CANVA" to "Subscriptions",
+        "Evernote" to "Subscriptions", "EVERNOTE" to "Subscriptions",
+        "Notion" to "Subscriptions", "NOTION" to "Subscriptions",
+        "Slack" to "Subscriptions", "SLACK" to "Subscriptions",
+        "Zoom" to "Subscriptions", "ZOOM.US" to "Subscriptions",
+        "Grammarly" to "Subscriptions", "GRAMMARLY" to "Subscriptions",
+        "LinkedIn" to "Subscriptions", "LINKEDIN PREMIUM" to "Subscriptions",
+        // VPN & Security
+        "NordVPN" to "Subscriptions", "NORDVPN" to "Subscriptions",
+        "ExpressVPN" to "Subscriptions", "EXPRESSVPN" to "Subscriptions",
+        "Surfshark" to "Subscriptions", "SURFSHARK" to "Subscriptions",
+        "CyberGhost" to "Subscriptions", "CYBERGHOST" to "Subscriptions",
+        "Bitdefender" to "Subscriptions", "BITDEFENDER" to "Subscriptions",
+        "Norton" to "Subscriptions", "NORTON" to "Subscriptions",
+        "Avast" to "Subscriptions", "AVAST" to "Subscriptions",
+        "Malwarebytes" to "Subscriptions", "MALWAREBYTES" to "Subscriptions",
+        "1Password" to "Subscriptions", "1PASSWORD" to "Subscriptions",
+        "LastPass" to "Subscriptions", "LASTPASS" to "Subscriptions",
+        "Dashlane" to "Subscriptions", "DASHLANE" to "Subscriptions",
+        // Gaming
+        "Steam" to "Subscriptions", "STEAMGAMES" to "Subscriptions", 
+        "VALVE" to "Subscriptions", "STEAM PURCHASE" to "Subscriptions",
+        "Epic Games" to "Subscriptions", "EPIC GAMES" to "Subscriptions",
+        "PlayStation" to "Subscriptions", "PLAYSTATION" to "Subscriptions", 
+        "PSN" to "Subscriptions", "PS PLUS" to "Subscriptions", 
+        "SONY NETWORK" to "Subscriptions",
+        "Xbox" to "Subscriptions", "XBOX" to "Subscriptions", 
+        "MICROSOFT XBOX" to "Subscriptions", "GAME PASS" to "Subscriptions",
+        "Nintendo" to "Subscriptions", "NINTENDO ONLINE" to "Subscriptions",
+        "EA Play" to "Subscriptions", "EA" to "Subscriptions",
+        "Ubisoft+" to "Subscriptions", "UBISOFT" to "Subscriptions",
+        "Blizzard" to "Subscriptions", "BATTLE.NET" to "Subscriptions",
+        "Roblox" to "Subscriptions", "ROBLOX" to "Subscriptions",
+        // Streaming & Social
+        "Twitch" to "Subscriptions", "TWITCH" to "Subscriptions",
+        "Discord" to "Subscriptions", "DISCORD" to "Subscriptions", 
+        "NITRO" to "Subscriptions",
+        "Patreon" to "Subscriptions", "PATREON" to "Subscriptions",
+        "Substack" to "Subscriptions", "SUBSTACK" to "Subscriptions",
+        "OnlyFans" to "Subscriptions", "ONLYFANS" to "Subscriptions",
+        // AI & Dev Tools
+        "ChatGPT" to "Subscriptions", "OPENAI" to "Subscriptions",
+        "Claude" to "Subscriptions", "ANTHROPIC" to "Subscriptions",
+        "Midjourney" to "Subscriptions", "MIDJOURNEY" to "Subscriptions",
+        "GitHub" to "Subscriptions", "GITHUB" to "Subscriptions", 
+        "COPILLOT" to "Subscriptions",
+        "DigitalOcean" to "Subscriptions", "DIGITALOCEAN" to "Subscriptions",
+        "Cloudflare" to "Subscriptions", "CLOUDFLARE" to "Subscriptions",
+        "Heroku" to "Subscriptions", "HEROKU" to "Subscriptions",
+        "Vercel" to "Subscriptions", "VERCEL" to "Subscriptions",
+        // Education & Others
+        "Duolingo" to "Subscriptions", "DUOLINGO" to "Subscriptions",
+        "Udemy" to "Subscriptions", "UDEMY" to "Subscriptions",
+        "Coursera" to "Subscriptions", "COURSERA" to "Subscriptions",
+        "Masterclass" to "Subscriptions", "MASTERCLASS" to "Subscriptions",
+        "Babbel" to "Subscriptions", "BABBEL" to "Subscriptions",
+        "Fitness App" to "Subscriptions", "GYMSHARK" to "Subscriptions",
+        "Strava" to "Subscriptions", "STRAVA" to "Subscriptions",
+        "Tinder" to "Subscriptions", "TINDER" to "Subscriptions",
+        "Bumble" to "Subscriptions", "BUMBLE" to "Subscriptions",
+        // ═══════════════════════════════════════════════════════════════
+        // 💡 UTILITIES - Bills, Services, Telecom
+        // ═══════════════════════════════════════════════════════════════
+        // Electricity
+        "DEI" to "Utilities", "ΔΕΗ" to "Utilities", 
+        "DIMOSIA EPICHEIRISI" to "Utilities", "DEH" to "Utilities",
+        "Heron" to "Utilities", "IRON" to "Utilities", 
+        "ΗΡΩΝ" to "Utilities", "HERON ENERGY" to "Utilities",
+        "Protergia" to "Utilities", "PROTERGIA" to "Utilities", 
+        "MYTILINEOS" to "Utilities",
+        "Elpedison" to "Utilities", "ELPEDISON" to "Utilities",
+        "Volton" to "Utilities", "VOLTON" to "Utilities",
+        "NRG" to "Utilities", "NRG TRADING" to "Utilities",
+        "Zenith" to "Utilities", "ZENITH" to "Utilities",
+        "Watt+Volt" to "Utilities", "WATT AND VOLT" to "Utilities", 
+        "WATT&VOLT" to "Utilities",
+        "Fysiko Aerio" to "Utilities", "ΦΥΣΙΚΟ ΑΕΡΙΟ" to "Utilities",
+        "Solar" to "Utilities", "SOLAR ENERGY" to "Utilities",
+        // Water
+        "EYDAP" to "Utilities", "ΕΥΔΑΠ" to "Utilities", 
+        "NERO" to "Utilities", "WATER BILL" to "Utilities",
+        "EYATH" to "Utilities", "ΕΥΑΘ" to "Utilities",
+        // Gas & Heating
+        "Fysiko Aerio" to "Utilities", "AERIO" to "Utilities", 
+        "EPA" to "Utilities", "GAS BILL" to "Utilities",
+        "Heating Oil" to "Utilities", "PETRELAIO" to "Utilities",
+        // Telecom - Fixed & Mobile
+        "Cosmote" to "Utilities", "COSMOTE" to "Utilities", 
+        "OTE" to "Utilities", "ΟΤΕ" to "Utilities",
+        "Vodafone" to "Utilities", "VODAFONE" to "Utilities", 
+        "VODAFONE PANAFON" to "Utilities",
+        "Wind" to "Utilities", "WIND" to "Utilities",
+        "Nova" to "Utilities", "NOVA" to "Utilities", 
+        "NOVA TELECOMB" to "Utilities",
+        "Inalan" to "Utilities", "INALAN" to "Utilities",
+        "Cyta" to "Utilities", "CYTA" to "Utilities",
+        // Others
+        "Koinoxrista" to "Utilities", "Κοινόχρηστα" to "Utilities", 
+        "Polytechneio" to "Utilities", "SHARED EXPENSES" to "Utilities",
+        "Cleaning Service" to "Utilities", "KATHARIOTHTA" to "Utilities",
+        "Waste" to "Utilities", "DIMOS" to "Utilities",
+        // ═══════════════════════════════════════════════════════════════
+        // 🏥 HEALTH & FITNESS
+        // ═══════════════════════════════════════════════════════════════
+        // Pharmacies
+        "Pharmacy" to "Health", "PHARMACY" to "Health", 
+        "Φαρμακείο" to "Health", "Farmakeio" to "Health", 
+        "DRUGSTORE" to "Health", "PHARME" to "Health",
+        // Medical Services
+        "Doctor" to "Health", "DOCTOR" to "Health", 
+        "Γιατρός" to "Health", "Iatros" to "Health",
+        "Dentist" to "Health", "Οδοντίατρος" to "Health", 
+        "Odontiatros" to "Health",
+        "Hospital" to "Health", "Nosokomeio" to "Health", 
+        "Νοσοκομείο" to "Health",
+        "Clinic" to "Health", "Κλινική" to "Health",
+        "Diagnostic" to "Health", "ΔΙΑΓΝΩΣΤΙΚΟ" to "Health",
+        // Centers & Platforms
+        "Iatropolis" to "Health", "IATROPOLIS" to "Health",
+        "Bioiatriki" to "Health", "BIOIATRIKI" to "Health",
+        "Affidea" to "Health", "AFFIDEA" to "Health",
+        "Euromedica" to "Health", "EUROMEDICA" to "Health",
+        "Doctoranytime" to "Health", "DOCTORANYTIME" to "Health",
+        // Specialists
+        "Eye Clinic" to "Health", "Optical" to "Health", 
+        "Οπτικά" to "Health", "Optika" to "Health",
+        "Psychologist" to "Health", "Ψυχολόγος" to "Health",
+        "Physiotherapy" to "Health", "Φυσικοθεραπεία" to "Health",
+        // Fitness
+        "Gym" to "Fitness", "GYM" to "Fitness", 
+        "Gymnastirio" to "Fitness", "Γυμναστήριο" to "Fitness",
+        "Yava" to "Fitness", "YAVA" to "Fitness",
+        "Planet Fitness" to "Fitness", "Alterlife" to "Fitness", 
+        "Holmes Place" to "Fitness",
+        "Yoga" to "Fitness", "Pilates" to "Fitness", 
+        "Crossfit" to "Fitness",
+        "Sports Club" to "Fitness", "ΑΘΛΗΤΙΚΟΣ" to "Fitness",
+        "Swimming" to "Fitness", "Κολυμβητήριο" to "Fitness",
+        // ═══════════════════════════════════════════════════════════════
+        // 🎬 ENTERTAINMENT
+        // ═══════════════════════════════════════════════════════════════
+        "Village Cinemas" to "Entertainment", "VILLAGE" to "Entertainment",
+        "Odeon" to "Entertainment", "Ster Cinemas" to "Entertainment",
+        "SNFCC" to "Entertainment", "STAVROS NIARCHOS" to "Entertainment",
+        "Technopolis" to "Entertainment", "Ticketmaster" to "Entertainment",
+        "Viva.gr" to "Entertainment", "VIVA" to "Entertainment",
+        "Eventbrite" to "Entertainment", "Allou" to "Entertainment",
+        "Kidom" to "Entertainment", "Escape Room" to "Entertainment",
+        "Bowling" to "Entertainment", "Billiards" to "Entertainment",
+        "Arcade" to "Entertainment", "Museum" to "Entertainment",
+        "Μουσείο" to "Entertainment", "Theater" to "Entertainment",
+        "Θέατρο" to "Entertainment", "Concert" to "Entertainment",
+        // ═══════════════════════════════════════════════════════════════
+        // 🏠 HOME & SERVICES
+        // ═══════════════════════════════════════════════════════════════
+        "IKEA" to "Shopping", // IKEA is Shopping but also Home
+        "Leroy Merlin" to "Shopping", "S.G.B. AE" to "Shopping",
+        "Praktiker" to "Shopping", "JYSK" to "Home",
+        "BricoMarche" to "Home", "Maisons du Monde" to "Home",
+        "Media Strom" to "Home", "Coco-mat" to "Home",
+        "Plumber" to "Home", "Υδραυλικός" to "Home",
+        "Electrician" to "Home", "Ηλεκτρολόγος" to "Home",
+        "Cleaner" to "Home", "Καθαρίστρια" to "Home",
+        "Pest Control" to "Home", "Locksmith" to "Home",
+        "Moving" to "Home", "Furniture" to "Home",
+        // ═══════════════════════════════════════════════════════════════
+        // 💄 BEAUTY & PERSONAL CARE
+        // ═══════════════════════════════════════════════════════════════
+        "Sephora" to "Shopping", "SEPHORA" to "Shopping",
+        "Hondos Center" to "Shopping", "HONDOS" to "Shopping",
+        "Gallerie de Beaute" to "Shopping", "MAC" to "Shopping",
+        "Hair Salon" to "Beauty", "Barber" to "Beauty",
+        "Nail Salon" to "Beauty", "Spa" to "Beauty",
+        "Waxing" to "Beauty", "The Body Shop" to "Beauty",
+        "L'Occitane" to "Beauty", "Kiehl's" to "Beauty",
+        "Rituals" to "Beauty", "Lush" to "Beauty",
+        "Yves Rocher" to "Beauty", "Apivita" to "Beauty",
+        "Korres" to "Beauty",
+        // ═══════════════════════════════════════════════════════════════
+        // ⚖️ LEGAL & GOVERNMENT
+        // ═══════════════════════════════════════════════════════════════
+        "EFKA" to "Legal & Gov", "ΕΦΚΑ" to "Legal & Gov",
+        "AADE" to "Legal & Gov", "ΑΑΔΕ" to "Legal & Gov",
+        "KEA" to "Legal & Gov", "Notary" to "Legal & Gov",
+        "Lawyer" to "Legal & Gov", "Δικηγόρος" to "Legal & Gov",
+        "Accountant" to "Legal & Gov", "Λογιστής" to "Legal & Gov",
+        "Translation" to "Legal & Gov", "Certificate" to "Legal & Gov",
+        "Driving License" to "Legal & Gov", "Paravolo" to "Legal & Gov",
+        "ΠΑΡΑΒΟΛΟ" to "Legal & Gov", "TAXISNET" to "Legal & Gov",
+        // ═══════════════════════════════════════════════════════════════
+        // 🐾 PETS
+        // ═══════════════════════════════════════════════════════════════
+        "Pet City" to "Pets", "PET CITY" to "Pets",
+        "Pet Shop" to "Pets", "Pet" to "Pets",
+        "Vet" to "Pets", "Ktiniatros" to "Pets",
+        "Animal" to "Pets", "Zooplus" to "Pets",
+        "Grooming" to "Pets",
+        // ═══════════════════════════════════════════════════════════════
+        // 🎓 EDUCATION & BOOKS
+        // ═══════════════════════════════════════════════════════════════
+        "Udemy" to "Education", "Coursera" to "Education",
+        "Book" to "Education", "Bookstore" to "Education",
+        "Vivlio" to "Education", "Βιβλιοπωλείο" to "Education",
+        "Ianos" to "Education", "Politeia" to "Education",
+        "Evripidis" to "Education", "Public" to "Electronics", // Note: Public is also books, but mostly Electronics in categorization
+        "School" to "Education", "University" to "Education",
+        "Tuition" to "Education", "Didaktra" to "Education",
+        // ═══════════════════════════════════════════════════════════════
+        // 🏦 BANKING & FEES
+        // ═══════════════════════════════════════════════════════════════
+        "Revolut" to "Banking", "REVOLUT" to "Banking",
+        "PayPal" to "Banking", "PAYPAL" to "Banking",
+        "Curve" to "Banking", "Wise" to "Banking",
+        "Alpha Bank" to "Banking", "Eurobank" to "Banking",
+        "Piraeus" to "Banking", "Ethniki" to "Banking",
+        "Commission" to "Banking", "Fee" to "Banking",
+        "Interest" to "Banking",
+        // ═══════════════════════════════════════════════════════════════
+        // 🧸 KIDS & BABY
+        // ═══════════════════════════════════════════════════════════════
+        "Jumbo" to "Shopping", "Moustakas" to "Shopping",
+        "DPAM" to "Kids", "Orchestra" to "Kids",
+        "Lego Store" to "Kids", "LEGO" to "Kids",
+        "Disney Store" to "Kids", "Hamleys" to "Kids",
+        "Smyths" to "Kids", "Mothercare" to "Kids",
+        "Baby" to "Kids", "Toys" to "Shopping"
+    )
+    // Additional mapping for normalized uppercase keys to capture variations
+    fun getExpandedMap(): Map<String, String> {
+        return merchantToCategoryMap.mapKeys { it.key.uppercase() }
+    }
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt <a name="mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt"></a>
 ```kotlin
 package com.yourname.expensetracker.data.repository
@@ -967,7 +2943,9 @@ class BudgetRepository @Inject constructor(
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
         // We fetch the last 13 months to cover yearly budgets + rollover
-        val thirteenMonthsAgo = System.currentTimeMillis() - (13L * 30 * 24 * 60 * 60 * 1000)
+        val thirteenMonthsAgo = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.MONTH, -13)
+        }.timeInMillis
         return combine(
             budgetDao.getActiveBudgetsFlow(),
             categoryDao.getAllFlow(),
@@ -1253,6 +3231,7 @@ import com.yourname.expensetracker.domain.model.PlannedExpensePriority as Domain
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel as DomainGoalProtection
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -1343,22 +3322,25 @@ class FinancialWeatherRepository @Inject constructor(
         val purchases = expenses.filter { 
             it.transactionType == TransactionType.PURCHASE 
         }
-        val pastSumDaily = run {
-            val amountByDay = purchases
-                .filter { it.date >= monthStart }
-                .groupBy { 
-                    val c = Calendar.getInstance().apply { timeInMillis = it.date }
-                    c.get(Calendar.DAY_OF_MONTH)
+        // 1. Calculate Past Daily Cumulative Spend - Optimized single pass
+        val calInstance = Calendar.getInstance()
+        val amountByDay = DoubleArray(currentDay + 1)
+        for (expense in purchases) {
+            if (expense.date >= monthStart) {
+                calInstance.timeInMillis = expense.date
+                val day = calInstance.get(Calendar.DAY_OF_MONTH)
+                if (day <= currentDay) {
+                    amountByDay[day] += expense.amount
                 }
-                .mapValues { it.value.sumOf { exp -> exp.amount } }
-            var runningTotal = 0.0
-            (1..currentDay).map { day ->
-                runningTotal += amountByDay[day] ?: 0.0
-                runningTotal
             }
         }
-        // 2. Get Engines data
-        val pace = insightsEngine.getSpendingPaceSuspend()
+        var runningTotal = 0.0
+        val pastSumDaily = (1..currentDay).map { day ->
+            runningTotal += amountByDay[day]
+            runningTotal
+        }
+        // 2. Get Engines data - Reusing already fetched expenses to avoid redundant DB queries
+        val pace = insightsEngine.getSpendingPaceSuspend(expenses)
         // 3. Synthesize Forecast
         val forecast = synthesisEngine.synthesize(
             pastSumDaily = pastSumDaily,
@@ -1395,6 +3377,19 @@ class FinancialWeatherRepository @Inject constructor(
             totalRecurringCount = recurringPatterns.size,
             details = narrative.details
         )
+    }.catch { e ->
+        android.util.Log.e("FinancialWeatherRepo", "Error generating weather", e)
+        emit(FinancialWeather(
+            state = WeatherState.UNKNOWN,
+            headline = "Weather Unavailable",
+            summary = "We couldn't calculate your financial outlook right now.",
+            icon = "❓",
+            riskLevel = 0,
+            totalCommitted = 0.0,
+            totalLikely = 0.0,
+            predictedDiscretionary = 0.0,
+            discretionaryBudget = 0.0
+        ))
     }
     private fun buildUpcomingItems(
         recurring: List<RecurringPattern>,
@@ -1440,6 +3435,45 @@ class FinancialWeatherRepository @Inject constructor(
 
 ---
 
+## main\java\com\yourname\expensetracker\data\repository\MerchantCategoryRepository.kt <a name="mainjavacomyournameexpensetrackerdatarepositorymerchantcategoryrepositorykt"></a>
+```kotlin
+package com.yourname.expensetracker.data.repository
+import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
+import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import javax.inject.Inject
+import javax.inject.Singleton
+@Singleton
+class MerchantCategoryRepository @Inject constructor(
+    private val dao: MerchantCategoryDao,
+    private val categorizationEngine: CategorizationEngine
+) {
+    /**
+     * Learns a merchant -> category mapping.
+     * Normalizes the merchant name before saving.
+     */
+    suspend fun learnPattern(merchantName: String, categoryId: Long) {
+        val pattern = categorizationEngine.normalize(merchantName)
+        if (pattern.isNotEmpty()) {
+            dao.insert(
+                MerchantCategory(
+                    merchantPattern = pattern,
+                    categoryId = categoryId,
+                    confidence = 1.0f
+                )
+            )
+        }
+    }
+    suspend fun getCategoryForMerchant(merchantName: String): MerchantCategory? {
+        val pattern = categorizationEngine.normalize(merchantName)
+        return dao.getCategoryForMerchant(pattern)
+    }
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt <a name="mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt"></a>
 ```kotlin
 package com.yourname.expensetracker.data.repository
@@ -1465,7 +3499,7 @@ class NotificationRepository @Inject constructor(
     private val dao: RawNotificationDao,
     private val blockedPackageDao: BlockedPackageDao,
     private val expenseDao: ExpenseDao,
-    private val merchantCategoryDao: MerchantCategoryDao,
+    private val merchantCategoryRepository: MerchantCategoryRepository,
     private val pendingReviewDao: PendingReviewDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val sourceStatsDao: SourceStatsDao,
@@ -1562,16 +3596,7 @@ class NotificationRepository @Inject constructor(
         budgetMonitor.checkBudgets()
         // 6. Learn the merchant→category mapping for future auto-categorization
         if (finalCategoryId != null && id > 0) {
-            val pattern = categorizationEngine.normalize(normalizedMerchant)
-            if (pattern.isNotEmpty()) {
-                merchantCategoryDao.insert(
-                    MerchantCategory(
-                        merchantPattern = pattern,
-                        categoryId = finalCategoryId,
-                        confidence = 1.0f
-                    )
-                )
-            }
+            merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
         }
         return id
     }
@@ -1678,7 +3703,8 @@ class NotificationRepository @Inject constructor(
                     confidence = routingResult.adjustedConfidence,
                     packageName = notification.packageName,
                     notificationTitle = notification.title,
-                    notificationText = notification.text ?: notification.bigText
+                    notificationText = notification.text ?: notification.bigText,
+                    suggestedDate = parsed.date // Fix 1.10: Pass the parsed date if available
                 )
                 pendingReviewDao.insert(review)
                 sourceStatsDao.incrementPending(notification.packageName)
@@ -1707,11 +3733,10 @@ class NotificationRepository @Inject constructor(
         finalCategoryId: Long? = null
     ) {
         val review = pendingReviewDao.getById(reviewId) ?: return
-        // Race condition check: ensure we are the first to handle this
-        // We set status to APPROVED first to lock it. If insertion fails, we're in a bit of a bind,
-        // but it's better than double-insertion stats.
-        val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "APPROVED")
-        if (rowsUpdated == 0) return
+        // Critical Fix: Check status specifically to avoid double-processing
+        // We do this instead of updateStatusIfPending at the start to ensure we don't
+        // mark it as APPROVED if the subsequent DB operations fail.
+        if (review.status != "PENDING") return
         val amount: Double = finalAmount ?: review.suggestedAmount
         val merchant: String = finalMerchant ?: review.suggestedMerchant
         val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
@@ -1724,11 +3749,14 @@ class NotificationRepository @Inject constructor(
         val notification = review.rawNotificationId?.let { dao.getById(it) }
         val transactionDate: Long = review.suggestedDate ?: notification?.timestamp ?: review.createdAt
         // Check for duplicates
+        // Fix 1.1: Use consistent 60s window for manual/review approvals
         val isDuplicate = expenseDao.isDuplicate(
             amount = amount,
             merchant = merchant,
-            date = transactionDate
+            date = transactionDate,
+            windowMs = 60000
         )
+        var operationSuccessful = true
         if (!isDuplicate) {
             // Create the expense
             val expense = com.yourname.expensetracker.data.database.entity.Expense(
@@ -1738,8 +3766,8 @@ class NotificationRepository @Inject constructor(
                 merchant,
                 type,
                 transactionDate,
-                review.rawNotificationId, // Index 6 (0-based) - Long?
-                categoryId,                // Index 7 (0-based) - Long?
+                review.rawNotificationId,
+                categoryId,
                 System.currentTimeMillis(),
                 com.yourname.expensetracker.data.database.entity.PaymentMethod.CARD,
                 review.scannedReceiptId != null,
@@ -1748,7 +3776,6 @@ class NotificationRepository @Inject constructor(
             try {
                 val expenseId = expenseDao.insert(expense)
                 if (expenseId > 0) {
-                    // Only if insert succeeds:
                     review.rawNotificationId?.let { dao.markRelevance(it, true) }
                     sourceStatsDao.incrementAccepted(review.packageName)
                     sourceStatsDao.decrementPending(review.packageName)
@@ -1758,47 +3785,48 @@ class NotificationRepository @Inject constructor(
                     }
                     // Check budgets
                     budgetMonitor.checkBudgets()
+                } else {
+                    // Insertion failed (likely IGNORE strategy due to same ID, which shouldn't happen here as ID is 0L)
+                    operationSuccessful = false
                 }
             } catch (e: android.database.sqlite.SQLiteConstraintException) {
-                // Ignore
+                // Unexpected constraint error, fail the operation
+                operationSuccessful = false
             }
+        } else {
+             // It's a duplicate, we treat this as "processed" to clear the review
+             sourceStatsDao.decrementPending(review.packageName)
         }
-        // Record user correction for learning
-        val correction = UserCorrection(
-            packageName = review.packageName,
-            originalMerchant = review.suggestedMerchant,
-            correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
-                finalMerchant else null,
-            originalAmount = review.suggestedAmount,
-            correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
-                finalAmount else null,
-            originalCategoryId = review.suggestedCategoryId,
-            correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
-                finalCategoryId else null,
-            wasRejected = false,
-            wasApproved = true,
-            notificationTitle = review.notificationTitle,
-            notificationText = review.notificationText
-        )
-        userCorrectionDao.insert(correction)
-        // Train classifier: user approved = positive
-        // LOG-003 Fix: Use retrainFromCorrections to ensure consistency and "un-learn" previous mistakes
-        try {
-            classifier.retrainFromCorrections()
-        } catch (e: Exception) {
-            android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
-        }
-        // Learn merchant → category mapping if category was set
-        if (categoryId != null) {
-            val pattern = categorizationEngine.normalize(merchant)
-            if (pattern.isNotEmpty()) {
-                merchantCategoryDao.insert(
-                    MerchantCategory(
-                        merchantPattern = pattern,
-                        categoryId = categoryId,
-                        confidence = 1.0f
-                    )
-                )
+        if (operationSuccessful) {
+            // ONLY set status to APPROVED if all core steps succeeded OR it was a duplicate we decided to skip
+            pendingReviewDao.updateStatusIfPending(reviewId, "APPROVED")
+            // Record user correction for learning
+            val correction = UserCorrection(
+                packageName = review.packageName,
+                originalMerchant = review.suggestedMerchant,
+                correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
+                    finalMerchant else null,
+                originalAmount = review.suggestedAmount,
+                correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
+                    finalAmount else null,
+                originalCategoryId = review.suggestedCategoryId,
+                correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
+                    finalCategoryId else null,
+                wasRejected = false,
+                wasApproved = true,
+                notificationTitle = review.notificationTitle,
+                notificationText = review.notificationText
+            )
+            userCorrectionDao.insert(correction)
+            // Retrain classifier
+            try {
+                classifier.retrainFromCorrections()
+            } catch (e: Exception) {
+                android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
+            }
+            // Learn mapping
+            if (categoryId != null) {
+                merchantCategoryRepository.learnPattern(merchant, categoryId)
             }
         }
     }
@@ -1884,7 +3912,7 @@ class NotificationRepository @Inject constructor(
         expenseDao.deleteAll()
         pendingReviewDao.deleteAll()
         userCorrectionDao.deleteAll()
-        merchantCategoryDao.deleteAll()
+        // merchantCategoryDao.deleteAll() // Removed as part of refactoring
         sourceStatsDao.resetAllPendingCounts()
     }
     suspend fun resetSourceStats() {
@@ -1894,16 +3922,7 @@ class NotificationRepository @Inject constructor(
     suspend fun deleteExpense(expense: Expense) = expenseDao.delete(expense)
     suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long) {
         expenseDao.updateCategory(expense.id, newCategoryId)
-        val pattern = categorizationEngine.normalize(expense.merchant)
-        if (pattern.isNotEmpty()) {
-            merchantCategoryDao.insert(
-                MerchantCategory(
-                    merchantPattern = pattern,
-                    categoryId = newCategoryId,
-                    confidence = 1.0f
-                )
-            )
-        }
+        merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
         // Also record as a correction for learning
         val correction = UserCorrection(
             packageName = "manual_edit",
@@ -2011,7 +4030,7 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
-import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
+// import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -2020,7 +4039,7 @@ import javax.inject.Singleton
 class ReceiptRepository @Inject constructor(
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
-    private val merchantCategoryDao: MerchantCategoryDao,
+    private val merchantCategoryRepository: MerchantCategoryRepository, // <-- Replaces DAO
     private val pendingReviewDao: PendingReviewDao,
     private val ocrService: ReceiptOcrService,
     private val receiptParser: ReceiptParser,
@@ -2164,16 +4183,7 @@ class ReceiptRepository @Inject constructor(
             budgetMonitor.checkBudgets()
             // 7. Learn merchant → category mapping
             if (finalCategoryId != null) {
-                val pattern = categorizationEngine.normalize(normalizedMerchant)
-                if (pattern.isNotEmpty()) {
-                    merchantCategoryDao.insert(
-                        MerchantCategory(
-                            merchantPattern = pattern,
-                            categoryId = finalCategoryId,
-                            confidence = 1.0f
-                        )
-                    )
-                }
+                merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
             }
         }
         return expenseId
@@ -2299,6 +4309,126 @@ class ReceiptRepository @Inject constructor(
 
 ---
 
+## main\java\com\yourname\expensetracker\di\AppModule.kt <a name="mainjavacomyournameexpensetrackerdiappmodulekt"></a>
+```kotlin
+package com.yourname.expensetracker.di
+import android.content.Context
+import androidx.room.Room
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.*
+import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.parser.GenericTransactionParser
+import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
+import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
+import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
+import com.yourname.expensetracker.domain.parser.parsers.SmsParser
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+@Module
+@InstallIn(SingletonComponent::class)
+object AppModule {
+    @Provides
+    @Singleton
+    fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
+        return Room.databaseBuilder(
+            context,
+            AppDatabase::class.java,
+            "expense_tracker_db"
+        ).addMigrations(
+            AppDatabase.MIGRATION_6_7, 
+            AppDatabase.MIGRATION_7_8,
+            AppDatabase.MIGRATION_8_9,
+            AppDatabase.MIGRATION_9_10,
+            AppDatabase.MIGRATION_10_11,
+            AppDatabase.MIGRATION_11_12,
+            AppDatabase.MIGRATION_12_13,
+            AppDatabase.MIGRATION_13_14
+        )
+            .addCallback(object : androidx.room.RoomDatabase.Callback() {
+                override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    super.onOpen(db)
+                    android.util.Log.d("AppDatabase", "Database opened successfully. Version: ${db.version}")
+                }
+            })
+            .fallbackToDestructiveMigration()
+            .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+            .build()
+    }
+    @Provides
+    @Singleton
+    fun providePlannedExpenseDao(database: AppDatabase): PlannedExpenseDao {
+        return database.plannedExpenseDao()
+    }
+    @Provides
+    @Singleton
+    fun provideSavingsGoalDao(database: AppDatabase): SavingsGoalDao {
+        return database.savingsGoalDao()
+    }
+    @Provides
+    @Singleton
+    fun provideRawNotificationDao(database: AppDatabase): RawNotificationDao {
+        return database.rawNotificationDao()
+    }
+    @Provides
+    @Singleton
+    fun provideBlockedPackageDao(database: AppDatabase): BlockedPackageDao {
+        return database.blockedPackageDao()
+    }
+    @Provides
+    @Singleton
+    fun provideExpenseDao(database: AppDatabase): ExpenseDao {
+        return database.expenseDao()
+    }
+    @Provides
+    @Singleton
+    fun provideBudgetDao(database: AppDatabase): BudgetDao {
+        return database.budgetDao()
+    }
+    @Provides
+    @Singleton
+    fun provideScannedReceiptDao(database: AppDatabase): ScannedReceiptDao {
+        return database.scannedReceiptDao()
+    }
+    @Provides
+    @Singleton
+    fun provideAppParserRegistry(): AppParserRegistry {
+        val appParsers = listOf(
+            RevolutParser(),
+            GoogleWalletParser(),
+            GreekBankParser(),
+            SmsParser()
+        )
+        val fallbackParser = GenericTransactionParser()
+        return AppParserRegistry(appParsers, fallbackParser)
+    }
+    @Provides
+    @Singleton
+    fun provideCategoryDao(database: AppDatabase): CategoryDao = database.categoryDao()
+    @Provides
+    @Singleton
+    fun provideMerchantCategoryDao(database: AppDatabase): MerchantCategoryDao = database.merchantCategoryDao()
+    @Provides
+    @Singleton
+    fun providePendingReviewDao(database: AppDatabase): PendingReviewDao = database.pendingReviewDao()
+    @Provides
+    @Singleton
+    fun provideUserCorrectionDao(database: AppDatabase): UserCorrectionDao = database.userCorrectionDao()
+    @Provides
+    @Singleton
+    fun provideSourceStatsDao(database: AppDatabase): SourceStatsDao = database.sourceStatsDao()
+    @Provides
+    @Singleton
+    fun provideRecurringExpenseDao(database: AppDatabase): RecurringExpenseDao = database.recurringExpenseDao()
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt <a name="mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt"></a>
 ```kotlin
 package com.yourname.expensetracker.domain.analytics
@@ -2311,22 +4441,16 @@ data class MonthPeriod(
     val startMs: Long,
     val endMs: Long
 ) {
+    companion object {
+        private val MONTH_NAMES = arrayOf(
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+        )
+    }
     val label: String
-        get() {
-            val monthNames = arrayOf(
-                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-            )
-            return "${monthNames[month]} $year"
-        }
+        get() = "${MONTH_NAMES[month]} $year"
     val shortLabel: String
-        get() {
-            val monthNames = arrayOf(
-                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-            )
-            return monthNames[month]
-        }
+        get() = MONTH_NAMES[month]
 }
 data class CategoryInsight(
     val category: Category,
@@ -2484,6 +4608,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import java.util.Calendar
 import javax.inject.Inject
@@ -2778,11 +4903,14 @@ class InsightsEngine @Inject constructor(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod,
         allExpenses: List<Expense>
-    ): SpendingPace {
+    ): SpendingPace = coroutineScope {
         val now = System.currentTimeMillis()
-        val currentSpent = expenseDao.getTotalForPeriod(currentMonth.startMs, currentMonth.endMs)
-        val previousTotal = expenseDao.getTotalForPeriod(previousMonth.startMs, previousMonth.endMs)
-        val previousCount = expenseDao.getCountForPeriod(previousMonth.startMs, previousMonth.endMs)
+        val currentSpentDeferred = async { expenseDao.getTotalForPeriod(currentMonth.startMs, currentMonth.endMs) }
+        val previousTotalDeferred = async { expenseDao.getTotalForPeriod(previousMonth.startMs, previousMonth.endMs) }
+        val previousCountDeferred = async { expenseDao.getCountForPeriod(previousMonth.startMs, previousMonth.endMs) }
+        val currentSpent = currentSpentDeferred.await()
+        val previousTotal = previousTotalDeferred.await()
+        val previousCount = previousCountDeferred.await()
         val cal = Calendar.getInstance()
         cal.timeInMillis = now
         val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
@@ -2795,7 +4923,7 @@ class InsightsEngine @Inject constructor(
         // Pace percentage: how much of the baseline have we consumed
         val baseline = avgMonthly ?: if (previousCount > 0) previousTotal else null
         val pacePercentage = if (baseline != null && baseline > 0) {
-            val expectedAtThisPoint = baseline * dayOfMonth / daysInMonth
+            val expectedAtThisPoint = baseline * dayOfMonth.coerceAtLeast(1) / daysInMonth
             (currentSpent / expectedAtThisPoint * 100).toFloat()
         } else 0f
         val paceStatus = when {
@@ -2804,7 +4932,7 @@ class InsightsEngine @Inject constructor(
             pacePercentage > 110f -> PaceStatus.OVER_PACE
             else -> PaceStatus.ON_PACE
         }
-        return SpendingPace(
+        SpendingPace(
             currentMonthSpent = currentSpent,
             daysElapsed = dayOfMonth,
             daysInMonth = daysInMonth,
@@ -2837,39 +4965,35 @@ class InsightsEngine @Inject constructor(
     private suspend fun findAnomalies(
         currentMonth: MonthPeriod,
         categoryMap: Map<Long, Category>
-    ): List<AnomalyTransaction> {
+    ): List<AnomalyTransaction> = coroutineScope {
         val merchantStats = expenseDao.getMerchantStats() // only merchants with 2+ tx
         val statsMap = merchantStats.associateBy { it.merchant }
-        val anomalies = mutableListOf<AnomalyTransaction>()
         // Check top merchants this month for outliers
         val topMerchants = expenseDao.getTopMerchantsForPeriod(
             currentMonth.startMs, currentMonth.endMs, 100
         )
-        for (merchantStat in topMerchants) {
-            val historicalStats = statsMap[merchantStat.merchant] ?: continue
-            // We need 3+ transactions historically to have a reliable average
-            if (historicalStats.txCount < 3) continue
-            // If the max amount this month is > 3x the historical average (LOG-015 Fix: Increased from 2x)
+        val deferredAnomalies: List<kotlinx.coroutines.Deferred<AnomalyTransaction?>> = topMerchants.mapNotNull { merchantStat ->
+            val historicalStats = statsMap[merchantStat.merchant] ?: return@mapNotNull null
+            if (historicalStats.txCount < 3) return@mapNotNull null
+            // If the max amount this month is > 3x the historical average
             if (merchantStat.maxAmount > historicalStats.avgAmount * 3.0) {
-                // Find the actual expense (largest for this merchant this month)
-                // Find the actual expense (largest for THIS merchant this month)
-                val expense = expenseDao.getLargestExpenseForMerchant(
-                    merchantStat.merchant, currentMonth.startMs, currentMonth.endMs
-                )
-                // Filter specifically for this merchant
-                if (expense != null) {
-                     anomalies.add(
+                async {
+                    expenseDao.getLargestExpenseForMerchant(
+                        merchantStat.merchant, currentMonth.startMs, currentMonth.endMs
+                    )?.let { expense ->
                         AnomalyTransaction(
                             expense = expense,
                             merchantAvg = historicalStats.avgAmount,
                             deviationMultiple = (expense.amount / historicalStats.avgAmount).toFloat(),
                             category = expense.categoryId?.let { categoryMap[it] }
                         )
-                    )
+                    }
                 }
-            }
+            } else null
         }
-        return anomalies.sortedByDescending { it.deviationMultiple }.take(5)
+        deferredAnomalies.awaitAll().filterNotNull()
+            .sortedByDescending { it.deviationMultiple }
+            .take(5)
     }
     // === Recurring Expenses ===
     private suspend fun findRecurringExpenses(): List<RecurringExpense> {
@@ -2983,10 +5107,7 @@ class InsightsEngine @Inject constructor(
         }
     }
     private fun calculateStdDev(values: List<Double>): Double {
-        if (values.size < 2) return 0.0
-        val mean = values.average()
-        val variance = values.map { (it - mean) * (it - mean) }.average()
-        return sqrt(variance)
+        return com.yourname.expensetracker.domain.util.StatisticsUtils.calculateStdDev(values)
     }
     private fun countDistinctMonths(expenses: List<Expense>): Int {
         if (expenses.isEmpty()) return 0
@@ -2997,16 +5118,15 @@ class InsightsEngine @Inject constructor(
         }.distinct().size
     }
     // === Exposed Suspend Functions for Repository Usage ===
-    suspend fun getSpendingPaceSuspend(): SpendingPace {
+    suspend fun getSpendingPaceSuspend(expenses: List<Expense>? = null): SpendingPace {
         val now = System.currentTimeMillis()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
-        // We need "all expenses" to calculate the average baseline
-        // For performance, we could limit this to the last 6 months, but for now we'll fetch all
-        // or just rely on previous month if that's faster.
-        // Let's fetch last 6 months for a good baseline.
-        val sixMonthsAgo = getMonthPeriod(now, -6).startMs
-        val recentExpenses = expenseDao.getExpensesBetween(sixMonthsAgo, now)
+        // Use provided expenses or fetch from DB if null
+        val recentExpenses = expenses ?: run {
+            val sixMonthsAgo = getMonthPeriod(now, -6).startMs
+            expenseDao.getExpensesBetween(sixMonthsAgo, now)
+        }
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
     }
     private fun fmt(amount: Double): String = String.format("%.2f", amount)
@@ -3193,17 +5313,21 @@ class BudgetMonitor @Inject constructor(
             }
             BudgetPeriod.MONTHLY -> {
                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-                val currentDay = cal.get(Calendar.DAY_OF_MONTH)
-                // If we haven't reached the anchor day this month, the cycle started last month
-                if (currentDay < anchorDay) {
+                // Set to start of current month first
+                cal.set(Calendar.DAY_OF_MONTH, 1)
+                val currentMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(currentMonthMax))
+                if (evaluationTime < cal.timeInMillis) {
+                    // If evaluation time is before the start of this month's cycle, the cycle started last month
                     cal.add(Calendar.MONTH, -1)
+                    val prevMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(prevMonthMax))
                 }
-                // Set day, handling shorter months (e.g. 31st vs Feb 28th)
-                val maxDays = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(maxDays))
                 val start = cal.timeInMillis
+                // To find the end, go to the start of the next cycle
                 cal.add(Calendar.MONTH, 1)
-                // Note: Standard add(MONTH, 1) handles month length variations (Jan 31 -> Feb 28/29)
+                val nextMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(nextMonthMax))
                 val end = cal.timeInMillis
                 Pair(start, end)
             }
@@ -3245,33 +5369,33 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 @Singleton
 class CategorizationEngine @Inject constructor(
-    private val merchantCategoryDao: MerchantCategoryDao
+    private val merchantCategoryDao: MerchantCategoryDao,
+    private val merchantNormalizer: com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
+    private var cachedMappingsMap: Map<String, MerchantCategory>? = null
     private var lastCacheTime = 0L
     private val CACHE_EXPIRY_MS = 300_000 // 5 minutes
-    private val cleanupRegex1 by lazy { Regex("[^A-ZΑ-Ω0-9 &]") }
-    private val cleanupRegex2 by lazy { Regex("\\s+") }
+    // Regex moved to MerchantNormalizer
     suspend fun categorize(merchant: String): Long? {
         val normalized = normalize(merchant)
         // 1. Exact match
         val exactMatch = merchantCategoryDao.getCategoryForMerchant(normalized)
         if (exactMatch != null) return exactMatch.categoryId
-        // 2. Substring match — check if any known merchant pattern is contained in this merchant
-        val sortedMappings = getMappings() // Already sorted by length descending (LOG-022)
+        // 2. Substring match
+        val (sortedMappings, mappingsMap) = getCache()
         val paddedNormalized = " $normalized "
         for (mapping in sortedMappings) {
-            if (mapping.merchantPattern.length >= 5) { // Adjusted for " pattern "
+            if (mapping.merchantPattern.length >= 5) {
                 if (paddedNormalized.contains(mapping.merchantPattern)) {
                     return mapping.categoryId
                 }
             }
         }
-        // 3. Word-level match — split merchant into words and check each
+        // 3. Word-level match
         val words = normalized.split(" ").filter { it.length >= 4 }
         if (words.isNotEmpty()) {
-            val mappingsMap = sortedMappings.associateBy { it.merchantPattern }
             for (word in words) {
                 val match = mappingsMap[word]
                 if (match != null) return match.categoryId
@@ -3280,28 +5404,25 @@ class CategorizationEngine @Inject constructor(
         return null
     }
     fun normalize(merchant: String): String {
-        return merchant.uppercase()
-            .replace(cleanupRegex1, "")
-            .trim()
-            .replace(cleanupRegex2, " ")
+        return merchantNormalizer.normalize(merchant)
     }
-    private suspend fun getMappings(): List<MerchantCategory> {
+    private suspend fun getCache(): Pair<List<MerchantCategory>, Map<String, MerchantCategory>> {
         cacheMutex.withLock {
             val now = System.currentTimeMillis()
-            if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
-                // LOG-022 Fix: Sort by pattern length descending ONCE during cache population
-                // This avoids sorting on every analyze call
-                cachedMappings = merchantCategoryDao.getAll()
-                    .map { it.copy(merchantPattern = " ${it.merchantPattern} ") }
+            if (cachedMappings == null || cachedMappingsMap == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
+                val all = merchantCategoryDao.getAll()
+                cachedMappings = all.map { it.copy(merchantPattern = " ${it.merchantPattern} ") }
                     .sortedByDescending { it.merchantPattern.length }
+                cachedMappingsMap = all.associateBy { it.merchantPattern }
                 lastCacheTime = now
             }
-            return cachedMappings!!
+            return Pair(cachedMappings!!, cachedMappingsMap!!)
         }
     }
     suspend fun invalidateCache() {
         cacheMutex.withLock {
             cachedMappings = null
+            cachedMappingsMap = null
             lastCacheTime = 0
         }
     }
@@ -3318,7 +5439,7 @@ import com.yourname.expensetracker.data.database.entity.RawNotification
 import javax.inject.Inject
 import kotlin.random.Random
 class NotificationSeeder @Inject constructor() {
-    private val categories = mapOf(
+    val categories = mapOf(
         "Groceries" to listOf("AB Vassilopoulos", "Sklavenitis", "Lidl", "Masoutis", "My Market"),
         "Transport" to listOf("Uber", "Beat", "OASA", "Shell", "EKO", "Aegean Airlines"),
         "Bills" to listOf("DEI", "EYDAP", "Vodafone", "Cosmote", "Wind"),
@@ -3800,6 +5921,7 @@ class TransactionClassifier @Inject constructor(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var saveJob: Job? = null
+    private var retrainJob: Job? = null
     companion object {
         private const val TAG = "TxClassifier"
         private const val MODEL_FILE = "naive_bayes_model.json"
@@ -3864,9 +5986,13 @@ class TransactionClassifier @Inject constructor(
             scheduleSave()
         }
     }
-    suspend fun retrainFromCorrections() {
-        mutex.withLock {
-            retrainFromCorrectionsInternal()
+    fun retrainFromCorrections() {
+        retrainJob?.cancel()
+        retrainJob = scope.launch {
+            delay(2000) // Debounce for 2 seconds
+            mutex.withLock {
+                retrainFromCorrectionsInternal()
+            }
         }
     }
     private suspend fun retrainFromCorrectionsInternal() {
@@ -4301,8 +6427,8 @@ class RecurringExpenseEngine @Inject constructor(
             val dates = sorted.map { it.date }
             val intervals = calculateIntervals(dates)
             val (frequency, confidence, varianceDays) = determineFrequency(intervals)
-            // Thresholds: Must be a known frequency and have > 60% confidence (LOG-013 Relaxed from 65%)
-            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.60) {
+            // Thresholds: Must be a known frequency and have > 55% confidence (LOG-013 Relaxed further to catch varying bills)
+            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.55) {
                 // Predict next date
                 // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)
                 val cal = java.util.Calendar.getInstance()
@@ -4359,10 +6485,7 @@ class RecurringExpenseEngine @Inject constructor(
         return intervals
     }
     private fun calculateStdDev(values: List<Double>): Double {
-        if (values.size < 2) return 0.0
-        val mean = values.average()
-        val sumSq = values.sumOf { (it - mean) * (it - mean) }
-        return sqrt(sumSq / (values.size - 1))
+        return com.yourname.expensetracker.domain.util.StatisticsUtils.calculateStdDev(values)
     }
     private fun determineFrequency(intervalsMs: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
         if (intervalsMs.isEmpty()) return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
@@ -4387,8 +6510,8 @@ class RecurringExpenseEngine @Inject constructor(
             return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
         }
         // Calculate Confidence
-        // Score based on how many intervals are "close" to the mode (within ±10% or ±1 day)
-        val tolerance = (mode * 0.1).coerceAtLeast(1.0)
+        // Score based on how many intervals are "close" to the mode (within ±20% or ±1 day)
+        val tolerance = (mode * 0.2).coerceAtLeast(1.0)
         val matchingIntervals = intervalsDays.count { abs(it - mode) <= tolerance }
         val consistencyScore = matchingIntervals.toDouble() / intervalsDays.size
         // Calculate Average Deviation (days)
@@ -4494,10 +6617,16 @@ class SynthesisEngine @Inject constructor() {
         val budgetLimit = if (overallBudget > 0) overallBudget else categoryBudgetsSum
         val spentSoFar = spendingPace.currentMonthSpent
         // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
-        // LOG-004 Fix: We only subtract BILLS and PLANNED expenses.
-        // We do NOT subtract the "future discretionary" because that IS the "available pool" we are tracking.
+        // If budgetLimit is 0, we use a fallback or express "Unknown" state
         val projectedObligations = committedUpcomingBills + committedPlanned + likelyUpcomingBills + likelyPlanned
-        val discretionaryBudget = (budgetLimit - (spentSoFar + projectedObligations + goalReserves)).coerceAtLeast(0.0)
+        val discretionaryBudget = if (budgetLimit > 0) {
+            (budgetLimit - (spentSoFar + projectedObligations + goalReserves)).coerceAtLeast(0.0)
+        } else {
+            // If no budget is set, the discretionary "pool" isn't 0 (which looks like "No money left"),
+            // it's effectively unlimited/unknown vs a goal. 
+            // We'll return 0.0 for now but the RiskLevel will signal NO_BUDGET
+            0.0
+        }
         // 6. Determine Risk Level
         val riskLevel = determineRiskLevel(
             spendingPace, 
@@ -4536,9 +6665,15 @@ class SynthesisEngine @Inject constructor() {
         // Ratio of discretionary to total budget
         val bufferRatio = if (limit > 0) discretionary / limit else 0.0
         return when {
-            criticalBudgets > 0 || (overPace && bufferRatio < 0.05) -> RiskLevel.CRITICAL
-            overPace || criticalBudgets > 0 || bufferRatio < 0.1 -> RiskLevel.HIGH
+            // Priority 1: Critical Budget Issues or Severe Overspending with no buffer
+            criticalBudgets > 0 -> RiskLevel.CRITICAL
+            overPace && bufferRatio < 0.05 -> RiskLevel.CRITICAL
+            // Priority 2: High Risk (Overspending or Low Buffer)
+            overPace -> RiskLevel.HIGH // If overPace but buffer > 0.05
+            bufferRatio < 0.1 -> RiskLevel.HIGH
+            // Priority 3: Medium Risk
             bufferRatio < 0.2 -> RiskLevel.MEDIUM
+            // Priority 4: Low Risk
             else -> RiskLevel.LOW
         }
     }
@@ -4721,6 +6856,601 @@ sealed class UpcomingItem {
         override val amount: Double = expense.amount
         override val date: Long = expense.date
         override val categoryId: Long? = expense.categoryId
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt <a name="mainjavacomyournameexpensetrackerdomainparserappparserregistrykt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.parser
+import com.yourname.expensetracker.data.database.entity.TransactionType
+/**
+ * Result from an app-specific parser. Higher confidence = more certain it's a real transaction.
+ */
+data class ParsedTransaction(
+    val amount: Double,
+    val currency: String,
+    val merchant: String,
+    val type: TransactionType,
+    val date: Long? = null,
+    val confidence: Float // 0.0 to 1.0
+)
+/**
+ * Interface for app-specific notification parsers.
+ */
+interface AppNotificationParser {
+    /** Package names this parser handles */
+    val supportedPackages: Set<String>
+    /**
+     * Try to parse. Return null if notification is NOT a transaction.
+     * Should be strict — only return a result when confident.
+     */
+    fun parse(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction?
+}
+/**
+ * Registry that routes notifications to the right parser.
+ */
+class AppParserRegistry(
+    private val appParsers: List<AppNotificationParser>,
+    private val fallbackParser: GenericTransactionParser
+) {
+    fun parse(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction? {
+        // 1. Try app-specific parser first
+        val specificParser = appParsers.find { packageName in it.supportedPackages }
+        if (specificParser != null) {
+            return specificParser.parse(title, text, bigText, subText, packageName)
+        }
+        // 2. Fallback to generic parser with HIGH threshold
+        return fallbackParser.parse(title, text, bigText, subText, packageName)
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt <a name="mainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.parser
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import java.util.regex.Pattern
+/**
+ * Fallback parser for unknown apps. VERY strict — requires both
+ * a strong transaction signal AND a plausible amount pattern.
+ * Returns results with lower confidence.
+ */
+class GenericTransactionParser {
+    // Strong signals that this is a REAL transaction notification
+    private val strongTransactionSignals by lazy {
+        listOf(
+            // English patterns that strongly indicate actual transactions
+            Pattern.compile("""(?:you\s+)?paid\s+[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""payment\s+(?:of\s+)?[€$£]\s*\d""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""charged?\s+[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:debit|deducted)\s+[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""transaction\s+(?:of\s+)?[€$£]\s*\d""", Pattern.CASE_INSENSITIVE),
+            // Greek patterns - using UNICODE_CASE and \p{L} for Greek letters
+            Pattern.compile("""(?:πληρω|χρεω|αγορ[αά])[\p{L}]*\s+\d+[.,]\d{2}\s*(?:€|EUR)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+            Pattern.compile("""(?:€|EUR)\s*\d+[.,]\d{2}\s*(?:στ[οη]|at)\s""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+            // Greeklish patterns
+            Pattern.compile("""(?:pliromi|xreosi|hreosi|agora)\w*\s+\d+[.,]\d{2}\s*(?:€|EUR)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:€|EUR)\s*\d+[.,]\d{2}\s*(?:sto|se|stin?)\s""", Pattern.CASE_INSENSITIVE),
+        )
+    }
+    // NEGATIVE signals — if present, this is NOT a transaction
+    // Using Regex to enforce word boundaries for English words to avoid "Coffee" matching "offer"
+    private val negativeSignalsPattern by lazy {
+        Pattern.compile(
+            """\b(offer|discount|save\s+up\s+to|earn|free|up\s+to|starting\s+from|balance|otp|verification|code|unsubscribe|opt\s+out|sale|%\s+off|promo|your\s+order|tracking|shipped|delivered|reminder|rate\s+us|review|survey)\b|""" +
+            """(προσφορά|έκπτωση|εξοικονομ|κέρδισε|δωρεάν|έως|από|υπόλοιπο|κωδικός|υπενθύμιση)""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        )
+    }
+    private val amountPattern by lazy {
+        Pattern.compile(
+            """([€$£])\s*(\d+(?:[.,]\d{2})?)|(\d+(?:[.,]\d{2})?)\s*([€$£]|EUR|USD|GBP)""",
+            Pattern.CASE_INSENSITIVE
+        )
+    }
+    private val MERCHANT_PREFIXES = listOf(" at ", " to ", " σε ", " στον ", " στην ", " στο ", " για ", " sto ", " ston ", " stin ", " se ")
+    fun parse(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction? {
+        val fullText = listOfNotNull(title, text, bigText).joinToString(" ")
+        val lowerFull = fullText.lowercase()
+        // 1. Check negative signals first
+        if (negativeSignalsPattern.matcher(lowerFull).find()) return null
+        // 2. Require at least one STRONG transaction signal
+        val hasStrongSignal = strongTransactionSignals.any { it.matcher(lowerFull).find() }
+        if (!hasStrongSignal) return null
+        // 3. Extract amount
+        val amountResult = extractAmount(fullText) ?: return null
+        // 4. Sanity check amount
+        if (amountResult.first < 0.10 || amountResult.first > 25000) return null
+        // 5. Extract merchant
+        val merchant = extractMerchant(fullText, title)
+        return ParsedTransaction(
+            amount = amountResult.first,
+            currency = amountResult.second,
+            merchant = merchant,
+            type = TransactionType.PURCHASE,
+            confidence = 0.60f // Lower confidence for generic parser
+        )
+    }
+    private fun extractAmount(text: String): Pair<Double, String>? {
+        val matcher = amountPattern.matcher(text)
+        if (matcher.find()) {
+            val currency = matcher.group(1) ?: matcher.group(4) ?: "€"
+            val amountStr = (matcher.group(2) ?: matcher.group(3))?.replace(",", ".") ?: return null
+            val amount = amountStr.toDoubleOrNull() ?: return null
+            return Pair(amount, normalizeCurrency(currency))
+        }
+        return null
+    }
+    private fun extractMerchant(text: String, title: String?): String {
+        val normalized = text.replace('\u00A0', ' ')
+        for (prefix in MERCHANT_PREFIXES) {
+            val index = normalized.indexOf(prefix, ignoreCase = true)
+            if (index != -1) {
+                val after = normalized.substring(index + prefix.length).trim()
+                return cleanMerchant(after)
+            }
+        }
+        // Fallback to title if it's not a generic keyword
+        if (!title.isNullOrBlank() && !isGenericTitle(title.lowercase())) {
+            return cleanMerchant(title)
+        }
+        return "Unknown"
+    }
+    private fun isGenericTitle(title: String): Boolean {
+        val genericWords = listOf("payment", "purchase", "transaction", "alert", "notification",
+            "πληρωμή", "αγορά", "συναλλαγή", "ειδοποίηση")
+        return genericWords.any { title.contains(it) }
+    }
+    private fun cleanMerchant(raw: String): String {
+        val stopWords = listOf("confirmed", "successful", "completed", "declined",
+            "ολοκληρώθηκε", "επιτυχής", ".", "!", "with card", "με κάρτα")
+        var candidate = raw
+        for (stop in stopWords) {
+            val idx = candidate.indexOf(stop, ignoreCase = true)
+            if (idx != -1) candidate = candidate.substring(0, idx)
+        }
+        return candidate.trim().take(40).trim()
+    }
+    private fun normalizeCurrency(raw: String): String {
+        return when (raw.uppercase().trim()) {
+            "€", "EUR", "ΕΥΡΩ" -> "EUR"
+            "$", "USD" -> "USD"
+            "£", "GBP" -> "GBP"
+            else -> "EUR"
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt <a name="mainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.parser.parsers
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.parser.AppNotificationParser
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import java.util.regex.Pattern
+class GoogleWalletParser : AppNotificationParser {
+    override val supportedPackages = setOf(
+        "com.google.android.apps.walletnfcrel",
+        "com.google.android.apps.nbu.paisa.user"
+    )
+    private val amountPattern by lazy {
+        Pattern.compile(
+            """([€$£])\s*(\d+[.,]\d{2})|(\d+[.,]\d{2})\s*([€$£]|EUR|USD|GBP)""",
+            Pattern.CASE_INSENSITIVE
+        )
+    }
+    private val atPattern by lazy {
+        Pattern.compile("""(?:at|to)\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]+)""", Pattern.CASE_INSENSITIVE)
+    }
+    // Things that are NOT transactions
+    private val REJECT_PATTERNS = listOf(
+        "add a card", "set up", "tap to pay", "loyalty", "offer",
+        "reward", "cashback available", "nearby", "suggest"
+    )
+    override fun parse(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction? {
+        val fullText = listOfNotNull(title, text, bigText).joinToString(" ")
+        val lowerFull = fullText.lowercase()
+        if (REJECT_PATTERNS.any { lowerFull.contains(it) }) return null
+        // Extract amount from anywhere in the notification
+        val amount = extractAmount(fullText) ?: return null
+        // Extract merchant: usually the title IS the merchant, or text contains "at MERCHANT"
+        val merchant = extractMerchant(title, text, bigText)
+        return ParsedTransaction(
+            amount = amount.first,
+            currency = amount.second,
+            merchant = merchant,
+            type = TransactionType.PURCHASE,
+            confidence = 0.90f
+        )
+    }
+    private fun extractAmount(text: String): Pair<Double, String>? {
+        val matcher = amountPattern.matcher(text)
+        if (matcher.find()) {
+            val prefixCurrency = matcher.group(1) ?: matcher.group(4)
+            val amountStr = (matcher.group(2) ?: matcher.group(3))?.replace(",", ".") ?: return null
+            val amount = amountStr.toDoubleOrNull() ?: return null
+            // Filter unrealistic amounts
+            if (amount < 0.01 || amount > 50000) return null
+            return Pair(amount, normalizeCurrency(prefixCurrency))
+        }
+        return null
+    }
+    private fun extractMerchant(title: String?, text: String?, bigText: String?): String {
+        // Check for "at MERCHANT" pattern in text
+        val combinedText = listOfNotNull(text, bigText).joinToString(" ")
+        val atMatcher = atPattern.matcher(combinedText)
+        if (atMatcher.find()) {
+            return cleanMerchant(atMatcher.group(1) ?: "Unknown")
+        }
+        // Title might be the merchant if it doesn't contain amount/payment keywords
+        if (!title.isNullOrBlank()) {
+            val lowerTitle = title.lowercase()
+            val isAmount = amountPattern.matcher(title).find()
+            val isKeyword = listOf("payment", "purchase", "paid", "transaction", "google wallet", "wallet").any { lowerTitle.contains(it) }
+            if (!isAmount && !isKeyword) {
+                return cleanMerchant(title)
+            }
+        }
+        return "Unknown"
+    }
+    private fun cleanMerchant(raw: String): String {
+        return raw.trim()
+            .replace(Regex("""[•·\-]\s*(Mastercard|Visa|Amex|card).*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*\*{2,}\d+.*$"""), "") // Remove "••1234"
+            .trim()
+            .take(40)
+            .trim()
+    }
+    private fun normalizeCurrency(raw: String?): String {
+        return when (raw?.uppercase()?.trim()) {
+            "€", "EUR" -> "EUR"
+            "$", "USD" -> "USD"
+            "£", "GBP" -> "GBP"
+            else -> "EUR"
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt <a name="mainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.parser.parsers
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.parser.AppNotificationParser
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import java.util.regex.Pattern
+/**
+ * Parser for Greek banking apps (NBG, Alpha, Eurobank, Piraeus).
+ * These typically send very structured SMS-like notifications.
+ */
+class GreekBankParser : AppNotificationParser {
+    override val supportedPackages = setOf(
+        "gr.nbg.mobilebanking",
+        "gr.alpha.mobile",
+        "com.eurobank.mobile",
+        "com.winbank.mobile"
+    )
+    private val PURCHASE_PATTERNS = listOf(
+        // "Αγορά 12,50 EUR στο MERCHANT" or "Πληρωμή €6.30 σε..."
+        Pattern.compile(
+            """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:EUR|€|USD|GBP)?\s*(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        ),
+        // "€12.50 at MERCHANT" or "12,50€ MERCHANT"
+        Pattern.compile(
+            """([€$£])\s*(\d+[.,]\d{2})\s*(?:at|στ[οη]ν?|σε|-)\s+(.+?)(?:\s*(?:με|with)|$)""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        ),
+        // "MERCHANT 12,50 EUR"
+        Pattern.compile(
+            """(?:χρ[έε]ωσ[ηη]?\s*κ[άα]ρτ[αά]ς?\s*\*?\d*:?\s*)(\d+[.,]\d{2})\s*(EUR|€)?\s*[-–]\s*(.+)""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        )
+    )
+    // Patterns to REJECT
+    private val REJECT_PATTERNS = listOf(
+        "υπόλοιπο", "balance", "otp", "κωδικός", "code",
+        "ενεργοποί", "activate", "εγκρίθηκε η αίτηση",
+        "προσφορά", "offer", "έκπτωση", "discount",
+        "ενημέρωση", "update", "reminder"
+    )
+    override fun parse(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction? {
+        val fullText = listOfNotNull(title, text, bigText).joinToString(" ")
+        val lowerFull = fullText.lowercase()
+        // Quick reject
+        if (REJECT_PATTERNS.any { lowerFull.contains(it) }) return null
+        for (pattern in PURCHASE_PATTERNS) {
+            val matcher = pattern.matcher(fullText)
+            if (matcher.find()) {
+                // Groups vary by pattern but we try to extract amount and merchant
+                return tryExtract(matcher, fullText)
+            }
+        }
+        return null
+    }
+    private fun tryExtract(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
+        // Try to find the amount (could be in group 1 or 2)
+        var amountStr: String? = null
+        var currency = "EUR"
+        var merchant = "Unknown"
+        for (i in 1..matcher.groupCount()) {
+            val group = matcher.group(i) ?: continue
+            if (group.matches(Regex("""\d+[.,]\d{2}"""))) {
+                amountStr = group
+            } else if (group.matches(Regex("""[€$£]|EUR|USD|GBP""", RegexOption.IGNORE_CASE))) {
+                currency = normalizeCurrency(group)
+            } else if (group.length > 2) {
+                merchant = cleanMerchant(group)
+            }
+        }
+        val amount = amountStr?.replace(",", ".")?.toDoubleOrNull() ?: return null
+        if (amount < 0.01 || amount > 50000) return null
+        return ParsedTransaction(
+            amount = amount,
+            currency = currency,
+            merchant = merchant,
+            type = TransactionType.PURCHASE,
+            confidence = 0.92f
+        )
+    }
+    private fun cleanMerchant(raw: String): String {
+        return raw.trim()
+            .replace(Regex("""(?:στις|on)\s*\d{1,2}/\d{1,2}.*$"""), "")
+            .replace(Regex("""\s*\*{2,}\d+.*$"""), "")
+            .trim()
+            .take(40)
+            .trim()
+    }
+    private fun normalizeCurrency(raw: String?): String {
+        return when (raw?.uppercase()?.trim()) {
+            "€", "EUR" -> "EUR"
+            "$", "USD" -> "USD"
+            "£", "GBP" -> "GBP"
+            else -> "EUR"
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt <a name="mainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.parser.parsers
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.parser.AppNotificationParser
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import java.util.regex.Pattern
+class RevolutParser : AppNotificationParser {
+    override val supportedPackages = setOf("com.revolut.revolut")
+    // Revolut notifications typically look like:
+    // Title: "Paid €12.50" or "💳 €12.50 at SKLAVENITIS"
+    // Text: "💳 €12.50 at SKLAVENITIS" or "You paid €5.00 to John"
+    // Also: "Received €100.00 from John"
+    // Also: "ATM withdrawal: €50.00"
+    // Ignore: "Your exchange rate...", "Weekly report", "Special offer"
+    private val PAID_PATTERN = Pattern.compile(
+        """(?:paid|sent|💳)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:at|to)\s+(.+)""",
+        Pattern.CASE_INSENSITIVE
+    )
+    private val RECEIVED_PATTERN = Pattern.compile(
+        """received\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*from\s+(.+)""",
+        Pattern.CASE_INSENSITIVE
+    )
+    private val ATM_PATTERN = Pattern.compile(
+        """(?:atm|withdrawal)[:\s]*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})""",
+        Pattern.CASE_INSENSITIVE
+    )
+    // Patterns to REJECT (not transactions)
+    private val REJECT_PATTERNS = listOf(
+        "exchange rate", "weekly report", "special offer", "cashback",
+        "refer a friend", "upgrade", "verify", "security", "pin",
+        "top-up reminder", "price alert", "savings vault"
+    )
+    override fun parse(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction? {
+        // Check each field individually to avoid "doubling" content which confuses greedy regex
+        val candidates = listOfNotNull(title, text, bigText)
+        for (content in candidates) {
+            val lower = content.lowercase()
+            if (REJECT_PATTERNS.any { lower.contains(it) }) return null
+            // Try paid/purchase pattern
+            val paidMatcher = PAID_PATTERN.matcher(content)
+            if (paidMatcher.find()) {
+                val currency = normalizeCurrency(paidMatcher.group(1))
+                val amount = paidMatcher.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: continue
+                val merchant = cleanMerchant(paidMatcher.group(3) ?: "Unknown")
+                return ParsedTransaction(amount, currency, merchant, TransactionType.PURCHASE, 0.95f)
+            }
+            // Try received pattern
+            val receivedMatcher = RECEIVED_PATTERN.matcher(content)
+            if (receivedMatcher.find()) {
+                val currency = normalizeCurrency(receivedMatcher.group(1))
+                val amount = receivedMatcher.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: continue
+                val merchant = cleanMerchant(receivedMatcher.group(3) ?: "Unknown")
+                return ParsedTransaction(amount, currency, merchant, TransactionType.DEPOSIT, 0.90f)
+            }
+            // Try ATM pattern
+            val atmMatcher = ATM_PATTERN.matcher(content)
+            if (atmMatcher.find()) {
+                val currency = normalizeCurrency(atmMatcher.group(1))
+                val amount = atmMatcher.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: continue
+                return ParsedTransaction(amount, currency, "ATM", TransactionType.WITHDRAWAL, 0.95f)
+            }
+        }
+        return null
+    }
+    private fun cleanMerchant(raw: String): String {
+        return raw.trim()
+            .replace(Regex("[.!]$"), "")
+            .take(40)
+            .trim()
+    }
+    private fun normalizeCurrency(raw: String?): String {
+        return when (raw?.uppercase()?.trim()) {
+            "€", "EUR" -> "EUR"
+            "$", "USD" -> "USD"
+            "£", "GBP" -> "GBP"
+            else -> "EUR"
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt <a name="mainjavacomyournameexpensetrackerdomainparserparserssmsparserkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.parser.parsers
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.parser.AppNotificationParser
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import java.util.regex.Pattern
+/**
+ * Handles SMS from banking apps (Google Messages, Samsung Messages, etc.)
+ * These are forwarded notifications from SMS — needs very careful filtering
+ * because messaging apps send ALL messages.
+ */
+class SmsParser : AppNotificationParser {
+    override val supportedPackages = setOf(
+        "com.google.android.apps.messaging",
+        "com.samsung.android.messaging",
+        "com.android.mms"
+    )
+    // Known bank SMS sender IDs
+    private val BANK_SENDERS = setOf(
+        "nbg", "alpha", "eurobank", "piraeus", "winbank",
+        "revolut", "paypal", "visa", "mastercard",
+        "ethniki", "εθνική", "αλφα", "πειραιώς"
+    )
+    private val amountPattern by lazy {
+        Pattern.compile(
+            """(\d+[.,]\d{2})\s*(EUR|€|USD|\$|GBP|£)|(EUR|€|USD|\$|GBP|£)\s*(\d+[.,]\d{2})""",
+            Pattern.CASE_INSENSITIVE
+        )
+    }
+    private val TRANSACTION_KEYWORDS = listOf(
+        "αγορ", "πληρωμ", "χρέωσ", "συναλλαγ",
+        "purchase", "payment", "charged", "debit",
+        "agora", "pliromi", "plirwmi", "hreosi", "xreosi", "synallagi"
+    )
+    override fun parse(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction? {
+        // For SMS, the title is usually the sender
+        val sender = title?.lowercase() ?: return null
+        val body = listOfNotNull(text, bigText).joinToString(" ")
+        val lowerBody = body.lowercase()
+        // Only process if sender looks like a bank
+        val isBankSms = BANK_SENDERS.any { sender.contains(it) }
+        if (!isBankSms) return null
+        // Must contain transaction keywords
+        val hasKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) }
+        if (!hasKeyword) return null
+        // Extract amount
+        val matcher = amountPattern.matcher(body)
+        if (!matcher.find()) return null
+        val amountStr = (matcher.group(1) ?: matcher.group(4))?.replace(",", ".") ?: return null
+        val amount = amountStr.toDoubleOrNull() ?: return null
+        val currency = normalizeCurrency(matcher.group(2) ?: matcher.group(3))
+        if (amount < 0.10 || amount > 50000) return null
+        // Try to extract merchant from the SMS body
+        val merchant = extractMerchantFromSms(body)
+        return ParsedTransaction(
+            amount = amount,
+            currency = currency,
+            merchant = merchant,
+            type = TransactionType.PURCHASE,
+            confidence = 0.85f
+        )
+    }
+    private val merchantPatterns by lazy {
+        listOf(
+            Pattern.compile("""(?:στ[οη]ν?|at|sto|stin?|ston?|se|sta)\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{2,30})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""-\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{2,30})""", Pattern.CASE_INSENSITIVE)
+        )
+    }
+    private fun extractMerchantFromSms(body: String): String {
+        for (p in merchantPatterns) {
+            val m = p.matcher(body)
+            if (m.find()) {
+                val raw = m.group(1) ?: continue
+                return cleanMerchant(raw)
+            }
+        }
+        return "Unknown"
+    }
+    private fun cleanMerchant(raw: String): String {
+        return raw.trim()
+            .replace(Regex("""\s\d{2}:\d{2}.*$"""), "") // Remove time like 12:30
+            .replace(Regex("""\s\d{1,2}/\d{1,2}.*$"""), "") // Remove date like 12/05
+            .replace(Regex("""\s(?:στις|at|on)\s+\d.*$""", RegexOption.IGNORE_CASE), "") // Remove "at 12..." or "στις 12..."
+            .replace(Regex("""[.!;]$"""), "") // Remove trailing punctuation
+            .take(30)
+            .trim()
+    }
+    private fun normalizeCurrency(raw: String?): String {
+        return when (raw?.uppercase()?.trim()) {
+            "€", "EUR" -> "EUR"
+            "$", "USD" -> "USD"
+            "£", "GBP" -> "GBP"
+            else -> "EUR"
+        }
     }
 }
 
@@ -5032,6 +7762,728 @@ class ReceiptOcrService @Inject constructor(
         try {
             File(path).delete()
         } catch (_: Exception) {
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt <a name="mainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.receipt
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.Calendar
+import java.util.Locale
+import java.util.regex.Pattern
+import java.text.SimpleDateFormat
+import javax.inject.Inject
+import javax.inject.Singleton
+@Singleton
+class ReceiptParser @Inject constructor() {
+    data class ParsedReceipt(
+        val merchantName: String?,
+        val total: Double?,
+        val subtotal: Double?,
+        val tax: Double?,
+        val date: Long?,
+        val currency: String,
+        val lineItems: List<LineItem>,
+        val confidence: Float
+    )
+    data class LineItem(
+        val description: String,
+        val quantity: Double?,
+        val unitPrice: Double?,
+        val totalPrice: Double
+    )
+    // Total amount patterns (Greek + English receipts)
+    private val totalPatterns = listOf(
+        // Greek patterns with fuzzy space and comma handling
+        Pattern.compile(
+            """(?:ΣΥΝΟΛΟ|ΤΕΛΙΚΟ|ΠΛΗΡΩΤΕΟ|ΠΟΣΟ|ΑΞΙΑ|ΓΕΝΙΚΟ\s*ΣΥΝΟΛΟ|ΛΟΓΑΡΙΑΣΜΟ[ΣΖ]|TOTAL|AMOUNT)\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        ),
+        // Amount with currency symbol at end
+        Pattern.compile(
+            """(?:TOTAL|ΣΥΝΟΛΟ|ΠΟΣΟ)\s*[:\s]*(\d+[\s.,]\s*\d{2})\s*(?:€|EUR)""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        ),
+        // Standalone large amount at the very bottom (common for Lidl/Sklavenitis)
+        Pattern.compile(
+            """(?:€|EUR)\s*(\d+[\s.,]\s*\d{2})\s*$""",
+            Pattern.MULTILINE
+        )
+    )
+    // Tax patterns
+    private val taxPatterns = listOf(
+        Pattern.compile(
+            """(?:Φ\.?Π\.?Α\.?|VAT|TAX|TVA)\s*[\d%]*\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        )
+    )
+    // Date patterns
+    private val datePatterns = listOf(
+        Pattern.compile("""(\d{2})[/\-.](\d{2})[/\-.](\d{4}|\d{2})"""),  // DD/MM/YYYY or DD/MM/YY
+        Pattern.compile("""(\d{4})[/\-.](\d{2})[/\-.](\d{2})""")   // YYYY/MM/DD
+    )
+    // Line item pattern: "description  price" with at least 2 spaces or tab
+    private val lineItemPatterns = listOf(
+        // "Item description    12.50" (fuzzy spaces in amount)
+        Pattern.compile(
+            """^(.{3,40}?)\s{2,}(\d+[\s.,]\s*\d{2})\s*€?\s*$""",
+            Pattern.MULTILINE
+        ),
+        // "Quantity x Description   Sum"
+        Pattern.compile(
+            """^(\d+)\s*x\s*(.{3,40}?)\s{2,}(\d+[\s.,]\s*\d{2})\s*€?\s*$""",
+            Pattern.MULTILINE
+        )
+    )
+    // Subtotal patterns (to distinguish from total)
+    private val subtotalPatterns = listOf(
+        Pattern.compile(
+            """(?:SUBTOTAL|SUB\s*TOTAL|ΥΠΟΣΥΝΟΛΟ|ΥΠΟ\s*ΣΥΝΟΛΟ|ΜΕΡΙΚΟ|ΚΑΘΑΡΗ\s*ΑΞΙΑ)\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        )
+    )
+    // Discount patterns
+    private val discountPatterns = listOf(
+        Pattern.compile(
+            """(?:DISCOUNT|ΕΚΠΤΩΣΗ|SAVINGS?|ΜΕΙΟΝ|ΕΚΠΤ)\s*[:\s]*-?\s*€?\s*(\d+[\s.,]\s*\d{2})""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        )
+    )
+    fun parse(rawText: String): ParsedReceipt {
+        // 1. Pre-process text to fix OCR spacing issues and Greek characters
+        val cleanedText = normalizeGreekOcr(rawText)
+        val lines = cleanedText.lines().filter { it.isNotBlank() }
+        // 2. Extract merchant
+        val merchant = extractMerchant(lines)
+        // 3. Extract date
+        val date = extractDate(cleanedText)
+        // 4. Extract total
+        val total = extractTotal(lines)
+        // 5. Extract subtotal (using original text as fallback or new logic if needed)
+        val subtotal = extractSubtotal(cleanedText)
+        // 6. Extract tax
+        val tax = extractTax(cleanedText)
+        // 7. Extract line items
+        val lineItems = extractLineItems(cleanedText)
+        // 8. Cross-validate
+        val finalTotal = total ?: lineItems.sumOf { it.totalPrice }.takeIf { it > 0 }
+        // 9. Calculate subtotal
+        val finalSubtotal = subtotal
+            ?: if (finalTotal != null && tax != null) finalTotal - tax else null
+        // 10. Confidence
+        val confidence = calculateConfidence(merchant, finalTotal, date, lineItems, tax)
+        return ParsedReceipt(
+            merchantName = merchant,
+            total = finalTotal,
+            subtotal = finalSubtotal,
+            tax = tax,
+            date = date,
+            currency = detectCurrency(cleanedText),
+            lineItems = lineItems,
+            confidence = confidence
+        )
+    }
+    /**
+     * Normalizes Greek OCR errors and cleans up number formatting.
+     */
+    private fun normalizeGreekOcr(text: String): String {
+        return text.uppercase()
+            // --- 1. CRITICAL: Fix Numbers broken by spaces (e.g., "55, 00" -> "55,00") ---
+            .replace(Regex("(\\d+)[.,]\\s+(\\d{2})"), "$1.$2") 
+            .replace(Regex("(\\d+)\\s+[.,](\\d{2})"), "$1.$2")
+            // --- 2. Fix Total Keywords ---
+            .replace(Regex(".*[ΠN]O[SZ]O.*AMOUNT.*"), "TOTAL_KEY")
+            .replace(Regex(".*[ΠN]O[SZ]O.*"), "TOTAL_KEY")
+            .replace(Regex(".*[ΣE2ZXY]YN.*[AΛV][O0Ω].*"), "TOTAL_KEY") // ΣΥΝΟΛΟ variants
+            .replace("NAHPQTEO", "TOTAL_KEY")
+            .replace("AMOUNT", "TOTAL_KEY")
+            .replace("TOTAL", "TOTAL_KEY")
+            // --- 3. Fix Dates ---
+            .replace(Regex("(\\d{2})-[D0O]-(\\d{2})"), "$1-04-$2") // Fix "16-D4-2017"
+            .replace("HM/NIA", "ΗΜΕΡΟΜΗΝΙΑ")
+            // --- 4. Currency & Noise Cleaning ---
+            .replace("EVP9", "") 
+            .replace("EVP", "")
+            .replace("EUR", "")
+            .replace("€", "")
+    }
+    // --- MERCHANT EXTRACTION ---
+    private fun extractMerchant(lines: List<String>): String? {
+        // Skip common non-merchant headers
+        val invalidHeaders = listOf(
+            "APODEIXI", "AIOAEIEH", "ANOD", "NOMIMH", "ENARXI", "START", 
+            "EAPA", "ADDRESS", "THL", "TEL", "AFM", "AOM"
+        )
+        // Find anchors: Address, Tax ID, Phone
+        val headerMarkers = listOf("ΑΦΜ", "AOM", "ΤΗΛ", "THA", "STR.", "ΟΔΟΣ", "TK", "Τ.Κ", "VAT", "TEL")
+        for ((index, line) in lines.withIndex()) {
+            if (index > 8) break // Merchant is usually in top 8 lines
+            // Check if this line is an anchor
+            if (headerMarkers.any { line.contains(it) }) {
+                // If we found an anchor, the merchant is likely ABOVE it.
+                // Scan upwards for the first valid line.
+                for (j in index - 1 downTo 0) {
+                    val candidate = lines[j]
+                    if (isValidMerchantLine(candidate, invalidHeaders)) {
+                        return cleanMerchantName(candidate)
+                    }
+                }
+            }
+        }
+        // Fallback: Just return the first valid line if no anchors found
+        for (line in lines.take(5)) {
+            if (isValidMerchantLine(line, invalidHeaders)) {
+                return cleanMerchantName(line)
+            }
+        }
+        return null
+    }
+    private fun isValidMerchantLine(line: String, invalidHeaders: List<String>): Boolean {
+        if (line.length < 3) return false
+        if (line.all { !it.isLetter() }) return false // Must have letters
+        if (invalidHeaders.any { line.contains(it) }) return false
+        return true
+    }
+    private fun cleanMerchantName(raw: String): String {
+        return raw.replace(Regex("[^a-zA-Zα-ωΑ-Ω0-9\\s&.-]"), "").trim()
+    }
+    private fun extractTotal(lines: List<String>): Double? {
+        // Regex: Matches 12.50, 12,50, 1.250,00
+        // Strictly avoids numbers followed by % (VAT rates)
+        val amountRegex = Regex("""(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})(?!\s?%)""")
+        // --- STRATEGY 1: Explicit "TOTAL" Keyword (Highest Confidence) ---
+        // Scan backwards (bottom-up) for the word "TOTAL_KEY"
+        val totalLineIndex = lines.indexOfLast { it.contains("TOTAL_KEY") }
+        if (totalLineIndex != -1) {
+            // Check the exact line
+            val amountInLine = extractAmountFromLine(lines[totalLineIndex], amountRegex)
+            if (amountInLine != null) return amountInLine
+            // Check the NEXT line (common in POS receipts: Label then Value)
+            if (totalLineIndex + 1 < lines.size) {
+                val amountNext = extractAmountFromLine(lines[totalLineIndex + 1], amountRegex)
+                if (amountNext != null) return amountNext
+            }
+        }
+        // --- STRATEGY 2: Fallback (Smart Max) ---
+        // If no keyword found, find the LARGEST plausible number.
+        var maxAmount = 0.0
+        // Only scan the bottom 70% of the receipt (Price is rarely at the top)
+        val searchStart = (lines.size * 0.3).toInt() 
+        for (i in searchStart until lines.size) {
+            val line = lines[i]
+            // FILTER: Ignore lines that definitely aren't the total
+            if (line.contains("%")) continue // Ignore VAT lines (13,00%)
+            if (line.contains("METPHTA") || line.contains("CASH")) continue // Ignore Cash Given (Receipt #18)
+            if (line.contains("RESTA") || line.contains("ΡΕΣΤΑ")) continue // Ignore Change
+            if (line.contains("KARTA") || line.contains("CARD")) continue // Ignore "Card" references unless parsed carefully
+            // Extract numbers from this line
+            val matches = amountRegex.findAll(line)
+            for (match in matches) {
+                val rawVal = match.groupValues[1]
+                val amount = parseAmount(rawVal)
+                // SANITY CHECKS:
+                // 1. Amount must be < 5000 (Avoids phone numbers/Tax IDs misread as price)
+                // 2. Amount must not look like a Year (e.g., 2024, 2025)
+                // 3. Amount must not look like Time (e.g., 14.24 in Receipt #6)
+                if (isValidAmount(amount, line)) {
+                    if (amount > maxAmount) {
+                        maxAmount = amount
+                    }
+                }
+            }
+        }
+        return if (maxAmount > 0.0) maxAmount else null
+    }
+    private fun isValidAmount(amount: Double, line: String): Boolean {
+        if (amount > 5000) return false
+        if (amount == 0.0) return false
+        // Year check: 2020-2030 usually represents date, not price
+        if (amount >= 2020 && amount <= 2035 && amount % 1 == 0.0) return false
+        // Time check: If line contains "ORA" or matches HH:MM pattern logic
+        if (line.contains("QPA") || line.contains("ORA")) return false
+        return true
+    }
+    private fun parseAmount(rawAmount: String): Double {
+        // Standardize: "1.250,50" -> "1250.50"
+        // Standardize: "12,50" -> "12.50"
+        val clean = rawAmount.replace(".", "").replace(",", ".")
+        return clean.toDoubleOrNull() ?: 0.0
+    }
+    private fun extractAmountFromLine(line: String, regex: Regex): Double? {
+        // If line has multiple numbers, we generally want the LAST one (Net... VAT... Total)
+        val matches = regex.findAll(line)
+        return matches.lastOrNull()?.groupValues?.get(1)?.let { parseAmount(it) }
+    }
+    private fun extractSubtotal(text: String): Double? {
+        for (pattern in subtotalPatterns) {
+            val matcher = pattern.matcher(text)
+            if (matcher.find()) {
+                return matcher.group(1)?.replace(",", ".")?.toDoubleOrNull()
+            }
+        }
+        return null
+    }
+    private fun extractTax(text: String): Double? {
+        for (pattern in taxPatterns) {
+            val matcher = pattern.matcher(text)
+            if (matcher.find()) {
+                return matcher.group(1)?.replace(",", ".")?.toDoubleOrNull()
+            }
+        }
+        return null
+    }
+    // --- DATE EXTRACTION ---
+    private fun extractDate(text: String): Long? {
+        // Regex handles: dd/MM/yyyy, dd-MM-yyyy, dd.MM.yyyy
+        val datePatterns = listOf(
+            Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(20\d{2})"""),
+            Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(\d{2})""")
+        )
+        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
+        sdf.isLenient = false
+        for (pattern in datePatterns) {
+            pattern.find(text)?.let { match ->
+                val (d, m, y) = match.destructured
+                val year = if (y.length == 2) "20$y" else y
+                // SANITY CHECK: Year must be reasonable (e.g., 2020-2030)
+                // Fixes Receipt #8 where OCR read 2058
+                val yearInt = year.toIntOrNull() ?: 0
+                if (yearInt in 2020..2030) { 
+                    try {
+                        return sdf.parse("$d/$m/$year")?.time
+                    } catch (e: Exception) { }
+                }
+            }
+        }
+        return null
+    }
+    private fun extractLineItems(text: String): List<LineItem> {
+        val items = mutableListOf<LineItem>()
+        // Skip lines that look like totals/subtotals
+        val skipLinePattern = Regex(
+            """(?i)(TOTAL|ΣΥΝΟΛΟ|VAT|ΦΠΑ|CHANGE|ΡΕΣΤΑ|CASH|CARD|VISA|MASTER|SUBTOTAL|ΥΠΟΣΥΝΟΛΟ|ΜΕΤΡΗΤΑ|ΚΑΡΤΑ|ΠΛΗΡΩΜΗ|PAYMENT|DISCOUNT|ΕΚΠΤΩΣΗ)"""
+        )
+        // Pattern 1: "description   amount"
+        val matcher1 = lineItemPatterns[0].matcher(text)
+        while (matcher1.find()) {
+            val desc = matcher1.group(1)?.trim() ?: continue
+            val price = matcher1.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: continue
+            if (skipLinePattern.containsMatchIn(desc)) continue
+            if (price <= 0 || price > 10000) continue
+            items.add(
+                LineItem(
+                    description = desc,
+                    quantity = null,
+                    unitPrice = null,
+                    totalPrice = price
+                )
+            )
+        }
+        // Pattern 2: "qty x description   amount"
+        val matcher2 = lineItemPatterns[1].matcher(text)
+        while (matcher2.find()) {
+            val qty = matcher2.group(1)?.toDoubleOrNull() ?: continue
+            val desc = matcher2.group(2)?.trim() ?: continue
+            val price = matcher2.group(3)?.replace(",", ".")?.toDoubleOrNull() ?: continue
+            if (skipLinePattern.containsMatchIn(desc)) continue
+            if (price <= 0 || price > 10000) continue
+            items.add(
+                LineItem(
+                    description = desc,
+                    quantity = qty,
+                    unitPrice = if (qty > 0) price / qty else null,
+                    totalPrice = price
+                )
+            )
+        }
+        return items
+    }
+    private fun detectCurrency(text: String): String {
+        return when {
+            text.contains("€") || text.contains("EUR", ignoreCase = true) ||
+                    text.contains("ΕΥΡΩ", ignoreCase = true) -> "EUR"
+            text.contains("$") || text.contains("USD", ignoreCase = true) -> "USD"
+            text.contains("£") || text.contains("GBP", ignoreCase = true) -> "GBP"
+            else -> "EUR"
+        }
+    }
+    private fun calculateConfidence(
+        merchant: String?,
+        total: Double?,
+        date: Long?,
+        items: List<LineItem>,
+        tax: Double?
+    ): Float {
+        var score = 0f
+        if (merchant != null) score += 0.15f
+        if (total != null) score += 0.40f  // Most important
+        if (date != null) score += 0.15f
+        if (items.isNotEmpty()) score += 0.15f
+        if (tax != null) score += 0.05f
+        // Bonus: items sum matches total (cross-validation)
+        if (total != null && items.isNotEmpty()) {
+            val itemsSum = items.sumOf { it.totalPrice }
+            val diff = kotlin.math.abs(total - itemsSum)
+            if (diff < total * 0.05) { // Within 5%
+                score += 0.10f
+            }
+        }
+        return score.coerceIn(0f, 1f)
+    }
+    // Utility: serialize line items to JSON
+    fun lineItemsToJson(items: List<LineItem>): String {
+        val jsonArray = JSONArray()
+        for (item in items) {
+            val obj = JSONObject().apply {
+                put("description", item.description)
+                put("totalPrice", item.totalPrice)
+                item.quantity?.let { put("quantity", it) }
+                item.unitPrice?.let { put("unitPrice", it) }
+            }
+            jsonArray.put(obj)
+        }
+        return jsonArray.toString()
+    }
+    // Utility: deserialize line items from JSON
+    fun lineItemsFromJson(json: String?): List<LineItem> {
+        if (json.isNullOrBlank()) return emptyList()
+        return try {
+            val jsonArray = JSONArray(json)
+            (0 until jsonArray.length()).map { i ->
+                val obj = jsonArray.getJSONObject(i)
+                LineItem(
+                    description = obj.getString("description"),
+                    totalPrice = obj.getDouble("totalPrice"),
+                    quantity = if (obj.has("quantity")) obj.getDouble("quantity") else null,
+                    unitPrice = if (obj.has("unitPrice")) obj.getDouble("unitPrice") else null
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt <a name="mainjavacomyournameexpensetrackerdomainutilstatisticsutilskt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.util
+import kotlin.math.sqrt
+object StatisticsUtils {
+    /**
+     * Calculates the Sample Standard Deviation from a list of values.
+     * Uses Bessel's correction (N-1).
+     * Returns 0.0 if there are fewer than 2 values.
+     */
+    fun calculateStdDev(values: List<Double>): Double {
+        if (values.size < 2) return 0.0
+        val mean = values.average()
+        val sumSq = values.sumOf { (it - mean) * (it - mean) }
+        return sqrt(sumSq / (values.size - 1))
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\receiver\BootReceiver.kt <a name="mainjavacomyournameexpensetrackerreceiverbootreceiverkt"></a>
+```kotlin
+package com.yourname.expensetracker.receiver
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import com.yourname.expensetracker.service.NotificationCaptureService
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            // We can't start the service directly from background on Android 8+
+            // But we can try to request a rebind if the component is enabled.
+            // However, NotificationListenerService is special. The system binds to it.
+            // This receiver mainly serves to ensure our process is woken up.
+            // On some aggressive OSes, starting a foreground service or just 'being' alive
+            // helps the system re-bind the listener.
+            // For now, we'll just log/noop, as the critical piece is
+            // android:enabled="true" in manifest and user toggle.
+            // Extending this: we could schedule a WorkManager job here.
+            Log.d("BootReceiver", "Boot completed - Service should be restarted by system or user interaction.")
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\service\NotificationCaptureService.kt <a name="mainjavacomyournameexpensetrackerservicenotificationcaptureservicekt"></a>
+```kotlin
+package com.yourname.expensetracker.service
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.data.repository.NotificationRepository
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
+import javax.inject.Inject
+@AndroidEntryPoint
+class NotificationCaptureService : NotificationListenerService() {
+    @Inject
+    lateinit var repository: NotificationRepository
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
+    // Thread-safe, bounded deduplication cache
+    private val processedNotifications = ConcurrentHashMap<String, Long>()
+    private var processCount = 0
+    companion object {
+        private const val TAG = "NotificationCapture"
+        const val ACTION_REFRESH_NOTIFICATIONS = "com.yourname.expensetracker.REFRESH_NOTIFICATIONS"
+        private const val FOREGROUND_ID = 1001
+        private const val CHANNEL_ID = "expense_tracker_service"
+        private const val DEDUP_WINDOW_MS = 5000L
+        private const val CACHE_CLEANUP_THRESHOLD = 50
+        private const val CACHE_MAX_AGE_MS = 60_000L
+        // Packages filtering logic...
+        private val MONITORED_PACKAGES = setOf(
+            "com.revolut.revolut",
+            "com.google.android.apps.walletnfcrel",
+            "com.google.android.apps.nbu.paisa.user", // Google Pay (old/new variants)
+            "gr.nbg.mobilebanking", // National Bank of Greece
+            "com.eurobank.mobile",
+            "gr.alpha.mobile",
+            "com.winbank.mobile", // Piraeus
+            "com.viber.voip",
+            "com.google.android.gm", // Gmail
+            "com.android.mms", // SMS (generic)
+            "com.google.android.apps.messaging", // Google Messages
+            "com.samsung.android.messaging" // Samsung Messages
+        )
+        private val IGNORED_PACKAGES = setOf(
+            "android",
+            "com.android.systemui",
+            "com.whatsapp",
+            "com.facebook.orca",
+            "com.instagram.android"
+        )
+    }
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+    }
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Expense Tracking",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Monitors transactions in background"
+                setShowBadge(false)
+            }
+            getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(channel)
+        }
+    }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForegroundWithNotification()
+        if (intent?.action == ACTION_REFRESH_NOTIFICATIONS) {
+            refreshActiveNotifications()
+        }
+        return super.onStartCommand(intent, flags, startId)
+    }
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Log.d(TAG, "NotificationListener connected! Starting foreground service.")
+        startForegroundWithNotification()
+    }
+    private fun startForegroundWithNotification() {
+        try {
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Expense Tracker Active")
+                .setContentText("Monitoring your transactions")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .setSilent(true)
+                .build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    startForeground(FOREGROUND_ID, notification, 
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start foreground with type DATA_SYNC, fallback to generic", e)
+                    startForeground(FOREGROUND_ID, notification)
+                }
+            } else {
+                startForeground(FOREGROUND_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "CRITICAL: Failed to start foreground service", e)
+        }
+    }
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.w(TAG, "NotificationListener disconnected - attempting rebind")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            requestRebind(ComponentName(this, NotificationCaptureService::class.java))
+        }
+    }
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        sbn ?: return
+        val packageName = sbn.packageName
+        if (!shouldCapture(packageName)) return
+        // Extract notification data ONCE for deduplication logic
+        val extras = sbn.notification.extras
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+        // Better deduplication using notification key + content
+        // sbn.key is unique to the notification slot
+        // contentHash ensures we catch updates to the same notification if content differs
+        val contentHash = (title.orEmpty() + text.orEmpty() + bigText.orEmpty()).hashCode()
+        val dedupeKey = "${sbn.key}:$contentHash"
+        val now = System.currentTimeMillis()
+        val lastProcessed = processedNotifications[dedupeKey]
+        if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
+            // Already processed this exact content recently
+            return
+        }
+        // Update cache
+        processedNotifications[dedupeKey] = now
+        cleanupCacheIfNeeded()
+        serviceScope.launch {
+            processNotification(sbn, packageName, title, text, bigText, extras)
+        }
+    }
+    private fun cleanupCacheIfNeeded() {
+        processCount++
+        if (processCount >= CACHE_CLEANUP_THRESHOLD) {
+            processCount = 0
+            val now = System.currentTimeMillis()
+            processedNotifications.entries.removeIf { 
+                now - it.value > CACHE_MAX_AGE_MS 
+            }
+        }
+    }
+    private suspend fun processNotification(
+        sbn: StatusBarNotification,
+        packageName: String,
+        title: String?,
+        text: String?,
+        bigText: String?,
+        extras: android.os.Bundle
+    ) {
+        if (repository.isPackageBlocked(packageName)) {
+            Log.d(TAG, "Ignoring blocked package: $packageName")
+            return
+        }
+        // Extract additional useful data for banking apps (sometimes hidden here)
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
+        val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString()
+        val summaryText = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString()
+        // Combine text for robust parsing - some apps put the real info in odd places
+        val effectiveBigText = bigText ?: infoText ?: summaryText
+        val extrasJson = try {
+            buildExtrasJson(extras)
+        } catch (e: Exception) {
+            "{\"error\": \"${e.message}\"}"
+        }
+        val appName = try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
+        } catch (e: PackageManager.NameNotFoundException) {
+            null
+        }
+        val rawNotification = RawNotification(
+            packageName = packageName,
+            appName = appName,
+            title = title,
+            text = text,
+            bigText = effectiveBigText,
+            subText = subText,
+            extrasJson = extrasJson,
+            timestamp = sbn.postTime,
+            capturedAt = System.currentTimeMillis()
+        )
+        try {
+            repository.processAndSave(rawNotification)
+            Log.d(TAG, "Processed: $packageName | Title: $title")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to process notification", e)
+        }
+    }
+    private fun refreshActiveNotifications() {
+        Log.d(TAG, "Manual refresh triggered")
+        try {
+            val activeNotifications = activeNotifications
+            activeNotifications.forEach { sbn ->
+                onNotificationPosted(sbn)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error refreshing active notifications", e)
+        }
+    }
+    private fun shouldCapture(packageName: String): Boolean {
+        return MONITORED_PACKAGES.contains(packageName)
+    }
+    private fun buildExtrasJson(extras: android.os.Bundle): String {
+        return try {
+            val json = org.json.JSONObject()
+            val sensitiveKeys = setOf(
+                "android.largeIcon", "android.picture", "android.icon",
+                "android.wearable.EXTENSIONS", "android.people.list",
+                "account_number", "card_number", "card_last_four", "balance"
+            )
+            for (key in extras.keySet()) {
+                if (sensitiveKeys.any { key.equals(it, ignoreCase = true) }) continue
+                val value = extras.get(key)
+                if (value != null) {
+                    val valueStr = value.toString()
+                    // Basic sanity: skip extremely large strings that are likely bitmaps
+                    if (valueStr.length < 2000) {
+                        json.put(key, valueStr)
+                    }
+                }
+            }
+            json.toString()
+        } catch (e: Exception) {
+            "{}"
+        }
+    }
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "Service destroyed")
+        serviceJob.cancel() // Stop all active coroutines
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
         }
     }
 }
@@ -9047,7 +12499,8 @@ import javax.inject.Inject
 @HiltViewModel
 class DebugViewModel @Inject constructor(
     private val repository: NotificationRepository,
-    private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository
+    private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
+    private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository
 ) : ViewModel() {
     val notifications: StateFlow<List<RawNotification>> = repository
         .getRecentNotifications(200)
@@ -9131,6 +12584,24 @@ class DebugViewModel @Inject constructor(
     fun simulateMassData(count: Int) {
         viewModelScope.launch {
             _isSimulating.value = true
+            // 1. Ensure categories exist
+            categoryRepository.ensureDefaultCategories()
+            // 2. Pre-seed mappings so categorization works
+            val cats = categoryRepository.allCategories.first()
+            val catMap = cats.associate { it.name to it.id }
+            seeder.categories.forEach { (catName, merchants) ->
+                val catId = catMap[catName]
+                if (catId != null) {
+                    merchants.forEach { merchant ->
+                        try {
+                            categoryRepository.learnMerchantCategory(merchant, catId)
+                        } catch (e: Exception) {
+                            // Ignore duplicates
+                        }
+                    }
+                }
+            }
+            // 3. Generate data
             val simulated = seeder.generate(count)
             repository.processAndSaveAll(simulated)
             _isSimulating.value = false
@@ -9919,6 +13390,7 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
 import com.yourname.expensetracker.data.repository.FinancialWeather
+import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
@@ -9996,29 +13468,36 @@ class HomeViewModel @Inject constructor(
 ) : ViewModel() {
     private val isEditMode = MutableStateFlow(false)
     // distinct intermediate flow for data to avoid 5-arg limit
+    init {
+        // Recover from destructive migration items if needed
+        viewModelScope.launch {
+            categoryRepository.ensureDefaultCategories()
+        }
+    }
     private val dataFlow = combine(
         repository.getAllExpenses().catch { emit(emptyList()) },
         categoryRepository.allCategories.catch { emit(emptyList()) },
         budgetRepository.getBudgetStatuses().catch { emit(emptyList()) },
         repository.getPendingReviewCount().catch { emit(0) },
-        financialWeatherRepository.getFinancialWeather().catch { /* Repository handles defaults */ }
+        financialWeatherRepository.getFinancialWeather().catch { 
+            // Return a default "Unknown" state if the weather engine fails to prevent stalling the dashboard
+            emit(FinancialWeather(
+                state = WeatherState.UNKNOWN,
+                headline = "Weather Unavailable",
+                summary = "We couldn't calculate your financial outlook right now.",
+                icon = "❓",
+                riskLevel = 0,
+                totalCommitted = 0.0,
+                totalLikely = 0.0,
+                predictedDiscretionary = 0.0,
+                discretionaryBudget = 0.0
+            ))
+        }
     ) { expenses, categories, budgetStatuses, pendingCount, weather ->
         FiveData(expenses, categories, budgetStatuses, pendingCount, weather)
     }
-    val dashboard: StateFlow<DashboardState> = combine(
-        dataFlow,
-        isEditMode,
-        dashboardRepository.configFlow
-    ) { data, editMode, configList ->
-        // Check service status (simplified for demo, usually via repository)
-        val isServiceRunning = try {
-            val packageName = "com.yourname.expensetracker"
-            val flat = android.provider.Settings.Secure.getString(
-                null, // This might fail without context, I should have passed it or used a repo
-                "enabled_notification_listeners"
-            )
-            flat != null && flat.contains(packageName)
-        } catch (e: Exception) { true }
+    // Optimized: Process heavy data separately and cache the result
+    private val processedDataFlow = dataFlow.map { data ->
         val (expenses, categories, budgetStatuses, pendingCount, weather) = data
         val now = System.currentTimeMillis()
         val cal = Calendar.getInstance()
@@ -10041,6 +13520,8 @@ class HomeViewModel @Inject constructor(
         val monthSpent = purchases.filter { it.date >= monthStart }.sumOf { it.amount }
         val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
         val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
+        // Transaction stats
+        val txCount = purchases.size
         // Days remaining in month
         val daysInMonth = Calendar.getInstance().getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
@@ -10070,8 +13551,9 @@ class HomeViewModel @Inject constructor(
         val baseline = overallBudget?.budget?.amount ?: if (previousMonthTotal > 0) previousMonthTotal else null
         val projectedTotal = if (dayOfMonth > 0)
             monthSpent * daysInMonth.toDouble() / dayOfMonth else monthSpent
+        // Validated Pace Logic: Handle dayOfMonth=1 or 0 gracefully
         val pacePercentage = if (baseline != null && baseline > 0) {
-            val expected = baseline * dayOfMonth / daysInMonth
+            val expected = baseline * dayOfMonth.coerceAtLeast(1) / daysInMonth
             val calculated = (monthSpent / expected * 100).toFloat()
             if (calculated.isFinite()) calculated else 0f
         } else 0f
@@ -10090,37 +13572,33 @@ class HomeViewModel @Inject constructor(
                 else -> PaceStatus.ON_PACE
             }
         )
-        // Cumulative Spend Trend Data
-        val currentMonthDaily = run {
-            val amountByDay = purchases
-                .filter { it.date >= monthStart }
-                .groupBy { 
-                    val cal = Calendar.getInstance().apply { timeInMillis = it.date }
-                    cal.get(Calendar.DAY_OF_MONTH)
-                }
-                .mapValues { it.value.sumOf { exp -> exp.amount } }
-            var runningTotal = 0.0
-            (1..dayOfMonth).map { day ->
-                runningTotal += amountByDay[day] ?: 0.0
-                runningTotal.toFloat()
+        // Cumulative Spend Trend Data - Optimized single pass
+        val calInstance = Calendar.getInstance()
+        val previousMonthDays = calInstance.apply { 
+            timeInMillis = previousMonthStart 
+        }.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val currentAmountByDay = DoubleArray(dayOfMonth + 1)
+        val previousAmountByDay = DoubleArray(previousMonthDays + 1)
+        for (expense in purchases) {
+            if (expense.date >= monthStart) {
+                calInstance.timeInMillis = expense.date
+                val day = calInstance.get(Calendar.DAY_OF_MONTH)
+                if (day <= dayOfMonth) currentAmountByDay[day] += expense.amount
+            } else if (expense.date >= previousMonthStart && expense.date < monthStart) {
+                calInstance.timeInMillis = expense.date
+                val day = calInstance.get(Calendar.DAY_OF_MONTH)
+                if (day <= previousMonthDays) previousAmountByDay[day] += expense.amount
             }
         }
-        val previousMonthDays = Calendar.getInstance().apply {
-            timeInMillis = previousMonthStart
-        }.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val previousMonthDaily = run {
-            val amountByDay = purchases
-                .filter { it.date >= previousMonthStart && it.date < monthStart }
-                .groupBy { 
-                    val cal = Calendar.getInstance().apply { timeInMillis = it.date }
-                    cal.get(Calendar.DAY_OF_MONTH)
-                }
-                .mapValues { it.value.sumOf { exp -> exp.amount } }
-            var runningTotal = 0.0
-            (1..previousMonthDays).map { day ->
-                runningTotal += amountByDay[day] ?: 0.0
-                runningTotal.toFloat()
-            }
+        var runningTotalCur = 0.0
+        val currentMonthDaily = (1..dayOfMonth).map { day ->
+            runningTotalCur += currentAmountByDay[day]
+            runningTotalCur.toFloat()
+        }
+        var runningTotalPrev = 0.0
+        val previousMonthDaily = (1..previousMonthDays).map { day ->
+            runningTotalPrev += previousAmountByDay[day]
+            runningTotalPrev.toFloat()
         }
         val trend = DashboardWidget.SpendingTrend(
             currentMonthData = currentMonthDaily,
@@ -10175,22 +13653,33 @@ class HomeViewModel @Inject constructor(
         if (purchases.isNotEmpty()) {
             widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
         }
+        CompiledDashboardData(
+            allWidgets = widgets,
+            totalSpent = totalSpent,
+            txCount = txCount
+        )
+    }
+    .flowOn(Dispatchers.Default) // Compuation on BG thread
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompiledDashboardData(emptyList(), 0.0, 0)) // Cache results
+    val dashboard: StateFlow<DashboardState> = combine(
+        processedDataFlow,
+        isEditMode,
+        dashboardRepository.configFlow
+    ) { compiledData, editMode, configList ->
         // === Apply Custom Layout ===
         val sortedWidgets = configList
             .filter { it.isVisible || editMode } // Show all in edit mode, otherwise filter
             .mapNotNull { conf ->
-                widgets.find { w -> getWidgetId(w) == conf.id }
+                compiledData.allWidgets.find { w -> getWidgetId(w) == conf.id }
             }
         DashboardState(
             widgets = sortedWidgets,
-            totalSpent = totalSpent,
-            transactionCount = purchases.size,
+            totalSpent = compiledData.totalSpent,
+            transactionCount = compiledData.txCount,
             isEditMode = editMode,
             isLoading = false
         )
     }
-        .debounce(300)
-        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState())
     fun toggleEditMode() {
         isEditMode.value = !isEditMode.value
@@ -10207,14 +13696,14 @@ class HomeViewModel @Inject constructor(
         dashboardRepository.saveDashboardConfig(currentConfig.sortedBy { it.order })
         // Trigger recomposition by refreshing dashboard flow (implicitly via combining with a triggered state if needed)
         // Here we can just nudge the isEditMode or use a dedicated Refresh trigger
-        isEditMode.value = isEditMode.value 
+        // isEditMode.value = isEditMode.value 
     }
     fun toggleWidgetVisibility(widgetId: String) {
         val currentConfig = dashboardRepository.getDashboardConfig().map {
             if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
         }
         dashboardRepository.saveDashboardConfig(currentConfig)
-        isEditMode.value = isEditMode.value
+        // isEditMode.value = isEditMode.value
     }
     private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
         is DashboardWidget.SafeToSpend -> "safe_to_spend"
@@ -10282,6 +13771,11 @@ data class FiveData(
     val budgetStatuses: List<BudgetStatus>,
     val pendingCount: Int,
     val weather: FinancialWeather
+)
+data class CompiledDashboardData(
+    val allWidgets: List<DashboardWidget>,
+    val totalSpent: Double,
+    val txCount: Int
 )
 
 ```
@@ -12225,7 +15719,6 @@ fun TransactionsScreen(
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val categories by viewModel.categories.collectAsState()
-    var showAddExpense by remember { mutableStateOf(false) }
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
     var expenseToRecurring by remember { mutableStateOf<Expense?>(null) }
@@ -12234,15 +15727,6 @@ fun TransactionsScreen(
             TopAppBar(
                 title = { Text("Transactions") }
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddExpense = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ) {
-                Icon(Icons.Default.Edit, contentDescription = "Add Expense")
-            }
         }
     ) { padding ->
         if (transactions.isEmpty()) {
@@ -12286,12 +15770,6 @@ fun TransactionsScreen(
                     )
                 }
             }
-        }
-        // Add Expense Sheet
-        if (showAddExpense) {
-            com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
-                onDismiss = { showAddExpense = false }
-            )
         }
         // ... Existing Dialogs ...
         if (expenseToDelete != null) {

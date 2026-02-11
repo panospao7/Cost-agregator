@@ -9,7 +9,8 @@ import kotlinx.coroutines.sync.withLock
 
 @Singleton
 class CategorizationEngine @Inject constructor(
-    private val merchantCategoryDao: MerchantCategoryDao
+    private val merchantCategoryDao: MerchantCategoryDao,
+    private val merchantNormalizer: com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
@@ -17,8 +18,7 @@ class CategorizationEngine @Inject constructor(
     private var lastCacheTime = 0L
     private val CACHE_EXPIRY_MS = 300_000 // 5 minutes
     
-    private val cleanupRegex1 by lazy { Regex("[^A-ZΑ-Ω0-9 &]") }
-    private val cleanupRegex2 by lazy { Regex("\\s+") }
+    // Regex moved to MerchantNormalizer
 
     suspend fun categorize(merchant: String): Long? {
         val normalized = normalize(merchant)
@@ -41,7 +41,10 @@ class CategorizationEngine @Inject constructor(
         }
 
         // 3. Word-level match
-        val words = normalized.split(" ").filter { it.length >= 4 }
+        val words = normalized.split(" ")
+            .filter { it.length >= 2 }
+            .filter { it !in listOf("the", "and", "for", "inc", "ltd", "com") }
+            
         if (words.isNotEmpty()) {
             for (word in words) {
                 val match = mappingsMap[word]
@@ -53,10 +56,7 @@ class CategorizationEngine @Inject constructor(
     }
 
     fun normalize(merchant: String): String {
-        return merchant.uppercase()
-            .replace(cleanupRegex1, "")
-            .trim()
-            .replace(cleanupRegex2, " ")
+        return merchantNormalizer.normalize(merchant)
     }
 
     private suspend fun getCache(): Pair<List<MerchantCategory>, Map<String, MerchantCategory>> {

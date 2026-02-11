@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
 import com.yourname.expensetracker.data.repository.FinancialWeather
+import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
@@ -107,31 +108,38 @@ class HomeViewModel @Inject constructor(
     private val isEditMode = MutableStateFlow(false)
 
     // distinct intermediate flow for data to avoid 5-arg limit
+    init {
+        // Recover from destructive migration items if needed
+        viewModelScope.launch {
+            categoryRepository.ensureDefaultCategories()
+        }
+    }
+
     private val dataFlow = combine(
         repository.getAllExpenses().catch { emit(emptyList()) },
         categoryRepository.allCategories.catch { emit(emptyList()) },
         budgetRepository.getBudgetStatuses().catch { emit(emptyList()) },
         repository.getPendingReviewCount().catch { emit(0) },
-        financialWeatherRepository.getFinancialWeather().catch { /* Repository handles defaults */ }
+        financialWeatherRepository.getFinancialWeather().catch { 
+            // Return a default "Unknown" state if the weather engine fails to prevent stalling the dashboard
+            emit(FinancialWeather(
+                state = WeatherState.UNKNOWN,
+                headline = "Weather Unavailable",
+                summary = "We couldn't calculate your financial outlook right now.",
+                icon = "❓",
+                riskLevel = 0,
+                totalCommitted = 0.0,
+                totalLikely = 0.0,
+                predictedDiscretionary = 0.0,
+                discretionaryBudget = 0.0
+            ))
+        }
     ) { expenses, categories, budgetStatuses, pendingCount, weather ->
         FiveData(expenses, categories, budgetStatuses, pendingCount, weather)
     }
 
-    val dashboard: StateFlow<DashboardState> = combine(
-        dataFlow,
-        isEditMode,
-        dashboardRepository.configFlow
-    ) { data, editMode, configList ->
-        // Check service status (simplified for demo, usually via repository)
-        val isServiceRunning = try {
-            val packageName = "com.yourname.expensetracker"
-            val flat = android.provider.Settings.Secure.getString(
-                null, // This might fail without context, I should have passed it or used a repo
-                "enabled_notification_listeners"
-            )
-            flat != null && flat.contains(packageName)
-        } catch (e: Exception) { true }
-
+    // Optimized: Process heavy data separately and cache the result
+    private val processedDataFlow = dataFlow.map { data ->
         val (expenses, categories, budgetStatuses, pendingCount, weather) = data
 
         val now = System.currentTimeMillis()
@@ -144,11 +152,9 @@ class HomeViewModel @Inject constructor(
         cal.set(Calendar.MILLISECOND, 0)
         val todayStart = cal.timeInMillis
 
-        val tempCal = cal.clone() as Calendar
-        tempCal.firstDayOfWeek = Calendar.MONDAY
-        tempCal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
-        if (tempCal.timeInMillis > todayStart) tempCal.add(Calendar.DAY_OF_YEAR, -7)
-        val weekStart = tempCal.timeInMillis
+        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
+        val daysToMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
+        val weekStart = cal.timeInMillis - (daysToMonday * 86400000L)
 
         cal.set(Calendar.DAY_OF_MONTH, 1)
         val monthStart = cal.timeInMillis
@@ -159,6 +165,9 @@ class HomeViewModel @Inject constructor(
         val monthSpent = purchases.filter { it.date >= monthStart }.sumOf { it.amount }
         val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
         val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
+        
+        // Transaction stats
+        val txCount = purchases.size
 
         // Days remaining in month
         val daysInMonth = Calendar.getInstance().getActualMaximum(Calendar.DAY_OF_MONTH)
@@ -195,8 +204,9 @@ class HomeViewModel @Inject constructor(
         val projectedTotal = if (dayOfMonth > 0)
             monthSpent * daysInMonth.toDouble() / dayOfMonth else monthSpent
             
+        // Validated Pace Logic: Handle dayOfMonth=1 or 0 gracefully
         val pacePercentage = if (baseline != null && baseline > 0) {
-            val expected = baseline * dayOfMonth / daysInMonth
+            val expected = baseline * dayOfMonth.coerceAtLeast(1) / daysInMonth
             val calculated = (monthSpent / expected * 100).toFloat()
             if (calculated.isFinite()) calculated else 0f
         } else 0f
@@ -316,24 +326,37 @@ class HomeViewModel @Inject constructor(
         if (purchases.isNotEmpty()) {
             widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
         }
+        
+        CompiledDashboardData(
+            allWidgets = widgets,
+            totalSpent = totalSpent,
+            txCount = txCount
+        )
+    }
+    .flowOn(Dispatchers.Default) // Compuation on BG thread
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompiledDashboardData(emptyList(), 0.0, 0)) // Cache results
+
+    val dashboard: StateFlow<DashboardState> = combine(
+        processedDataFlow,
+        isEditMode,
+        dashboardRepository.configFlow
+    ) { compiledData, editMode, configList ->
 
         // === Apply Custom Layout ===
         val sortedWidgets = configList
             .filter { it.isVisible || editMode } // Show all in edit mode, otherwise filter
             .mapNotNull { conf ->
-                widgets.find { w -> getWidgetId(w) == conf.id }
+                compiledData.allWidgets.find { w -> getWidgetId(w) == conf.id }
             }
 
         DashboardState(
             widgets = sortedWidgets,
-            totalSpent = totalSpent,
-            transactionCount = purchases.size,
+            totalSpent = compiledData.totalSpent,
+            transactionCount = compiledData.txCount,
             isEditMode = editMode,
             isLoading = false
         )
     }
-        .debounce(300)
-        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState())
 
     fun toggleEditMode() {
@@ -355,7 +378,7 @@ class HomeViewModel @Inject constructor(
         dashboardRepository.saveDashboardConfig(currentConfig.sortedBy { it.order })
         // Trigger recomposition by refreshing dashboard flow (implicitly via combining with a triggered state if needed)
         // Here we can just nudge the isEditMode or use a dedicated Refresh trigger
-        isEditMode.value = isEditMode.value 
+        // isEditMode.value = isEditMode.value 
     }
 
     fun toggleWidgetVisibility(widgetId: String) {
@@ -363,7 +386,7 @@ class HomeViewModel @Inject constructor(
             if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
         }
         dashboardRepository.saveDashboardConfig(currentConfig)
-        isEditMode.value = isEditMode.value
+        // isEditMode.value = isEditMode.value
     }
 
     private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
@@ -434,4 +457,10 @@ data class FiveData(
     val budgetStatuses: List<BudgetStatus>,
     val pendingCount: Int,
     val weather: FinancialWeather
+)
+
+data class CompiledDashboardData(
+    val allWidgets: List<DashboardWidget>,
+    val totalSpent: Double,
+    val txCount: Int
 )

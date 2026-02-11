@@ -59,8 +59,8 @@ class RecurringExpenseEngine @Inject constructor(
             
             val (frequency, confidence, varianceDays) = determineFrequency(intervals)
 
-            // Thresholds: Must be a known frequency and have > 60% confidence (LOG-013 Relaxed from 65%)
-            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.60) {
+            // Thresholds: Must be a known frequency and have > 55% confidence (LOG-013 Relaxed further to catch varying bills)
+            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.55) {
                 
                 // Predict next date
                 // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)
@@ -123,10 +123,7 @@ class RecurringExpenseEngine @Inject constructor(
     }
 
     private fun calculateStdDev(values: List<Double>): Double {
-        if (values.size < 2) return 0.0
-        val mean = values.average()
-        val sumSq = values.sumOf { (it - mean) * (it - mean) }
-        return sqrt(sumSq / (values.size - 1))
+        return com.yourname.expensetracker.domain.util.StatisticsUtils.calculateStdDev(values)
     }
 
     private fun determineFrequency(intervalsMs: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
@@ -144,12 +141,12 @@ class RecurringExpenseEngine @Inject constructor(
         
         // Map mode to known frequencies with tolerance
         val frequency = when (mode) {
-             in 6..8 -> RecurrenceFrequency.WEEKLY
-             in 13..15 -> RecurrenceFrequency.BIWEEKLY
-             in 28..31 -> RecurrenceFrequency.MONTHLY // Covers 28, 30, 31 day months
-             in 85..95 -> RecurrenceFrequency.QUARTERLY
-             in 175..190 -> RecurrenceFrequency.SEMI_ANNUALLY
-             in 360..370 -> RecurrenceFrequency.ANNUALLY
+             in 5..9 -> RecurrenceFrequency.WEEKLY
+             in 11..17 -> RecurrenceFrequency.BIWEEKLY
+             in 25..35 -> RecurrenceFrequency.MONTHLY // Covers shifts due to weekends/month length
+             in 80..100 -> RecurrenceFrequency.QUARTERLY
+             in 170..190 -> RecurrenceFrequency.SEMI_ANNUALLY
+             in 350..380 -> RecurrenceFrequency.ANNUALLY
              else -> RecurrenceFrequency.IRREGULAR
         }
 
@@ -158,8 +155,8 @@ class RecurringExpenseEngine @Inject constructor(
         }
 
         // Calculate Confidence
-        // Score based on how many intervals are "close" to the mode (within ±10% or ±1 day)
-        val tolerance = (mode * 0.1).coerceAtLeast(1.0)
+        // Score based on how many intervals are "close" to the mode (within ±20% or ±1 day)
+        val tolerance = (mode * 0.2).coerceAtLeast(1.0)
         val matchingIntervals = intervalsDays.count { abs(it - mode) <= tolerance }
         val consistencyScore = matchingIntervals.toDouble() / intervalsDays.size
 

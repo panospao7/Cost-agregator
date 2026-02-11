@@ -63,7 +63,18 @@ class SynthesisEngine @Inject constructor() {
             it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date <= endOfMonth
         }.sumOf { it.amount }
         
-        val monthlyRecurringTotal = recurringPatterns.sumOf { it.averageAmount }
+        val monthlyRecurringTotal = recurringPatterns.sumOf { pattern ->
+            when (pattern.frequency) {
+                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (30.0 / 7.0)
+                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (30.0 / 14.0)
+                RecurrenceFrequency.MONTHLY -> pattern.averageAmount
+                RecurrenceFrequency.QUARTERLY -> pattern.averageAmount / 3.0
+                RecurrenceFrequency.SEMI_ANNUALLY -> pattern.averageAmount / 6.0
+                RecurrenceFrequency.ANNUALLY -> pattern.averageAmount / 12.0
+                else -> 0.0
+            }
+        }
+
         val typicalDailyDiscretionary = spendingPace.averageMonthlyTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth } 
             ?: (spendingPace.previousMonthTotal?.let { (it - monthlyRecurringTotal).coerceAtLeast(0.0) / daysInMonth })
             ?: 0.0
@@ -106,11 +117,17 @@ class SynthesisEngine @Inject constructor() {
         val spentSoFar = spendingPace.currentMonthSpent
         
         // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
-        // LOG-004 Fix: We only subtract BILLS and PLANNED expenses.
-        // We do NOT subtract the "future discretionary" because that IS the "available pool" we are tracking.
+        // If budgetLimit is 0, we use a fallback or express "Unknown" state
         val projectedObligations = committedUpcomingBills + committedPlanned + likelyUpcomingBills + likelyPlanned
         
-        val discretionaryBudget = (budgetLimit - (spentSoFar + projectedObligations + goalReserves)).coerceAtLeast(0.0)
+        val discretionaryBudget = if (budgetLimit > 0) {
+            (budgetLimit - (spentSoFar + projectedObligations + goalReserves)).coerceAtLeast(0.0)
+        } else {
+            // If no budget is set, the discretionary "pool" isn't 0 (which looks like "No money left"),
+            // it's effectively unlimited/unknown vs a goal. 
+            // We'll return 0.0 for now but the RiskLevel will signal NO_BUDGET
+            0.0
+        }
 
         // 6. Determine Risk Level
         val riskLevel = determineRiskLevel(
@@ -154,9 +171,18 @@ class SynthesisEngine @Inject constructor() {
         val bufferRatio = if (limit > 0) discretionary / limit else 0.0
 
         return when {
-            criticalBudgets > 0 || (overPace && bufferRatio < 0.05) -> RiskLevel.CRITICAL
-            overPace || criticalBudgets > 0 || bufferRatio < 0.1 -> RiskLevel.HIGH
+            // Priority 1: Critical Budget Issues or Severe Overspending with no buffer
+            criticalBudgets > 0 -> RiskLevel.CRITICAL
+            overPace && bufferRatio < 0.05 -> RiskLevel.CRITICAL
+            
+            // Priority 2: High Risk (Overspending or Low Buffer)
+            overPace -> RiskLevel.HIGH // If overPace but buffer > 0.05
+            bufferRatio < 0.1 -> RiskLevel.HIGH
+            
+            // Priority 3: Medium Risk
             bufferRatio < 0.2 -> RiskLevel.MEDIUM
+            
+            // Priority 4: Low Risk
             else -> RiskLevel.LOW
         }
     }

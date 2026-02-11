@@ -78,7 +78,6 @@ fun TransactionsScreen(
     val transactions by viewModel.transactions.collectAsState()
     val categories by viewModel.categories.collectAsState()
 
-    var showAddExpense by remember { mutableStateOf(false) }
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
     var expenseToRecurring by remember { mutableStateOf<Expense?>(null) }
@@ -88,15 +87,6 @@ fun TransactionsScreen(
             TopAppBar(
                 title = { Text("Transactions") }
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddExpense = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ) {
-                Icon(Icons.Default.Edit, contentDescription = "Add Expense")
-            }
         }
     ) { padding ->
         if (transactions.isEmpty()) {
@@ -140,13 +130,6 @@ fun TransactionsScreen(
                     )
                 }
             }
-        }
-
-        // Add Expense Sheet
-        if (showAddExpense) {
-            com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
-                onDismiss = { showAddExpense = false }
-            )
         }
 
         // ... Existing Dialogs ...

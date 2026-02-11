@@ -12,23 +12,22 @@ def extract_codebase(src_path, output_file):
         out.write("## Table of Contents\n")
         file_list = []
         for root, dirs, files in os.walk(src_path):
-            # Exclude specific directories for UI refactoring
-            excluded_dirs = {
-                "test", "androidTest", "di", "service", "receiver", 
-                "dao", "converter", "parser"
-            }
+            # Exclude tests and build artifacts
+            excluded_dirs = {"test", "androidTest", "build", ".gradle", ".idea"}
             if any(part in root.split(os.sep) for part in excluded_dirs):
                 continue
                 
             for file in files:
-                # Exclude specific logic-heavy files
-                excluded_files = {"MerchantCategoryProvider", "ReceiptParser"}
-                if any(ex in file for ex in excluded_files):
-                    continue
-                
                 # Exclude binary and irrelevant assets
                 ext = os.path.splitext(file)[1].lower()
-                binary_exts = {".png", ".jpg", ".jpeg", ".webp", ".ico", ".pdf", ".bin"}
+                binary_exts = {
+                    ".png", ".jpg", ".jpeg", ".webp", ".ico", ".pdf", ".bin",
+                    ".ttf", ".otf", ".woff", ".woff2",  # Fonts
+                    ".mp4", ".mov", ".avi",            # Video
+                    ".mp3", ".wav",                   # Audio
+                    ".zip", ".tar", ".gz", ".7z",      # Archives
+                    ".jar", ".aar", ".so", ".exe"      # Binaries
+                }
                 if ext in binary_exts:
                     continue
                     

@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.model.PlannedExpensePriority as Domain
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel as DomainGoalProtection
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -177,6 +178,19 @@ class FinancialWeatherRepository @Inject constructor(
             totalRecurringCount = recurringPatterns.size,
             details = narrative.details
         )
+    }.catch { e ->
+        android.util.Log.e("FinancialWeatherRepo", "Error generating weather", e)
+        emit(FinancialWeather(
+            state = WeatherState.UNKNOWN,
+            headline = "Weather Unavailable",
+            summary = "We couldn't calculate your financial outlook right now.",
+            icon = "❓",
+            riskLevel = 0,
+            totalCommitted = 0.0,
+            totalLikely = 0.0,
+            predictedDiscretionary = 0.0,
+            discretionaryBudget = 0.0
+        ))
     }
 
     private fun buildUpcomingItems(

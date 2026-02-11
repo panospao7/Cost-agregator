@@ -55,19 +55,19 @@ class BudgetMonitor @Inject constructor(
 
         when {
             percent >= 1.0f -> {
-                if (shouldNotify(budget.lastExceededNotifiedAt, now)) {
+                if (shouldNotify(budget.lastExceededNotifiedAt, now, window.first)) {
                     sendNotification(budget, spent, "Budget Exceeded!")
                     budgetDao.updateExceededNotification(budget.id, now)
                 }
             }
             percent >= budget.notifyAtCritical -> {
-                if (shouldNotify(budget.lastCriticalNotifiedAt, now)) {
+                if (shouldNotify(budget.lastCriticalNotifiedAt, now, window.first)) {
                     sendNotification(budget, spent, "Critical Budget Warning")
                     budgetDao.updateCriticalNotification(budget.id, now)
                 }
             }
             percent >= budget.notifyAtWarning -> {
-                if (shouldNotify(budget.lastWarningNotifiedAt, now)) {
+                if (shouldNotify(budget.lastWarningNotifiedAt, now, window.first)) {
                     sendNotification(budget, spent, "Budget Warning")
                     budgetDao.updateWarningNotification(budget.id, now)
                 }
@@ -75,8 +75,12 @@ class BudgetMonitor @Inject constructor(
         }
     }
 
-    private fun shouldNotify(lastNotified: Long?, now: Long): Boolean {
+    private fun shouldNotify(lastNotified: Long?, now: Long, periodStart: Long): Boolean {
         if (lastNotified == null) return true
+        
+        // Reset cooldown if we entered a new period (BUG-7 Fix)
+        if (lastNotified < periodStart) return true
+        
         // Cooldown: only notify once every 12 hours for the same budget level
         val cooldown = 12 * 60 * 60 * 1000L
         return now - lastNotified > cooldown

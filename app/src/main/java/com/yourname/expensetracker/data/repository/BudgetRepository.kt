@@ -26,7 +26,9 @@ class BudgetRepository @Inject constructor(
 
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
         // We fetch the last 13 months to cover yearly budgets + rollover
-        val thirteenMonthsAgo = System.currentTimeMillis() - (13L * 30 * 24 * 60 * 60 * 1000)
+        val thirteenMonthsAgo = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.MONTH, -13)
+        }.timeInMillis
         
         return combine(
             budgetDao.getActiveBudgetsFlow(),
@@ -51,13 +53,24 @@ class BudgetRepository @Inject constructor(
                 val spent = getSpentInRange(window.first, window.second)
                 var limit = budget.amount
                 
-                // LOG-002: Implement Rollover
+                // LOG-002: Implement Compounding Rollover - BUG-2 FIX
                 if (budget.rollover) {
-                    val prevWindow = budgetMonitor.getPreviousPeriodWindow(budget.period, budget.startDate)
-                    val prevSpent = getSpentInRange(prevWindow.first, prevWindow.second)
+                    // we compute this by iterating forward from the budget's first period
+                    val budgetFirstStart = budget.startDate
+                    var movingWindow = budgetMonitor.calculatePeriodWindow(budget.period, budgetFirstStart)
+                    var effectiveLimit = budget.amount
                     
-                    val rolloverAmount = (budget.amount - prevSpent).coerceAtLeast(0.0)
-                    limit += rolloverAmount
+                    // Iterate forward until we reach the previous period of the current window
+                    while (movingWindow.second <= window.first) {
+                        val spentInPeriod = getSpentInRange(movingWindow.first, movingWindow.second)
+                        val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
+                        effectiveLimit = budget.amount + surplus
+                        
+                        // Move to next period
+                        val nextStart = movingWindow.second
+                        movingWindow = budgetMonitor.calculatePeriodWindow(budget.period, nextStart)
+                    }
+                    limit = effectiveLimit
                 }
 
                 val percent = if (limit > 0) (spent / limit).toFloat() else 0f
@@ -97,7 +110,13 @@ class BudgetRepository @Inject constructor(
 
     suspend fun updateBudget(budget: Budget) {
         try {
-            budgetDao.update(budget)
+            // Reset notifications when budget is edited so user gets fresh alerts (BUG-7 Fix)
+            val resetBudget = budget.copy(
+                lastWarningNotifiedAt = null,
+                lastCriticalNotifiedAt = null,
+                lastExceededNotifiedAt = null
+            )
+            budgetDao.update(resetBudget)
             budgetMonitor.checkBudgets()
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to update budget ${budget.id}", e)

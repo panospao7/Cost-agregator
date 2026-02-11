@@ -214,5 +214,21 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
             }
         }
+
+        val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS source_stats (
+                        packageName TEXT PRIMARY KEY NOT NULL,
+                        totalNotifications INTEGER NOT NULL DEFAULT 0,
+                        acceptedAsExpense INTEGER NOT NULL DEFAULT 0,
+                        rejectedByUser INTEGER NOT NULL DEFAULT 0,
+                        autoRejected INTEGER NOT NULL DEFAULT 0,
+                        pendingReview INTEGER NOT NULL DEFAULT 0,
+                        lastSeen INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+            }
+        }
     }
 }

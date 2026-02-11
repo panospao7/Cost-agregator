@@ -375,7 +375,7 @@ class InsightsEngine @Inject constructor(
         // Pace percentage: how much of the baseline have we consumed
         val baseline = avgMonthly ?: if (previousCount > 0) previousTotal else null
         val pacePercentage = if (baseline != null && baseline > 0) {
-            val expectedAtThisPoint = baseline * dayOfMonth / daysInMonth
+            val expectedAtThisPoint = baseline * dayOfMonth.coerceAtLeast(1) / daysInMonth
             (currentSpent / expectedAtThisPoint * 100).toFloat()
         } else 0f
 
@@ -593,10 +593,7 @@ class InsightsEngine @Inject constructor(
     }
 
     private fun calculateStdDev(values: List<Double>): Double {
-        if (values.size < 2) return 0.0
-        val mean = values.average()
-        val variance = values.map { (it - mean) * (it - mean) }.average()
-        return sqrt(variance)
+        return com.yourname.expensetracker.domain.util.StatisticsUtils.calculateStdDev(values)
     }
 
     private fun countDistinctMonths(expenses: List<Expense>): Int {

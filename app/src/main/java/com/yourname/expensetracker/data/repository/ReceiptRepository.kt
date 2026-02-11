@@ -16,7 +16,7 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
-import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
+// import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -26,7 +26,7 @@ import javax.inject.Singleton
 class ReceiptRepository @Inject constructor(
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
-    private val merchantCategoryDao: MerchantCategoryDao,
+    private val merchantCategoryRepository: MerchantCategoryRepository, // <-- Replaces DAO
     private val pendingReviewDao: PendingReviewDao,
     private val ocrService: ReceiptOcrService,
     private val receiptParser: ReceiptParser,
@@ -187,16 +187,7 @@ class ReceiptRepository @Inject constructor(
 
             // 7. Learn merchant → category mapping
             if (finalCategoryId != null) {
-                val pattern = categorizationEngine.normalize(normalizedMerchant)
-                if (pattern.isNotEmpty()) {
-                    merchantCategoryDao.insert(
-                        MerchantCategory(
-                            merchantPattern = pattern,
-                            categoryId = finalCategoryId,
-                            confidence = 1.0f
-                        )
-                    )
-                }
+                merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
             }
         }
 

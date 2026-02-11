@@ -6,7 +6,7 @@ import kotlin.random.Random
 
 class NotificationSeeder @Inject constructor() {
 
-    private val categories = mapOf(
+    val categories = mapOf(
         "Groceries" to listOf("AB Vassilopoulos", "Sklavenitis", "Lidl", "Masoutis", "My Market"),
         "Transport" to listOf("Uber", "Beat", "OASA", "Shell", "EKO", "Aegean Airlines"),
         "Bills" to listOf("DEI", "EYDAP", "Vodafone", "Cosmote", "Wind"),

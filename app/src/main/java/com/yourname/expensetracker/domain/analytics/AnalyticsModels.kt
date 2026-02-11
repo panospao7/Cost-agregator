@@ -11,23 +11,18 @@ data class MonthPeriod(
     val startMs: Long,
     val endMs: Long
 ) {
+    companion object {
+        val MONTH_NAMES = arrayOf(
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+        )
+    }
+
     val label: String
-        get() {
-            val monthNames = arrayOf(
-                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-            )
-            return "${monthNames[month]} $year"
-        }
+        get() = "${MONTH_NAMES[month]} $year"
 
     val shortLabel: String
-        get() {
-            val monthNames = arrayOf(
-                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-            )
-            return monthNames[month]
-        }
+        get() = MONTH_NAMES[month]
 }
 
 data class CategoryInsight(

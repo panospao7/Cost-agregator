@@ -14,7 +14,8 @@ import javax.inject.Inject
 @HiltViewModel
 class DebugViewModel @Inject constructor(
     private val repository: NotificationRepository,
-    private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository
+    private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
+    private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository
 ) : ViewModel() {
     
     val notifications: StateFlow<List<RawNotification>> = repository
@@ -119,6 +120,28 @@ class DebugViewModel @Inject constructor(
     fun simulateMassData(count: Int) {
         viewModelScope.launch {
             _isSimulating.value = true
+            
+            // 1. Ensure categories exist
+            categoryRepository.ensureDefaultCategories()
+            
+            // 2. Pre-seed mappings so categorization works
+            val cats = categoryRepository.allCategories.first()
+            val catMap = cats.associate { it.name to it.id }
+            
+            seeder.categories.forEach { (catName, merchants) ->
+                val catId = catMap[catName]
+                if (catId != null) {
+                    merchants.forEach { merchant ->
+                        try {
+                            categoryRepository.learnMerchantCategory(merchant, catId)
+                        } catch (e: Exception) {
+                            // Ignore duplicates
+                        }
+                    }
+                }
+            }
+            
+            // 3. Generate data
             val simulated = seeder.generate(count)
             repository.processAndSaveAll(simulated)
             _isSimulating.value = false

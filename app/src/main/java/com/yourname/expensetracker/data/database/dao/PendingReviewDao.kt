@@ -34,6 +34,9 @@ interface PendingReviewDao {
     @Query("SELECT * FROM pending_reviews WHERE rawNotificationId = :rawId")
     suspend fun getByRawId(rawId: Long): PendingReview?
 
+    @Query("DELETE FROM pending_reviews WHERE rawNotificationId = :rawId")
+    suspend fun deleteByRawId(rawId: Long)
+
     @Query("UPDATE pending_reviews SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String)
 

@@ -10,7 +10,8 @@ data class ParsedTransaction(
     val currency: String,
     val merchant: String,
     val type: TransactionType,
-    val confidence: Float // 0.0 to 1.0
+    val confidence: Float, // 0.0 to 1.0
+    val date: Long? = null
 )
 
 /**

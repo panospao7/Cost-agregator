@@ -82,14 +82,16 @@ class ReceiptOcrService @Inject constructor(
     private suspend fun recognizeText(
         image: InputImage
     ): com.google.mlkit.vision.text.Text {
-        return suspendCancellableCoroutine { continuation ->
-            recognizer.process(image)
-                .addOnSuccessListener { text ->
-                    continuation.resume(text)
-                }
-                .addOnFailureListener { e ->
-                    continuation.resumeWithException(e)
-                }
+        return kotlinx.coroutines.withTimeout(15000) { // Fix 4.17: 15s timeout
+            suspendCancellableCoroutine { continuation ->
+                recognizer.process(image)
+                    .addOnSuccessListener { text ->
+                        continuation.resume(text)
+                    }
+                    .addOnFailureListener { e ->
+                        continuation.resumeWithException(e)
+                    }
+            }
         }
     }
 
