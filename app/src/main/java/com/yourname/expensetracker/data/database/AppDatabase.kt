@@ -107,49 +107,56 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // To change NOT NULL constraint in SQLite, we must recreate the table
-                database.execSQL("ALTER TABLE pending_reviews RENAME TO pending_reviews_old")
-                database.execSQL("""
-                    CREATE TABLE IF NOT EXISTS pending_reviews (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        rawNotificationId INTEGER,
-                        scannedReceiptId INTEGER,
-                        suggestedAmount REAL NOT NULL,
-                        suggestedCurrency TEXT NOT NULL,
-                        suggestedMerchant TEXT NOT NULL,
-                        suggestedType TEXT NOT NULL,
-                        suggestedCategoryId INTEGER,
-                        confidence REAL NOT NULL,
-                        packageName TEXT NOT NULL,
-                        notificationTitle TEXT,
-                        notificationText TEXT,
-                        createdAt INTEGER NOT NULL,
-                        status TEXT NOT NULL DEFAULT 'PENDING',
-                        FOREIGN KEY(rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
-                        FOREIGN KEY(scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
-                    )
-                """.trimIndent())
-                
-                database.execSQL("""
-                    INSERT INTO pending_reviews (
-                        id, rawNotificationId, suggestedAmount, suggestedCurrency, 
-                        suggestedMerchant, suggestedType, suggestedCategoryId, 
-                        confidence, packageName, notificationTitle, notificationText, 
-                        createdAt, status
-                    )
-                    SELECT 
-                        id, rawNotificationId, suggestedAmount, suggestedCurrency, 
-                        suggestedMerchant, suggestedType, suggestedCategoryId, 
-                        confidence, packageName, notificationTitle, notificationText, 
-                        createdAt, status
-                    FROM pending_reviews_old
-                """.trimIndent())
-                
-                database.execSQL("DROP TABLE pending_reviews_old")
-                
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+                database.beginTransaction()
+                try {
+                    database.execSQL("ALTER TABLE pending_reviews RENAME TO pending_reviews_old")
+                    database.execSQL("""
+                        CREATE TABLE IF NOT EXISTS pending_reviews (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            rawNotificationId INTEGER,
+                            scannedReceiptId INTEGER,
+                            suggestedAmount REAL NOT NULL,
+                            suggestedCurrency TEXT NOT NULL,
+                            suggestedMerchant TEXT NOT NULL,
+                            suggestedType TEXT NOT NULL,
+                            suggestedCategoryId INTEGER,
+                            confidence REAL NOT NULL,
+                            packageName TEXT NOT NULL,
+                            notificationTitle TEXT,
+                            notificationText TEXT,
+                            createdAt INTEGER NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'PENDING',
+                            FOREIGN KEY(rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                            FOREIGN KEY(scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("""
+                        INSERT INTO pending_reviews (
+                            id, rawNotificationId, suggestedAmount, suggestedCurrency, 
+                            suggestedMerchant, suggestedType, suggestedCategoryId, 
+                            confidence, packageName, notificationTitle, notificationText, 
+                            createdAt, status
+                        )
+                        SELECT 
+                            id, rawNotificationId, suggestedAmount, suggestedCurrency, 
+                            suggestedMerchant, suggestedType, suggestedCategoryId, 
+                            confidence, packageName, notificationTitle, notificationText, 
+                            createdAt, status
+                        FROM pending_reviews_old
+                    """.trimIndent())
+                    
+                    database.execSQL("DROP TABLE pending_reviews_old")
+                    
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+                    
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
             }
         }
 

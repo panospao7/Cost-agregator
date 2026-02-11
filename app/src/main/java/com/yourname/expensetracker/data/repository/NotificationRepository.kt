@@ -103,13 +103,14 @@ class NotificationRepository @Inject constructor(
         // 2. Auto-categorize if no category provided
         val finalCategoryId = categoryId ?: categorizationEngine.categorize(normalizedMerchant)
 
-        // 3. Dedup check with tighter window for manual entries (1 minute)
-        val isDuplicate = expenseDao.isDuplicate(
-            amount = amount,
-            merchant = normalizedMerchant,
-            date = date,
-            windowMs = 60000
-        )
+                // 3. Dedup check with tighter window for manual entries (1 minute)
+                // For manual entries, we trust the user but want to avoid accidental double-taps.
+                val isDuplicate = expenseDao.isDuplicate(
+                    amount = amount,
+                    merchant = normalizedMerchant,
+                    date = date,
+                    windowMs = 60000 // 1 minute window for manual double-entry prevention
+                )
         if (isDuplicate) return -1L
 
         // 4. Create expense
@@ -210,10 +211,15 @@ class NotificationRepository @Inject constructor(
 
         when (routingResult.decision) {
             RoutingDecision.AUTO_ACCEPT -> {
+                // 3. Check for duplicates
+                // Use a short window (e.g. 10s) for auto-detected transactions to avoid flagging
+                // legitimate consecutive purchases (e.g. buying rounds of drinks) as duplicates,
+                // while still catching immediate double-processing of the same notification.
                 val isDuplicate = expenseDao.isDuplicate(
                     amount = parsed.amount,
                     merchant = correctedMerchant,
-                    date = notification.timestamp
+                    date = notification.timestamp,
+                    windowMs = 10000 
                 )
                 if (isDuplicate) {
                     dao.markRelevance(rawId, false)
@@ -308,6 +314,7 @@ class NotificationRepository @Inject constructor(
         val type: com.yourname.expensetracker.data.database.entity.TransactionType = try {
             com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(review.suggestedType)
         } catch (e: Exception) {
+            android.util.Log.w("NotificationRepo", "Unknown transaction type: ${review.suggestedType}, falling back to PURCHASE")
             com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
         }
 

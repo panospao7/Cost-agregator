@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,7 +33,9 @@ import com.yourname.expensetracker.ui.components.AmountText
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
-import java.text.SimpleDateFormat
+import java.time.format.DateTimeFormatter
+import java.time.Instant
+import java.time.ZoneId
 import java.util.*
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import coil.compose.AsyncImage
@@ -49,6 +52,8 @@ fun ReviewScreen(
     val categories by viewModel.categories.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
+    // Guard against double-swipes/rapid-fire actions
+    val processingIds = remember { mutableStateListOf<Long>() }
     val haptic = rememberHapticFeedback()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -63,7 +68,7 @@ fun ReviewScreen(
     val batchLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
     ) { uris ->
-        if (uris != null && uris.isNotEmpty()) {
+        if (uris.isNotEmpty()) {
             viewModel.processBatch(uris)
         }
     }
@@ -114,7 +119,7 @@ fun ReviewScreen(
                                 },
                                 leadingIcon = { Icon(Icons.Rounded.Layers, null) }
                             )
-                            Divider()
+                            HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text("Export Parser Data") },
                                 onClick = {
@@ -127,7 +132,7 @@ fun ReviewScreen(
                                 },
                                 leadingIcon = { Icon(Icons.Rounded.ContentCopy, null) }
                             )
-                            Divider()
+                            HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text("Clear Scanned Data") },
                                 onClick = {
@@ -187,13 +192,17 @@ fun ReviewScreen(
                 items(pendingReviews, key = { it.review.id }) { item ->
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { dismissValue ->
+                            if (processingIds.contains(item.review.id)) return@rememberSwipeToDismissBoxState false
+                            
                             when (dismissValue) {
                                 SwipeToDismissBoxValue.StartToEnd -> {
+                                    processingIds.add(item.review.id)
                                     haptic(HapticType.Success)
                                     viewModel.approveReview(item.review.id)
                                     true
                                 }
                                 SwipeToDismissBoxValue.EndToStart -> {
+                                    processingIds.add(item.review.id)
                                     haptic(HapticType.Error)
                                     viewModel.rejectReview(item.review.id)
                                     true
@@ -219,7 +228,7 @@ fun ReviewScreen(
                             val icon = when (dismissState.dismissDirection) {
                                 SwipeToDismissBoxValue.StartToEnd -> Icons.Rounded.CheckCircle
                                 SwipeToDismissBoxValue.EndToStart -> Icons.Rounded.Delete
-                                else -> Icons.Rounded.ArrowForward
+                                else -> Icons.AutoMirrored.Rounded.ArrowForward
                             }
 
                             Box(
@@ -308,7 +317,7 @@ fun ReviewCard(
     onEdit: () -> Unit
 ) {
     val review = item.review
-    val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, HH:mm", Locale.getDefault()) }
     var showTrustSignal by remember { mutableStateOf(false) }
     val haptic = rememberHapticFeedback()
 
@@ -390,7 +399,7 @@ fun ReviewCard(
                     )
                     
                     Text(
-                        text = dateFormat.format(Date(review.createdAt)),
+                        text = dateFormat.format(Instant.ofEpochMilli(review.createdAt).atZone(ZoneId.systemDefault())),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextSecondary,
                         letterSpacing = 0.5.sp

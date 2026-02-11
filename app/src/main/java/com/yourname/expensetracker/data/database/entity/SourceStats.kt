@@ -6,11 +6,11 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "source_stats")
 data class SourceStats(
     @PrimaryKey val packageName: String,
-    val totalNotifications: Int = 0,
-    val acceptedAsExpense: Int = 0,
-    val rejectedByUser: Int = 0,
-    val autoRejected: Int = 0,
-    val pendingReview: Int = 0,
+    val totalNotifications: Long = 0,
+    val acceptedAsExpense: Long = 0,
+    val rejectedByUser: Long = 0,
+    val autoRejected: Long = 0,
+    val pendingReview: Long = 0,
     val lastSeen: Long = System.currentTimeMillis()
 ) {
     val trustScore: Float

@@ -27,7 +27,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
+import java.time.format.DateTimeFormatter
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
@@ -63,12 +65,17 @@ class RecurringExpensesViewModel @Inject constructor(
 
     fun deleteManualRule(pattern: RecurringPattern) {
         viewModelScope.launch {
-            // Find by merchant (heuristic for now, real ID would be better)
-            val rules = recurringExpenseDao.getAll()
-            val rule = rules.find { it.merchant == pattern.merchantName }
-            if (rule != null) {
-                recurringExpenseDao.delete(rule)
+            if (pattern.id != null) {
+                recurringExpenseDao.deleteById(pattern.id)
                 refreshTrigger.value += 1
+            } else {
+                // Legacy fallback: Delete by merchant name if ID is missing (e.g. old local data)
+                val rules = recurringExpenseDao.getAll()
+                val rule = rules.find { it.merchant == pattern.merchantName }
+                if (rule != null) {
+                    recurringExpenseDao.delete(rule)
+                    refreshTrigger.value += 1
+                }
             }
         }
     }
@@ -189,9 +196,9 @@ fun PlannedExpenseItem(
                     text = "€${String.format("%.2f", expense.amount)} • ${expense.priority.name.lowercase().capitalize()}",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+                val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
                 Text(
-                    text = "Date: ${dateFormat.format(Date(expense.date))}",
+                    text = "Date: ${dateFormat.format(Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()))}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -213,7 +220,7 @@ fun RecurringExpenseItem(
     pattern: RecurringPattern,
     onDelete: () -> Unit
 ) {
-    val isManual = pattern.confidence >= 0.99f // Check based on confidence
+    val isManual = pattern.id != null || pattern.confidence >= 0.99f
     
     Card(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -234,9 +241,9 @@ fun RecurringExpenseItem(
                     text = "${String.format("%.2f", pattern.averageAmount)} ${pattern.currency} • ${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+                val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault()) }
                 Text(
-                    text = "Next: ${dateFormat.format(Date(pattern.nextExpectedDate))}",
+                    text = "Next: ${dateFormat.format(Instant.ofEpochMilli(pattern.nextExpectedDate).atZone(ZoneId.systemDefault()))}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

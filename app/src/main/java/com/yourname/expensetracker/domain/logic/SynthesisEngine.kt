@@ -36,24 +36,31 @@ class SynthesisEngine @Inject constructor() {
         }
         val endOfMonth = endOfMonthCal.timeInMillis
 
+        val startOfToday = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
         // 1. Calculate Committed (Highly likely/Automated/Must happen)
         val committedUpcomingBills = recurringPatterns.filter { 
-            it.confidence >= 0.90f && it.nextExpectedDate > now && it.nextExpectedDate <= endOfMonth 
+            it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth 
         }.sumOf { it.averageAmount }
         
         val committedPlanned = plannedExpenses.filter {
-            it.priority == PlannedExpensePriority.MUST && it.date > now && it.date <= endOfMonth
+            it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date <= endOfMonth
         }.sumOf { it.amount }
 
         val totalCommitted = committedUpcomingBills + committedPlanned
 
         // 2. Calculate Likely (Probable behavior)
         val likelyUpcomingBills = recurringPatterns.filter { 
-            it.confidence in 0.70f..0.89f && it.nextExpectedDate > now && it.nextExpectedDate <= endOfMonth
+            it.confidence in 0.70f..0.89f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth
         }.sumOf { it.averageAmount }
         
         val likelyPlanned = plannedExpenses.filter {
-            it.priority == PlannedExpensePriority.LIKELY && it.date > now && it.date <= endOfMonth
+            it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date <= endOfMonth
         }.sumOf { it.amount }
         
         val monthlyRecurringTotal = recurringPatterns.sumOf { it.averageAmount }

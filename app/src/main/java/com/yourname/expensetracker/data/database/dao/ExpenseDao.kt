@@ -202,6 +202,17 @@ interface ExpenseDao {
     """)
     suspend fun getLargestExpenseForPeriod(startMs: Long, endMs: Long): Expense?
 
+    // Largest single transaction for a specific merchant in a period
+    @Query("""
+        SELECT * FROM expenses 
+        WHERE transactionType = 'PURCHASE' 
+        AND date >= :startMs AND date < :endMs
+        AND merchant = :merchant
+        ORDER BY amount DESC
+        LIMIT 1
+    """)
+    suspend fun getLargestExpenseForMerchant(merchant: String, startMs: Long, endMs: Long): Expense?
+
     // Daily spending totals for a period (for pace calculation)
     @Query("""
         SELECT (date / 86400000) as dayEpoch, SUM(amount) as total, COUNT(*) as txCount

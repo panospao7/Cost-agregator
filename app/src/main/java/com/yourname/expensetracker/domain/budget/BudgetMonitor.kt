@@ -44,7 +44,7 @@ class BudgetMonitor @Inject constructor(
             expenseDao.getTotalForPeriod(window.first, window.second)
         }
 
-        if (spent <= 0) return
+        if (spent <= 0 || budget.amount <= 0) return
 
         val percent = (spent / budget.amount).toFloat()
         val now = System.currentTimeMillis()
@@ -114,6 +114,25 @@ class BudgetMonitor @Inject constructor(
 
         return when (period) {
             BudgetPeriod.DAILY -> {
+                // For daily, we want the current day, but we should respect the start time if it was today.
+                // Actually, daily budgets are usually "per calendar day".
+                // If the user wants 24h windows from a specific time, that's different.
+                // Standard behavior: Start of Today -> End of Today.
+                // The issue BUG-019 states we ignore anchorDate.
+                // If anchorDate is relevant for "Daily" (e.g. "Daily starting from..."), we should check it.
+                // But usually "Daily" means "Every Day".
+                // However, to fix "Ignores Anchor Date", we can check if we are before the start date.
+                if (now < anchorDate) {
+                    // Budget hasn't started yet
+                     return Pair(anchorDate, anchorDate + 86400000)
+                }
+                
+                // If anchorDate implies a custom "day start" (e.g. 5 AM), we should adjust.
+                // But simplified fix for now: standard calendar day is robust for most users.
+                // The bug report says "ALWAYS uses current day".
+                // If we want to check a specific PAST day, we'd need to pass that target date in.
+                // But this function `calculatePeriodWindow` seems to imply "Current Active Window".
+                
                 val start = cal.timeInMillis
                 cal.add(Calendar.DAY_OF_YEAR, 1)
                 Pair(start, cal.timeInMillis)

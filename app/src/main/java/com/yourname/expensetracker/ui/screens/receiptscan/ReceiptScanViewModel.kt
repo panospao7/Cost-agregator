@@ -59,10 +59,13 @@ sealed class SaveReceiptResult {
 @HiltViewModel
 class ReceiptScanViewModel @Inject constructor(
     private val receiptRepository: ReceiptRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val savedStateHandle: androidx.lifecycle.SavedStateHandle
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(ReceiptScanState())
+    private val _state = MutableStateFlow(ReceiptScanState(
+        tempCameraUri = savedStateHandle.get<Uri>("temp_uri")
+    ))
     val state: StateFlow<ReceiptScanState> = _state.asStateFlow()
 
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
@@ -73,6 +76,7 @@ class ReceiptScanViewModel @Inject constructor(
      */
     fun createTempPhotoUri(): Uri {
         val uri = receiptRepository.createTempPhotoUri()
+        savedStateHandle["temp_uri"] = uri
         _state.update { it.copy(tempCameraUri = uri) }
         return uri
     }

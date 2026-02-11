@@ -72,12 +72,18 @@ class NotificationSeeder @Inject constructor() {
         )
     }
 
+    private val recurringTemplates = listOf(
+        Pair("Netflix", 13.99),
+        Pair("Spotify", 7.99),
+        Pair("Cosmote", 35.00),
+        Pair("DEI", 45.50),
+        Pair("iCloud", 2.99),
+        Pair("YouTube Premium", 11.99)
+    )
+
     private fun generateRecurring(index: Int, now: Long): RawNotification {
-        // Force some recurring patterns (e.g. Netflix every month)
-        // We'll generate a "Netflix" charge at a specific day of month relative to 'index' simply to seed *some* recurring data
-        // But for mass simulation in one go, we can just sprinkle them randomly in time but with fixed amount
-        val merchant = "Netflix"
-        val amount = 13.99
+        val (merchant, amount) = recurringTemplates.random()
+        // Random date within last 60 days
         val date = now - Random.nextLong(60L * 24 * 60 * 60 * 1000)
 
         return RawNotification(

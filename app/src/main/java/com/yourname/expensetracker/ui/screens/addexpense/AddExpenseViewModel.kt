@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlinx.coroutines.isActive
 
 data class AddExpenseState(
     val merchant: String = "",
@@ -78,7 +79,12 @@ class AddExpenseViewModel @Inject constructor(
         if (value.length >= 2) {
             searchJob = viewModelScope.launch {
                 delay(300)
+                if (!isActive) return@launch
+                
                 val suggestions = repository.searchMerchants(value)
+                
+                if (!isActive) return@launch
+                
                 _state.update {
                     it.copy(
                         suggestions = suggestions,

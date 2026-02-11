@@ -220,16 +220,59 @@ fun SmartFAB(
     onApproveAll: () -> Unit
 ) {
     val haptic = rememberHapticFeedback()
-    val clipboardManager = LocalClipboardManager.current
+    // Use native ClipboardManager to listen for changes
+    val context = LocalContext.current
+    val clipboardManager = remember {
+        context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    }
     var clipboardAmount by remember { mutableStateOf<String?>(null) }
+
+    // Helper to check clipboard content
+    fun checkClipboard() {
+        try {
+            if (clipboardManager.hasPrimaryClip()) {
+                val item = clipboardManager.primaryClip?.getItemAt(0)
+                val text = item?.text?.toString() ?: ""
+                val regex = Regex("""(\d+[\.,]\d{2})""")
+                val match = regex.find(text)
+                if (match != null) {
+                    clipboardAmount = match.value
+                } else {
+                    clipboardAmount = null
+                }
+            } else {
+                clipboardAmount = null
+            }
+        } catch (e: Exception) {
+            // Ignore clipboard errors
+        }
+    }
+
+    // Listen for clipboard changes while this composable is active
+    DisposableEffect(clipboardManager) {
+        val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
+            checkClipboard()
+        }
+        clipboardManager.addPrimaryClipChangedListener(listener)
+        // Initial check
+        checkClipboard()
+        
+        onDispose {
+            clipboardManager.removePrimaryClipChangedListener(listener)
+        }
+    }
     
-    // Detect currency amount in clipboard (e.g., "$12.50", "12,50 €", etc.)
-    LaunchedEffect(Unit) {
-        val text = clipboardManager.getText()?.text ?: ""
-        val regex = Regex("""(\d+[\.,]\d{2})""")
-        val match = regex.find(text)
-        if (match != null) {
-            clipboardAmount = match.value
+    // Also check on resume to handle background changes
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                checkClipboard()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
     

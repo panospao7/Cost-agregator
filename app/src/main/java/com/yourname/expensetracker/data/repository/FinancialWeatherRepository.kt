@@ -166,15 +166,20 @@ class FinancialWeatherRepository @Inject constructor(
         recurring: List<RecurringPattern>,
         planned: List<PlannedExpense>
     ): List<UpcomingItem> {
-        val now = System.currentTimeMillis()
-        val horizon = now + (31 * 86_400_000L) // Show next 31 days in the list
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val startOfToday = cal.timeInMillis
+        val horizon = startOfToday + (31 * 86_400_000L) // Show next 31 days in the list
         
         val items = mutableListOf<com.yourname.expensetracker.domain.model.UpcomingItem>()
         
-        recurring.filter { it.nextExpectedDate in (now + 1)..horizon }
+        recurring.filter { it.nextExpectedDate in startOfToday..horizon }
             .forEach { items.add(UpcomingItem.Recurring(it)) }
             
-        planned.filter { it.date in (now + 1)..horizon }
+        planned.filter { it.date in startOfToday..horizon }
             .forEach { items.add(UpcomingItem.Planned(it)) }
             
         return items.sortedBy { it.date }

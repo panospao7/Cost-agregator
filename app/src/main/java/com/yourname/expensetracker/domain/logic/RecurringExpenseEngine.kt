@@ -95,7 +95,8 @@ class RecurringExpenseEngine @Inject constructor(
                 nextExpectedDate = manual.nextDate,
                 confidence = 1.0f, // Manual is 100% confident
                 previousDates = emptyList(), // No history needed for display
-                categoryId = null // Manual entries don't have categoryId yet
+                categoryId = null, // Manual entries don't have categoryId yet
+                id = manual.id // Use DB ID
             )
         }
 

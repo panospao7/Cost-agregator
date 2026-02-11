@@ -176,8 +176,10 @@ class TransactionClassifier @Inject constructor(
         val total = totalPositive + totalNegative
         if (total == 0) return 0.5f
 
-        var logProbPos = ln(totalPositive.toDouble() / total)
-        var logProbNeg = ln(totalNegative.toDouble() / total)
+        // Guard against ln(0) which returns -Infinity
+        // If a class has 0 samples, we treat its prior probability as extremely low (-20.0 in log space ~= 2e-9)
+        var logProbPos = if (totalPositive > 0) ln(totalPositive.toDouble() / total) else -20.0
+        var logProbNeg = if (totalNegative > 0) ln(totalNegative.toDouble() / total) else -20.0
 
         val vocabSize = vocabularySize.coerceAtLeast(1)
 

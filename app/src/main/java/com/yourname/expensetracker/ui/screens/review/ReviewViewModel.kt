@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelChildren
 import javax.inject.Inject
 
 @HiltViewModel
@@ -32,6 +34,8 @@ class ReviewViewModel @Inject constructor(
 
     private val _isBatchProcessing = MutableStateFlow(false)
     val isBatchProcessing = _isBatchProcessing.asStateFlow()
+
+    private var batchJob: Job? = null
 
     val pendingReviews: StateFlow<List<PendingReviewWithReceipt>> = repository
         .getPendingReviews()
@@ -96,7 +100,8 @@ class ReviewViewModel @Inject constructor(
 
     fun processBatch(uris: List<android.net.Uri>) {
         if (uris.isEmpty()) return
-        viewModelScope.launch {
+        batchJob?.cancel() // Cancel previous if any
+        batchJob = viewModelScope.launch {
             try {
                 _isBatchProcessing.value = true
                 _batchProgress.value = Pair(0, uris.size)
@@ -120,6 +125,13 @@ class ReviewViewModel @Inject constructor(
                 _batchProgress.value = null
             }
         }
+    }
+
+    fun cancelBatchProcessing() {
+        batchJob?.cancel()
+        _isBatchProcessing.value = false
+        _batchProgress.value = null
+        _errorMessage.value = "Batch processing cancelled."
     }
 
     fun processStatement(uri: android.net.Uri) {

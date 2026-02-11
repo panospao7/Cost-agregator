@@ -95,22 +95,22 @@ class MerchantNormalizer @Inject constructor(
         }
 
         val now = System.currentTimeMillis()
-        val cached: String? = cacheMutex.withLock {
+        return cacheMutex.withLock {
             if (now - lastCacheClear > CACHE_DURATION) {
                 correctionCache.clear()
                 lastCacheClear = now
             }
-            correctionCache[normalized]
+            
+            val cached = correctionCache[normalized]
+            if (cached != null) {
+                cached
+            } else {
+                val corrected = userCorrectionDao.getMostCommonMerchantCorrection(normalized)
+                val result = corrected ?: toTitleCase(normalized)
+                correctionCache[normalized] = result
+                result
+            }
         }
-        if (cached != null) return cached
-
-        val corrected = userCorrectionDao.getMostCommonMerchantCorrection(normalized)
-        val result = corrected ?: toTitleCase(normalized)
-
-        cacheMutex.withLock {
-            correctionCache[normalized] = result
-        }
-        return result
     }
 
     /**

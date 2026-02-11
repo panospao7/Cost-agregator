@@ -99,7 +99,8 @@ class ReceiptOcrService @Inject constructor(
      */
     private fun loadAndCorrectBitmap(uri: Uri): Bitmap? {
         val tempFile = File(context.cacheDir, "temp_ocr_${System.nanoTime()}.jpg")
-        return try {
+        var decodedBitmap: Bitmap? = null
+        try {
             // Copy URI to temp file
             val inputStream = context.contentResolver.openInputStream(uri)
                 ?: throw IllegalStateException("Could not open input stream for $uri")
@@ -137,6 +138,7 @@ class ReceiptOcrService @Inject constructor(
             }
             val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath, decodeOptions)
                 ?: throw IllegalStateException("Bitmap decode failed for $uri (Sample: $sampleSize)")
+            decodedBitmap = bitmap
 
             // 3. Apply EXIF rotation
             val exif = ExifInterface(tempFile.absolutePath)
@@ -157,16 +159,24 @@ class ReceiptOcrService @Inject constructor(
             }
 
             if (needsRotate) {
-                val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-                if (rotated != bitmap) {
-                    bitmap.recycle() // Clean up original if rotated
+                try {
+                    val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                    if (rotated != bitmap) {
+                        bitmap.recycle() // Clean up original if rotated
+                    }
+                    return rotated
+                } catch (e: Exception) {
+                    bitmap.recycle() // CRITICAL: Recycle original if rotation fails (OOM similar)
+                    throw e
                 }
-                rotated
             } else {
-                bitmap
+                return bitmap
             }
         } catch (e: Exception) {
             android.util.Log.e("ReceiptOcrService", "Error loading bitmap from $uri", e)
+            if (decodedBitmap?.isRecycled == false) {
+                decodedBitmap?.recycle()
+            }
             throw IllegalStateException("Failed to load image: ${e.message}", e)
         } finally {
             if (tempFile.exists()) tempFile.delete()

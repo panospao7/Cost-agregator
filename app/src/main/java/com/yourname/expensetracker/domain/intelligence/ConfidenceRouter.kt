@@ -40,8 +40,9 @@ class ConfidenceRouter @Inject constructor(
         var adjustedConfidence = parsed.confidence
         val reasons = mutableListOf<String>()
 
-        // 1. ML classifier prediction (if ready)
-        if (notificationText != null) {
+        // 1. ML classifier prediction (if ready and needed)
+        // Skip ML if parser is extremely confident (e.g. exact template match) to save resources
+        if (notificationText != null && parsed.confidence < 1.0f) {
             val mlPrediction = classifier.predict(notificationText)
             val classifierStats = classifier.getStats()
 

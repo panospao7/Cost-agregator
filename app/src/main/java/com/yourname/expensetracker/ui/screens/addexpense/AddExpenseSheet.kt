@@ -34,8 +34,11 @@ import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import java.text.SimpleDateFormat
+import java.time.format.DateTimeFormatter
+import java.time.Instant
+import java.time.ZoneId
 import java.util.*
+import java.util.Currency
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -143,7 +146,7 @@ fun AddExpenseSheet(
                     ),
                     isError = state.amountError != null,
                     supportingText = state.amountError?.let { { Text(it) } },
-                    leadingIcon = { Text("€", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Text(Currency.getInstance("EUR").symbol, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -564,7 +567,7 @@ fun DateSelector(
     dateMs: Long,
     onDateSelected: (Long) -> Unit
 ) {
-    val dateFormat = remember { SimpleDateFormat("EEE, dd MMM yyyy, HH:mm", Locale.getDefault()) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy, HH:mm", Locale.getDefault()) }
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
         initialSelectedDateMillis = dateMs
@@ -589,7 +592,7 @@ fun DateSelector(
                 fontWeight = FontWeight.Medium
             )
             Text(
-                dateFormat.format(Date(dateMs)),
+                dateFormat.format(Instant.ofEpochMilli(dateMs).atZone(ZoneId.systemDefault())),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

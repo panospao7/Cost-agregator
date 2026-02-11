@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -593,7 +594,7 @@ fun AddPlannedExpenseDialog(
     var description by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     var priority by remember { mutableStateOf(PlannedExpensePriority.LIKELY) }
-    val date = remember { System.currentTimeMillis() }
+    var date by remember { mutableStateOf(System.currentTimeMillis()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -649,6 +650,12 @@ fun AddPlannedExpenseDialog(
                         }
                     }
                 }
+
+                // Date Selector
+                DateSelector(
+                    dateMs = date,
+                    onDateSelected = { date = it }
+                )
             }
         },
         confirmButton = {
@@ -672,4 +679,75 @@ fun AddPlannedExpenseDialog(
         containerColor = SemanticColors.BaseNavy,
         shape = RoundedCornerShape(28.dp)
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DateSelector(
+    dateMs: Long,
+    onDateSelected: (Long) -> Unit
+) {
+    val dateFormat = remember { java.text.SimpleDateFormat("EEE, dd MMM yyyy", java.util.Locale.getDefault()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = dateMs
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showDatePicker = true }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Default.DateRange,
+            contentDescription = "Date",
+            tint = SemanticColors.PrimaryIndigo
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(
+                "Date",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium,
+                color = SemanticColors.TextSecondary
+            )
+            Text(
+                dateFormat.format(java.util.Date(dateMs)),
+                style = MaterialTheme.typography.bodyMedium,
+                color = SemanticColors.TextPrimary
+            )
+        }
+    }
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { selectedDate ->
+                            // Preserve time of day (roughly, or just set to noon to avoid timezone issues/start of day)
+                            // Here we just use the selected date (which is usually UTC midnight) + current time offset if needed?
+                            // Material3 DatePicker returns UTC start of day. 
+                            // Let's just use it as is, or add current time component if we cared about exact time.
+                            // For forecast, date is most important.
+                            onDateSelected(selectedDate)
+                        }
+                        showDatePicker = false
+                    }
+                ) {
+                    Text("OK", color = SemanticColors.PrimaryIndigo)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel", color = SemanticColors.TextSecondary)
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 }

@@ -190,7 +190,8 @@ class HomeViewModel @Inject constructor(
             averageMonthlyTotal = null,
             pacePercentage = if (previousMonthTotal > 0) {
                 val expected = previousMonthTotal * dayOfMonth / daysInMonth
-                (monthSpent / expected * 100).toFloat()
+                val calculated = (monthSpent / expected * 100).toFloat()
+                if (calculated.isFinite()) calculated else 0f
             } else 0f,
             paceStatus = when {
                 previousMonthTotal <= 0 -> PaceStatus.NO_BASELINE

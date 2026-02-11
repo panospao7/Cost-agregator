@@ -12,6 +12,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import java.util.Currency
 
 /**
  * Atomic BentoCard — the building block for the Bento Grid layout.
@@ -118,7 +119,7 @@ fun StatLabel(
 @Composable
 fun AmountText(
     amount: Double,
-    currency: String = "€",
+    currency: String = Currency.getInstance("EUR").symbol,
     modifier: Modifier = Modifier,
     style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.displaySmall,
     color: Color = SemanticColors.TextPrimary

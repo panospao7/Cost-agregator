@@ -41,6 +41,7 @@ import com.yourname.expensetracker.ui.screens.addexpense.CategoryGrid
 import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
 import com.yourname.expensetracker.ui.screens.addexpense.PaymentMethodChip
 import kotlinx.coroutines.delay
+import java.util.Currency
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -323,7 +324,10 @@ private fun ReviewStep(
         value = state.editAmount,
         onValueChange = { viewModel.updateAmount(it) },
         label = { Text("Total Amount") },
-        leadingIcon = { Text("€", fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+        leadingIcon = { 
+            val symbol = try { Currency.getInstance(parsed?.currency ?: "EUR").symbol } catch(e: Exception) { "€" }
+            Text(symbol, fontSize = 18.sp, fontWeight = FontWeight.Bold) 
+        },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true,
         modifier = Modifier.fillMaxWidth()
@@ -413,7 +417,7 @@ private fun ReviewStep(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "€${String.format("%.2f", item.totalPrice)}",
+                            "${try { Currency.getInstance(parsed.currency).symbol } catch(e: Exception) { "€" }}${String.format("%.2f", item.totalPrice)}",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
@@ -439,7 +443,7 @@ private fun ReviewStep(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "€${String.format("%.2f", tax)}",
+                            "${try { Currency.getInstance(parsed.currency).symbol } catch(e: Exception) { "€" }}${String.format("%.2f", tax)}",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }

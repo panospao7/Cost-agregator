@@ -437,11 +437,12 @@ class InsightsEngine @Inject constructor(
             // If the max amount this month is > 2x the historical average
             if (merchantStat.maxAmount > historicalStats.avgAmount * 2.0) {
                 // Find the actual expense (largest for this merchant this month)
-                val expense = expenseDao.getLargestExpenseForPeriod(
-                    currentMonth.startMs, currentMonth.endMs
+                // Find the actual expense (largest for THIS merchant this month)
+                val expense = expenseDao.getLargestExpenseForMerchant(
+                    merchantStat.merchant, currentMonth.startMs, currentMonth.endMs
                 )
                 // Filter specifically for this merchant
-                if (expense != null && expense.merchant == merchantStat.merchant) {
+                if (expense != null) {
                      anomalies.add(
                         AnomalyTransaction(
                             expense = expense,
@@ -527,10 +528,10 @@ class InsightsEngine @Inject constructor(
     // But it's better to use the snapshot.
     // We already have findRecurringExpenses internally.
     
-    // Legacy helper for detections from list
-    fun detectRecurring(expenses: List<Expense>): List<com.yourname.expensetracker.domain.analytics.RecurringCandidate> {
+    // Legacy helper for detections from list - RE-ADDED FOR UI COMPATIBILITY
+    fun detectRecurring(expenses: List<Expense>): List<RecurringCandidate> {
          val dayMs = 86_400_000L
-         val results = mutableListOf<com.yourname.expensetracker.domain.analytics.RecurringCandidate>()
+         val results = mutableListOf<RecurringCandidate>()
          val byMerchant = expenses
             .filter { it.transactionType == TransactionType.PURCHASE }
             .groupBy { it.merchant.uppercase() }
@@ -560,7 +561,7 @@ class InsightsEngine @Inject constructor(
                      val nextExpected = lastDate + avgInterval * dayMs
 
                      results.add(
-                         com.yourname.expensetracker.domain.analytics.RecurringCandidate(
+                         RecurringCandidate(
                              merchant = exps.first().merchant,
                              amount = avgAmount,
                              intervalDays = avgInterval,
@@ -574,6 +575,8 @@ class InsightsEngine @Inject constructor(
          }
          return results.sortedByDescending { it.occurrences }
     }
+    
+
 
     private fun calculateMedian(values: List<Double>): Double {
         if (values.isEmpty()) return 0.0
