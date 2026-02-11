@@ -72,10 +72,22 @@ class SynthesisEngine @Inject constructor() {
 
         // 3. Goal Reserves
         // Strict goals are subtracted from "Available"
+        // 3. Goal Reserves (Pro-rated for strict goals - LOG-019)
         val goalReserves = savingsGoals
             .filter { it.protectionLevel == GoalProtectionLevel.STRICT }
-            .sumOf { it.targetAmount - it.currentAmount }
-            .coerceAtLeast(0.0)
+            .sumOf { goal ->
+                 val remaining = (goal.targetAmount - goal.currentAmount).coerceAtLeast(0.0)
+                 if (remaining <= 0) 0.0
+                 else {
+                     val targetDate = goal.targetDate
+                     if (targetDate == null || targetDate <= now) remaining // Due now or past due
+                     else {
+                         val msRemaining = targetDate - now
+                         val monthsRemaining = (msRemaining / (30.0 * 24 * 60 * 60 * 1000)).coerceAtLeast(1.0)
+                         remaining / monthsRemaining
+                     }
+                 }
+            }
 
         // 4. Calculate Projected Timeline Points
         val lastKnownTotal = pastSumDaily.lastOrNull() ?: 0.0
@@ -93,7 +105,13 @@ class SynthesisEngine @Inject constructor() {
         val spentSoFar = spendingPace.currentMonthSpent
         
         // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
-        val discretionaryBudget = (budgetLimit - (spentSoFar + totalCommitted + totalLikely + goalReserves)).coerceAtLeast(0.0)
+        // Revised Formula: Limit - (Spent + Future Committed + Future Likely + Goal Reserves)
+        // LOG-004 Fix: totalLikely includes future discretionary (lines 67-71). 
+        // We should NOT subtract that "future discretionary" from the "available pool".
+        // We only subtract BILLS and PLANNED expenses.
+        val projectedObligations = committedUpcomingBills + committedPlanned + likelyUpcomingBills + likelyPlanned
+        
+        val discretionaryBudget = (budgetLimit - (spentSoFar + projectedObligations + goalReserves)).coerceAtLeast(0.0)
 
         // 6. Determine Risk Level
         val riskLevel = determineRiskLevel(

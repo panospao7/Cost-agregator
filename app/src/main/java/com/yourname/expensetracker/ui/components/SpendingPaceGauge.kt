@@ -34,7 +34,8 @@ fun SpendingPaceGauge(
     }
 
     // Animate the sweep angle (240 degree range)
-    val targetSweep = (pace.pacePercentage / 200f).coerceIn(0f, 1f) * 240f
+    val maxPacePercent = 200f
+    val targetSweep = (pace.pacePercentage / maxPacePercent).coerceIn(0f, 1f) * 240f
     val animatedSweep by animateFloatAsState(
         targetValue = targetSweep,
         animationSpec = tween(1200), // Slightly slower, more premium animation

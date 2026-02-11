@@ -385,12 +385,11 @@ class NotificationRepository @Inject constructor(
         userCorrectionDao.insert(correction)
 
         // Train classifier: user approved = positive
-        val trainingText = listOfNotNull(
-            review.notificationTitle,
-            review.notificationText
-        ).joinToString(" ")
-        if (trainingText.isNotBlank()) {
-            classifier.train(trainingText, isTransaction = true)
+        // LOG-003 Fix: Use retrainFromCorrections to ensure consistency and "un-learn" previous mistakes
+        try {
+            classifier.retrainFromCorrections()
+        } catch (e: Exception) {
+            android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
         }
 
         // Learn merchant → category mapping if category was set
@@ -440,12 +439,11 @@ class NotificationRepository @Inject constructor(
         userCorrectionDao.insert(correction)
 
         // Train classifier: user rejected = negative
-        val trainingText = listOfNotNull(
-            review.notificationTitle,
-            review.notificationText
-        ).joinToString(" ")
-        if (trainingText.isNotBlank()) {
-            classifier.train(trainingText, isTransaction = false)
+        // LOG-003 Fix: Use retrainFrom corrections
+        try {
+            classifier.retrainFromCorrections()
+        } catch (e: Exception) {
+            android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
         }
     }
 
@@ -474,30 +472,27 @@ class NotificationRepository @Inject constructor(
         dao.markRelevance(id, isRelevant)
 
         // Train classifier directly from this manual action
-        val trainingText = listOfNotNull(
-            notification.title,
-            notification.text,
-            notification.bigText
-        ).joinToString(" ")
-
-        if (trainingText.isNotBlank()) {
-            classifier.train(trainingText, isTransaction = isRelevant)
-            
-            // Also record a correction for future retraining
-            val correction = UserCorrection(
-                packageName = notification.packageName,
-                originalMerchant = "Manual",
-                correctedMerchant = null,
-                originalAmount = 0.0,
-                correctedAmount = null,
-                originalCategoryId = null,
-                correctedCategoryId = null,
-                wasRejected = !isRelevant,
-                wasApproved = isRelevant,
-                notificationTitle = notification.title,
-                notificationText = notification.text ?: notification.bigText
-            )
-            userCorrectionDao.insert(correction)
+        // Also record a correction for future retraining (LOG-003)
+        // We record correction AND retrain immediately to ensure consistency
+        val correction = UserCorrection(
+            packageName = notification.packageName,
+            originalMerchant = "Manual",
+            correctedMerchant = null,
+            originalAmount = 0.0,
+            correctedAmount = null,
+            originalCategoryId = null,
+            correctedCategoryId = null,
+            wasRejected = !isRelevant,
+            wasApproved = isRelevant,
+            notificationTitle = notification.title,
+            notificationText = notification.text ?: notification.bigText
+        )
+        userCorrectionDao.insert(correction)
+        
+        try {
+            classifier.retrainFromCorrections()
+        } catch (e: Exception) {
+            android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
         }
     }
 

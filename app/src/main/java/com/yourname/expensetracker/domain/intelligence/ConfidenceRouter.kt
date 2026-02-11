@@ -134,19 +134,19 @@ class ConfidenceRouter @Inject constructor(
         return when {
             totalSamples < 20 -> 0f       // Not ready
             totalSamples < 50 -> 0.2f     // Low confidence in ML
-            totalSamples < 100 -> 0.3f    // Growing confidence
-            totalSamples < 200 -> 0.35f   // Moderate
-            else -> 0.4f                   // Maxed out — never fully trust ML alone
+            totalSamples < 100 -> 0.35f   // Growing confidence
+            totalSamples < 200 -> 0.5f    // Moderate
+            else -> 0.6f                   // Max capped at 60% (LOG-007)
         }
     }
 
     private fun calculateTrustModifier(stats: SourceStats): Float {
         return when {
-            stats.isLikelySpam -> 0.2f
+            stats.isLikelySpam -> 0.1f // LOG-014: Heavy penalty for spam
             stats.trustScore > 0.8f -> 1.1f
-            stats.trustScore > 0.5f -> 1.0f
-            stats.trustScore > 0.2f -> 0.8f
-            else -> 0.5f
+            stats.trustScore > 0.4f -> 1.0f // 40-80% is neutral
+            stats.trustScore > 0.15f -> 0.9f // 15-40% is slight penalty
+            else -> 0.5f // < 15% is heavy penalty
         }
     }
 

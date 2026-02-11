@@ -59,12 +59,21 @@ class RecurringExpenseEngine @Inject constructor(
             
             val (frequency, confidence, varianceDays) = determineFrequency(intervals)
 
-            // Thresholds: Must be a known frequency and have > 65% confidence
-            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.65) {
+            // Thresholds: Must be a known frequency and have > 60% confidence (LOG-013 Relaxed from 65%)
+            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.60) {
                 
                 // Predict next date
-                val lastDate = dates.last()
-                val nextDate = lastDate + (frequency.days * 86_400_000L) // days to ms
+                // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)
+                val cal = java.util.Calendar.getInstance()
+                cal.timeInMillis = dates.last()
+                when (frequency) {
+                    RecurrenceFrequency.MONTHLY -> cal.add(java.util.Calendar.MONTH, 1)
+                    RecurrenceFrequency.QUARTERLY -> cal.add(java.util.Calendar.MONTH, 3)
+                    RecurrenceFrequency.SEMI_ANNUALLY -> cal.add(java.util.Calendar.MONTH, 6)
+                    RecurrenceFrequency.ANNUALLY -> cal.add(java.util.Calendar.YEAR, 1)
+                    else -> cal.add(java.util.Calendar.DAY_OF_YEAR, frequency.days)
+                }
+                val nextDate = cal.timeInMillis
 
                 detectedPatterns.add(
                     RecurringPattern(

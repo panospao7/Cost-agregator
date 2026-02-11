@@ -38,8 +38,25 @@ class BudgetRepository @Inject constructor(
                     expenseDao.getTotalForPeriod(window.first, window.second)
                 }
 
-                val percent = if (budget.amount > 0) (spent / budget.amount).toFloat() else 0f
-                val remaining = (budget.amount - spent).coerceAtLeast(0.0)
+                var limit = budget.amount
+                
+                // LOG-002: Implement Rollover
+                if (budget.rollover) {
+                    val prevWindow = budgetMonitor.getPreviousPeriodWindow(budget.period, budget.startDate)
+                    val prevSpent = if (budget.categoryId != null) {
+                        expenseDao.getCategorySpentInPeriod(budget.categoryId, prevWindow.first, prevWindow.second)
+                    } else {
+                        expenseDao.getTotalForPeriod(prevWindow.first, prevWindow.second)
+                    }
+                    
+                    // Simplified rollover: Assumes budget amount was same in previous period.
+                    // Calculate unspent amount from previous period.
+                    val rolloverAmount = (budget.amount - prevSpent).coerceAtLeast(0.0)
+                    limit += rolloverAmount
+                }
+
+                val percent = if (limit > 0) (spent / limit).toFloat() else 0f
+                val remaining = (limit - spent).coerceAtLeast(0.0)
 
                 val health = when {
                     percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
@@ -49,7 +66,7 @@ class BudgetRepository @Inject constructor(
                 }
 
                 BudgetStatus(
-                    budget = budget,
+                    budget = budget.copy(amount = limit), // Show effective limit
                     category = categoryMap[budget.categoryId],
                     spentAmount = spent,
                     remainingAmount = remaining,
@@ -95,21 +112,38 @@ class BudgetRepository @Inject constructor(
         val categoriesWithBudget = activeBudgets.mapNotNull { it.categoryId }.toSet()
 
         val now = System.currentTimeMillis()
+        val oldestDate = expenseDao.getOldestExpenseDate() ?: now
+        
+        // Use up to 3 months of history, but at least 1 month if available
+        // If data is less than 15 days, results might be unreliable, but we'll try to extrapolate conservatively
         val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
+        val effectiveStart = maxOf(oldestDate, threeMonthsAgo)
+        
+        val daysDiff = ((now - effectiveStart) / (24 * 60 * 60 * 1000)).coerceAtLeast(1)
+        
+        // If we have very little data (e.g. < 7 days), skip suggestions to avoid noise (LOG-010)
+        if (daysDiff < 7) return emptyList()
+
+        val monthsDivisor = daysDiff / 30.0
         
         for (category in categories) {
             if (categoriesWithBudget.contains(category.id)) continue
 
-            val spent = expenseDao.getCategorySpentInPeriod(category.id, threeMonthsAgo, now)
-            if (spent > 50.0) { // Only suggest for categories with significant spend
-                val monthlyAvg = spent / 3.0
+            val spent = expenseDao.getCategorySpentInPeriod(category.id, effectiveStart, now)
+            
+            // Calculate monthly average
+            val monthlyAvg = if (monthsDivisor > 0) spent / monthsDivisor else 0.0
+            
+            // Only suggest if significant spend (> €20/month)
+            if (monthlyAvg > 20.0) { 
                 suggestions.add(
                     BudgetSuggestion(
                         categoryId = category.id,
                         categoryName = category.name,
                         categoryIcon = category.icon,
-                        suggestedAmount = (monthlyAvg * 1.1).coerceAtLeast(20.0), // 10% buffer
-                        basedOnMonths = 3,
+                        // increase buffer to 20% (LOG-016)
+                        suggestedAmount = (monthlyAvg * 1.2).coerceAtLeast(20.0), 
+                        basedOnMonths = Math.round(monthsDivisor).toInt().coerceAtLeast(1),
                         reason = "Based on your €${"%.0f".format(monthlyAvg)} monthly average spend."
                     )
                 )

@@ -114,7 +114,17 @@ class TransactionClassifier @Inject constructor(
         totalPositive = 0
         totalNegative = 0
 
-        for (correction in corrections) {
+        // LOG-012 Fix: Balance dataset
+        val positiveCorrections = corrections.filter { it.wasApproved }
+        val negativeCorrections = corrections.filter { it.wasRejected }
+        
+        // Cap negatives to 3x positives to prevent skew
+        val maxNegatives = (positiveCorrections.size * 3).coerceAtLeast(MIN_TRAINING_SAMPLES)
+        val selectedNegatives = negativeCorrections.shuffled().take(maxNegatives)
+        
+        val trainingSet = positiveCorrections + selectedNegatives
+        
+        for (correction in trainingSet) {
             val text = buildTrainingText(correction)
             if (text.isNotBlank()) {
                 val features = extractFeatures(text)

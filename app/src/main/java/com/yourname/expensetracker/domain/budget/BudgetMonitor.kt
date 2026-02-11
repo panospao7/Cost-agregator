@@ -102,11 +102,23 @@ class BudgetMonitor @Inject constructor(
     }
 
     fun calculatePeriodWindow(period: BudgetPeriod, anchorDate: Long): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        val now = System.currentTimeMillis()
-        cal.timeInMillis = now
+        return calculatePeriodWindowForTime(period, anchorDate, System.currentTimeMillis())
+    }
 
-        // Set to start of current day
+    fun getPreviousPeriodWindow(period: BudgetPeriod, anchorDate: Long): Pair<Long, Long> {
+        val currentWindow = calculatePeriodWindow(period, anchorDate)
+        // To get previous, we can just subtract a small amount from the start of current and recalculate
+        // This is safer than date math which might miss (e.g. variable month lengths)
+        // If current start is Nov 1. Nov 1 - 1ms = Oct 31.
+        // Calculate window for Oct 31. It will be Oct 1 - Nov 1.
+        return calculatePeriodWindowForTime(period, anchorDate, currentWindow.first - 1000)
+    }
+
+    private fun calculatePeriodWindowForTime(period: BudgetPeriod, anchorDate: Long, evaluationTime: Long): Pair<Long, Long> {
+        val anchorCal = Calendar.getInstance().apply { timeInMillis = anchorDate }
+        val cal = Calendar.getInstance().apply { timeInMillis = evaluationTime }
+
+        // Reset time components to start of day
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
@@ -114,48 +126,62 @@ class BudgetMonitor @Inject constructor(
 
         return when (period) {
             BudgetPeriod.DAILY -> {
-                // For daily, we want the current day, but we should respect the start time if it was today.
-                // Actually, daily budgets are usually "per calendar day".
-                // If the user wants 24h windows from a specific time, that's different.
-                // Standard behavior: Start of Today -> End of Today.
-                // The issue BUG-019 states we ignore anchorDate.
-                // If anchorDate is relevant for "Daily" (e.g. "Daily starting from..."), we should check it.
-                // But usually "Daily" means "Every Day".
-                // However, to fix "Ignores Anchor Date", we can check if we are before the start date.
-                if (now < anchorDate) {
-                    // Budget hasn't started yet
-                     return Pair(anchorDate, anchorDate + 86400000)
-                }
-                
-                // If anchorDate implies a custom "day start" (e.g. 5 AM), we should adjust.
-                // But simplified fix for now: standard calendar day is robust for most users.
-                // The bug report says "ALWAYS uses current day".
-                // If we want to check a specific PAST day, we'd need to pass that target date in.
-                // But this function `calculatePeriodWindow` seems to imply "Current Active Window".
-                
                 val start = cal.timeInMillis
                 cal.add(Calendar.DAY_OF_YEAR, 1)
                 Pair(start, cal.timeInMillis)
             }
             BudgetPeriod.WEEKLY -> {
-                // Set to current week's Monday
-                cal.firstDayOfWeek = Calendar.MONDAY
-                cal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+                // Find the most recent occurrence of the anchor weekday
+                val anchorDayOfWeek = anchorCal.get(Calendar.DAY_OF_WEEK)
+                while (cal.get(Calendar.DAY_OF_WEEK) != anchorDayOfWeek) {
+                    cal.add(Calendar.DAY_OF_YEAR, -1)
+                }
                 val start = cal.timeInMillis
                 cal.add(Calendar.WEEK_OF_YEAR, 1)
                 Pair(start, cal.timeInMillis)
             }
             BudgetPeriod.MONTHLY -> {
-                cal.set(Calendar.DAY_OF_MONTH, 1)
+                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+                val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+
+                // If we haven't reached the anchor day this month, the cycle started last month
+                if (currentDay < anchorDay) {
+                    cal.add(Calendar.MONTH, -1)
+                }
+                
+                // Set day, handling shorter months (e.g. 31st vs Feb 28th)
+                val maxDays = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(maxDays))
+
                 val start = cal.timeInMillis
                 cal.add(Calendar.MONTH, 1)
-                Pair(start, cal.timeInMillis)
+                // Note: Standard add(MONTH, 1) handles month length variations (Jan 31 -> Feb 28/29)
+                val end = cal.timeInMillis
+                Pair(start, end)
             }
             BudgetPeriod.YEARLY -> {
-                cal.set(Calendar.DAY_OF_YEAR, 1)
+                val anchorMonth = anchorCal.get(Calendar.MONTH)
+                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+                
+                val currentMonth = cal.get(Calendar.MONTH)
+                val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+
+                // Check if we passed the anniversary this year
+                var passed = false
+                if (currentMonth > anchorMonth) passed = true
+                else if (currentMonth == anchorMonth && currentDay >= anchorDay) passed = true
+                
+                if (!passed) {
+                    cal.add(Calendar.YEAR, -1)
+                }
+                
+                cal.set(Calendar.MONTH, anchorMonth)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH)))
+                
                 val start = cal.timeInMillis
                 cal.add(Calendar.YEAR, 1)
-                Pair(start, cal.timeInMillis)
+                val end = cal.timeInMillis
+                Pair(start, end)
             }
         }
     }

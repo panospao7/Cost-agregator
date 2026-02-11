@@ -170,7 +170,7 @@ class MerchantNormalizer @Inject constructor(
     /**
      * Find best matching merchant name from a list
      */
-    fun findBestMatch(merchant: String, candidates: List<String>, threshold: Float = 0.7f): String? {
+    fun findBestMatch(merchant: String, candidates: List<String>, threshold: Float = 0.85f): String? {
         var bestMatch: String? = null
         var bestScore = 0f
 

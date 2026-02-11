@@ -17,9 +17,9 @@ import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
 import com.yourname.expensetracker.data.repository.FinancialWeather
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
-import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
-import com.yourname.expensetracker.data.database.entity.PlannedExpense as PlannedExpenseEntity
+import com.yourname.expensetracker.data.database.entity.PlannedExpense
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -100,7 +100,7 @@ class HomeViewModel @Inject constructor(
     private val dashboardRepository: DashboardRepository,
     private val insightsEngine: InsightsEngine,
     private val financialWeatherRepository: FinancialWeatherRepository,
-    private val plannedExpenseDao: PlannedExpenseDao
+    private val plannedExpenseRepository: PlannedExpenseRepository
 ) : ViewModel() {
 
     private val isEditMode = MutableStateFlow(false)
@@ -118,8 +118,9 @@ class HomeViewModel @Inject constructor(
 
     val dashboard: StateFlow<DashboardState> = combine(
         dataFlow,
-        isEditMode
-    ) { data, editMode ->
+        isEditMode,
+        dashboardRepository.configFlow
+    ) { data, editMode, configList ->
         val (expenses, categories, budgetStatuses, pendingCount, weather) = data
 
         val now = System.currentTimeMillis()
@@ -178,9 +179,17 @@ class HomeViewModel @Inject constructor(
             .filter { it.date >= previousMonthStart && it.date < previousMonthEnd }
             .sumOf { it.amount }
         
+        val baseline = overallBudget?.budget?.amount ?: if (previousMonthTotal > 0) previousMonthTotal else null
+        
         val projectedTotal = if (dayOfMonth > 0)
             monthSpent * daysInMonth.toDouble() / dayOfMonth else monthSpent
             
+        val pacePercentage = if (baseline != null && baseline > 0) {
+            val expected = baseline * dayOfMonth / daysInMonth
+            val calculated = (monthSpent / expected * 100).toFloat()
+            if (calculated.isFinite()) calculated else 0f
+        } else 0f
+
         val pace = SpendingPace(
             currentMonthSpent = monthSpent,
             daysElapsed = dayOfMonth,
@@ -188,15 +197,11 @@ class HomeViewModel @Inject constructor(
             projectedTotal = projectedTotal,
             previousMonthTotal = if (previousMonthTotal > 0) previousMonthTotal else null,
             averageMonthlyTotal = null,
-            pacePercentage = if (previousMonthTotal > 0) {
-                val expected = previousMonthTotal * dayOfMonth / daysInMonth
-                val calculated = (monthSpent / expected * 100).toFloat()
-                if (calculated.isFinite()) calculated else 0f
-            } else 0f,
+            pacePercentage = pacePercentage,
             paceStatus = when {
-                previousMonthTotal <= 0 -> PaceStatus.NO_BASELINE
-                monthSpent < previousMonthTotal * dayOfMonth / daysInMonth * 0.9 -> PaceStatus.UNDER_PACE
-                monthSpent > previousMonthTotal * dayOfMonth / daysInMonth * 1.1 -> PaceStatus.OVER_PACE
+                baseline == null || baseline <= 0 -> PaceStatus.NO_BASELINE
+                pacePercentage < 90f -> PaceStatus.UNDER_PACE
+                pacePercentage > 110f -> PaceStatus.OVER_PACE
                 else -> PaceStatus.ON_PACE
             }
         )
@@ -286,8 +291,7 @@ class HomeViewModel @Inject constructor(
         }
 
         // === Apply Custom Layout ===
-        val config = dashboardRepository.getDashboardConfig()
-        val sortedWidgets = config
+        val sortedWidgets = configList
             .filter { it.isVisible || editMode } // Show all in edit mode, otherwise filter
             .mapNotNull { conf ->
                 widgets.find { w -> getWidgetId(w) == conf.id }
@@ -385,8 +389,8 @@ class HomeViewModel @Inject constructor(
         priority: PlannedExpensePriority
     ) {
         viewModelScope.launch {
-            plannedExpenseDao.insertPlannedExpense(
-                PlannedExpenseEntity(
+            plannedExpenseRepository.addPlannedExpense(
+                PlannedExpense(
                     description = description,
                     amount = amount,
                     date = date,

@@ -9,11 +9,18 @@ import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
 @Singleton
 class DashboardRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val prefs: SharedPreferences = context.getSharedPreferences("dashboard_prefs", Context.MODE_PRIVATE)
+
+    private val _configFlow = MutableStateFlow(getDashboardConfig())
+    val configFlow: StateFlow<List<DashboardWidgetConfig>> = _configFlow.asStateFlow()
 
     fun getDashboardConfig(): List<DashboardWidgetConfig> {
         val json = prefs.getString("layout_config", null) ?: return getDefaultConfig()
@@ -46,6 +53,7 @@ class DashboardRepository @Inject constructor(
             array.put(obj)
         }
         prefs.edit().putString("layout_config", array.toString()).apply()
+        _configFlow.value = config
     }
 
     private fun getDefaultConfig(): List<DashboardWidgetConfig> {

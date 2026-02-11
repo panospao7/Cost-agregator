@@ -434,8 +434,8 @@ class InsightsEngine @Inject constructor(
             // We need 3+ transactions historically to have a reliable average
             if (historicalStats.txCount < 3) continue
 
-            // If the max amount this month is > 2x the historical average
-            if (merchantStat.maxAmount > historicalStats.avgAmount * 2.0) {
+            // If the max amount this month is > 3x the historical average (LOG-015 Fix: Increased from 2x)
+            if (merchantStat.maxAmount > historicalStats.avgAmount * 3.0) {
                 // Find the actual expense (largest for this merchant this month)
                 // Find the actual expense (largest for THIS merchant this month)
                 val expense = expenseDao.getLargestExpenseForMerchant(

@@ -27,10 +27,7 @@ class CategorizationEngine @Inject constructor(
         if (exactMatch != null) return exactMatch.categoryId
 
         // 2. Substring match — check if any known merchant pattern is contained in this merchant
-        val allMappings = getMappings()
-        
-        // Sort by pattern length descending to match longest first
-        val sortedMappings = allMappings.sortedByDescending { it.merchantPattern.length }
+        val sortedMappings = getMappings() // Already sorted by length descending (LOG-022)
         
         val paddedNormalized = " $normalized "
         
@@ -48,7 +45,7 @@ class CategorizationEngine @Inject constructor(
         // 3. Word-level match — split merchant into words and check each
         val words = normalized.split(" ").filter { it.length >= 4 }
         if (words.isNotEmpty()) {
-            val mappingsMap = allMappings.associateBy { it.merchantPattern }
+            val mappingsMap = sortedMappings.associateBy { it.merchantPattern }
             for (word in words) {
                 val match = mappingsMap[word]
                 if (match != null) return match.categoryId
@@ -69,7 +66,10 @@ class CategorizationEngine @Inject constructor(
         cacheMutex.withLock {
             val now = System.currentTimeMillis()
             if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
+                // LOG-022 Fix: Sort by pattern length descending ONCE during cache population
+                // This avoids sorting on every analyze call
                 cachedMappings = merchantCategoryDao.getAll()
+                    .sortedByDescending { it.merchantPattern.length }
                 lastCacheTime = now
             }
             return cachedMappings!!

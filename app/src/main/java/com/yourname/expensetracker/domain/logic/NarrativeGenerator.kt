@@ -23,7 +23,7 @@ class NarrativeGenerator @Inject constructor() {
         val discretionary = components.discretionaryBudget
 
         val basic = when {
-            risk == RiskLevel.LOW && discretionary > 200.0 -> WeatherNarrative(
+            risk == RiskLevel.LOW && discretionary > 100.0 -> WeatherNarrative(
                 state = WeatherState.CLEAR_SKIES,
                 icon = "☀️",
                 headline = "Clear Skies",
