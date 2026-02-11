@@ -20,7 +20,7 @@ import androidx.room.*
         PlannedExpense::class,
         SavingsGoal::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
