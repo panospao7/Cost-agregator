@@ -23,16 +23,11 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["rawNotificationId"]),
-        Index(value = ["date"]),
-        Index(value = ["categoryId"]),
-        Index(value = ["transactionType"]),
-        Index(value = ["date", "transactionType"]), // For dashboard totals
-        Index(value = ["merchant", "date"]),        // For merchant analytics/anomalies
-        Index(value = ["categoryId", "date"]),      // For category breakdown
-        Index(value = ["amount", "merchant", "date"]),
-        // Optimized indices
-        Index(value = ["transactionType", "merchant"]),
-        Index(value = ["transactionType", "categoryId", "date"])
+        Index(value = ["transactionType", "date"]), // Replaces (date, transactionType) for better filtering
+        Index(value = ["transactionType", "categoryId", "date"]), // Covers (categoryId, date) if filtered by type
+        Index(value = ["categoryId", "date"]),      // For category breakdown and FK constraint
+        Index(value = ["amount", "merchant", "date"]), // High specificity for duplicate check
+        Index(value = ["merchant", "date"]) // Necessary for merchant-specific time searches
     ]
 )
 data class Expense(

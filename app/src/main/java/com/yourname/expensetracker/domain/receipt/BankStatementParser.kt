@@ -3,11 +3,16 @@ package com.yourname.expensetracker.domain.receipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import java.util.regex.Pattern
+import com.yourname.expensetracker.domain.util.CurrencyNormalizer
+import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class BankStatementParser @Inject constructor() {
+class BankStatementParser @Inject constructor(
+    private val currencyNormalizer: CurrencyNormalizer,
+    private val merchantCleaner: MerchantCleaner
+) {
 
     /**
      * Parse a list of text blocks (with spatial data) into multiple transactions.
@@ -78,9 +83,9 @@ class BankStatementParser @Inject constructor() {
         
         if (!amountMatcher.find()) return null
         
-        val amountStr = amountMatcher.group(1)!!.replace(" ", "").replace(",", ".")
+        val amountStr = amountMatcher.group(1)?.replace(" ", "")?.replace(",", ".") ?: return null
         val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
-        val currency = normalizeCurrency(amountMatcher.group(2) ?: "EUR")
+        val currency = currencyNormalizer.normalize(amountMatcher.group(2) ?: "EUR")
 
         // 3. Extract logic for merchant
         // Usually merchant is the text that is NOT the amount and NOT a date/time
@@ -101,18 +106,9 @@ class BankStatementParser @Inject constructor() {
         return ParsedTransaction(
             amount = absAmount,
             currency = currency,
-            merchant = merchant.take(40).trim(),
+            merchant = merchantCleaner.clean(merchant),
             type = if (amountStr.contains("-")) TransactionType.PURCHASE else TransactionType.DEPOSIT,
             confidence = 0.70f // Base confidence for statement parsing
         )
-    }
-
-    private fun normalizeCurrency(raw: String): String {
-        return when (raw.uppercase().trim()) {
-            "€", "EUR" -> "EUR"
-            "$", "USD" -> "USD"
-            "£", "GBP" -> "GBP"
-            else -> "EUR"
-        }
     }
 }

@@ -3,13 +3,19 @@ package com.yourname.expensetracker.domain.parser.parsers
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.util.CurrencyNormalizer
+import com.yourname.expensetracker.domain.util.MerchantCleaner
 import java.util.regex.Pattern
+import javax.inject.Inject
 
 /**
  * Parser for Greek banking apps (NBG, Alpha, Eurobank, Piraeus).
  * These typically send very structured SMS-like notifications.
  */
-class GreekBankParser : AppNotificationParser {
+class GreekBankParser @Inject constructor(
+    private val currencyNormalizer: CurrencyNormalizer,
+    private val merchantCleaner: MerchantCleaner
+) : AppNotificationParser {
 
     override val supportedPackages = setOf(
         "gr.nbg.mobilebanking",
@@ -79,9 +85,9 @@ class GreekBankParser : AppNotificationParser {
             if (group.matches(Regex("""\d+[.,]\d{2}"""))) {
                 amountStr = group
             } else if (group.matches(Regex("""[€$£]|EUR|USD|GBP""", RegexOption.IGNORE_CASE))) {
-                currency = normalizeCurrency(group)
+                currency = currencyNormalizer.normalize(group)
             } else if (group.length > 2) {
-                merchant = cleanMerchant(group)
+                merchant = merchantCleaner.clean(group)
             }
         }
 
@@ -95,23 +101,5 @@ class GreekBankParser : AppNotificationParser {
             type = TransactionType.PURCHASE,
             confidence = 0.92f
         )
-    }
-
-    private fun cleanMerchant(raw: String): String {
-        return raw.trim()
-            .replace(Regex("""(?:στις|on)\s*\d{1,2}/\d{1,2}.*$"""), "")
-            .replace(Regex("""\s*\*{2,}\d+.*$"""), "")
-            .trim()
-            .take(40)
-            .trim()
-    }
-
-    private fun normalizeCurrency(raw: String?): String {
-        return when (raw?.uppercase()?.trim()) {
-            "€", "EUR" -> "EUR"
-            "$", "USD" -> "USD"
-            "£", "GBP" -> "GBP"
-            else -> "EUR"
-        }
     }
 }

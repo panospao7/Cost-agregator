@@ -26,10 +26,14 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit OFFSET :offset")
     suspend fun getExpensesWithCategoryPaged(limit: Int, offset: Int): List<ExpenseWithCategory>
 
+    @Transaction
+    @Query("SELECT * FROM expenses WHERE date >= :startMs AND date <= :endMs ORDER BY date DESC")
+    fun getExpensesWithCategoryInPeriodFlow(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>>
+
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     suspend fun getAll(): List<Expense>
     
-    @Query("SELECT SUM(amount) FROM expenses WHERE UPPER(transactionType) = 'PURCHASE'")
+    @Query("SELECT SUM(amount) FROM expenses WHERE transactionType = 'PURCHASE'")
     fun getTotalSpentFlow(): Flow<Double?>
 
     @Query("DELETE FROM expenses")
@@ -44,7 +48,7 @@ interface ExpenseDao {
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses 
-            WHERE ABS(amount - :amount) < 0.001 
+            WHERE (ABS(amount - :amount) < 0.01 OR ABS(amount - :amount) / amount < 0.001)
             AND merchant = :merchant 
             AND ABS(date - :date) <= :windowMs
         )
@@ -52,7 +56,7 @@ interface ExpenseDao {
     suspend fun isDuplicate(amount: Double, merchant: String, date: Long, windowMs: Long = 300000): Boolean
     @Query("""
         SELECT COALESCE(SUM(amount), 0.0) FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND categoryId = :categoryId 
         AND date >= :startMs AND date < :endMs
     """)
@@ -60,7 +64,7 @@ interface ExpenseDao {
 
     @Query("""
         SELECT COALESCE(SUM(amount), 0.0) FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND categoryId = :categoryId 
         AND date >= :startMs AND date < :endMs
     """)
@@ -95,7 +99,7 @@ interface ExpenseDao {
 
     @Query("""
         SELECT SUM(amount) FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startDate AND date <= :endDate
     """)
     suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
@@ -103,7 +107,7 @@ interface ExpenseDao {
     @Query("""
         SELECT merchant, SUM(amount) as total, COUNT(*) as cnt 
         FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startDate AND date <= :endDate
         GROUP BY UPPER(merchant)
         ORDER BY total DESC
@@ -113,7 +117,7 @@ interface ExpenseDao {
     @Query("""
         SELECT categoryId, SUM(amount) as total, COUNT(*) as txCount
         FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startDate AND date <= :endDate
         AND categoryId IS NOT NULL
         GROUP BY categoryId
@@ -121,7 +125,7 @@ interface ExpenseDao {
     """)
     suspend fun getCategoryTotalsBetween(startDate: Long, endDate: Long): List<CategoryTotal>
 
-    @Query("SELECT COUNT(*) FROM expenses WHERE UPPER(transactionType) = 'PURCHASE'")
+    @Query("SELECT COUNT(*) FROM expenses WHERE transactionType = 'PURCHASE'")
     suspend fun getPurchaseCount(): Int
 
     @Query("SELECT MIN(date) FROM expenses")
@@ -132,7 +136,7 @@ interface ExpenseDao {
     // Monthly total for a specific month range
     @Query("""
         SELECT COALESCE(SUM(amount), 0.0) FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
     """)
     suspend fun getTotalForPeriod(startMs: Long, endMs: Long): Double
@@ -140,7 +144,7 @@ interface ExpenseDao {
     // Count for a period
     @Query("""
         SELECT COUNT(*) FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
     """)
     suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int
@@ -149,7 +153,7 @@ interface ExpenseDao {
     @Query("""
         SELECT categoryId, SUM(amount) as total, COUNT(*) as txCount
         FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         AND categoryId IS NOT NULL
         GROUP BY categoryId
@@ -163,7 +167,7 @@ interface ExpenseDao {
                MIN(amount) as minAmount, MAX(amount) as maxAmount,
                COUNT(*) as txCount, SUM(amount) as totalAmount
         FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE'
+        WHERE transactionType = 'PURCHASE'
         GROUP BY merchant
         HAVING txCount >= 2
         ORDER BY totalAmount DESC
@@ -176,7 +180,7 @@ interface ExpenseDao {
                MIN(amount) as minAmount, MAX(amount) as maxAmount,
                COUNT(*) as txCount, SUM(amount) as totalAmount
         FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE'
+        WHERE transactionType = 'PURCHASE'
         GROUP BY merchant
         ORDER BY totalAmount DESC
     """)
@@ -188,7 +192,7 @@ interface ExpenseDao {
                MIN(amount) as minAmount, MAX(amount) as maxAmount,
                COUNT(*) as txCount, SUM(amount) as totalAmount
         FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         GROUP BY merchant
         ORDER BY totalAmount DESC
@@ -199,7 +203,7 @@ interface ExpenseDao {
     // Largest single transaction in a period
     @Query("""
         SELECT * FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         ORDER BY amount DESC
         LIMIT 1
@@ -209,7 +213,7 @@ interface ExpenseDao {
     // Largest single transaction for a specific merchant in a period
     @Query("""
         SELECT * FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         AND merchant = :merchant
         ORDER BY amount DESC
@@ -221,7 +225,7 @@ interface ExpenseDao {
     @Query("""
         SELECT (date / 86400000) as dayEpoch, SUM(amount) as total, COUNT(*) as txCount
         FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE' 
+        WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         GROUP BY dayEpoch
         ORDER BY dayEpoch ASC
@@ -237,7 +241,7 @@ interface ExpenseDao {
                COUNT(*) as txCount, 
                SUM(amount) as totalAmount
         FROM expenses 
-        WHERE UPPER(transactionType) = 'PURCHASE'
+        WHERE transactionType = 'PURCHASE'
         GROUP BY merchant
         HAVING txCount >= 2 
         AND (maxAmount - minAmount) < (avgAmount * 0.15)
@@ -248,17 +252,17 @@ interface ExpenseDao {
     // Day-of-week spending pattern
     @Query("""
         SELECT 
-            CAST(((date / 1000 + 259200) % 604800) / 86400 AS INTEGER) as dayOfWeek,
+            CAST((((date + :timeZoneOffset) / 1000 + 259200) % 604800) / 86400 AS INTEGER) as dayOfWeek,
             SUM(amount) as total,
             COUNT(*) as txCount,
             AVG(amount) as avgAmount
         FROM expenses
-        WHERE UPPER(transactionType) = 'PURCHASE'
+        WHERE transactionType = 'PURCHASE'
         AND date >= :startMs AND date < :endMs
         GROUP BY dayOfWeek
         ORDER BY dayOfWeek ASC
     """)
-    suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long): List<DayOfWeekTotal>
+    suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long, timeZoneOffset: Int): List<DayOfWeekTotal>
 }
 
 data class MerchantSuggestion(

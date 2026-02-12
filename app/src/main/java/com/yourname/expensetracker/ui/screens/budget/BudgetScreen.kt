@@ -41,6 +41,7 @@ fun BudgetScreen(
     
     var showAddDialog by remember { mutableStateOf(false) }
     var editingBudget by remember { mutableStateOf<BudgetStatus?>(null) }
+    val dateFormat = remember { SimpleDateFormat("MMM dd", Locale.getDefault()) }
 
     Scaffold(
         topBar = {
@@ -75,6 +76,7 @@ fun BudgetScreen(
                     items(uiState.budgets) { budgetStatus ->
                         BudgetCard(
                             status = budgetStatus,
+                            dateFormat = dateFormat,
                             onEdit = { editingBudget = budgetStatus },
                             onToggle = { isActive -> viewModel.toggleBudget(budgetStatus.budget.id, isActive) },
                             onDelete = { viewModel.deleteBudget(it) }
@@ -141,6 +143,7 @@ fun SummaryItem(label: String, count: Int, color: Color) {
 @Composable
 fun BudgetCard(
     status: BudgetStatus,
+    dateFormat: SimpleDateFormat,
     onEdit: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onDelete: (Budget) -> Unit
@@ -170,7 +173,7 @@ fun BudgetCard(
                         fontSize = 18.sp
                     )
                     Text(
-                        "${status.budget.period.name.lowercase().capitalize()} • Starts ${formatDate(status.budget.startDate)}",
+                        "${status.budget.period.name.lowercase().capitalize()} • Starts ${dateFormat.format(Date(status.budget.startDate))}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -401,9 +404,6 @@ fun CategorySelector(
     }
 }
 
-private fun formatDate(ms: Long): String {
-    return SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(ms))
-}
 
 // Extension to avoid repetitive logic
 fun String.capitalize() = replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }

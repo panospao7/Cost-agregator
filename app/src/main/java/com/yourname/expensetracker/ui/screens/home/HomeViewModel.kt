@@ -160,14 +160,46 @@ class HomeViewModel @Inject constructor(
         cal.set(Calendar.DAY_OF_MONTH, 1)
         val monthStart = cal.timeInMillis
 
-        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        // Single-pass aggregation
+        var totalSpent = 0.0
+        var monthSpent = 0.0
+        var weekSpent = 0.0
+        var todaySpent = 0.0
+        var previousMonthTotal = 0.0
+        val categoryTotalsMap = mutableMapOf<Long, Double>()
+        val purchases = ArrayList<Expense>(expenses.size)
+
+        val previousMonthStart = insightsEngine.getMonthPeriod(now, -1).startMs
+        val previousMonthEnd = monthStart
+
+        for (expense in expenses) {
+            if (expense.transactionType != TransactionType.PURCHASE) continue
+            
+            val amount = expense.amount
+            val date = expense.date
+            
+            purchases.add(expense)
+            totalSpent += amount
+            
+            if (date >= monthStart) {
+                monthSpent += amount
+            } else if (date >= previousMonthStart && date < previousMonthEnd) {
+                previousMonthTotal += amount
+            }
+
+            if (date >= weekStart) {
+                weekSpent += amount
+                if (date >= todayStart) {
+                    todaySpent += amount
+                }
+            }
+            
+            expense.categoryId?.let { catId ->
+                categoryTotalsMap[catId] = (categoryTotalsMap[catId] ?: 0.0) + amount
+            }
+        }
+
         val categoryMap = categories.associateBy { it.id }
-        val totalSpent = purchases.sumOf { it.amount }
-        val monthSpent = purchases.filter { it.date >= monthStart }.sumOf { it.amount }
-        val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
-        val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
-        
-        // Transaction stats
         val txCount = purchases.size
 
         // Days remaining in month
@@ -179,12 +211,10 @@ class HomeViewModel @Inject constructor(
         val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
         val safeToSpend = weather.discretionaryBudget 
 
-        // Category totals
-        val categoryTotals = purchases
-            .groupBy { it.categoryId }
-            .mapNotNull { (catId, exps) ->
-                val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
-                val catTotal = exps.sumOf { it.amount }
+        // Finalize Category totals
+        val categoryTotals = categoryTotalsMap.entries
+            .mapNotNull { (catId, catTotal) ->
+                val cat = catId.let { categoryMap[it] } ?: return@mapNotNull null
                 CategorySpending(
                     category = cat,
                     total = catTotal,
@@ -192,24 +222,31 @@ class HomeViewModel @Inject constructor(
                 )
             }
             .sortedByDescending { it.total }
-
-        // Spending pace logic (adapted for flow combine)
-        val previousMonthStart = insightsEngine.getMonthPeriod(now, -1).startMs
-        val previousMonthEnd = monthStart
-        val previousMonthTotal = purchases
-            .filter { it.date >= previousMonthStart && it.date < previousMonthEnd }
-            .sumOf { it.amount }
         
         val baseline = overallBudget?.budget?.amount ?: if (previousMonthTotal > 0) previousMonthTotal else null
         
-        val projectedTotal = if (dayOfMonth > 0)
-            monthSpent * daysInMonth.toDouble() / dayOfMonth else monthSpent
+        // Handle Day 1 Noise (LOG-005 Fix)
+        // If it's the first day, we use the average of (baseline / daysInMonth) and current monthSpent 
+        // to avoid extreme swings if a user makes a big purchase on Day 1.
+        val dayOfMonthCoerced = dayOfMonth.coerceAtLeast(1)
+        val projectedTotal = if (dayOfMonth == 1) {
+            // Weighted average on day 1: 70% baseline, 30% current spend extrapolated
+            if (baseline != null) (baseline * 0.7) + (monthSpent * 0.3 * daysInMonth)
+            else monthSpent * daysInMonth
+        } else {
+            monthSpent * daysInMonth.toDouble() / dayOfMonth
+        }
             
         // Validated Pace Logic: Handle dayOfMonth=1 or 0 gracefully
         val pacePercentage = if (baseline != null && baseline > 0) {
-            val expected = baseline * dayOfMonth.coerceAtLeast(1) / daysInMonth
+            val expected = baseline * dayOfMonthCoerced / daysInMonth
             val calculated = (monthSpent / expected * 100).toFloat()
-            if (calculated.isFinite()) calculated else 0f
+            // Dampen day 1 pace
+            if (dayOfMonth == 1) {
+                if (calculated > 110f) 110f else if (calculated < 90f) 90f else calculated
+            } else {
+                if (calculated.isFinite()) calculated else 0f
+            }
         } else 0f
 
         val pace = SpendingPace(

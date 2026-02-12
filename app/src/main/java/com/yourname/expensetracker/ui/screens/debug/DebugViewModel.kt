@@ -15,37 +15,38 @@ import javax.inject.Inject
 class DebugViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
-    private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository
+    private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
+    private val notificationSeeder: com.yourname.expensetracker.domain.debug.NotificationSeeder
 ) : ViewModel() {
     
     val notifications: StateFlow<List<RawNotification>> = repository
         .getRecentNotifications(200)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30000), emptyList())
     
     val notificationCount: StateFlow<Int> = repository
         .getCount()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30000), 0)
     
     val packages: StateFlow<List<String>> = repository
         .getAllPackages()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30000), emptyList())
 
     val blockedPackages: StateFlow<List<com.yourname.expensetracker.data.database.entity.BlockedPackage>> = repository
         .getBlockedPackages()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30000), emptyList())
         
     val totalSpent: StateFlow<Double> = repository
         .getTotalSpent()
         .map { it ?: 0.0 }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30000), 0.0)
 
     val sourceStats: StateFlow<List<com.yourname.expensetracker.data.database.entity.SourceStats>> = repository
         .getSourceStats()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30000), emptyList())
 
     val classifierStats: StateFlow<com.yourname.expensetracker.domain.intelligence.ClassifierStats> = repository
         .getClassifierStatsFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.getClassifierStats())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(30000), com.yourname.expensetracker.domain.intelligence.ClassifierStats(0, 0, 0, false))
     
     private val _selectedPackageFilter = MutableStateFlow<String?>(null)
     val selectedPackageFilter: StateFlow<String?> = _selectedPackageFilter
@@ -56,7 +57,7 @@ class DebugViewModel @Inject constructor(
     ) { notifs, filter ->
         if (filter == null) notifs
         else notifs.filter { it.packageName == filter }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(30000), emptyList())
     
     fun setPackageFilter(packageName: String?) {
         _selectedPackageFilter.value = packageName
@@ -89,7 +90,6 @@ class DebugViewModel @Inject constructor(
     fun blockPackage(packageName: String) {
         viewModelScope.launch {
             repository.blockPackage(packageName)
-            // Also refresh filter if needed, but Flow should handle it
         }
     }
     
@@ -110,9 +110,6 @@ class DebugViewModel @Inject constructor(
             repository.resetSourceStats()
         }
     }
-    
-    @Inject
-    lateinit var seeder: com.yourname.expensetracker.domain.debug.NotificationSeeder
 
     private val _isSimulating = MutableStateFlow(false)
     val isSimulating: StateFlow<Boolean> = _isSimulating
@@ -128,7 +125,7 @@ class DebugViewModel @Inject constructor(
             val cats = categoryRepository.allCategories.first()
             val catMap = cats.associate { it.name to it.id }
             
-            seeder.categories.forEach { (catName, merchants) ->
+            notificationSeeder.categories.forEach { (catName, merchants) ->
                 val catId = catMap[catName]
                 if (catId != null) {
                     merchants.forEach { merchant ->
@@ -142,7 +139,7 @@ class DebugViewModel @Inject constructor(
             }
             
             // 3. Generate data
-            val simulated = seeder.generate(count)
+            val simulated = notificationSeeder.generate(count)
             repository.processAndSaveAll(simulated)
             _isSimulating.value = false
         }

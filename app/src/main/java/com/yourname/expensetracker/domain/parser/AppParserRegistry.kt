@@ -1,5 +1,11 @@
 package com.yourname.expensetracker.domain.parser
 
+import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
+import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
+import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
+import com.yourname.expensetracker.domain.parser.parsers.SmsParser
+import javax.inject.Inject
+import javax.inject.Singleton
 import com.yourname.expensetracker.data.database.entity.TransactionType
 
 /**
@@ -37,10 +43,24 @@ interface AppNotificationParser {
 /**
  * Registry that routes notifications to the right parser.
  */
-class AppParserRegistry(
-    private val appParsers: List<AppNotificationParser>,
-    private val fallbackParser: GenericTransactionParser
+@Singleton
+class AppParserRegistry @Inject constructor(
+    private val greekBankParser: GreekBankParser,
+    private val revolutParser: RevolutParser,
+    private val smsParser: SmsParser,
+    private val googleWalletParser: GoogleWalletParser,
+    private val genericParser: GenericTransactionParser
 ) {
+    private val parsers = mutableListOf<AppNotificationParser>()
+
+    init {
+        // Order matters: Specific parsers first
+        parsers.add(greekBankParser)
+        parsers.add(revolutParser)
+        parsers.add(smsParser)
+        parsers.add(googleWalletParser)
+    }
+
     fun parse(
         title: String?,
         text: String?,
@@ -49,12 +69,12 @@ class AppParserRegistry(
         packageName: String
     ): ParsedTransaction? {
         // 1. Try app-specific parser first
-        val specificParser = appParsers.find { packageName in it.supportedPackages }
+        val specificParser = parsers.find { packageName in it.supportedPackages }
         if (specificParser != null) {
             return specificParser.parse(title, text, bigText, subText, packageName)
         }
 
         // 2. Fallback to generic parser with HIGH threshold
-        return fallbackParser.parse(title, text, bigText, subText, packageName)
+        return genericParser.parse(title, text, bigText, subText, packageName)
     }
 }

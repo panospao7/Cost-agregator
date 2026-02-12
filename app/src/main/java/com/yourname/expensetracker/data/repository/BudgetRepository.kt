@@ -97,19 +97,19 @@ class BudgetRepository @Inject constructor(
         }
     }
 
-    suspend fun addBudget(budget: Budget): Long {
+    suspend fun addBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Long> {
         return try {
             val id = budgetDao.insert(budget)
             budgetMonitor.checkBudgets()
-            id
+            com.yourname.expensetracker.domain.model.Result.Success(id)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to add budget", e)
-            -1L
+            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to add budget")
         }
     }
 
-    suspend fun updateBudget(budget: Budget) {
-        try {
+    suspend fun updateBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
+        return try {
             // Reset notifications when budget is edited so user gets fresh alerts (BUG-7 Fix)
             val resetBudget = budget.copy(
                 lastWarningNotifiedAt = null,
@@ -118,33 +118,41 @@ class BudgetRepository @Inject constructor(
             )
             budgetDao.update(resetBudget)
             budgetMonitor.checkBudgets()
+            com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to update budget ${budget.id}", e)
+            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to update budget")
         }
     }
 
-    suspend fun deleteBudget(budget: Budget) {
-        try {
+    suspend fun deleteBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
+        return try {
             budgetDao.delete(budget)
+            com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to delete budget ${budget.id}", e)
+            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete budget")
         }
     }
 
-    suspend fun toggleBudget(id: Long, isActive: Boolean) {
-        try {
+    suspend fun toggleBudget(id: Long, isActive: Boolean): com.yourname.expensetracker.domain.model.Result<Unit> {
+        return try {
             budgetDao.setActive(id, isActive)
             budgetMonitor.checkBudgets()
+            com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to toggle budget $id", e)
+            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to toggle budget")
         }
     }
 
-    suspend fun deleteAll() {
-        try {
+    suspend fun deleteAll(): com.yourname.expensetracker.domain.model.Result<Unit> {
+        return try {
             budgetDao.deleteAll()
+            com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to delete all budgets", e)
+            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete all budgets")
         }
     }
 

@@ -29,46 +29,79 @@ class BudgetMonitor @Inject constructor(
 
     fun checkBudgets() {
         serviceScope.launch {
-            val activeBudgets = budgetDao.getActiveBudgets()
-            for (budget in activeBudgets) {
-                try {
-                    processBudget(budget)
-                } catch (e: Exception) {
-                    android.util.Log.e("BudgetMonitor", "Error processing budget ${budget.id}: ${e.message}", e)
+            try {
+                val activeBudgets = budgetDao.getActiveBudgets()
+                if (activeBudgets.isEmpty()) return@launch
+
+                // 1. Pre-fetch categories for notifications (Avoid N+1 in sendNotification)
+                val categoryIds = activeBudgets.mapNotNull { it.categoryId }.distinct()
+                val categoryMap = if (categoryIds.isNotEmpty()) {
+                    categoryDao.getByIds(categoryIds).associateBy { it.id }
+                } else emptyMap()
+
+                // 2. Group budgets by their period window to batch spending queries
+                val now = System.currentTimeMillis()
+                val budgetsByWindow = activeBudgets.groupBy { 
+                    calculatePeriodWindow(it.period, it.startDate)
                 }
+
+                for ((window, budgets) in budgetsByWindow) {
+                    val startMs = window.first
+                    val endMs = window.second
+                    
+                    // Bulk query category totals for this window
+                    val categoryTotals = expenseDao.getCategoryTotalsForPeriod(startMs, endMs)
+                        .associateBy { it.categoryId }
+                    
+                    // If any budget is overall (no category), query total spent for the period
+                    val totalSpent = if (budgets.any { it.categoryId == null }) {
+                        expenseDao.getTotalForPeriod(startMs, endMs)
+                    } else null
+
+                    for (budget in budgets) {
+                        val spent = if (budget.categoryId != null) {
+                            categoryTotals[budget.categoryId]?.total ?: 0.0
+                        } else {
+                            totalSpent ?: 0.0
+                        }
+                        
+                        val categoryName = budget.categoryId?.let { categoryMap[it]?.name } ?: "Overall"
+                        processBudgetWithSpent(budget, spent, now, startMs, categoryName)
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("BudgetMonitor", "Error in checkBudgets: ${e.message}", e)
             }
         }
     }
 
-    private suspend fun processBudget(budget: Budget) {
-        val window = calculatePeriodWindow(budget.period, budget.startDate)
-        val spent = if (budget.categoryId != null) {
-            expenseDao.getCategorySpentInPeriod(budget.categoryId, window.first, window.second)
-        } else {
-            expenseDao.getTotalForPeriod(window.first, window.second)
-        }
-
+    private suspend fun processBudgetWithSpent(
+        budget: Budget, 
+        spent: Double, 
+        now: Long, 
+        periodStart: Long,
+        categoryName: String
+    ) {
         if (spent <= 0 || budget.amount <= 0) return
 
         val percent = (spent / budget.amount).toFloat()
-        val now = System.currentTimeMillis()
 
         when {
             percent >= 1.0f -> {
-                if (shouldNotify(budget.lastExceededNotifiedAt, now, window.first)) {
-                    sendNotification(budget, spent, "Budget Exceeded!")
+                if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart)) {
+                    sendNotificationDirect(budget, spent, "Budget Exceeded!", categoryName)
                     budgetDao.updateExceededNotification(budget.id, now)
                 }
             }
             percent >= budget.notifyAtCritical -> {
-                if (shouldNotify(budget.lastCriticalNotifiedAt, now, window.first)) {
-                    sendNotification(budget, spent, "Critical Budget Warning")
+                if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart)) {
+                    sendNotificationDirect(budget, spent, "Critical Budget Warning", categoryName)
                     budgetDao.updateCriticalNotification(budget.id, now)
                 }
             }
             percent >= budget.notifyAtWarning -> {
-                if (shouldNotify(budget.lastWarningNotifiedAt, now, window.first)) {
-                    sendNotification(budget, spent, "Budget Warning")
+                if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart)) {
+                    sendNotificationDirect(budget, spent, "Budget Warning", categoryName)
                     budgetDao.updateWarningNotification(budget.id, now)
                 }
             }
@@ -86,27 +119,18 @@ class BudgetMonitor @Inject constructor(
         return now - lastNotified > cooldown
     }
 
-    private fun sendNotification(budget: Budget, spent: Double, title: String) {
+    private fun sendNotificationDirect(budget: Budget, spent: Double, title: String, categoryName: String) {
         val percent = (spent / budget.amount * 100).toInt()
-        
-        serviceScope.launch {
-            val categoryName = if (budget.categoryId != null) {
-                categoryDao.getById(budget.categoryId)?.name ?: "Category"
-            } else {
-                "Overall"
-            }
-            
-            val content = "You've spent €${"%.2f".format(spent)} ($percent%) of your $categoryName budget."
+        val content = "You've spent €${String.format(java.util.Locale.US, "%.2f", spent)} ($percent%) of your $categoryName budget."
 
-            val builder = NotificationCompat.Builder(context, "budget_alerts")
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle(title)
-                .setContentText(content)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setAutoCancel(true)
+        val builder = NotificationCompat.Builder(context, "budget_alerts")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
 
-            notificationManager.notify(budget.id.toInt(), builder.build())
-        }
+        notificationManager.notify(budget.id.toInt(), builder.build())
     }
 
     fun calculatePeriodWindow(period: BudgetPeriod, anchorDate: Long): Pair<Long, Long> {

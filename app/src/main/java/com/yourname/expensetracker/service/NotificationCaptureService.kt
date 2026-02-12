@@ -34,7 +34,7 @@ class NotificationCaptureService : NotificationListenerService() {
     
     // Thread-safe, bounded deduplication cache
     private val processedNotifications = ConcurrentHashMap<String, Long>()
-    private var processCount = 0
+    private val processCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     companion object {
         private const val TAG = "NotificationCapture"
@@ -64,9 +64,28 @@ class NotificationCaptureService : NotificationListenerService() {
         private val IGNORED_PACKAGES = setOf(
             "android",
             "com.android.systemui",
+            "com.android.settings",
             "com.whatsapp",
             "com.facebook.orca",
-            "com.instagram.android"
+            "com.instagram.android",
+            "com.snapchat.android",
+            "com.google.android.youtube"
+        )
+
+        // Heuristic detection patterns
+        private val REGEX_CURRENCY = Regex("""[€$£¥]|(EUR|USD|GBP|CHF)""")
+        private val REGEX_AMOUNT = Regex("""\d+[.,]\d{2}""")
+        
+        private val FINANCIAL_KEYWORDS = setOf(
+            "paid", "spent", "purchase", "charged", "payment", "transaction", "amount", 
+            "card", "debit", "credit", "bank", "wallet",
+            // Greek Keywords (Properly Encoded)
+            "πληρωμ",   // πληρωμή
+            "αγορ",     // αγορά
+            "χρέωσ",    // χρέωση
+            "συναλλαγ", // συναλλαγή
+            "κάρτα",    // κάρτα
+            "μεταφορ"   // μεταφορά
         )
     }
 
@@ -144,13 +163,14 @@ class NotificationCaptureService : NotificationListenerService() {
         sbn ?: return
 
         val packageName = sbn.packageName
-        if (!shouldCapture(packageName)) return
         
-        // Extract notification data ONCE for deduplication logic
+        // Extract notification data for both filtering and deduplication
         val extras = sbn.notification.extras
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+
+        if (!shouldCapture(packageName, title, text, bigText)) return
         
         // Better deduplication using notification key + content
         // sbn.key is unique to the notification slot
@@ -175,9 +195,8 @@ class NotificationCaptureService : NotificationListenerService() {
     }
     
     private fun cleanupCacheIfNeeded() {
-        processCount++
-        if (processCount >= CACHE_CLEANUP_THRESHOLD) {
-            processCount = 0
+        if (processCount.incrementAndGet() >= CACHE_CLEANUP_THRESHOLD) {
+            processCount.set(0)
             val now = System.currentTimeMillis()
             processedNotifications.entries.removeIf { 
                 now - it.value > CACHE_MAX_AGE_MS 
@@ -251,8 +270,18 @@ class NotificationCaptureService : NotificationListenerService() {
         }
     }
 
-    private fun shouldCapture(packageName: String): Boolean {
-        return MONITORED_PACKAGES.contains(packageName)
+    private fun shouldCapture(packageName: String, title: String, text: String, bigText: String): Boolean {
+        if (IGNORED_PACKAGES.contains(packageName)) return false
+        if (MONITORED_PACKAGES.contains(packageName)) return true
+
+        // Discovery Mode: Heuristic check for unmonitored packages
+        val content = (title + " " + text + " " + bigText).lowercase()
+        
+        // Must contain an amount or currency, PLUS a financial keyword
+        val hasAmount = REGEX_CURRENCY.containsMatchIn(content) || REGEX_AMOUNT.containsMatchIn(content)
+        if (!hasAmount) return false
+
+        return FINANCIAL_KEYWORDS.any { content.contains(it) }
     }
 
     private fun buildExtrasJson(extras: android.os.Bundle): String {
@@ -276,6 +305,7 @@ class NotificationCaptureService : NotificationListenerService() {
             }
             json.toString()
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to build extras JSON", e)
             "{}"
         }
     }

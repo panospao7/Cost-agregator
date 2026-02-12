@@ -27,19 +27,19 @@ class NarrativeGenerator @Inject constructor() {
                 state = WeatherState.CLEAR_SKIES,
                 icon = "☀️",
                 headline = "Clear Skies",
-                summary = "You have a comfortable buffer of €${String.format("%.2f", discretionary)} for the rest of the month."
+                summary = "You have a comfortable buffer of €${String.format(java.util.Locale.US, "%.2f", discretionary)} for the rest of the month."
             )
             risk == RiskLevel.LOW || risk == RiskLevel.MEDIUM -> WeatherNarrative(
                 state = WeatherState.PARTLY_CLOUDY,
                 icon = "⛅",
                 headline = "Partly Cloudy",
-                summary = "Everything is on track, though discretionary buffer is moderate (€${String.format("%.2f", discretionary)})."
+                summary = "Everything is on track, though discretionary buffer is moderate (€${String.format(java.util.Locale.US, "%.2f", discretionary)})."
             )
             risk == RiskLevel.HIGH && discretionary > 0 -> WeatherNarrative(
                 state = WeatherState.CLOUDY,
                 icon = "☁️",
                 headline = "Cloudy Forecast",
-                summary = "Spending is tight. You only have €${String.format("%.2f", discretionary)} remaining for unpredicted expenses."
+                summary = "Spending is tight. You only have €${String.format(java.util.Locale.US, "%.2f", discretionary)} remaining for unpredicted expenses."
             )
             risk == RiskLevel.HIGH -> WeatherNarrative(
                 state = WeatherState.RAINY,
@@ -83,7 +83,7 @@ class NarrativeGenerator @Inject constructor() {
                     icon = "🚨",
                     items = criticalBudgets.map { 
                         val name = it.category?.name ?: "Total Budget"
-                        "$name is ${it.healthStatus.name}: €${String.format("%.0f", it.spentAmount)} spent"
+                        "$name is ${it.healthStatus.name}: €${String.format(java.util.Locale.US, "%.0f", it.spentAmount)} spent"
                     }
                 )
             )
@@ -103,7 +103,7 @@ class NarrativeGenerator @Inject constructor() {
                 NarrativeSection(
                     title = "Goal Reserves",
                     icon = "⛨",
-                    items = listOf("€${String.format("%.0f", components.goalReserves)} locked for high-priority savings")
+                    items = listOf("€${String.format(java.util.Locale.US, "%.0f", components.goalReserves)} locked for high-priority savings")
                 )
             )
         }
@@ -120,7 +120,7 @@ class NarrativeGenerator @Inject constructor() {
                     icon = "🎯",
                     items = importantPlans.map { 
                         val priorityLabel = if (it.priority == PlannedExpensePriority.MUST) "Must" else "Likely"
-                        "${it.description}: €${String.format("%.0f", it.amount)} ($priorityLabel)"
+                        "${it.description}: €${String.format(java.util.Locale.US, "%.0f", it.amount)} ($priorityLabel)"
                     }
                 )
             )
@@ -133,7 +133,7 @@ class NarrativeGenerator @Inject constructor() {
                     title = "Predicted Activity",
                     icon = "📈",
                     items = listOf(
-                        "Habit-based forecast: €${String.format("%.0f", components.predictedDiscretionary)} likely spending based on your typical month."
+                        "Habit-based forecast: €${String.format(java.util.Locale.US, "%.0f", components.predictedDiscretionary)} likely spending based on your typical month."
                     )
                 )
             )

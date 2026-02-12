@@ -5,7 +5,14 @@ import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import java.util.regex.Pattern
 
-class GoogleWalletParser : AppNotificationParser {
+import com.yourname.expensetracker.domain.util.CurrencyNormalizer
+import com.yourname.expensetracker.domain.util.MerchantCleaner
+import javax.inject.Inject
+
+class GoogleWalletParser @Inject constructor(
+    private val currencyNormalizer: CurrencyNormalizer,
+    private val merchantCleaner: MerchantCleaner
+) : AppNotificationParser {
 
     override val supportedPackages = setOf(
         "com.google.android.apps.walletnfcrel",
@@ -64,7 +71,7 @@ class GoogleWalletParser : AppNotificationParser {
             val amount = amountStr.toDoubleOrNull() ?: return null
             // Filter unrealistic amounts
             if (amount < 0.01 || amount > 50000) return null
-            return Pair(amount, normalizeCurrency(prefixCurrency))
+            return Pair(amount, currencyNormalizer.normalize(prefixCurrency))
         }
         return null
     }
@@ -74,7 +81,7 @@ class GoogleWalletParser : AppNotificationParser {
         val combinedText = listOfNotNull(text, bigText).joinToString(" ")
         val atMatcher = atPattern.matcher(combinedText)
         if (atMatcher.find()) {
-            return cleanMerchant(atMatcher.group(1) ?: "Unknown")
+            return merchantCleaner.clean(atMatcher.group(1))
         }
 
         // Title might be the merchant if it doesn't contain amount/payment keywords
@@ -84,28 +91,10 @@ class GoogleWalletParser : AppNotificationParser {
             val isKeyword = listOf("payment", "purchase", "paid", "transaction", "google wallet", "wallet").any { lowerTitle.contains(it) }
             
             if (!isAmount && !isKeyword) {
-                return cleanMerchant(title)
+                return merchantCleaner.clean(title)
             }
         }
 
         return "Unknown"
-    }
-
-    private fun cleanMerchant(raw: String): String {
-        return raw.trim()
-            .replace(Regex("""[•·\-]\s*(Mastercard|Visa|Amex|card).*$""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\s*\*{2,}\d+.*$"""), "") // Remove "••1234"
-            .trim()
-            .take(40)
-            .trim()
-    }
-
-    private fun normalizeCurrency(raw: String?): String {
-        return when (raw?.uppercase()?.trim()) {
-            "€", "EUR" -> "EUR"
-            "$", "USD" -> "USD"
-            "£", "GBP" -> "GBP"
-            else -> "EUR"
-        }
     }
 }

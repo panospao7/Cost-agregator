@@ -10,7 +10,14 @@ import java.util.regex.Pattern
  * These are forwarded notifications from SMS — needs very careful filtering
  * because messaging apps send ALL messages.
  */
-class SmsParser : AppNotificationParser {
+import com.yourname.expensetracker.domain.util.CurrencyNormalizer
+import com.yourname.expensetracker.domain.util.MerchantCleaner
+import javax.inject.Inject
+
+class SmsParser @Inject constructor(
+    private val currencyNormalizer: CurrencyNormalizer,
+    private val merchantCleaner: MerchantCleaner
+) : AppNotificationParser {
 
     override val supportedPackages = setOf(
         "com.google.android.apps.messaging",
@@ -64,7 +71,7 @@ class SmsParser : AppNotificationParser {
 
         val amountStr = (matcher.group(1) ?: matcher.group(4))?.replace(",", ".") ?: return null
         val amount = amountStr.toDoubleOrNull() ?: return null
-        val currency = normalizeCurrency(matcher.group(2) ?: matcher.group(3))
+        val currency = currencyNormalizer.normalize(matcher.group(2) ?: matcher.group(3))
 
         if (amount < 0.10 || amount > 50000) return null
 
@@ -92,28 +99,9 @@ class SmsParser : AppNotificationParser {
             val m = p.matcher(body)
             if (m.find()) {
                 val raw = m.group(1) ?: continue
-                return cleanMerchant(raw)
+                return merchantCleaner.clean(raw)
             }
         }
         return "Unknown"
-    }
-
-    private fun cleanMerchant(raw: String): String {
-        return raw.trim()
-            .replace(Regex("""\s\d{2}:\d{2}.*$"""), "") // Remove time like 12:30
-            .replace(Regex("""\s\d{1,2}/\d{1,2}.*$"""), "") // Remove date like 12/05
-            .replace(Regex("""\s(?:στις|at|on)\s+\d.*$""", RegexOption.IGNORE_CASE), "") // Remove "at 12..." or "στις 12..."
-            .replace(Regex("""[.!;]$"""), "") // Remove trailing punctuation
-            .take(30)
-            .trim()
-    }
-
-    private fun normalizeCurrency(raw: String?): String {
-        return when (raw?.uppercase()?.trim()) {
-            "€", "EUR" -> "EUR"
-            "$", "USD" -> "USD"
-            "£", "GBP" -> "GBP"
-            else -> "EUR"
-        }
     }
 }

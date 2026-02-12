@@ -50,8 +50,8 @@ class RecurringExpenseEngine @Inject constructor(
             // Coefficient of variation: stdDev / mean
             val amountVariance = if (avgAmount > 0) stdDevAmount / avgAmount else 0.0
 
-            // If amount varies by more than 20%, likely not a fixed subscription/bill
-            if (amountVariance > 0.20) continue 
+            // If amount varies by more than 35%, likely not a fixed subscription/bill
+            if (amountVariance > 0.35) continue 
 
             // 2. Interval Analysis
             val dates = sorted.map { it.date }
@@ -59,8 +59,8 @@ class RecurringExpenseEngine @Inject constructor(
             
             val (frequency, confidence, varianceDays) = determineFrequency(intervals)
 
-            // Thresholds: Must be a known frequency and have > 55% confidence (LOG-013 Relaxed further to catch varying bills)
-            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.55) {
+            // Thresholds: Must be a known frequency and have > 50% confidence (LOG-013 Relaxed further to catch varying bills)
+            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.50) {
                 
                 // Predict next date
                 // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)

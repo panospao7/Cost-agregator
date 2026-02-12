@@ -47,52 +47,68 @@ class ReceiptRepository @Inject constructor(
         imageUri: Uri,
         autoCreateReview: Boolean = false
     ): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
-        // 1. Run OCR
-        val ocrResult: OcrResult = ocrService.processImage(imageUri)
+        try {
+            // 1. Run OCR
+            val ocrResult: OcrResult = ocrService.processImage(imageUri)
 
-        // 2. Parse the OCR text
-        val parsed = receiptParser.parse(ocrResult.fullText)
+            // 2. Parse the OCR text
+            val parsed = receiptParser.parse(ocrResult.fullText)
 
-        // 3. Normalize merchant if found
-        val normalizedMerchant = parsed.merchantName?.let {
-            merchantNormalizer.applyUserCorrections(it)
-        }
+            // 3. Normalize merchant if found
+            val normalizedMerchant = parsed.merchantName?.let {
+                merchantNormalizer.applyUserCorrections(it)
+            }
 
-        // 4. Save scanned receipt record
-        val receipt = ScannedReceipt(
-            imagePath = ocrResult.savedImagePath,
-            rawOcrText = ocrResult.fullText,
-            parsedTotal = parsed.total,
-            parsedMerchant = normalizedMerchant ?: parsed.merchantName,
-            parsedDate = parsed.date,
-            parsedItems = if (parsed.lineItems.isNotEmpty())
-                receiptParser.lineItemsToJson(parsed.lineItems) else null,
-            parsedTaxAmount = parsed.tax,
-            currency = parsed.currency,
-            confidence = parsed.confidence
-        )
-
-        val receiptId = scannedReceiptDao.insert(receipt)
-
-        // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
-        if (autoCreateReview) {
-            val review = PendingReview(
-                rawNotificationId = null,
-                scannedReceiptId = receiptId,
-                suggestedAmount = parsed.total ?: 0.0,
-                suggestedCurrency = parsed.currency,
-                suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant",
-                suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                suggestedCategoryId = null, // Auto-detected on approval
-                suggestedDate = parsed.date, // Preserving the date found by parser
-                confidence = parsed.confidence,
-                packageName = "receipt.scan",
-                notificationTitle = "Scanned Receipt",
-                notificationText = ocrResult.fullText.take(200) // Preview snippet
+            // 4. Save scanned receipt record
+            val receipt = ScannedReceipt(
+                imagePath = ocrResult.savedImagePath,
+                rawOcrText = ocrResult.fullText,
+                parsedTotal = parsed.total,
+                parsedMerchant = normalizedMerchant ?: parsed.merchantName,
+                parsedDate = parsed.date,
+                parsedItems = if (parsed.lineItems.isNotEmpty())
+                    receiptParser.lineItemsToJson(parsed.lineItems) else null,
+                parsedTaxAmount = parsed.tax,
+                currency = parsed.currency,
+                confidence = parsed.confidence
             )
-            pendingReviewDao.insert(review)
+
+            val receiptId = scannedReceiptDao.insert(receipt)
+
+            // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
+            if (autoCreateReview) {
+                val review = PendingReview(
+                    rawNotificationId = null,
+                    scannedReceiptId = receiptId,
+                    suggestedAmount = parsed.total ?: 0.0,
+                    suggestedCurrency = parsed.currency,
+                    suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant",
+                    suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
+                    suggestedCategoryId = null, // Auto-detected on approval
+                    suggestedDate = parsed.date, // Preserving the date found by parser
+                    confidence = parsed.confidence,
+                    packageName = "receipt.scan",
+                    notificationTitle = "Scanned Receipt",
+                    notificationText = ocrResult.fullText.take(200) // Preview snippet
+                )
+                pendingReviewDao.insert(review)
+            }
+            return Pair(receipt.copy(id = receiptId), parsed)
+
+        } catch (e: Exception) {
+            // Log error and save a "failed" record so we don't lose the image/Scan attempt
+            android.util.Log.e("ReceiptRepository", "Failed to process receipt", e)
+            
+            // Fallback: Try to save the image using manual record logic
+            return saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
+                val failedReceipt = receipt.copy(
+                    rawOcrText = "Scan Failed: ${e.message}", 
+                    confidence = 0f
+                )
+                scannedReceiptDao.update(failedReceipt) // Update the record created by saveManualReceiptRecord
+                Pair(failedReceipt, parsed)
+            }
         }
-        return Pair(receipt.copy(id = receiptId), parsed)
     }
 
     suspend fun saveManualReceiptRecord(imageUri: android.net.Uri): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {

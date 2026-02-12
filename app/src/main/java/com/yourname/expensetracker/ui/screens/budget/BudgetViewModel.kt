@@ -58,26 +58,80 @@ class BudgetViewModel @Inject constructor(
     }
 
     fun addBudget(budget: Budget) {
+        if (!validateThresholds(budget)) return
         viewModelScope.launch {
-            budgetRepository.addBudget(budget)
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            val result = budgetRepository.addBudget(budget)
+            when (result) {
+                is com.yourname.expensetracker.domain.model.Result.Success -> {
+                    _uiState.update { it.copy(isLoading = false) }
+                }
+                is com.yourname.expensetracker.domain.model.Result.Error -> {
+                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                }
+                else -> {}
+            }
         }
     }
 
     fun updateBudget(budget: Budget) {
+        if (!validateThresholds(budget)) return
         viewModelScope.launch {
-            budgetRepository.updateBudget(budget)
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            val result = budgetRepository.updateBudget(budget)
+            when (result) {
+                is com.yourname.expensetracker.domain.model.Result.Success -> {
+                    _uiState.update { it.copy(isLoading = false) }
+                }
+                is com.yourname.expensetracker.domain.model.Result.Error -> {
+                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                }
+                else -> {}
+            }
         }
+    }
+
+    private fun validateThresholds(budget: Budget): Boolean {
+        if (budget.notifyAtWarning <= 0f || budget.notifyAtWarning >= 1f) {
+            _uiState.update { it.copy(error = "Warning threshold must be between 0 and 1") }
+            return false
+        }
+        if (budget.notifyAtCritical <= budget.notifyAtWarning || budget.notifyAtCritical >= 1.05f) {
+            _uiState.update { it.copy(error = "Critical threshold must be between warning and 100%") }
+            return false
+        }
+        return true
     }
 
     fun deleteBudget(budget: Budget) {
         viewModelScope.launch {
-            budgetRepository.deleteBudget(budget)
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            val result = budgetRepository.deleteBudget(budget)
+             when (result) {
+                is com.yourname.expensetracker.domain.model.Result.Success -> {
+                    _uiState.update { it.copy(isLoading = false) }
+                }
+                is com.yourname.expensetracker.domain.model.Result.Error -> {
+                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                }
+                else -> {}
+            }
         }
     }
 
     fun toggleBudget(id: Long, isActive: Boolean) {
         viewModelScope.launch {
-            budgetRepository.toggleBudget(id, isActive)
+            _uiState.update { it.copy(isLoading = true, error = null) }
+             val result = budgetRepository.toggleBudget(id, isActive)
+             when (result) {
+                is com.yourname.expensetracker.domain.model.Result.Success -> {
+                    _uiState.update { it.copy(isLoading = false) }
+                }
+                is com.yourname.expensetracker.domain.model.Result.Error -> {
+                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                }
+                else -> {}
+            }
         }
     }
 

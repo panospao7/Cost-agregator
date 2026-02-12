@@ -30,6 +30,11 @@ open class TransactionClassifier @Inject constructor(
     private var saveJob: Job? = null
     private var retrainJob: Job? = null
 
+    fun cleanup() {
+        saveJob?.cancel()
+        retrainJob?.cancel()
+    }
+
     companion object {
         private const val TAG = "TxClassifier"
         private const val MODEL_FILE = "naive_bayes_model.json"
@@ -49,6 +54,7 @@ open class TransactionClassifier @Inject constructor(
         private val regexBalanceKeyword = Regex("""(?i)(balance|υπόλοιπο)""")
     }
 
+    private val mutex = Mutex()
     private val positiveWordCounts = mutableMapOf<String, Int>()
     private val negativeWordCounts = mutableMapOf<String, Int>()
     private var totalPositive = 0
@@ -59,10 +65,11 @@ open class TransactionClassifier @Inject constructor(
     private val positiveBigramCounts = mutableMapOf<String, Int>()
     private val negativeBigramCounts = mutableMapOf<String, Int>()
 
-    private val _stats = MutableStateFlow(getStats())
+    private val _stats = MutableStateFlow(
+        ClassifierStats(0, 0, 0, false)
+    )
     val stats: StateFlow<ClassifierStats> = _stats.asStateFlow()
 
-    private val mutex = Mutex()
     @Volatile
     private var isLoaded = false
     private var lastTrainingCount = 0
@@ -74,7 +81,7 @@ open class TransactionClassifier @Inject constructor(
 
             if (loadFromDisk()) {
                 isLoaded = true
-                _stats.value = getStats()
+                _stats.value = getStatsInternal()
                 Log.d(TAG, "Loaded model from disk: +$totalPositive/-$totalNegative samples")
             }
 
@@ -169,13 +176,21 @@ open class TransactionClassifier @Inject constructor(
         }
     }
 
-    open fun getStats(): ClassifierStats {
+    // Internal helper to get stats without locking (caller must hold mutex)
+    private fun getStatsInternal(): ClassifierStats {
         return ClassifierStats(
             totalPositive = totalPositive,
             totalNegative = totalNegative,
             vocabularySize = vocabularySize,
             isReady = totalPositive + totalNegative >= MIN_TRAINING_SAMPLES
         )
+    }
+
+    // Public suspend version that acquires lock
+    open suspend fun getStats(): ClassifierStats {
+        return mutex.withLock {
+            getStatsInternal()
+        }
     }
 
     private fun addTrainingSample(features: FeatureSet, isTransaction: Boolean) {
@@ -199,7 +214,7 @@ open class TransactionClassifier @Inject constructor(
             }
         }
         vocabularySize = vocabulary.size
-        _stats.value = getStats()
+        _stats.value = getStatsInternal()
     }
 
     private fun calculateProbability(features: FeatureSet): Float {
@@ -301,23 +316,25 @@ open class TransactionClassifier @Inject constructor(
             try {
                 val json = JSONObject().apply {
                     put("version", MODEL_VERSION)
-                    put("totalPositive", totalPositive)
-                    put("totalNegative", totalNegative)
-                    put("vocabularySize", vocabularySize)
-                    put("lastTrainingCount", lastTrainingCount)
+                    mutex.withLock {
+                        put("totalPositive", totalPositive)
+                        put("totalNegative", totalNegative)
+                        put("vocabularySize", vocabularySize)
+                        put("lastTrainingCount", lastTrainingCount)
 
-                    put("positiveWords", JSONObject().apply {
-                        positiveWordCounts.forEach { (k, v) -> put(k, v) }
-                    })
-                    put("negativeWords", JSONObject().apply {
-                        negativeWordCounts.forEach { (k, v) -> put(k, v) }
-                    })
-                    put("positiveBigrams", JSONObject().apply {
-                        positiveBigramCounts.forEach { (k, v) -> put(k, v) }
-                    })
-                    put("negativeBigrams", JSONObject().apply {
-                        negativeBigramCounts.forEach { (k, v) -> put(k, v) }
-                    })
+                        put("positiveWords", JSONObject().apply {
+                            positiveWordCounts.forEach { (k, v) -> put(k, v) }
+                        })
+                        put("negativeWords", JSONObject().apply {
+                            negativeWordCounts.forEach { (k, v) -> put(k, v) }
+                        })
+                        put("positiveBigrams", JSONObject().apply {
+                            positiveBigramCounts.forEach { (k, v) -> put(k, v) }
+                        })
+                        put("negativeBigrams", JSONObject().apply {
+                            negativeBigramCounts.forEach { (k, v) -> put(k, v) }
+                        })
+                    }
                 }
 
                 File(context.filesDir, MODEL_FILE).writeText(json.toString())

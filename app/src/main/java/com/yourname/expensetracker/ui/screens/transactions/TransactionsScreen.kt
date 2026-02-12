@@ -25,6 +25,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.ui.res.stringResource
 import java.util.Locale
 
 @Composable
@@ -34,7 +35,7 @@ fun RecurrencePickerDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select Frequency") },
+        title = { Text(stringResource(com.yourname.expensetracker.R.string.select_frequency_title)) },
         text = {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
@@ -65,7 +66,7 @@ fun RecurrencePickerDialog(
         confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(com.yourname.expensetracker.R.string.cancel_button))
             }
         }
     )
@@ -78,6 +79,7 @@ fun TransactionsScreen(
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val categories by viewModel.categories.collectAsState()
+    val selectedTab by viewModel.selectedTab.collectAsState()
 
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
@@ -85,9 +87,31 @@ fun TransactionsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Transactions") }
-            )
+            Column {
+                TopAppBar(
+                    title = { Text(stringResource(com.yourname.expensetracker.R.string.transactions_title)) }
+                )
+                ScrollableTabRow(
+                    selectedTabIndex = selectedTab.ordinal,
+                    edgePadding = 16.dp,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                    divider = {}
+                ) {
+                    TransactionsViewModel.TransactionTab.values().forEach { tab ->
+                        Tab(
+                            selected = selectedTab == tab,
+                            onClick = { viewModel.selectTab(tab) },
+                            text = { 
+                                Text(
+                                    text = tab.label,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        )
+                    }
+                }
+            }
         }
     ) { padding ->
         if (transactions.isEmpty()) {
@@ -99,12 +123,12 @@ fun TransactionsScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "No transactions found",
+                        text = stringResource(com.yourname.expensetracker.R.string.no_transactions_title),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "Parsed expenses will appear here",
+                        text = stringResource(com.yourname.expensetracker.R.string.no_transactions_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -118,16 +142,11 @@ fun TransactionsScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                itemsIndexed(
+                items(
                     items = transactions,
-                    key = { _, item -> item.expense.id },
-                    contentType = { _, _ -> "transaction" }
-                ) { index, item ->
-                    if (index == transactions.lastIndex) {
-                        LaunchedEffect(Unit) {
-                            viewModel.loadMore()
-                        }
-                    }
+                    key = { item -> item.expense.id },
+                    contentType = { "transaction" }
+                ) { item ->
                     TransactionItem(
                         transaction = item,
                         onDelete = { expenseToDelete = item.expense },
@@ -142,8 +161,8 @@ fun TransactionsScreen(
         if (expenseToDelete != null) {
             AlertDialog(
                 onDismissRequest = { expenseToDelete = null },
-                title = { Text("Delete Transaction") },
-                text = { Text("Are you sure you want to delete this transaction from ${expenseToDelete?.merchant}?") },
+                title = { Text(stringResource(com.yourname.expensetracker.R.string.delete_transaction_title)) },
+                text = { Text(stringResource(com.yourname.expensetracker.R.string.delete_transaction_confirmation, expenseToDelete?.merchant ?: "")) },
                 confirmButton = {
                     TextButton(
                         onClick = {
@@ -152,12 +171,12 @@ fun TransactionsScreen(
                         },
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
-                        Text("Delete")
+                        Text(stringResource(com.yourname.expensetracker.R.string.delete_button))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { expenseToDelete = null }) {
-                        Text("Cancel")
+                        Text(stringResource(com.yourname.expensetracker.R.string.cancel_button))
                     }
                 }
             )
@@ -196,7 +215,7 @@ fun CategoryPickerDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select Category") },
+        title = { Text(stringResource(com.yourname.expensetracker.R.string.select_category_title)) },
         text = {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
@@ -224,7 +243,7 @@ fun CategoryPickerDialog(
         confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(com.yourname.expensetracker.R.string.cancel_button))
             }
         }
     )
@@ -300,7 +319,7 @@ fun TransactionItem(
                         Spacer(modifier = Modifier.width(4.dp))
                     }
                     Text(
-                        text = category?.name ?: "Uncategorized",
+                        text = category?.name ?: stringResource(com.yourname.expensetracker.R.string.uncategorized_label),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.clickable { onEditCategory() }
@@ -326,7 +345,7 @@ fun TransactionItem(
             IconButton(onClick = onMarkRecurring) {
                 Icon(
                     Icons.Default.Repeat,
-                    contentDescription = "Mark as Recurring",
+                    contentDescription = stringResource(com.yourname.expensetracker.R.string.mark_recurring_content_description),
                     tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
                     modifier = Modifier.size(20.dp)
                 )
@@ -336,7 +355,7 @@ fun TransactionItem(
             IconButton(onClick = onDelete) {
                 Icon(
                     Icons.Default.Delete,
-                    contentDescription = "Delete",
+                    contentDescription = stringResource(com.yourname.expensetracker.R.string.delete_button),
                     tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
                     modifier = Modifier.size(20.dp)
                 )

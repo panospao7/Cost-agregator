@@ -46,7 +46,7 @@ class ReceiptOcrService @Inject constructor(
      */
     suspend fun processImage(imageUri: Uri): OcrResult {
         // 1. Load and prepare the image (throws if fail)
-        val bitmap = loadAndCorrectBitmap(imageUri)!!
+        val bitmap = loadAndCorrectBitmap(imageUri) ?: throw IllegalStateException("Failed to load and correct image: $imageUri")
 
         try {
             // 2. Save compressed copy

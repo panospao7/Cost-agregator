@@ -29,6 +29,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.database.entity.Category
@@ -80,13 +81,13 @@ fun AddExpenseSheet(
         ) {
             // Top bar
             TopAppBar(
-                title = { Text("Add Expense", fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(com.yourname.expensetracker.R.string.add_expense_title), fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = {
                         viewModel.reset()
                         onDismiss()
                     }) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
+                        Icon(Icons.Default.Close, contentDescription = stringResource(com.yourname.expensetracker.R.string.close_content_description))
                     }
                 },
                 actions = {
@@ -102,7 +103,7 @@ fun AddExpenseSheet(
                                 strokeWidth = 2.dp
                             )
                         } else {
-                            Text("Save")
+                            Text(stringResource(com.yourname.expensetracker.R.string.save_button))
                         }
                     }
                 }
@@ -134,8 +135,8 @@ fun AddExpenseSheet(
                 OutlinedTextField(
                     value = state.amount,
                     onValueChange = { viewModel.updateAmount(it) },
-                    label = { Text("Amount (€)") },
-                    placeholder = { Text("0.00") },
+                    label = { Text(stringResource(com.yourname.expensetracker.R.string.amount_label)) },
+                    placeholder = { Text(stringResource(com.yourname.expensetracker.R.string.amount_placeholder)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Decimal,
@@ -152,7 +153,7 @@ fun AddExpenseSheet(
 
                 // === Payment Method ===
                 Text(
-                    "Payment Method",
+                    stringResource(com.yourname.expensetracker.R.string.payment_method_label),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium
                 )
@@ -161,19 +162,19 @@ fun AddExpenseSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     PaymentMethodChip(
-                        label = "💳 Card",
+                        label = stringResource(com.yourname.expensetracker.R.string.payment_method_card),
                         selected = state.paymentMethod == PaymentMethod.CARD,
                         onClick = { viewModel.selectPaymentMethod(PaymentMethod.CARD) },
                         modifier = Modifier.weight(1f)
                     )
                     PaymentMethodChip(
-                        label = "💵 Cash",
+                        label = stringResource(com.yourname.expensetracker.R.string.payment_method_cash),
                         selected = state.paymentMethod == PaymentMethod.CASH,
                         onClick = { viewModel.selectPaymentMethod(PaymentMethod.CASH) },
                         modifier = Modifier.weight(1f)
                     )
                     PaymentMethodChip(
-                        label = "🏦 Transfer",
+                        label = stringResource(com.yourname.expensetracker.R.string.payment_method_transfer),
                         selected = state.paymentMethod == PaymentMethod.BANK_TRANSFER,
                         onClick = { viewModel.selectPaymentMethod(PaymentMethod.BANK_TRANSFER) },
                         modifier = Modifier.weight(1f)
@@ -182,7 +183,7 @@ fun AddExpenseSheet(
 
                 // === Category Selector ===
                 Text(
-                    "Category",
+                    stringResource(com.yourname.expensetracker.R.string.category_label),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium
                 )
@@ -207,15 +208,15 @@ fun AddExpenseSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Transaction Type: ${state.transactionType.name.lowercase()
-                            .replaceFirstChar { it.uppercase() }}",
+                        stringResource(com.yourname.expensetracker.R.string.transaction_type_prefix, state.transactionType.name.lowercase()
+                            .replaceFirstChar { it.uppercase() }),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Medium
                     )
                     Icon(
                         if (state.showTransactionType) Icons.Default.KeyboardArrowUp
                         else Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Toggle"
+                        contentDescription = stringResource(com.yourname.expensetracker.R.string.toggle_content_description)
                     )
                 }
 
@@ -248,14 +249,14 @@ fun AddExpenseSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Notes",
+                        stringResource(com.yourname.expensetracker.R.string.notes_label),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Medium
                     )
                     Icon(
                         if (state.showNotes) Icons.Default.KeyboardArrowUp
                         else Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Toggle"
+                        contentDescription = stringResource(com.yourname.expensetracker.R.string.toggle_content_description)
                     )
                 }
 
@@ -263,7 +264,7 @@ fun AddExpenseSheet(
                     OutlinedTextField(
                         value = state.notes,
                         onValueChange = { viewModel.updateNotes(it) },
-                        label = { Text("Optional notes") },
+                        label = { Text(stringResource(com.yourname.expensetracker.R.string.notes_placeholder)) },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2,
                         maxLines = 4
@@ -277,7 +278,7 @@ fun AddExpenseSheet(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        "Repeat Transaction?",
+                        stringResource(com.yourname.expensetracker.R.string.repeat_transaction_label),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Medium
                     )
@@ -290,7 +291,7 @@ fun AddExpenseSheet(
                 AnimatedVisibility(visible = state.isRecurring) {
                     Column {
                         Text(
-                            "Frequency",
+                            stringResource(com.yourname.expensetracker.R.string.frequency_label),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -328,7 +329,7 @@ fun AddExpenseSheet(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                "⚠️ A similar transaction already exists",
+                                stringResource(com.yourname.expensetracker.R.string.error_duplicate_transaction),
                                 modifier = Modifier.padding(12.dp),
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
@@ -375,8 +376,8 @@ fun MerchantFieldWithSuggestions(
         OutlinedTextField(
             value = merchant,
             onValueChange = onMerchantChange,
-            label = { Text("Merchant / Place") },
-            placeholder = { Text("e.g. Sklavenitis, Starbucks...") },
+            label = { Text(stringResource(com.yourname.expensetracker.R.string.merchant_label)) },
+            placeholder = { Text(stringResource(com.yourname.expensetracker.R.string.merchant_placeholder)) },
             singleLine = true,
             isError = error != null,
             supportingText = error?.let { { Text(it) } },
@@ -440,7 +441,7 @@ fun MerchantFieldWithSuggestions(
                                             if (category != null) append(category.name)
                                             if (suggestion.txCount > 0) {
                                                 if (isNotEmpty()) append(" · ")
-                                                append("${suggestion.txCount} visits")
+                                                append(stringResource(com.yourname.expensetracker.R.string.visits_suffix_format, suggestion.txCount))
                                             }
                                         },
                                         style = MaterialTheme.typography.bodySmall,
@@ -449,7 +450,7 @@ fun MerchantFieldWithSuggestions(
                                 }
 
                                 Text(
-                                    "~€${String.format("%.2f", suggestion.avgAmount)}",
+                                    stringResource(com.yourname.expensetracker.R.string.avg_amount_format, suggestion.avgAmount),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.Medium
@@ -581,13 +582,13 @@ fun DateSelector(
     ) {
         Icon(
             Icons.Default.DateRange,
-            contentDescription = "Date",
+            contentDescription = stringResource(com.yourname.expensetracker.R.string.date_label),
             tint = MaterialTheme.colorScheme.primary
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column {
             Text(
-                "Date",
+                stringResource(com.yourname.expensetracker.R.string.date_label),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Medium
             )
@@ -617,12 +618,12 @@ fun DateSelector(
                         showDatePicker = false
                     }
                 ) {
-                    Text("OK")
+                    Text(stringResource(com.yourname.expensetracker.R.string.ok_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDatePicker = false }) {
-                    Text("Cancel")
+                    Text(stringResource(com.yourname.expensetracker.R.string.cancel_button))
                 }
             }
         ) {

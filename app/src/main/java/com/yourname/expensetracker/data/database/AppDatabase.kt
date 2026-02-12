@@ -20,7 +20,7 @@ import androidx.room.*
         PlannedExpense::class,
         SavingsGoal::class
     ],
-    version = 14,
+    version = 16,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -228,6 +228,89 @@ abstract class AppDatabase : RoomDatabase() {
                         lastSeen INTEGER NOT NULL DEFAULT 0
                     )
                 """.trimIndent())
+            }
+        }
+
+        val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // RawNotifications index
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_raw_notifications_isRelevant` ON `raw_notifications` (`isRelevant`)")
+                
+                // Expense indices optimization
+                database.execSQL("DROP INDEX IF EXISTS `index_expenses_date`")
+                database.execSQL("DROP INDEX IF EXISTS `index_expenses_categoryId`")
+                database.execSQL("DROP INDEX IF EXISTS `index_expenses_transactionType`")
+                
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_expenses_transactionType_merchant` ON `expenses` (`transactionType`, `merchant`)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_expenses_transactionType_categoryId_date` ON `expenses` (`transactionType`, `categoryId`, `date`)")
+            }
+        }
+
+        val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // 1. UserCorrections: Recreate table to add Foreign Keys and Indices, and new columns
+                database.beginTransaction()
+                try {
+                    // Create new table with updated schema (FKs + Indices support)
+                    database.execSQL("""
+                        CREATE TABLE IF NOT EXISTS user_corrections_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            packageName TEXT NOT NULL,
+                            originalMerchant TEXT NOT NULL,
+                            correctedMerchant TEXT,
+                            originalAmount REAL NOT NULL,
+                            correctedAmount REAL,
+                            originalCategoryId INTEGER,
+                            correctedCategoryId INTEGER,
+                            wasRejected INTEGER NOT NULL DEFAULT 0,
+                            wasApproved INTEGER NOT NULL DEFAULT 0,
+                            notificationTitle TEXT,
+                            notificationText TEXT,
+                            createdAt INTEGER NOT NULL,
+                            FOREIGN KEY(originalCategoryId) REFERENCES categories(id) ON DELETE SET NULL,
+                            FOREIGN KEY(correctedCategoryId) REFERENCES categories(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+
+                    // Copy data from old table
+                    // We assume originalCategoryId and correctedCategoryId are new columns, so we don't migrate them.
+                    database.execSQL("""
+                        INSERT INTO user_corrections_new (
+                            id, packageName, originalMerchant, correctedMerchant, 
+                            originalAmount, correctedAmount, wasRejected, wasApproved, 
+                            notificationTitle, notificationText, createdAt
+                        )
+                        SELECT 
+                            id, packageName, originalMerchant, correctedMerchant, 
+                            originalAmount, correctedAmount, wasRejected, wasApproved, 
+                            notificationTitle, notificationText, createdAt
+                        FROM user_corrections
+                    """.trimIndent())
+
+                    // Swap tables
+                    database.execSQL("DROP TABLE user_corrections")
+                    database.execSQL("ALTER TABLE user_corrections_new RENAME TO user_corrections")
+
+                    // Create indices for UserCorrection
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_originalCategoryId ON user_corrections (originalCategoryId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_correctedCategoryId ON user_corrections (correctedCategoryId)")
+
+                    // 2. Expenses: Update Indices to match Expense.kt
+                    // Drop obsolete indices
+                    database.execSQL("DROP INDEX IF EXISTS index_expenses_transactionType_merchant")
+                    database.execSQL("DROP INDEX IF EXISTS index_expenses_date_transactionType") // Fixes schema mismatch crash
+                    
+                    // Create new/updated indices
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_rawNotificationId ON expenses (rawNotificationId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_date ON expenses (transactionType, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_categoryId_date ON expenses (categoryId, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_amount_merchant_date ON expenses (amount, merchant, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_merchant_date ON expenses (merchant, date)")
+                    
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
             }
         }
     }

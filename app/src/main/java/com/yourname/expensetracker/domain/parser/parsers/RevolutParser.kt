@@ -3,9 +3,15 @@ package com.yourname.expensetracker.domain.parser.parsers
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.util.CurrencyNormalizer
+import com.yourname.expensetracker.domain.util.MerchantCleaner
 import java.util.regex.Pattern
+import javax.inject.Inject
 
-class RevolutParser : AppNotificationParser {
+class RevolutParser @Inject constructor(
+    private val currencyNormalizer: CurrencyNormalizer,
+    private val merchantCleaner: MerchantCleaner
+) : AppNotificationParser {
 
     override val supportedPackages = setOf("com.revolut.revolut")
 
@@ -54,47 +60,28 @@ class RevolutParser : AppNotificationParser {
 
             // Try paid/purchase pattern
             val paidMatcher = PAID_PATTERN.matcher(content)
-            if (paidMatcher.find()) {
-                val currency = normalizeCurrency(paidMatcher.group(1))
-                val amount = paidMatcher.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: continue
-                val merchant = cleanMerchant(paidMatcher.group(3) ?: "Unknown")
-                return ParsedTransaction(amount, currency, merchant, TransactionType.PURCHASE, 0.95f)
-            }
-
-            // Try received pattern
             val receivedMatcher = RECEIVED_PATTERN.matcher(content)
-            if (receivedMatcher.find()) {
-                val currency = normalizeCurrency(receivedMatcher.group(1))
-                val amount = receivedMatcher.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: continue
-                val merchant = cleanMerchant(receivedMatcher.group(3) ?: "Unknown")
-                return ParsedTransaction(amount, currency, merchant, TransactionType.DEPOSIT, 0.90f)
-            }
-
-            // Try ATM pattern
             val atmMatcher = ATM_PATTERN.matcher(content)
-            if (atmMatcher.find()) {
-                val currency = normalizeCurrency(atmMatcher.group(1))
+
+            if (paidMatcher.find()) {
+                val amount = paidMatcher.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: return null
+                val currency = currencyNormalizer.normalize(paidMatcher.group(1))
+                val merchant = merchantCleaner.clean(paidMatcher.group(3))
+
+                return ParsedTransaction(amount, currency, merchant, TransactionType.PURCHASE, 0.95f)
+            } else if (receivedMatcher.find()) {
+                val amount = receivedMatcher.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: return null
+                val currency = currencyNormalizer.normalize(receivedMatcher.group(1))
+                val merchant = merchantCleaner.clean(receivedMatcher.group(3))
+
+                return ParsedTransaction(amount, currency, merchant, TransactionType.DEPOSIT, 0.90f)
+            } else if (atmMatcher.find()) {
                 val amount = atmMatcher.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: continue
+                val currency = currencyNormalizer.normalize(atmMatcher.group(1))
                 return ParsedTransaction(amount, currency, "ATM", TransactionType.WITHDRAWAL, 0.95f)
             }
         }
 
         return null
-    }
-
-    private fun cleanMerchant(raw: String): String {
-        return raw.trim()
-            .replace(Regex("[.!]$"), "")
-            .take(40)
-            .trim()
-    }
-
-    private fun normalizeCurrency(raw: String?): String {
-        return when (raw?.uppercase()?.trim()) {
-            "€", "EUR" -> "EUR"
-            "$", "USD" -> "USD"
-            "£", "GBP" -> "GBP"
-            else -> "EUR"
-        }
     }
 }

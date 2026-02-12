@@ -1,0 +1,81 @@
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :app:kspDebugKotlin
+
+> Task :app:compileDebugKotlin
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:83:32 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:89:72 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:105:34 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:137:36 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:138:42 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:155:21 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:164:33 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:170:33 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:176:33 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:185:21 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:210:25 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:218:46 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:251:25 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:258:46 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:266:40 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:280:25 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:293:29 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:331:33 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:378:28 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:379:34 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:443:56 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:452:37 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:584:34 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:590:17 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:620:26 Unresolved reference 'stringResource'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseSheet.kt:625:26 Unresolved reference 'stringResource'.
+
+> Task :app:compileDebugKotlin FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 28s
+30 actionable tasks: 2 executed, 28 up-to-date

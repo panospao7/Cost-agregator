@@ -8,7 +8,19 @@ import java.util.regex.Pattern
  * a strong transaction signal AND a plausible amount pattern.
  * Returns results with lower confidence.
  */
-class GenericTransactionParser {
+import com.yourname.expensetracker.domain.util.CurrencyNormalizer
+import com.yourname.expensetracker.domain.util.MerchantCleaner
+import javax.inject.Inject
+
+/**
+ * Fallback parser for unknown apps. VERY strict — requires both
+ * a strong transaction signal AND a plausible amount pattern.
+ * Returns results with lower confidence.
+ */
+class GenericTransactionParser @Inject constructor(
+    private val currencyNormalizer: CurrencyNormalizer,
+    private val merchantCleaner: MerchantCleaner
+) {
 
     // Strong signals that this is a REAL transaction notification
     private val strongTransactionSignals by lazy {
@@ -88,7 +100,7 @@ class GenericTransactionParser {
             val currency = matcher.group(1) ?: matcher.group(4) ?: "€"
             val amountStr = (matcher.group(2) ?: matcher.group(3))?.replace(",", ".") ?: return null
             val amount = amountStr.toDoubleOrNull() ?: return null
-            return Pair(amount, normalizeCurrency(currency))
+            return Pair(amount, currencyNormalizer.normalize(currency))
         }
         return null
     }
@@ -99,12 +111,12 @@ class GenericTransactionParser {
             val index = normalized.indexOf(prefix, ignoreCase = true)
             if (index != -1) {
                 val after = normalized.substring(index + prefix.length).trim()
-                return cleanMerchant(after)
+                return merchantCleaner.clean(after)
             }
         }
         // Fallback to title if it's not a generic keyword
         if (!title.isNullOrBlank() && !isGenericTitle(title.lowercase())) {
-            return cleanMerchant(title)
+            return merchantCleaner.clean(title)
         }
         return "Unknown"
     }
@@ -113,25 +125,5 @@ class GenericTransactionParser {
         val genericWords = listOf("payment", "purchase", "transaction", "alert", "notification",
             "πληρωμή", "αγορά", "συναλλαγή", "ειδοποίηση")
         return genericWords.any { title.contains(it) }
-    }
-
-    private fun cleanMerchant(raw: String): String {
-        val stopWords = listOf("confirmed", "successful", "completed", "declined",
-            "ολοκληρώθηκε", "επιτυχής", ".", "!", "with card", "με κάρτα")
-        var candidate = raw
-        for (stop in stopWords) {
-            val idx = candidate.indexOf(stop, ignoreCase = true)
-            if (idx != -1) candidate = candidate.substring(0, idx)
-        }
-        return candidate.trim().take(40).trim()
-    }
-
-    private fun normalizeCurrency(raw: String): String {
-        return when (raw.uppercase().trim()) {
-            "€", "EUR", "ΕΥΡΩ" -> "EUR"
-            "$", "USD" -> "USD"
-            "£", "GBP" -> "GBP"
-            else -> "EUR"
-        }
     }
 }

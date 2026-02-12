@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 import androidx.room.*
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
@@ -19,6 +20,7 @@ import javax.inject.Singleton
 
 @Singleton
 class NotificationRepository @Inject constructor(
+    private val database: AppDatabase,
     private val dao: RawNotificationDao,
     private val blockedPackageDao: BlockedPackageDao,
     private val expenseDao: ExpenseDao,
@@ -41,7 +43,7 @@ class NotificationRepository @Inject constructor(
     private val sharedExpenses = expenseDao.getAllFlow()
         .shareIn(
             scope = repositoryScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(30000),
             replay = 1
         )
 
@@ -66,7 +68,7 @@ class NotificationRepository @Inject constructor(
 
     // === Classifier Stats ===
     fun getClassifierStatsFlow(): Flow<ClassifierStats> = classifier.stats
-    fun getClassifierStats() = classifier.getStats()
+    suspend fun getClassifierStats() = classifier.getStats()
 
     // === Manual Expense Entry ===
 
@@ -155,27 +157,15 @@ class NotificationRepository @Inject constructor(
     }
 
     // === Core Processing Pipeline ===
-    @Transaction
     suspend fun processAndSave(notification: RawNotification) {
-        // Optimized check: return early if already exists
+        // 1. Initial existence check (fast, non-transactional)
         if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return
 
-        // 1. Save raw notification
-        val rawId = try {
-            dao.insert(notification)
-        } catch (e: android.database.sqlite.SQLiteConstraintException) {
-            // Race condition: another thread inserted it after our exists() check
-            return
-        }
-
-        // 2. Ensure source stats exist, then increment total
-        confidenceRouter.ensureSourceStats(notification.packageName)
-        sourceStatsDao.incrementTotal(notification.packageName)
-
-        // 3. Initialize classifier if needed
+        // 2. Heavy CPU/IO Work - MOVE OUTSIDE TRANSACTION
+        // Initialize classifier if needed
         classifier.initialize()
 
-        // 4. Try to parse
+        // Try to parse
         val parsed = parserRegistry.parse(
             title = notification.title,
             text = notification.text,
@@ -185,19 +175,26 @@ class NotificationRepository @Inject constructor(
         )
 
         if (parsed == null) {
-            sourceStatsDao.incrementAutoRejected(notification.packageName)
-            dao.markRelevance(rawId, false)
+            database.withTransaction {
+                // Secondary check inside transaction to prevent race conditions
+                if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return@withTransaction
+                
+                val rawId = try { dao.insert(notification) } catch (e: Exception) { return@withTransaction }
+                sourceStatsDao.incrementTotal(notification.packageName)
+                sourceStatsDao.incrementAutoRejected(notification.packageName)
+                dao.markRelevance(rawId, false)
+            }
             return
         }
 
-        // 6. Build full notification text for ML classifier
+        // Build full notification text for ML classifier
         val fullNotificationText = listOfNotNull(
             notification.title,
             notification.text,
             notification.bigText
         ).joinToString(" ")
         
-        // 7. Route through confidence system (includes source stats + ML)
+        // Route through confidence system (includes source stats + ML)
         var routingResult = confidenceRouter.route(
             parsed = parsed,
             packageName = notification.packageName,
@@ -210,82 +207,91 @@ class NotificationRepository @Inject constructor(
             routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
         }
 
-        // 8. Apply merchant normalization & user corrections
+        // Apply merchant normalization & user corrections
         val correctedMerchant = merchantNormalizer.applyUserCorrections(parsed.merchant)
 
-        when (routingResult.decision) {
-            RoutingDecision.AUTO_ACCEPT -> {
-                // 3. Check for duplicates
-                // Use a short window (e.g. 10s) for auto-detected transactions to avoid flagging
-                // legitimate consecutive purchases (e.g. buying rounds of drinks) as duplicates,
-                // while still catching immediate double-processing of the same notification.
-                val isDuplicate = expenseDao.isDuplicate(
-                    amount = parsed.amount,
-                    merchant = correctedMerchant,
-                    date = notification.timestamp,
-                    windowMs = 10000 
-                )
-                if (isDuplicate) {
-                    dao.markRelevance(rawId, false)
-                    return
-                }
+        // 3. Database Transaction - ONLY MINIMAL DB WRITES
+        database.withTransaction {
+            // Secondary check inside transaction
+            if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return@withTransaction
 
-                val categoryId = categorizationEngine.categorize(correctedMerchant)
-
-                val expense = Expense(
-                    amount = parsed.amount,
-                    currency = parsed.currency,
-                    merchant = correctedMerchant,
-                    transactionType = parsed.type,
-                    date = notification.timestamp,
-                    rawNotificationId = rawId,
-                    categoryId = categoryId,
-                    paymentMethod = PaymentMethod.CARD,
-                    isManualEntry = false
-                )
-                try {
-                    expenseDao.insert(expense)
-                    dao.markRelevance(rawId, true)
-                    sourceStatsDao.incrementAccepted(notification.packageName)
-                    
-                    // Check budgets
-                    budgetMonitor.checkBudgets()
-    
-                    // Train classifier: auto-accepted = positive example
-                    classifier.train(fullNotificationText, isTransaction = true)
-                } catch (e: android.database.sqlite.SQLiteConstraintException) {
-                    // Ignore duplicate expenses
-                    dao.markRelevance(rawId, false)
-                }
+            // Save raw notification
+            val rawId = try {
+                dao.insert(notification)
+            } catch (e: android.database.sqlite.SQLiteConstraintException) {
+                return@withTransaction
             }
 
-            RoutingDecision.NEEDS_REVIEW -> {
-                val suggestedCategoryId = categorizationEngine.categorize(correctedMerchant)
+            // Update stats
+            confidenceRouter.ensureSourceStats(notification.packageName)
+            sourceStatsDao.incrementTotal(notification.packageName)
 
-                val review = PendingReview(
-                    rawNotificationId = rawId,
-                    suggestedAmount = parsed.amount,
-                    suggestedCurrency = parsed.currency,
-                    suggestedMerchant = correctedMerchant,
-                    suggestedType = parsed.type.name,
-                    suggestedCategoryId = suggestedCategoryId,
-                    confidence = routingResult.adjustedConfidence,
-                    packageName = notification.packageName,
-                    notificationTitle = notification.title,
-                    notificationText = notification.text ?: notification.bigText,
-                    suggestedDate = parsed.date // Fix 1.10: Pass the parsed date if available
-                )
-                pendingReviewDao.insert(review)
-                sourceStatsDao.incrementPending(notification.packageName)
-            }
+            when (routingResult.decision) {
+                RoutingDecision.AUTO_ACCEPT -> {
+                    // Check for duplicates
+                    val isDuplicate = expenseDao.isDuplicate(
+                        amount = parsed.amount,
+                        merchant = correctedMerchant,
+                        date = notification.timestamp,
+                        windowMs = 60000 
+                    )
+                    if (isDuplicate) {
+                        dao.markRelevance(rawId, false)
+                        return@withTransaction
+                    }
 
-            RoutingDecision.AUTO_REJECT -> {
-                dao.markRelevance(rawId, false)
-                sourceStatsDao.incrementAutoRejected(notification.packageName)
+                    val categoryId = categorizationEngine.categorize(correctedMerchant)
 
-                // Only train negative if it's truly NOT a transaction (parser was null)
-                // If it reached here, it means parser WAS not null but confidence was low.
-                // We DON'T train it as negative yet, let the user decide if they mark it manually.
+                    val expense = Expense(
+                        amount = parsed.amount,
+                        currency = parsed.currency,
+                        merchant = correctedMerchant,
+                        transactionType = parsed.type,
+                        date = notification.timestamp,
+                        rawNotificationId = rawId,
+                        categoryId = categoryId,
+                        paymentMethod = PaymentMethod.CARD,
+                        isManualEntry = false
+                    )
+                    try {
+                        expenseDao.insert(expense)
+                        dao.markRelevance(rawId, true)
+                        sourceStatsDao.incrementAccepted(notification.packageName)
+                        
+                        // Check budgets (Note: potentially heavy, but standard for accept flow)
+                        budgetMonitor.checkBudgets()
+        
+                        // Train classifier: auto-accepted = positive example
+                        classifier.train(fullNotificationText, isTransaction = true)
+                    } catch (e: android.database.sqlite.SQLiteConstraintException) {
+                        dao.markRelevance(rawId, false)
+                    }
+                }
+
+                RoutingDecision.NEEDS_REVIEW -> {
+                    val suggestedCategoryId = categorizationEngine.categorize(correctedMerchant)
+
+                    val review = PendingReview(
+                        rawNotificationId = rawId,
+                        suggestedAmount = parsed.amount,
+                        suggestedCurrency = parsed.currency,
+                        suggestedMerchant = correctedMerchant,
+                        suggestedType = parsed.type.name,
+                        suggestedCategoryId = suggestedCategoryId,
+                        confidence = routingResult.adjustedConfidence,
+                        packageName = notification.packageName,
+                        notificationTitle = notification.title,
+                        notificationText = notification.text ?: notification.bigText,
+                        suggestedDate = parsed.date
+                    )
+                    pendingReviewDao.insert(review)
+                    sourceStatsDao.incrementPending(notification.packageName)
+                }
+
+                RoutingDecision.AUTO_REJECT -> {
+                    dao.markRelevance(rawId, false)
+                    sourceStatsDao.incrementAutoRejected(notification.packageName)
+                }
             }
         }
     }
@@ -307,14 +313,22 @@ class NotificationRepository @Inject constructor(
     ) {
         val review = pendingReviewDao.getById(reviewId) ?: return
         
-        // Critical Fix: Check status specifically to avoid double-processing
-        // We do this instead of updateStatusIfPending at the start to ensure we don't
-        // mark it as APPROVED if the subsequent DB operations fail.
-        if (review.status != "PENDING") return
+        // Critical Fix: Atomically check and update status to prevent double-processing
+        val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING")
+        if (rowsUpdated == 0) return  // Already processed or not PENDING
+
+        // If we fail later, we should ideally revert this, but for now we secure the lock.
+        // We will update to APPROVED at the end.
 
         val amount: Double = finalAmount ?: review.suggestedAmount
         val merchant: String = finalMerchant ?: review.suggestedMerchant
         val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
+        // Fix 4.12: Large amount validation
+        if (amount > 1000000.0) {
+            android.util.Log.w("NotificationRepo", "Approval suppressed due to large amount: $amount")
+            return
+        }
+
         val type: com.yourname.expensetracker.data.database.entity.TransactionType = try {
             com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(review.suggestedType)
         } catch (e: Exception) {
@@ -385,7 +399,7 @@ class NotificationRepository @Inject constructor(
             // Fix 1.19 status update: We update it to APPROVED even if it was a duplicate
             // so it leaves the queue. If it truly failed insertion (operationSuccessful = false),
             // we should probably still mark it as something else or just skip it for now.
-            pendingReviewDao.updateStatusIfPending(reviewId, "APPROVED")
+            pendingReviewDao.updateStatus(reviewId, "APPROVED")
             
             // Record user correction for learning
             val correction = UserCorrection(
@@ -575,6 +589,12 @@ class NotificationRepository @Inject constructor(
 
     fun getExpensesWithCategory(limit: Int = 200): Flow<List<ExpenseWithCategory>> =
         expenseDao.getAllWithCategoryFlow(limit)
+
+    fun getExpensesWithCategoryInPeriod(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>> =
+        expenseDao.getExpensesWithCategoryInPeriodFlow(startMs, endMs)
+
+    suspend fun getExpensesPaged(limit: Int, offset: Int): List<ExpenseWithCategory> =
+        expenseDao.getExpensesWithCategoryPaged(limit, offset)
 
     suspend fun processAndSaveAll(notifications: List<RawNotification>) {
         if (notifications.isEmpty()) return

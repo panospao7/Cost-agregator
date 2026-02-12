@@ -94,8 +94,9 @@ class MerchantNormalizer @Inject constructor(
             }
         }
 
-        val now = System.currentTimeMillis()
+        
         return cacheMutex.withLock {
+            val now = System.currentTimeMillis()
             if (now - lastCacheClear > CACHE_DURATION) {
                 correctionCache.clear()
                 lastCacheClear = now

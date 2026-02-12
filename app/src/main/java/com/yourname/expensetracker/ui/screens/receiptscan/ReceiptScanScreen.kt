@@ -43,6 +43,10 @@ import com.yourname.expensetracker.ui.screens.addexpense.PaymentMethodChip
 import kotlinx.coroutines.delay
 import java.util.Currency
 
+private fun getCurrencySymbol(currencyCode: String?): String {
+    return try { Currency.getInstance(currencyCode ?: "EUR").symbol } catch(e: Exception) { "€" }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReceiptScanScreen(
@@ -325,8 +329,7 @@ private fun ReviewStep(
         onValueChange = { viewModel.updateAmount(it) },
         label = { Text("Total Amount") },
         leadingIcon = { 
-            val symbol = try { Currency.getInstance(parsed?.currency ?: "EUR").symbol } catch(e: Exception) { "€" }
-            Text(symbol, fontSize = 18.sp, fontWeight = FontWeight.Bold) 
+            Text(getCurrencySymbol(parsed?.currency), fontSize = 18.sp, fontWeight = FontWeight.Bold) 
         },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true,
@@ -417,7 +420,7 @@ private fun ReviewStep(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "${try { Currency.getInstance(parsed.currency).symbol } catch(e: Exception) { "€" }}${String.format("%.2f", item.totalPrice)}",
+                            "${getCurrencySymbol(parsed.currency)}${String.format("%.2f", item.totalPrice)}",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
@@ -443,7 +446,7 @@ private fun ReviewStep(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "${try { Currency.getInstance(parsed.currency).symbol } catch(e: Exception) { "€" }}${String.format("%.2f", tax)}",
+                            "${getCurrencySymbol(parsed.currency)}${String.format("%.2f", tax)}",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }

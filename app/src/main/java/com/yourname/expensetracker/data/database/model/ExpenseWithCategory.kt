@@ -28,7 +28,7 @@ data class ExpenseWithCategory(
     }
 
     val formattedAmount: String by lazy {
-        String.format("%.2f %s", expense.amount, expense.currency)
+        String.format(java.util.Locale.US, "%.2f %s", expense.amount, expense.currency)
     }
 
     val categoryColor: Long by lazy {

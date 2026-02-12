@@ -1,3 +1,48 @@
 <resources>
     <string name="app_name">ExpenseTracker</string>
+    
+    <!-- Add Expense -->
+    <string name="add_expense_title">Add Expense</string>
+    <string name="close_content_description">Close</string>
+    <string name="save_button">Save</string>
+    <string name="merchant_label">Merchant / Place</string>
+    <string name="merchant_placeholder">e.g. Sklavenitis, Starbucks...</string>
+    <string name="amount_label">Amount (€)</string>
+    <string name="amount_placeholder">0.00</string>
+    <string name="payment_method_label">Payment Method</string>
+    <string name="payment_method_card">💳 Card</string>
+    <string name="payment_method_cash">💵 Cash</string>
+    <string name="payment_method_transfer">🏦 Transfer</string>
+    <string name="category_label">Category</string>
+    <string name="date_label">Date</string>
+    <string name="transaction_type_prefix">Transaction Type: %1$s</string>
+    <string name="toggle_content_description">Toggle</string>
+    <string name="notes_label">Notes</string>
+    <string name="notes_placeholder">Optional notes</string>
+    <string name="repeat_transaction_label">Repeat Transaction?</string>
+    <string name="frequency_label">Frequency</string>
+    <string name="error_duplicate_transaction">⚠️ A similar transaction already exists</string>
+    <string name="avg_amount_format">~€%.2f</string>
+    <string name="visits_suffix_format">%d visits</string>
+    <string name="ok_button">OK</string>
+    <string name="cancel_button">Cancel</string>
+    
+    <!-- Error Messages -->
+    <string name="error_merchant_required">Merchant name is required</string>
+    <string name="error_invalid_amount">Enter a valid amount</string>
+    <string name="error_amount_too_large">Amount is too large</string>
+    <string name="error_unknown">Unknown error</string>
+    <string name="recurring_note_default">Created from manual entry</string>
+
+    <!-- Transactions Screen -->
+    <string name="select_frequency_title">Select Frequency</string>
+    <string name="transactions_title">Transactions</string>
+    <string name="no_transactions_title">No transactions found</string>
+    <string name="no_transactions_subtitle">Parsed expenses in this period will appear here</string>
+    <string name="delete_transaction_title">Delete Transaction</string>
+    <string name="delete_transaction_confirmation">Are you sure you want to delete this transaction from %1$s?</string>
+    <string name="delete_button">Delete</string>
+    <string name="select_category_title">Select Category</string>
+    <string name="uncategorized_label">Uncategorized</string>
+    <string name="mark_recurring_content_description">Mark as Recurring</string>
 </resources>

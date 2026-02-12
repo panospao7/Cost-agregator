@@ -254,14 +254,14 @@ fun ReviewScreen(
             }
         }
 
-        if (editingReview != null) {
+        editingReview?.let { review ->
             EditReviewDialog(
-                review = editingReview!!,
+                review = review,
                 categories = categories,
                 onDismiss = { editingReview = null },
                 onSave = { amount, merchant, categoryId ->
                     viewModel.approveReviewWithEdits(
-                        reviewId = editingReview!!.id,
+                        reviewId = review.id,
                         finalAmount = amount,
                         finalMerchant = merchant,
                         finalCategoryId = categoryId

@@ -66,9 +66,10 @@ class AddExpenseViewModel @Inject constructor(
     private var searchJob: Job? = null
 
     fun updateMerchant(value: String) {
+        val sanitized = value.take(100) // Max 100 chars
         _state.update {
             it.copy(
-                merchant = value,
+                merchant = sanitized,
                 merchantError = null,
                 saveResult = null
             )
@@ -76,12 +77,12 @@ class AddExpenseViewModel @Inject constructor(
 
         // Debounced search
         searchJob?.cancel()
-        if (value.length >= 2) {
+        if (sanitized.length >= 2) {
             searchJob = viewModelScope.launch {
                 delay(300)
                 if (!isActive) return@launch
                 
-                val suggestions = repository.searchMerchants(value)
+                val suggestions = repository.searchMerchants(sanitized)
                 
                 if (!isActive) return@launch
                 
@@ -143,7 +144,7 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun updateNotes(value: String) {
-        _state.update { it.copy(notes = value) }
+        _state.update { it.copy(notes = value.take(500)) } // Max 500 chars
     }
 
     fun toggleNotes() {
@@ -179,10 +180,15 @@ class AddExpenseViewModel @Inject constructor(
             return
         }
 
-        if (amount > 50000) {
-            _state.update { it.copy(amountError = "Amount seems too large") }
+        if (amount > 1_000_000) { // Reasonable upper limit
+            _state.update { it.copy(amountError = "Amount is too large") }
             return
         }
+
+        // Normalize to 2 decimal places
+        val normalizedAmount = java.math.BigDecimal(amount)
+            .setScale(2, java.math.RoundingMode.HALF_UP)
+            .toDouble()
 
         _state.update { it.copy(isSaving = true, saveResult = null) }
 
@@ -191,7 +197,7 @@ class AddExpenseViewModel @Inject constructor(
                 // 1. Save the actual transaction
                 val result = repository.addManualExpense(
                     merchant = merchantTrimmed,
-                    amount = amount,
+                    amount = normalizedAmount,
                     currency = "EUR",
                     categoryId = currentState.selectedCategoryId,
                     transactionType = currentState.transactionType,
@@ -207,7 +213,7 @@ class AddExpenseViewModel @Inject constructor(
                 } else {
                     // 2. If recurring, save the rule
                     if (currentState.isRecurring) {
-                        saveRecurringRule(merchantTrimmed, amount, currentState.recurrenceFrequency, currentState.date)
+                        saveRecurringRule(merchantTrimmed, normalizedAmount, currentState.recurrenceFrequency, currentState.date)
                     }
                     
                     _state.update {
@@ -231,8 +237,23 @@ class AddExpenseViewModel @Inject constructor(
         frequency: RecurrenceFrequency, 
         lastDate: Long
     ) {
-        // Calculate next date based on frequency
-        val nextDate = lastDate + (frequency.days * 86_400_000L)
+        // Calculate next date based on frequency using java.time for accuracy (DST/Leap years)
+        val lastLocalDate = java.time.Instant.ofEpochMilli(lastDate)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate()
+
+        val nextLocalDate = when (frequency) {
+            RecurrenceFrequency.WEEKLY -> lastLocalDate.plusWeeks(1)
+            RecurrenceFrequency.BIWEEKLY -> lastLocalDate.plusWeeks(2)
+            RecurrenceFrequency.MONTHLY -> lastLocalDate.plusMonths(1)
+            RecurrenceFrequency.QUARTERLY -> lastLocalDate.plusMonths(3)
+            RecurrenceFrequency.SEMI_ANNUALLY -> lastLocalDate.plusMonths(6)
+            RecurrenceFrequency.ANNUALLY -> lastLocalDate.plusYears(1)
+            RecurrenceFrequency.IRREGULAR -> lastLocalDate // Should not happen for recurring rule
+            else -> lastLocalDate.plusDays(frequency.days.toLong()) // Fallback
+        }
+
+        val nextDate = nextLocalDate.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         
         val rule = ManualRecurringExpense(
             merchant = merchant,

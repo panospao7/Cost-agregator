@@ -7,6 +7,8 @@ import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -19,7 +21,7 @@ class CategoryRepository @Inject constructor(
 
     val allCategories: Flow<List<Category>> = categoryDao.getAllFlow()
 
-    suspend fun ensureDefaultCategories() {
+    suspend fun ensureDefaultCategories() = withContext(Dispatchers.IO) {
         if (categoryDao.getCount() == 0) {
             // Seed Categories
             val defaults = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
@@ -28,8 +30,6 @@ class CategoryRepository @Inject constructor(
             // Seed Merchant Dictionary
             // We need to resolve Category IDs first to map names to IDs
             val categories = categoryDao.getAllFlow().first() // Use flow first emission or simple get
-            // Actually, let's use a non-flow direct access if possible or collect once
-            // Adding a simple getAll helper to DAO would be cleaner, but for now:
             
             // Map: "Groceries" -> 1, "Transport" -> 2
             val categoryIdMap = categories.associate { it.name to it.id }
@@ -50,12 +50,12 @@ class CategoryRepository @Inject constructor(
         }
     }
 
-    suspend fun addCategory(name: String, icon: String, color: String) {
+    suspend fun addCategory(name: String, icon: String, color: String) = withContext(Dispatchers.IO) {
         val category = Category(name = name, icon = icon, color = color)
         categoryDao.insert(category)
     }
 
-    suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) {
+    suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) = withContext(Dispatchers.IO) {
         val normalized = categorizationEngine.normalize(merchantName)
         val mapping = MerchantCategory(merchantPattern = normalized, categoryId = categoryId)
         merchantCategoryDao.insert(mapping)

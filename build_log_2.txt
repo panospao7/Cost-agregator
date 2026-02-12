@@ -1,0 +1,88 @@
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:kspDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+
+> Task :app:compileDebugKotlin FAILED
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:72:13 Unresolved reference 'sourceStatsCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:72:37 Unresolved reference 'MAX_CACHE_SIZE'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:72:53 Unresolved reference 'sourceStatsCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:73:13 Unresolved reference 'merchantRejectionCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:73:43 Unresolved reference 'MAX_CACHE_SIZE'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:73:59 Unresolved reference 'merchantRejectionCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:74:13 Unresolved reference 'packageRejectionCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:74:42 Unresolved reference 'MAX_CACHE_SIZE'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:74:58 Unresolved reference 'packageRejectionCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:75:13 Unresolved reference 'approvalCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:75:34 Unresolved reference 'MAX_CACHE_SIZE'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:75:50 Unresolved reference 'approvalCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:201:22 Unresolved reference 'sourceStatsCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:202:44 Unresolved reference 'second'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:202:51 'operator' modifier is required on 'FirNamedFunctionSymbol kotlin/compareTo' in 'compareTo'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:203:27 Unresolved reference 'first'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:206:9 Unresolved reference 'sourceStatsCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:213:22 Unresolved reference 'merchantRejectionCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:214:44 Unresolved reference 'second'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:214:51 'operator' modifier is required on 'FirNamedFunctionSymbol kotlin/compareTo' in 'compareTo'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:215:27 Unresolved reference 'first'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:224:9 Unresolved reference 'merchantRejectionCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:230:22 Unresolved reference 'packageRejectionCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:231:44 Unresolved reference 'second'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:231:51 'operator' modifier is required on 'FirNamedFunctionSymbol kotlin/compareTo' in 'compareTo'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:232:27 Unresolved reference 'first'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:241:9 Unresolved reference 'packageRejectionCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:248:22 Unresolved reference 'approvalCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:249:44 Unresolved reference 'second'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:249:51 'operator' modifier is required on 'FirNamedFunctionSymbol kotlin/compareTo' in 'compareTo'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:250:27 Unresolved reference 'first'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:254:9 Unresolved reference 'approvalCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:260:22 Unresolved reference 'sourceStatsCache'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:260:53 Unresolved reference 'first'.
+e: file:///C:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt:268:9 Unresolved reference 'sourceStatsCache'.
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 8s
+30 actionable tasks: 1 executed, 29 up-to-date

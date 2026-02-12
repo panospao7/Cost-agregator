@@ -37,7 +37,9 @@ object AppModule {
             AppDatabase.MIGRATION_10_11,
             AppDatabase.MIGRATION_11_12,
             AppDatabase.MIGRATION_12_13,
-            AppDatabase.MIGRATION_13_14
+            AppDatabase.MIGRATION_13_14,
+            AppDatabase.MIGRATION_14_15,
+            AppDatabase.MIGRATION_15_16
         )
             .addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -92,18 +94,7 @@ object AppModule {
         return database.scannedReceiptDao()
     }
     
-    @Provides
-    @Singleton
-    fun provideAppParserRegistry(): AppParserRegistry {
-        val appParsers = listOf(
-            RevolutParser(),
-            GoogleWalletParser(),
-            GreekBankParser(),
-            SmsParser()
-        )
-        val fallbackParser = GenericTransactionParser()
-        return AppParserRegistry(appParsers, fallbackParser)
-    }
+
 
 
     @Provides

@@ -62,6 +62,23 @@ class FinancialWeatherRepository @Inject constructor(
     private val synthesisEngine: SynthesisEngine,
     private val narrativeGenerator: NarrativeGenerator
 ) {
+    private val calendar = Calendar.getInstance()
+
+    private fun com.yourname.expensetracker.data.database.entity.PlannedExpense.toDomain(): PlannedExpense {
+        return PlannedExpense(
+            id = this.id,
+            description = this.description,
+            amount = this.amount,
+            date = this.date,
+            categoryId = this.categoryId,
+            isRecurring = this.isRecurring,
+            priority = when(this.priority) {
+                EntityPlannedPriority.MUST -> DomainPlannedPriority.MUST
+                EntityPlannedPriority.LIKELY -> DomainPlannedPriority.LIKELY
+                EntityPlannedPriority.OPTIONAL -> DomainPlannedPriority.OPTIONAL
+            }
+        )
+    }
 
     fun getFinancialWeather(): Flow<FinancialWeather> = combine(
         notificationRepository.getAllExpenses(),
@@ -71,21 +88,7 @@ class FinancialWeatherRepository @Inject constructor(
         savingsGoalDao.getAllGoals()
     ) { expenses, budgetStatuses, recurringPatterns, plannedEntities, goalEntities ->
         
-        val plannedExpenses = plannedEntities.map { entity ->
-            PlannedExpense(
-                id = entity.id,
-                description = entity.description,
-                amount = entity.amount,
-                date = entity.date,
-                categoryId = entity.categoryId,
-                isRecurring = entity.isRecurring,
-                priority = when(entity.priority) {
-                    EntityPlannedPriority.MUST -> DomainPlannedPriority.MUST
-                    EntityPlannedPriority.LIKELY -> DomainPlannedPriority.LIKELY
-                    EntityPlannedPriority.OPTIONAL -> DomainPlannedPriority.OPTIONAL
-                }
-            )
-        }
+        val plannedExpenses = plannedEntities.map { it.toDomain() }
         
         val savingsGoals = goalEntities.map { entity ->
             SavingsGoal(
@@ -104,14 +107,19 @@ class FinancialWeatherRepository @Inject constructor(
         
         // 1. Calculate Past Daily Cumulative Spend
         val now = System.currentTimeMillis()
-        val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        cal.set(Calendar.DAY_OF_MONTH, 1)
-        val monthStart = cal.timeInMillis
-        val currentDay = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
+        val (monthStart, currentDay) = synchronized(calendar) {
+            calendar.timeInMillis = now
+            val currentDayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
+            
+            calendar.set(Calendar.HOUR_OF_DAY, 0)
+            calendar.set(Calendar.MINUTE, 0)
+            calendar.set(Calendar.SECOND, 0)
+            calendar.set(Calendar.MILLISECOND, 0)
+            calendar.set(Calendar.DAY_OF_MONTH, 1)
+            val start = calendar.timeInMillis
+             // Keep instance for simple read or reuse
+            start to currentDayOfMonth
+        }
         
         val purchases = expenses.filter { 
             it.transactionType == TransactionType.PURCHASE 
@@ -217,23 +225,7 @@ class FinancialWeatherRepository @Inject constructor(
     }
 
     fun getAllPlannedExpenses(): Flow<List<PlannedExpense>> = plannedExpenseDao.getAllPlannedExpenses()
-        .map { entities ->
-            entities.map { entity ->
-                PlannedExpense(
-                    id = entity.id,
-                    description = entity.description,
-                    amount = entity.amount,
-                    date = entity.date,
-                    categoryId = entity.categoryId,
-                    isRecurring = entity.isRecurring,
-                    priority = when(entity.priority) {
-                        EntityPlannedPriority.MUST -> DomainPlannedPriority.MUST
-                        EntityPlannedPriority.LIKELY -> DomainPlannedPriority.LIKELY
-                        EntityPlannedPriority.OPTIONAL -> DomainPlannedPriority.OPTIONAL
-                    }
-                )
-            }
-        }
+        .map { entities -> entities.map { it.toDomain() } }
 
     fun getAllRecurringPatterns(): Flow<List<RecurringPattern>> = recurringExpenseDao.getAllFlow()
         .map { recurringExpenseEngine.getPatterns() }

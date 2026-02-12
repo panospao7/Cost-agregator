@@ -481,7 +481,8 @@ class InsightsEngine @Inject constructor(
         startMs: Long,
         endMs: Long
     ): List<DayOfWeekInsight> {
-        val data = expenseDao.getDayOfWeekPattern(startMs, endMs)
+        val timeZoneOffset = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis())
+        val data = expenseDao.getDayOfWeekPattern(startMs, endMs, timeZoneOffset)
 
         // Fill in missing days with zeros
         val dayMap = data.associateBy { it.dayOfWeek }
@@ -621,7 +622,7 @@ class InsightsEngine @Inject constructor(
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
     }
 
-    private fun fmt(amount: Double): String = String.format("%.2f", amount)
+    private fun fmt(amount: Double): String = String.format(java.util.Locale.US, "%.2f", amount)
     
     private fun formatDate(dateMs: Long): String {
          val format = java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault())
