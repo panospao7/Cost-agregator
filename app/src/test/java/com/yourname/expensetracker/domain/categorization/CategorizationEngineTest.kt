@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.categorization
 
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -9,27 +10,31 @@ import org.junit.Test
 
 class CategorizationEngineTest {
     private val merchantCategoryDao = mockk<com.yourname.expensetracker.data.database.dao.MerchantCategoryDao>(relaxed = true)
+    private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private lateinit var engine: CategorizationEngine
 
     @Before
     fun setup() {
-        engine = CategorizationEngine(merchantCategoryDao)
+        // Setup default normalizer behavior to match what test expects (simple uppercasing/cleaning)
+        // Since normalize() in engine just delegates to normalizer, we mock it.
+        every { merchantNormalizer.normalize(any()) } answers {
+            val input = firstArg<String>()
+            input.uppercase().replace(Regex("[^A-Z0-9 ]"), " ").trim().replace(Regex("\\s+"), " ")
+        }
+        engine = CategorizationEngine(merchantCategoryDao, merchantNormalizer)
     }
 
     @Test
-    fun `normalize uppercases and removes special chars`() {
-        assertEquals("STARBUCKS", engine.normalize("starbucks"))
-        assertEquals("UBER EATS", engine.normalize("uber-eats"))
-    }
-
-    @Test
-    fun `normalize handles Greek characters`() {
-        val result = engine.normalize("ΣΚΛΑΒΕΝΙΤΗΣ")
-        assertTrue(result.contains("ΣΚΛΑΒΕΝΙΤΗΣ"))
+    fun `normalize delegates to MerchantNormalizer`() {
+        engine.normalize("starbucks")
+        verify { merchantNormalizer.normalize("starbucks") }
     }
 
     @Test
     fun `exact match returns category`() = runBlocking {
+        // Mock normalize to return expected string for this test case
+        every { merchantNormalizer.normalize("starbucks") } returns "STARBUCKS"
+
         coEvery { merchantCategoryDao.getCategoryForMerchant("STARBUCKS") } returns
             MerchantCategory("STARBUCKS", 5L)
 
@@ -39,14 +44,13 @@ class CategorizationEngineTest {
 
     @Test
     fun `substring match finds pattern within merchant name`() = runBlocking {
+        every { merchantNormalizer.normalize("UBER EATS DELIVERY 1234") } returns "UBER EATS DELIVERY 1234"
+
         coEvery { merchantCategoryDao.getCategoryForMerchant("UBER EATS DELIVERY 1234") } returns null
         coEvery { merchantCategoryDao.getAll() } returns listOf(
             MerchantCategory("UBER EATS", 3L),
             MerchantCategory("UBER", 4L)
         )
-        // Word-level match for "UBER"
-        coEvery { merchantCategoryDao.getCategoryForMerchant("UBER") } returns
-            MerchantCategory("UBER", 4L)
 
         val result = engine.categorize("UBER EATS DELIVERY 1234")
         // Should match "UBER EATS" first (longer pattern) via substring, returning 3L
@@ -55,6 +59,8 @@ class CategorizationEngineTest {
 
     @Test
     fun `returns null when no match found`() = runBlocking {
+        every { merchantNormalizer.normalize("COMPLETELY UNKNOWN MERCHANT") } returns "COMPLETELY UNKNOWN MERCHANT"
+
         coEvery { merchantCategoryDao.getCategoryForMerchant(any()) } returns null
         coEvery { merchantCategoryDao.getAll() } returns emptyList()
 

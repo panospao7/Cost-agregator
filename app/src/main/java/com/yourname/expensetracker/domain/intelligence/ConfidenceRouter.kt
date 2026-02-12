@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,12 +26,21 @@ data class RoutingResult(
 class ConfidenceRouter @Inject constructor(
     private val sourceStatsDao: SourceStatsDao,
     private val userCorrectionDao: UserCorrectionDao,
-    private val classifier: TransactionClassifier
+    private val classifier: ITransactionClassifier
 ) {
     companion object {
         const val AUTO_ACCEPT_THRESHOLD = 0.85f
         const val REVIEW_THRESHOLD = 0.50f
+        private const val CACHE_TTL_MS = 60_000L // 1 minute
     }
+
+    // In-memory caches to reduce DB hits
+    private val sourceStatsCache = ConcurrentHashMap<String, CachedValue<SourceStats?>>()
+    private val merchantRejectionCache = ConcurrentHashMap<String, CachedValue<Float>>()
+    private val packageRejectionCache = ConcurrentHashMap<String, CachedValue<Float>>()
+    private val approvalCache = ConcurrentHashMap<String, CachedValue<Boolean>>()
+
+    private data class CachedValue<T>(val value: T, val timestamp: Long)
 
     suspend fun route(
         parsed: ParsedTransaction,
@@ -63,42 +73,37 @@ class ConfidenceRouter @Inject constructor(
         }
 
         // 2-5. Adjust based on source trust, merchant history, package history, and previous approvals
-        coroutineScope {
-            val sourceStatsDeferred = async { sourceStatsDao.getByPackage(packageName) }
-            val merchantRejectionRateDeferred = async { getMerchantRejectionRate(parsed.merchant) }
-            val packageRejectionRateDeferred = async { getPackageRejectionRate(packageName) }
-            val previouslyApprovedDeferred = async { hasPreviousApprovals(parsed.merchant, packageName) }
+        // Now using cached values where possible to avoid 4 concurrent DB queries per notification
 
-            // 2. Adjust based on source trust score
-            val sourceStats = sourceStatsDeferred.await()
-            if (sourceStats != null && sourceStats.totalNotifications > 10) {
-                val trustModifier = calculateTrustModifier(sourceStats)
-                adjustedConfidence *= trustModifier
-                if (trustModifier < 0.9f) {
-                    reasons.add("Source trust: ${(sourceStats.trustScore * 100).toInt()}%")
-                }
+        // 2. Adjust based on source trust score
+        val sourceStats = getCachedSourceStats(packageName)
+        if (sourceStats != null && sourceStats.totalNotifications > 10) {
+            val trustModifier = calculateTrustModifier(sourceStats)
+            adjustedConfidence *= trustModifier
+            if (trustModifier < 0.9f) {
+                reasons.add("Source trust: ${(sourceStats.trustScore * 100).toInt()}%")
             }
+        }
 
-            // 3. Adjust based on user correction history for this merchant
-            val merchantRejectionRate = merchantRejectionRateDeferred.await()
-            if (merchantRejectionRate > 0.5f) {
-                adjustedConfidence *= 0.5f
-                reasons.add("Merchant often rejected")
-            }
+        // 3. Adjust based on user correction history for this merchant
+        val merchantRejectionRate = getCachedMerchantRejectionRate(parsed.merchant)
+        if (merchantRejectionRate > 0.5f) {
+            adjustedConfidence *= 0.5f
+            reasons.add("Merchant often rejected")
+        }
 
-            // 4. Package rejection rate
-            val packageRejectionRate = packageRejectionRateDeferred.await()
-            if (packageRejectionRate > 0.7f) {
-                adjustedConfidence *= 0.3f
-                reasons.add("Package mostly rejected")
-            }
+        // 4. Package rejection rate
+        val packageRejectionRate = getCachedPackageRejectionRate(packageName)
+        if (packageRejectionRate > 0.7f) {
+            adjustedConfidence *= 0.3f
+            reasons.add("Package mostly rejected")
+        }
 
-            // 5. Boost if user has previously approved similar transactions
-            val previouslyApproved = previouslyApprovedDeferred.await()
-            if (previouslyApproved) {
-                adjustedConfidence = (adjustedConfidence * 1.2f).coerceAtMost(1.0f)
-                reasons.add("Previously approved merchant")
-            }
+        // 5. Boost if user has previously approved similar transactions
+        val previouslyApproved = getCachedPreviousApproval(parsed.merchant, packageName)
+        if (previouslyApproved) {
+            adjustedConfidence = (adjustedConfidence * 1.2f).coerceAtMost(1.0f)
+            reasons.add("Previously approved merchant")
         }
 
         // 6. Penalty for Unknown merchant
@@ -150,28 +155,79 @@ class ConfidenceRouter @Inject constructor(
         }
     }
 
-    private suspend fun getMerchantRejectionRate(merchant: String): Float {
+    private suspend fun getCachedSourceStats(packageName: String): SourceStats? {
+        val now = System.currentTimeMillis()
+        val cached = sourceStatsCache[packageName]
+        if (cached != null && now - cached.timestamp < CACHE_TTL_MS) {
+            return cached.value
+        }
+        val stats = sourceStatsDao.getByPackage(packageName)
+        sourceStatsCache[packageName] = CachedValue(stats, now)
+        return stats
+    }
+
+    private suspend fun getCachedMerchantRejectionRate(merchant: String): Float {
+        val now = System.currentTimeMillis()
+        val cached = merchantRejectionCache[merchant]
+        if (cached != null && now - cached.timestamp < CACHE_TTL_MS) {
+            return cached.value
+        }
+
         val total = userCorrectionDao.getMerchantTotalCorrections(merchant)
-        if (total < 3) return 0f
-        val rejections = userCorrectionDao.getMerchantRejectionCount(merchant)
-        return rejections.toFloat() / total
+        val rate = if (total < 3) 0f else {
+            val rejections = userCorrectionDao.getMerchantRejectionCount(merchant)
+            rejections.toFloat() / total
+        }
+        merchantRejectionCache[merchant] = CachedValue(rate, now)
+        return rate
     }
 
-    private suspend fun getPackageRejectionRate(packageName: String): Float {
+    private suspend fun getCachedPackageRejectionRate(packageName: String): Float {
+        val now = System.currentTimeMillis()
+        val cached = packageRejectionCache[packageName]
+        if (cached != null && now - cached.timestamp < CACHE_TTL_MS) {
+            return cached.value
+        }
+
         val total = userCorrectionDao.getTotalCorrections(packageName)
-        if (total < 5) return 0f
-        val rejections = userCorrectionDao.getRejectionCount(packageName)
-        return rejections.toFloat() / total
+        val rate = if (total < 5) 0f else {
+            val rejections = userCorrectionDao.getRejectionCount(packageName)
+            rejections.toFloat() / total
+        }
+        packageRejectionCache[packageName] = CachedValue(rate, now)
+        return rate
     }
 
-    private suspend fun hasPreviousApprovals(merchant: String, packageName: String): Boolean {
-        return userCorrectionDao.hasPreviousApprovals(merchant, packageName)
+    private suspend fun getCachedPreviousApproval(merchant: String, packageName: String): Boolean {
+        val key = "${merchant}_$packageName"
+        val now = System.currentTimeMillis()
+        val cached = approvalCache[key]
+        if (cached != null && now - cached.timestamp < CACHE_TTL_MS) {
+            return cached.value
+        }
+
+        val approved = userCorrectionDao.hasPreviousApprovals(merchant, packageName)
+        approvalCache[key] = CachedValue(approved, now)
+        return approved
     }
 
     suspend fun ensureSourceStats(packageName: String) {
+        // Quick check in cache first
+        val cached = sourceStatsCache[packageName]
+        if (cached != null && cached.value != null) return
+
         val existing = sourceStatsDao.getByPackage(packageName)
         if (existing == null) {
             sourceStatsDao.insertIfNotExists(SourceStats(packageName = packageName))
+        } else {
+            sourceStatsCache[packageName] = CachedValue(existing, System.currentTimeMillis())
         }
+    }
+
+    fun invalidateCache() {
+        sourceStatsCache.clear()
+        merchantRejectionCache.clear()
+        packageRejectionCache.clear()
+        approvalCache.clear()
     }
 }

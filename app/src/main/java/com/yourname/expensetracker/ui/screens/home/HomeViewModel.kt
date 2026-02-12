@@ -159,15 +159,54 @@ class HomeViewModel @Inject constructor(
         cal.set(Calendar.DAY_OF_MONTH, 1)
         val monthStart = cal.timeInMillis
 
-        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
         val categoryMap = categories.associateBy { it.id }
-        val totalSpent = purchases.sumOf { it.amount }
-        val monthSpent = purchases.filter { it.date >= monthStart }.sumOf { it.amount }
-        val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
-        val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
         
-        // Transaction stats
-        val txCount = purchases.size
+        // Single-pass aggregation variables
+        var totalSpent = 0.0
+        var monthSpent = 0.0
+        var weekSpent = 0.0
+        var todaySpent = 0.0
+        var txCount = 0
+        var previousMonthTotal = 0.0
+
+        // Pre-calculate date boundaries for efficient loop checking
+        val previousMonthStart = insightsEngine.getMonthPeriod(now, -1).startMs
+        val previousMonthEnd = monthStart
+
+        val categoryTotalsMap = mutableMapOf<Long, Double>()
+
+        // Single pass through expenses
+        val purchases = ArrayList<Expense>(expenses.size) // Pre-allocate for recent transactions
+
+        for (expense in expenses) {
+            if (expense.transactionType != TransactionType.PURCHASE) continue
+
+            val amount = expense.amount
+            val date = expense.date
+
+            // Add to list for "Recent Transactions" widget (we sort/limit later)
+            purchases.add(expense)
+            txCount++
+            totalSpent += amount
+
+            // Time buckets
+            if (date >= monthStart) {
+                monthSpent += amount
+                if (date >= weekStart) {
+                    weekSpent += amount
+                    if (date >= todayStart) {
+                        todaySpent += amount
+                    }
+                }
+            } else if (date >= previousMonthStart && date < previousMonthEnd) {
+                previousMonthTotal += amount
+            }
+
+            // Category aggregation
+            expense.categoryId?.let { catId ->
+                categoryTotalsMap[catId] = (categoryTotalsMap[catId] ?: 0.0) + amount
+            }
+        }
 
         // Days remaining in month
         val daysInMonth = Calendar.getInstance().getActualMaximum(Calendar.DAY_OF_MONTH)
@@ -178,12 +217,10 @@ class HomeViewModel @Inject constructor(
         val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
         val safeToSpend = weather.discretionaryBudget 
 
-        // Category totals
-        val categoryTotals = purchases
-            .groupBy { it.categoryId }
-            .mapNotNull { (catId, exps) ->
-                val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
-                val catTotal = exps.sumOf { it.amount }
+        // Finalize Category totals
+        val categoryTotals = categoryTotalsMap.entries
+            .mapNotNull { (catId, catTotal) ->
+                val cat = catId.let { categoryMap[it] } ?: return@mapNotNull null
                 CategorySpending(
                     category = cat,
                     total = catTotal,
@@ -191,13 +228,6 @@ class HomeViewModel @Inject constructor(
                 )
             }
             .sortedByDescending { it.total }
-
-        // Spending pace logic (adapted for flow combine)
-        val previousMonthStart = insightsEngine.getMonthPeriod(now, -1).startMs
-        val previousMonthEnd = monthStart
-        val previousMonthTotal = purchases
-            .filter { it.date >= previousMonthStart && it.date < previousMonthEnd }
-            .sumOf { it.amount }
         
         val baseline = overallBudget?.budget?.amount ?: if (previousMonthTotal > 0) previousMonthTotal else null
         

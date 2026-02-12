@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
@@ -13,19 +15,28 @@ class ConfidenceRouterTest {
     private lateinit var router: ConfidenceRouter
     private val sourceStatsDao = mockk<com.yourname.expensetracker.data.database.dao.SourceStatsDao>(relaxed = true)
     private val userCorrectionDao = mockk<com.yourname.expensetracker.data.database.dao.UserCorrectionDao>(relaxed = true)
-    private val classifier = mockk<TransactionClassifier>(relaxed = true)
+
+    // Use Fake instead of MockK to avoid ClassCastException issues with interface mocking
+    private val classifier = FakeClassifier()
+
+    class FakeClassifier : ITransactionClassifier {
+        override suspend fun initialize() {}
+        override suspend fun predict(text: String): Float = 0.5f
+        override suspend fun train(text: String, isTransaction: Boolean) {}
+        override fun retrainFromCorrections() {}
+        override fun getStats(): ClassifierStats = ClassifierStats(0, 0, 0, false)
+        override val stats: StateFlow<ClassifierStats> = MutableStateFlow(ClassifierStats(0, 0, 0, false))
+    }
 
     @Before
     fun setup() {
         router = ConfidenceRouter(sourceStatsDao, userCorrectionDao, classifier)
 
-        // Default: no source stats, no corrections, classifier not ready
+        // Default: no source stats, no corrections
         coEvery { sourceStatsDao.getByPackage(any()) } returns null
         coEvery { userCorrectionDao.getMerchantTotalCorrections(any()) } returns 0
         coEvery { userCorrectionDao.getTotalCorrections(any()) } returns 0
         coEvery { userCorrectionDao.hasPreviousApprovals(any(), any()) } returns false
-        every { classifier.getStats() } returns ClassifierStats(0, 0, 0, false)
-        coEvery { classifier.predict(any()) } returns 0.5f
     }
 
     private fun makeParsed(confidence: Float, merchant: String = "TestMerchant") =

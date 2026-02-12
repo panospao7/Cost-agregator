@@ -68,6 +68,18 @@ class NotificationCaptureService : NotificationListenerService() {
             "com.facebook.orca",
             "com.instagram.android"
         )
+
+        // Keywords that strongly suggest a financial notification
+        private val FINANCIAL_KEYWORDS = listOf(
+            "purchase", "payment", "transaction", "spent", "charged", "paid",
+            "authorized", "declined", "card", "account", "bank", "credit", "debit",
+            "available balance", "confirm", "amount", "merchant",
+            "αγορά", "πληρωμή", "συναλλαγή", "χρέωση", "κάρτα", "λογαριασμός",
+            "εγκρίθηκε", "υπόλοιπο", "ποσό", "κατάστημα"
+        )
+
+        // Regex for currency amounts (EUR, USD, GBP) to further validate
+        private val CURRENCY_REGEX = Regex("""(?i)(€|\$|£|EUR|USD|GBP)\s*\d+[.,]\d{2}|\d+[.,]\d{2}\s*(€|\$|£|EUR|USD|GBP)""")
     }
 
     override fun onCreate() {
@@ -144,14 +156,16 @@ class NotificationCaptureService : NotificationListenerService() {
         sbn ?: return
 
         val packageName = sbn.packageName
-        if (!shouldCapture(packageName)) return
         
-        // Extract notification data ONCE for deduplication logic
+        // Extract notification data ONCE for inspection and deduplication
         val extras = sbn.notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
         
+        // Filter logic: Check Allowlist OR Discovery Mode (Heuristic scan)
+        if (!shouldCapture(packageName, title, text, bigText)) return
+
         // Better deduplication using notification key + content
         // sbn.key is unique to the notification slot
         // contentHash ensures we catch updates to the same notification if content differs
@@ -251,8 +265,26 @@ class NotificationCaptureService : NotificationListenerService() {
         }
     }
 
-    private fun shouldCapture(packageName: String): Boolean {
-        return MONITORED_PACKAGES.contains(packageName)
+    private fun shouldCapture(
+        packageName: String,
+        title: String?,
+        text: String?,
+        bigText: String?
+    ): Boolean {
+        // 1. Always ignore system/social apps to reduce noise
+        if (IGNORED_PACKAGES.contains(packageName)) return false
+
+        // 2. Allowlisted apps are always captured
+        if (MONITORED_PACKAGES.contains(packageName)) return true
+
+        // 3. Discovery Mode: Heuristic scan for financial keywords
+        val combinedText = "${title ?: ""} ${text ?: ""} ${bigText ?: ""}".lowercase()
+
+        // Must contain at least one financial keyword AND a currency amount pattern
+        val hasKeyword = FINANCIAL_KEYWORDS.any { combinedText.contains(it) }
+        val hasAmount = CURRENCY_REGEX.containsMatchIn(combinedText)
+
+        return hasKeyword && hasAmount
     }
 
     private fun buildExtrasJson(extras: android.os.Bundle): String {

@@ -22,10 +22,10 @@ import kotlin.math.ln
  * No TensorFlow needed. Learns from user corrections.
  */
 @Singleton
-class TransactionClassifier @Inject constructor(
+open class TransactionClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
     private val userCorrectionDao: UserCorrectionDao
-) {
+) : ITransactionClassifier {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var saveJob: Job? = null
     private var retrainJob: Job? = null
@@ -60,14 +60,14 @@ class TransactionClassifier @Inject constructor(
     private val negativeBigramCounts = mutableMapOf<String, Int>()
 
     private val _stats = MutableStateFlow(getStats())
-    val stats: StateFlow<ClassifierStats> = _stats.asStateFlow()
+    override val stats: StateFlow<ClassifierStats> = _stats.asStateFlow()
 
     private val mutex = Mutex()
     @Volatile
     private var isLoaded = false
     private var lastTrainingCount = 0
 
-    suspend fun initialize() {
+    override open suspend fun initialize() {
         if (isLoaded) return
         mutex.withLock {
             if (isLoaded) return
@@ -87,7 +87,7 @@ class TransactionClassifier @Inject constructor(
         }
     }
 
-    suspend fun predict(text: String): Float {
+    override open suspend fun predict(text: String): Float {
         if (!isLoaded) initialize()
 
         if (totalPositive + totalNegative < MIN_TRAINING_SAMPLES) {
@@ -100,7 +100,7 @@ class TransactionClassifier @Inject constructor(
         }
     }
 
-    suspend fun train(text: String, isTransaction: Boolean) {
+    override open suspend fun train(text: String, isTransaction: Boolean) {
         mutex.withLock {
             val features = extractFeatures(text)
             addTrainingSample(features, isTransaction)
@@ -108,7 +108,7 @@ class TransactionClassifier @Inject constructor(
         }
     }
 
-    fun retrainFromCorrections() {
+    override open fun retrainFromCorrections() {
         retrainJob?.cancel()
         retrainJob = scope.launch {
             delay(2000) // Debounce for 2 seconds
@@ -169,7 +169,7 @@ class TransactionClassifier @Inject constructor(
         }
     }
 
-    fun getStats(): ClassifierStats {
+    override open fun getStats(): ClassifierStats {
         return ClassifierStats(
             totalPositive = totalPositive,
             totalNegative = totalNegative,
