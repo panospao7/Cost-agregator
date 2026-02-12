@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.domain.model.OperationResult
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -206,20 +207,32 @@ class AddExpenseViewModel @Inject constructor(
                     notes = currentState.notes.takeIf { it.isNotBlank() }
                 )
 
-                if (result == -1L) {
-                    _state.update {
-                        it.copy(isSaving = false, saveResult = SaveResult.Duplicate)
+                when (result) {
+                    is OperationResult.Success -> {
+                        // 2. If recurring, save the rule
+                        if (currentState.isRecurring) {
+                            saveRecurringRule(merchantTrimmed, normalizedAmount, currentState.recurrenceFrequency, currentState.date)
+                        }
+                        
+                        _state.update {
+                            it.copy(isSaving = false, saveResult = SaveResult.Success)
+                        }
                     }
-                } else {
-                    // 2. If recurring, save the rule
-                    if (currentState.isRecurring) {
-                        saveRecurringRule(merchantTrimmed, normalizedAmount, currentState.recurrenceFrequency, currentState.date)
+                    is OperationResult.Duplicate -> {
+                        _state.update {
+                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate)
+                        }
                     }
-                    
-                    _state.update {
-                        it.copy(isSaving = false, saveResult = SaveResult.Success)
+                    is OperationResult.Error -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveResult.Error(result.message)
+                            )
+                        }
                     }
                 }
+
             } catch (e: Exception) {
                 _state.update {
                     it.copy(

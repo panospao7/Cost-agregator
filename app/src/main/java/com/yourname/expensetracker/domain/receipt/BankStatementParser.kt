@@ -73,19 +73,32 @@ class BankStatementParser @Inject constructor(
         // 1. Clean noise
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
         
-        // 2. Look for amount patterns
-        // Matches -12.50, 1.250,50, etc. optionally followed by currency
-        val amountPattern = Pattern.compile(
-            """(-?\b\d+[\s.,]?\d{0,3}[\s.,]\d{2})\s*([€$£]|EUR|USD|GBP)?""",
-            Pattern.CASE_INSENSITIVE
-        )
-        val amountMatcher = amountPattern.matcher(cleanRow)
+        // 2. Look for amount patterns (DUP-005)
+        val amountMatcher = com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX.matcher(cleanRow)
         
         if (!amountMatcher.find()) return null
         
-        val amountStr = amountMatcher.group(1)?.replace(" ", "")?.replace(",", ".") ?: return null
+        // Fix (BUG-009): Robust European & US decimal parsing (Updated groups for DUP-005)
+        val rawAmount = amountMatcher.group(2)?.replace(" ", "") ?: return null
+        val lastSep = rawAmount.findLastAnyOf(listOf(".", ","))
+        
+        val amountStr = if (lastSep != null) {
+            val (sepIndex, sepChar) = lastSep
+            val integerPart = rawAmount.substring(0, sepIndex).replace(".", "").replace(",", "")
+            val decimalPart = rawAmount.substring(sepIndex + 1)
+            "$integerPart.$decimalPart"
+        } else {
+            rawAmount
+        }
+        
         val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
-        val currency = currencyNormalizer.normalize(amountMatcher.group(2) ?: "EUR")
+        
+        // Fix (BUG-010): Use more specific currency check (Updated groups for DUP-005)
+        var currency = "EUR" // Default currency
+        val currencyGroup = amountMatcher.group(1) ?: amountMatcher.group(3)
+        if (currencyGroup != null && currencyGroup.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
+            currency = currencyNormalizer.normalize(currencyGroup)
+        }
 
         // 3. Extract logic for merchant
         // Usually merchant is the text that is NOT the amount and NOT a date/time
@@ -108,7 +121,7 @@ class BankStatementParser @Inject constructor(
             currency = currency,
             merchant = merchantCleaner.clean(merchant),
             type = if (amountStr.contains("-")) TransactionType.PURCHASE else TransactionType.DEPOSIT,
-            confidence = 0.70f // Base confidence for statement parsing
+            confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK // LOGIC-004
         )
     }
 }

@@ -11,7 +11,8 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
-import com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
@@ -32,7 +33,8 @@ class ReceiptRepository @Inject constructor(
     private val receiptParser: ReceiptParser,
     private val statementParser: BankStatementParser,
     private val categorizationEngine: CategorizationEngine,
-    private val merchantNormalizer: MerchantNormalizer,
+    private val merchantNormalizer: NewMerchantNormalizer,
+    private val hybridClassifier: HybridExpenseClassifier,
     private val budgetMonitor: BudgetMonitor
 ) {
     val allReceipts: Flow<List<ScannedReceipt>> = scannedReceiptDao.getAllFlow()
@@ -55,9 +57,10 @@ class ReceiptRepository @Inject constructor(
             val parsed = receiptParser.parse(ocrResult.fullText)
 
             // 3. Normalize merchant if found
-            val normalizedMerchant = parsed.merchantName?.let {
-                merchantNormalizer.applyUserCorrections(it)
+            val lookupResult = parsed.merchantName?.let {
+                merchantNormalizer.normalize(it, autoCreate = true)
             }
+            val normalizedMerchant = lookupResult?.canonical?.normalizedName
 
             // 4. Save scanned receipt record
             val receipt = ScannedReceipt(
@@ -84,12 +87,14 @@ class ReceiptRepository @Inject constructor(
                     suggestedCurrency = parsed.currency,
                     suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant",
                     suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                    suggestedCategoryId = null, // Auto-detected on approval
                     suggestedDate = parsed.date, // Preserving the date found by parser
                     confidence = parsed.confidence,
                     packageName = "receipt.scan",
                     notificationTitle = "Scanned Receipt",
-                    notificationText = ocrResult.fullText.take(200) // Preview snippet
+                    notificationText = ocrResult.fullText.take(200), // Preview snippet
+                    suggestedCategoryId = normalizedMerchant?.let { 
+                         hybridClassifier.classify(it, parsed.total ?: 0.0).categoryId.takeIf { id -> id > 0 }
+                    }
                 )
                 pendingReviewDao.insert(review)
             }
@@ -103,7 +108,7 @@ class ReceiptRepository @Inject constructor(
             return saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
                 val failedReceipt = receipt.copy(
                     rawOcrText = "Scan Failed: ${e.message}", 
-                    confidence = 0f
+                    confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK
                 )
                 scannedReceiptDao.update(failedReceipt) // Update the record created by saveManualReceiptRecord
                 Pair(failedReceipt, parsed)
@@ -162,21 +167,25 @@ class ReceiptRepository @Inject constructor(
         date: Long = System.currentTimeMillis(),
         paymentMethod: PaymentMethod = PaymentMethod.CARD,
         notes: String? = null
-    ): Long {
+    ): com.yourname.expensetracker.domain.model.OperationResult<Long> {
         // 1. Normalize merchant
-        val normalizedMerchant = merchantNormalizer.applyUserCorrections(merchant)
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
+        val normalizedMerchant = lookupResult.canonical.normalizedName
 
         // 2. Auto-categorize if no category provided
-        val finalCategoryId = categoryId ?: categorizationEngine.categorize(normalizedMerchant)
+        val finalCategoryId = categoryId ?: hybridClassifier.classify(
+            merchantName = normalizedMerchant,
+            amount = amount
+        ).categoryId.takeIf { it > 0 }
 
         // 3. Check for duplicates
         val isDuplicate = expenseDao.isDuplicate(
             amount = amount,
             merchant = normalizedMerchant,
             date = date,
-            windowMs = 60000 // 1 minute window for manual/scan entries
+            windowMs = com.yourname.expensetracker.domain.util.AppConstants.Windows.DUPLICATE_DETECTION
         )
-        if (isDuplicate) return -1L
+        if (isDuplicate) return com.yourname.expensetracker.domain.model.OperationResult.Duplicate
 
         // 4. Create expense
         val expense = Expense(
@@ -203,11 +212,20 @@ class ReceiptRepository @Inject constructor(
 
             // 7. Learn merchant → category mapping
             if (finalCategoryId != null) {
+                try {
+                    hybridClassifier.learnFromCorrection(
+                        merchantName = normalizedMerchant,
+                        correctCategoryId = finalCategoryId,
+                        amount = amount
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("ReceiptRepo", "Failed to learn categorization", e)
+                }
                 merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
             }
         }
 
-        return expenseId
+        return com.yourname.expensetracker.domain.model.OperationResult.Success(expenseId)
     }
 
     fun createTempPhotoUri(): Uri {
@@ -291,8 +309,14 @@ class ReceiptRepository @Inject constructor(
         parsedTransactions.forEach { tx ->
             try {
                 // Normalize merchant
-                val normalizedMerchant = merchantNormalizer.applyUserCorrections(tx.merchant)
+                val lookupResult = merchantNormalizer.normalize(tx.merchant, autoCreate = true)
+                val normalizedMerchant = lookupResult.canonical.normalizedName
                 
+                val classification = hybridClassifier.classify(
+                    merchantName = normalizedMerchant,
+                    amount = tx.amount
+                )
+
                 val review = PendingReview(
                     rawNotificationId = null,
                     scannedReceiptId = receiptId,
@@ -300,7 +324,7 @@ class ReceiptRepository @Inject constructor(
                     suggestedCurrency = tx.currency,
                     suggestedMerchant = normalizedMerchant,
                     suggestedType = tx.type.name,
-                    suggestedCategoryId = categorizationEngine.categorize(normalizedMerchant),
+                    suggestedCategoryId = classification.categoryId.takeIf { id -> id > 0 },
                     suggestedDate = System.currentTimeMillis(),
                     confidence = tx.confidence,
                     packageName = "statement.import",

@@ -22,31 +22,35 @@ class CategoryRepository @Inject constructor(
     val allCategories: Flow<List<Category>> = categoryDao.getAllFlow()
 
     suspend fun ensureDefaultCategories() = withContext(Dispatchers.IO) {
-        if (categoryDao.getCount() == 0) {
-            // Seed Categories
-            val defaults = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
-            categoryDao.insertAll(defaults)
-            
-            // Seed Merchant Dictionary
-            // We need to resolve Category IDs first to map names to IDs
-            val categories = categoryDao.getAllFlow().first() // Use flow first emission or simple get
-            
-            // Map: "Groceries" -> 1, "Transport" -> 2
-            val categoryIdMap = categories.associate { it.name to it.id }
-            
-            val merchantMap = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.getExpandedMap()
-            val merchantEntities = merchantMap.mapNotNull { (merchant, categoryName) ->
-               val catId = categoryIdMap[categoryName]
-               if (catId != null) {
-                   MerchantCategory(merchantPattern = merchant, categoryId = catId)
-               } else {
-                   null
-               }
+        try {
+            if (categoryDao.getCount() == 0) {
+                // Seed Categories
+                val defaults = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
+                categoryDao.insertAll(defaults)
+                
+                // Seed Merchant Dictionary
+                // We need to resolve Category IDs first to map names to IDs
+                val categories = categoryDao.getAllFlow().first() // Use flow first emission or simple get
+                
+                // Map: "Groceries" -> 1, "Transport" -> 2
+                val categoryIdMap = categories.associate { it.name to it.id }
+                
+                val merchantMap = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.getExpandedMap()
+                val merchantEntities = merchantMap.mapNotNull { (merchant, categoryName) ->
+                   val catId = categoryIdMap[categoryName]
+                   if (catId != null) {
+                       MerchantCategory(merchantPattern = merchant, categoryId = catId)
+                   } else {
+                       null
+                   }
+                }
+                if (merchantEntities.isNotEmpty()) {
+                    // We need a bulk insert for speed
+                    merchantCategoryDao.insertAll(merchantEntities)
+                }
             }
-            if (merchantEntities.isNotEmpty()) {
-                // We need a bulk insert for speed
-                merchantCategoryDao.insertAll(merchantEntities)
-            }
+        } catch (e: Exception) {
+            android.util.Log.e("CategoryRepository", "Failed to seed default categories", e)
         }
     }
 

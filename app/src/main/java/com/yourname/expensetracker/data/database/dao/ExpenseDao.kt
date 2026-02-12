@@ -33,6 +33,9 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     suspend fun getAll(): List<Expense>
     
+    @Query("SELECT * FROM expenses WHERE date >= :since ORDER BY date DESC")
+    suspend fun getExpensesSince(since: Long): List<Expense>
+    
     @Query("SELECT SUM(amount) FROM expenses WHERE transactionType = 'PURCHASE'")
     fun getTotalSpentFlow(): Flow<Double?>
 

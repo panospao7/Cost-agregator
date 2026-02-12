@@ -12,111 +12,120 @@ This file contains the complete source code from the `src` directory.
 7. [main\java\com\yourname\expensetracker\data\database\dao\CategoryDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaocategorydaokt)
 8. [main\java\com\yourname\expensetracker\data\database\dao\ExpenseDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaoexpensedaokt)
 9. [main\java\com\yourname\expensetracker\data\database\dao\MerchantCategoryDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaomerchantcategorydaokt)
-10. [main\java\com\yourname\expensetracker\data\database\dao\PendingReviewDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaopendingreviewdaokt)
-11. [main\java\com\yourname\expensetracker\data\database\dao\PlannedExpenseDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaoplannedexpensedaokt)
-12. [main\java\com\yourname\expensetracker\data\database\dao\RawNotificationDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaorawnotificationdaokt)
-13. [main\java\com\yourname\expensetracker\data\database\dao\RecurringExpenseDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaorecurringexpensedaokt)
-14. [main\java\com\yourname\expensetracker\data\database\dao\SavingsGoalDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaosavingsgoaldaokt)
-15. [main\java\com\yourname\expensetracker\data\database\dao\ScannedReceiptDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaoscannedreceiptdaokt)
-16. [main\java\com\yourname\expensetracker\data\database\dao\SourceStatsDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaosourcestatsdaokt)
-17. [main\java\com\yourname\expensetracker\data\database\dao\UserCorrectionDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaousercorrectiondaokt)
-18. [main\java\com\yourname\expensetracker\data\database\entity\BlockedPackage.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityblockedpackagekt)
-19. [main\java\com\yourname\expensetracker\data\database\entity\Budget.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitybudgetkt)
-20. [main\java\com\yourname\expensetracker\data\database\entity\Category.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitycategorykt)
-21. [main\java\com\yourname\expensetracker\data\database\entity\Expense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityexpensekt)
-22. [main\java\com\yourname\expensetracker\data\database\entity\ManualRecurringExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymanualrecurringexpensekt)
-23. [main\java\com\yourname\expensetracker\data\database\entity\MerchantCategory.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymerchantcategorykt)
-24. [main\java\com\yourname\expensetracker\data\database\entity\PendingReview.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitypendingreviewkt)
-25. [main\java\com\yourname\expensetracker\data\database\entity\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityplannedexpensekt)
-26. [main\java\com\yourname\expensetracker\data\database\entity\RawNotification.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityrawnotificationkt)
-27. [main\java\com\yourname\expensetracker\data\database\entity\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysavingsgoalkt)
-28. [main\java\com\yourname\expensetracker\data\database\entity\ScannedReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityscannedreceiptkt)
-29. [main\java\com\yourname\expensetracker\data\database\entity\SourceStats.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysourcestatskt)
-30. [main\java\com\yourname\expensetracker\data\database\entity\UserCorrection.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityusercorrectionkt)
-31. [main\java\com\yourname\expensetracker\data\database\model\DashboardWidgetConfig.kt](#mainjavacomyournameexpensetrackerdatadatabasemodeldashboardwidgetconfigkt)
-32. [main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategorykt)
-33. [main\java\com\yourname\expensetracker\data\database\model\PendingReviewWithReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelpendingreviewwithreceiptkt)
-34. [main\java\com\yourname\expensetracker\data\provider\MerchantCategoryProvider.kt](#mainjavacomyournameexpensetrackerdataprovidermerchantcategoryproviderkt)
-35. [main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
-36. [main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
-37. [main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt)
-38. [main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt)
-39. [main\java\com\yourname\expensetracker\data\repository\MerchantCategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorymerchantcategoryrepositorykt)
-40. [main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
-41. [main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt)
-42. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
-43. [main\java\com\yourname\expensetracker\di\AppModule.kt](#mainjavacomyournameexpensetrackerdiappmodulekt)
-44. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
-45. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
-46. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
-47. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
-48. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
-49. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
-50. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
-51. [main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt)
-52. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
-53. [main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#mainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
-54. [main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
-55. [main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
-56. [main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#mainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
-57. [main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
-58. [main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
-59. [main\java\com\yourname\expensetracker\domain\model\Result.kt](#mainjavacomyournameexpensetrackerdomainmodelresultkt)
-60. [main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
-61. [main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
-62. [main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#mainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
-63. [main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#mainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
-64. [main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
-65. [main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
-66. [main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
-67. [main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#mainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
-68. [main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
-69. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
-70. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
-71. [main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#mainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
-72. [main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#mainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
-73. [main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#mainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
-74. [main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#mainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
-75. [main\java\com\yourname\expensetracker\receiver\BootReceiver.kt](#mainjavacomyournameexpensetrackerreceiverbootreceiverkt)
-76. [main\java\com\yourname\expensetracker\service\NotificationCaptureService.kt](#mainjavacomyournameexpensetrackerservicenotificationcaptureservicekt)
-77. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
-78. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
-79. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
-80. [main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
-81. [main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
-82. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
-83. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
-84. [main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
-85. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
-86. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
-87. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
-88. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
-89. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
-90. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
-91. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
-92. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
-93. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
-94. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
-95. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
-96. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
-97. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
-98. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
-99. [main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
-100. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
-101. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
-102. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
-103. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
-104. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
-105. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
-106. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
-107. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
-108. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
-109. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
-110. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
-111. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
-112. [main\res\values\strings.xml](#mainresvaluesstringsxml)
-113. [main\res\values\themes.xml](#mainresvaluesthemesxml)
-114. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
+10. [main\java\com\yourname\expensetracker\data\database\dao\MerchantNormalizationDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaomerchantnormalizationdaokt)
+11. [main\java\com\yourname\expensetracker\data\database\dao\PendingReviewDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaopendingreviewdaokt)
+12. [main\java\com\yourname\expensetracker\data\database\dao\PlannedExpenseDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaoplannedexpensedaokt)
+13. [main\java\com\yourname\expensetracker\data\database\dao\RawNotificationDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaorawnotificationdaokt)
+14. [main\java\com\yourname\expensetracker\data\database\dao\RecurringExpenseDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaorecurringexpensedaokt)
+15. [main\java\com\yourname\expensetracker\data\database\dao\SavingsGoalDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaosavingsgoaldaokt)
+16. [main\java\com\yourname\expensetracker\data\database\dao\ScannedReceiptDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaoscannedreceiptdaokt)
+17. [main\java\com\yourname\expensetracker\data\database\dao\SourceStatsDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaosourcestatsdaokt)
+18. [main\java\com\yourname\expensetracker\data\database\dao\UserCorrectionDao.kt](#mainjavacomyournameexpensetrackerdatadatabasedaousercorrectiondaokt)
+19. [main\java\com\yourname\expensetracker\data\database\entity\BlockedPackage.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityblockedpackagekt)
+20. [main\java\com\yourname\expensetracker\data\database\entity\Budget.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitybudgetkt)
+21. [main\java\com\yourname\expensetracker\data\database\entity\Category.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitycategorykt)
+22. [main\java\com\yourname\expensetracker\data\database\entity\Expense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityexpensekt)
+23. [main\java\com\yourname\expensetracker\data\database\entity\ManualRecurringExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymanualrecurringexpensekt)
+24. [main\java\com\yourname\expensetracker\data\database\entity\MerchantAlias.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymerchantaliaskt)
+25. [main\java\com\yourname\expensetracker\data\database\entity\MerchantCanonical.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymerchantcanonicalkt)
+26. [main\java\com\yourname\expensetracker\data\database\entity\MerchantCategory.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitymerchantcategorykt)
+27. [main\java\com\yourname\expensetracker\data\database\entity\PendingReview.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitypendingreviewkt)
+28. [main\java\com\yourname\expensetracker\data\database\entity\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityplannedexpensekt)
+29. [main\java\com\yourname\expensetracker\data\database\entity\RawNotification.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityrawnotificationkt)
+30. [main\java\com\yourname\expensetracker\data\database\entity\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysavingsgoalkt)
+31. [main\java\com\yourname\expensetracker\data\database\entity\ScannedReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityscannedreceiptkt)
+32. [main\java\com\yourname\expensetracker\data\database\entity\SourceStats.kt](#mainjavacomyournameexpensetrackerdatadatabaseentitysourcestatskt)
+33. [main\java\com\yourname\expensetracker\data\database\entity\UserCorrection.kt](#mainjavacomyournameexpensetrackerdatadatabaseentityusercorrectionkt)
+34. [main\java\com\yourname\expensetracker\data\database\model\DashboardWidgetConfig.kt](#mainjavacomyournameexpensetrackerdatadatabasemodeldashboardwidgetconfigkt)
+35. [main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategorykt)
+36. [main\java\com\yourname\expensetracker\data\database\model\PendingReviewWithReceipt.kt](#mainjavacomyournameexpensetrackerdatadatabasemodelpendingreviewwithreceiptkt)
+37. [main\java\com\yourname\expensetracker\data\provider\MerchantCategoryProvider.kt](#mainjavacomyournameexpensetrackerdataprovidermerchantcategoryproviderkt)
+38. [main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
+39. [main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
+40. [main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt)
+41. [main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt)
+42. [main\java\com\yourname\expensetracker\data\repository\MerchantCategoryRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorymerchantcategoryrepositorykt)
+43. [main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#mainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
+44. [main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt)
+45. [main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#mainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
+46. [main\java\com\yourname\expensetracker\di\AppModule.kt](#mainjavacomyournameexpensetrackerdiappmodulekt)
+47. [main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#mainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
+48. [main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#mainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
+49. [main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
+50. [main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#mainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
+51. [main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#mainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
+52. [main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#mainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
+53. [main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#mainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
+54. [main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
+55. [main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseCategoryClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencemlexpensecategoryclassifierkt)
+56. [main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencemlexpenseclassifierkt)
+57. [main\java\com\yourname\expensetracker\domain\intelligence\ml\FeatureExtractor.kt](#mainjavacomyournameexpensetrackerdomainintelligencemlfeatureextractorkt)
+58. [main\java\com\yourname\expensetracker\domain\intelligence\ml\HybridExpenseClassifier.kt](#mainjavacomyournameexpensetrackerdomainintelligencemlhybridexpenseclassifierkt)
+59. [main\java\com\yourname\expensetracker\domain\intelligence\ml\MerchantNormalizer.kt](#mainjavacomyournameexpensetrackerdomainintelligencemlmerchantnormalizerkt)
+60. [main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#mainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
+61. [main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
+62. [main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
+63. [main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#mainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
+64. [main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
+65. [main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
+66. [main\java\com\yourname\expensetracker\domain\model\Result.kt](#mainjavacomyournameexpensetrackerdomainmodelresultkt)
+67. [main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
+68. [main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
+69. [main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#mainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
+70. [main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#mainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
+71. [main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
+72. [main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
+73. [main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
+74. [main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#mainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
+75. [main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
+76. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
+77. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
+78. [main\java\com\yourname\expensetracker\domain\util\BKTree.kt](#mainjavacomyournameexpensetrackerdomainutilbktreekt)
+79. [main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#mainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
+80. [main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#mainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
+81. [main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#mainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
+82. [main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#mainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
+83. [main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt](#mainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt)
+84. [main\java\com\yourname\expensetracker\receiver\BootReceiver.kt](#mainjavacomyournameexpensetrackerreceiverbootreceiverkt)
+85. [main\java\com\yourname\expensetracker\service\NotificationCaptureService.kt](#mainjavacomyournameexpensetrackerservicenotificationcaptureservicekt)
+86. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
+87. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
+88. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
+89. [main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
+90. [main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
+91. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
+92. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
+93. [main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
+94. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
+95. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
+96. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
+97. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
+98. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
+99. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
+100. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
+101. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
+102. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
+103. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
+104. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
+105. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
+106. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
+107. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
+108. [main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
+109. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
+110. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
+111. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
+112. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
+113. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
+114. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
+115. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
+116. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
+117. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
+118. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
+119. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
+120. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
+121. [main\res\values\strings.xml](#mainresvaluesstringsxml)
+122. [main\res\values\themes.xml](#mainresvaluesthemesxml)
+123. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
 
 ---
 
@@ -240,9 +249,11 @@ import androidx.room.*
         ScannedReceipt::class,
         ManualRecurringExpense::class,
         PlannedExpense::class,
-        SavingsGoal::class
+        SavingsGoal::class,
+        MerchantCanonical::class,
+        MerchantAlias::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -261,6 +272,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recurringExpenseDao(): RecurringExpenseDao
     abstract fun plannedExpenseDao(): PlannedExpenseDao
     abstract fun savingsGoalDao(): SavingsGoalDao
+    abstract fun merchantNormalizationDao(): MerchantNormalizationDao
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -497,8 +509,9 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_originalCategoryId ON user_corrections (originalCategoryId)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_correctedCategoryId ON user_corrections (correctedCategoryId)")
                     // 2. Expenses: Update Indices to match Expense.kt
-                    // Drop obsolete index
+                    // Drop obsolete indices
                     database.execSQL("DROP INDEX IF EXISTS index_expenses_transactionType_merchant")
+                    database.execSQL("DROP INDEX IF EXISTS index_expenses_date_transactionType") // Fixes schema mismatch crash
                     // Create new/updated indices
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_rawNotificationId ON expenses (rawNotificationId)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_date ON expenses (transactionType, date)")
@@ -509,6 +522,75 @@ abstract class AppDatabase : RoomDatabase() {
                 } finally {
                     database.endTransaction()
                 }
+            }
+        }
+        val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create canonical merchants table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS merchant_canonicals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        normalizedName TEXT NOT NULL,
+                        searchKey TEXT NOT NULL,
+                        categoryId INTEGER,
+                        totalOccurrences INTEGER NOT NULL DEFAULT 0,
+                        totalSpent REAL NOT NULL DEFAULT 0.0,
+                        isVerified INTEGER NOT NULL DEFAULT 0,
+                        logoUrl TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                    )
+                """)
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_canonicals_normalizedName ON merchant_canonicals (normalizedName)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_canonicals_searchKey ON merchant_canonicals (searchKey)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_canonicals_categoryId ON merchant_canonicals (categoryId)")
+                // Create merchant aliases table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS merchant_aliases (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        rawName TEXT NOT NULL,
+                        normalizedKey TEXT NOT NULL,
+                        canonicalId INTEGER NOT NULL,
+                        occurrenceCount INTEGER NOT NULL DEFAULT 1,
+                        isUserDefined INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL,
+                        lastUsedAt INTEGER NOT NULL,
+                        FOREIGN KEY(canonicalId) REFERENCES merchant_canonicals(id) ON DELETE CASCADE
+                    )
+                """)
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_aliases_rawName ON merchant_aliases (rawName)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_aliases_normalizedKey ON merchant_aliases (normalizedKey)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_aliases_canonicalId ON merchant_aliases (canonicalId)")
+                // Migrate existing merchants
+                val now = System.currentTimeMillis()
+                database.execSQL("""
+                    INSERT INTO merchant_canonicals (normalizedName, searchKey, categoryId, totalOccurrences, totalSpent, isVerified, createdAt, updatedAt)
+                    SELECT 
+                        merchant as normalizedName,
+                        LOWER(REPLACE(REPLACE(REPLACE(merchant, '.', ''), '''', ''), ' ', '')) as searchKey,
+                        categoryId,
+                        COUNT(*) as totalOccurrences,
+                        SUM(amount) as totalSpent,
+                        0 as isVerified,
+                        $now as createdAt,
+                        $now as updatedAt
+                    FROM expenses
+                    WHERE merchant IS NOT NULL AND transactionType IN ('PURCHASE', 'WITHDRAWAL', 'TRANSFER')
+                    GROUP BY merchant
+                """)
+                database.execSQL("""
+                    INSERT INTO merchant_aliases (rawName, normalizedKey, canonicalId, occurrenceCount, isUserDefined, createdAt, lastUsedAt)
+                    SELECT 
+                        mc.normalizedName as rawName,
+                        mc.searchKey as normalizedKey,
+                        mc.id as canonicalId,
+                        mc.totalOccurrences as occurrenceCount,
+                        0 as isUserDefined,
+                        mc.createdAt,
+                        mc.updatedAt as lastUsedAt
+                    FROM merchant_canonicals mc
+                """)
             }
         }
     }
@@ -970,6 +1052,88 @@ interface MerchantCategoryDao {
     suspend fun getAll(): List<MerchantCategory>
     @Query("DELETE FROM merchant_categories")
     suspend fun deleteAll()
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\dao\MerchantNormalizationDao.kt <a name="mainjavacomyournameexpensetrackerdatadatabasedaomerchantnormalizationdaokt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.dao
+import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.MerchantAlias
+import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+/**
+ * DAO for merchant normalization tables.
+ */
+@Dao
+interface MerchantNormalizationDao {
+    // ==================== Canonical Merchants ====================
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertCanonical(merchant: MerchantCanonical): Long
+    @Update
+    suspend fun updateCanonical(merchant: MerchantCanonical)
+    @Query("SELECT * FROM merchant_canonicals WHERE id = :id")
+    suspend fun getCanonicalById(id: Long): MerchantCanonical?
+    @Query("SELECT * FROM merchant_canonicals WHERE searchKey = :searchKey LIMIT 1")
+    suspend fun getCanonicalBySearchKey(searchKey: String): MerchantCanonical?
+    @Query("SELECT * FROM merchant_canonicals WHERE normalizedName = :name LIMIT 1")
+    suspend fun getCanonicalByName(name: String): MerchantCanonical?
+    @Query("SELECT * FROM merchant_canonicals ORDER BY totalOccurrences DESC")
+    suspend fun getAllCanonicals(): List<MerchantCanonical>
+    @Query("SELECT * FROM merchant_canonicals ORDER BY totalOccurrences DESC LIMIT :limit")
+    suspend fun getTopMerchants(limit: Int): List<MerchantCanonical>
+    @Query("UPDATE merchant_canonicals SET categoryId = :categoryId WHERE id = :id")
+    suspend fun updateCanonicalCategory(id: Long, categoryId: Long?)
+    @Query("UPDATE merchant_canonicals SET totalOccurrences = totalOccurrences + 1, totalSpent = totalSpent + :amount, updatedAt = :timestamp WHERE id = :id")
+    suspend fun incrementMerchantStats(id: Long, amount: Double, timestamp: Long = System.currentTimeMillis())
+    // ==================== Merchant Aliases ====================
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAlias(alias: MerchantAlias): Long
+    @Update
+    suspend fun updateAlias(alias: MerchantAlias)
+    @Query("SELECT * FROM merchant_aliases WHERE id = :id")
+    suspend fun getAliasById(id: Long): MerchantAlias?
+    @Query("SELECT * FROM merchant_aliases WHERE rawName = :rawName LIMIT 1")
+    suspend fun getAliasByRawName(rawName: String): MerchantAlias?
+    @Query("SELECT * FROM merchant_aliases WHERE normalizedKey = :normalizedKey LIMIT 1")
+    suspend fun getAliasByNormalizedKey(normalizedKey: String): MerchantAlias?
+    @Query("SELECT * FROM merchant_aliases WHERE canonicalId = :canonicalId")
+    suspend fun getAliasesForCanonical(canonicalId: Long): List<MerchantAlias>
+    @Query("""
+        SELECT * FROM merchant_aliases 
+        WHERE normalizedKey LIKE '%' || :query || '%'
+        ORDER BY occurrenceCount DESC
+        LIMIT :limit
+    """)
+    suspend fun searchAliases(query: String, limit: Int = 20): List<MerchantAlias>
+    @Query("DELETE FROM merchant_aliases WHERE lastUsedAt < :olderThan")
+    suspend fun deleteUnusedAliasesOlderThan(olderThan: Long): Int
+    // ==================== Combined Operations ====================
+    @Transaction
+    suspend fun linkAliasToCanonical(rawName: String, canonicalId: Long, isUserDefined: Boolean = false) {
+        val normalizedKey = rawName.lowercase().trim()
+            .replace(Regex("[^a-z0-9α-ωά-ώ]"), "")
+        val existing = getAliasByRawName(rawName)
+        if (existing != null) {
+            updateAlias(existing.copy(
+                canonicalId = canonicalId,
+                isUserDefined = isUserDefined || existing.isUserDefined,
+                occurrenceCount = existing.occurrenceCount + 1,
+                lastUsedAt = System.currentTimeMillis()
+            ))
+        } else {
+            insertAlias(MerchantAlias(
+                rawName = rawName,
+                normalizedKey = normalizedKey,
+                canonicalId = canonicalId,
+                isUserDefined = isUserDefined
+            ))
+        }
+    }
+    @Query("SELECT COUNT(*) FROM merchant_canonicals")
+    suspend fun getCanonicalCount(): Int
 }
 
 ```
@@ -1479,6 +1643,86 @@ data class ManualRecurringExpense(
     val nextDate: Long,
     val note: String? = null,
     val createdAt: Long = System.currentTimeMillis()
+)
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\entity\MerchantAlias.kt <a name="mainjavacomyournameexpensetrackerdatadatabaseentitymerchantaliaskt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.entity
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+@Entity(
+    tableName = "merchant_aliases",
+    foreignKeys = [
+        ForeignKey(
+            entity = MerchantCanonical::class,
+            parentColumns = ["id"],
+            childColumns = ["canonicalId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["rawName"], unique = true),
+        Index(value = ["normalizedKey"]),
+        Index(value = ["canonicalId"])
+    ]
+)
+data class MerchantAlias(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val rawName: String,        // e.g., "MCDONALD'S #1234"
+    val normalizedKey: String,   // e.g., "mcdonalds1234"
+    val canonicalId: Long,
+    val occurrenceCount: Int = 1,
+    val isUserDefined: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis(),
+    val lastUsedAt: Long = System.currentTimeMillis()
+)
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\data\database\entity\MerchantCanonical.kt <a name="mainjavacomyournameexpensetrackerdatadatabaseentitymerchantcanonicalkt"></a>
+```kotlin
+package com.yourname.expensetracker.data.database.entity
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+@Entity(
+    tableName = "merchant_canonicals",
+    foreignKeys = [
+        ForeignKey(
+            entity = Category::class,
+            parentColumns = ["id"],
+            childColumns = ["categoryId"],
+            onDelete = ForeignKey.SET_NULL
+        )
+    ],
+    indices = [
+        Index(value = ["normalizedName"], unique = true),
+        Index(value = ["searchKey"]),
+        Index(value = ["categoryId"])
+    ]
+)
+data class MerchantCanonical(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val normalizedName: String, // e.g., "McDonald's"
+    val searchKey: String,      // e.g., "mcdonalds" (stripped)
+    val categoryId: Long? = null,
+    val totalOccurrences: Int = 0,
+    val totalSpent: Double = 0.0,
+    val isVerified: Boolean = false,
+    val logoUrl: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 ```
@@ -3603,10 +3847,12 @@ import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
-import com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import kotlinx.coroutines.flow.*
@@ -3627,9 +3873,10 @@ class NotificationRepository @Inject constructor(
     private val parserRegistry: AppParserRegistry,
     private val categorizationEngine: CategorizationEngine,
     private val confidenceRouter: ConfidenceRouter,
-    private val merchantNormalizer: MerchantNormalizer,
+    private val merchantNormalizer: NewMerchantNormalizer,
+    private val hybridClassifier: HybridExpenseClassifier,
     private val classifier: TransactionClassifier,
-    private val budgetMonitor: BudgetMonitor // <-- NEW
+    private val budgetMonitor: BudgetMonitor 
 ) {
     private val repositoryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
     // Shared expenses flow to prevent redundant DB queries (shared by multiple ViewModels)
@@ -3691,9 +3938,13 @@ class NotificationRepository @Inject constructor(
             return -1L
         }
         // 1. Normalize merchant name
-        val normalizedMerchant = merchantNormalizer.applyUserCorrections(merchant)
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
+        val normalizedMerchant = lookupResult.canonical.normalizedName
         // 2. Auto-categorize if no category provided
-        val finalCategoryId = categoryId ?: categorizationEngine.categorize(normalizedMerchant)
+        val finalCategoryId = categoryId ?: hybridClassifier.classify(
+            merchantName = normalizedMerchant,
+            amount = amount
+        ).categoryId.takeIf { it > 0 }
                 // 3. Dedup check with tighter window for manual entries (1 minute)
                 // For manual entries, we trust the user but want to avoid accidental double-taps.
                 val isDuplicate = expenseDao.isDuplicate(
@@ -3775,7 +4026,8 @@ class NotificationRepository @Inject constructor(
             routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
         }
         // Apply merchant normalization & user corrections
-        val correctedMerchant = merchantNormalizer.applyUserCorrections(parsed.merchant)
+        val lookupResult = merchantNormalizer.normalize(parsed.merchant)
+        val correctedMerchant = lookupResult.canonical.normalizedName
         // 3. Database Transaction - ONLY MINIMAL DB WRITES
         database.withTransaction {
             // Secondary check inside transaction
@@ -3802,7 +4054,14 @@ class NotificationRepository @Inject constructor(
                         dao.markRelevance(rawId, false)
                         return@withTransaction
                     }
-                    val categoryId = categorizationEngine.categorize(correctedMerchant)
+                    val classification = hybridClassifier.classify(
+                        merchantName = correctedMerchant,
+                        amount = parsed.amount,
+                        notificationTitle = notification.title,
+                        notificationText = notification.text,
+                        packageName = notification.packageName
+                    )
+                    val categoryId = classification.categoryId.takeIf { it > 0 }
                     val expense = Expense(
                         amount = parsed.amount,
                         currency = parsed.currency,
@@ -3827,7 +4086,14 @@ class NotificationRepository @Inject constructor(
                     }
                 }
                 RoutingDecision.NEEDS_REVIEW -> {
-                    val suggestedCategoryId = categorizationEngine.categorize(correctedMerchant)
+                    val classification = hybridClassifier.classify(
+                        merchantName = correctedMerchant,
+                        amount = parsed.amount,
+                        notificationTitle = notification.title,
+                        notificationText = notification.text,
+                        packageName = notification.packageName
+                    )
+                    val suggestedCategoryId = classification.categoryId.takeIf { it > 0 }
                     val review = PendingReview(
                         rawNotificationId = rawId,
                         suggestedAmount = parsed.amount,
@@ -3967,6 +4233,16 @@ class NotificationRepository @Inject constructor(
             }
             // Learn mapping
             if (categoryId != null) {
+                try {
+                    hybridClassifier.learnFromCorrection(
+                        merchantName = merchant,
+                        correctCategoryId = categoryId,
+                        amount = amount,
+                        packageName = review.packageName
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("NotificationRepo", "Failed to learn categorization", e)
+                }
                 merchantCategoryRepository.learnPattern(merchant, categoryId)
             }
         }
@@ -4171,7 +4447,8 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
-import com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
@@ -4191,7 +4468,8 @@ class ReceiptRepository @Inject constructor(
     private val receiptParser: ReceiptParser,
     private val statementParser: BankStatementParser,
     private val categorizationEngine: CategorizationEngine,
-    private val merchantNormalizer: MerchantNormalizer,
+    private val merchantNormalizer: NewMerchantNormalizer,
+    private val hybridClassifier: HybridExpenseClassifier,
     private val budgetMonitor: BudgetMonitor
 ) {
     val allReceipts: Flow<List<ScannedReceipt>> = scannedReceiptDao.getAllFlow()
@@ -4211,9 +4489,10 @@ class ReceiptRepository @Inject constructor(
             // 2. Parse the OCR text
             val parsed = receiptParser.parse(ocrResult.fullText)
             // 3. Normalize merchant if found
-            val normalizedMerchant = parsed.merchantName?.let {
-                merchantNormalizer.applyUserCorrections(it)
+            val lookupResult = parsed.merchantName?.let {
+                merchantNormalizer.normalize(it, autoCreate = true)
             }
+            val normalizedMerchant = lookupResult?.canonical?.normalizedName
             // 4. Save scanned receipt record
             val receipt = ScannedReceipt(
                 imagePath = ocrResult.savedImagePath,
@@ -4237,12 +4516,14 @@ class ReceiptRepository @Inject constructor(
                     suggestedCurrency = parsed.currency,
                     suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant",
                     suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                    suggestedCategoryId = null, // Auto-detected on approval
                     suggestedDate = parsed.date, // Preserving the date found by parser
                     confidence = parsed.confidence,
                     packageName = "receipt.scan",
                     notificationTitle = "Scanned Receipt",
-                    notificationText = ocrResult.fullText.take(200) // Preview snippet
+                    notificationText = ocrResult.fullText.take(200), // Preview snippet
+                    suggestedCategoryId = normalizedMerchant?.let { 
+                         hybridClassifier.classify(it, parsed.total ?: 0.0).categoryId.takeIf { id -> id > 0 }
+                    }
                 )
                 pendingReviewDao.insert(review)
             }
@@ -4311,9 +4592,13 @@ class ReceiptRepository @Inject constructor(
         notes: String? = null
     ): Long {
         // 1. Normalize merchant
-        val normalizedMerchant = merchantNormalizer.applyUserCorrections(merchant)
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
+        val normalizedMerchant = lookupResult.canonical.normalizedName
         // 2. Auto-categorize if no category provided
-        val finalCategoryId = categoryId ?: categorizationEngine.categorize(normalizedMerchant)
+        val finalCategoryId = categoryId ?: hybridClassifier.classify(
+            merchantName = normalizedMerchant,
+            amount = amount
+        ).categoryId.takeIf { it > 0 }
         // 3. Check for duplicates
         val isDuplicate = expenseDao.isDuplicate(
             amount = amount,
@@ -4343,6 +4628,15 @@ class ReceiptRepository @Inject constructor(
             budgetMonitor.checkBudgets()
             // 7. Learn merchant → category mapping
             if (finalCategoryId != null) {
+                try {
+                    hybridClassifier.learnFromCorrection(
+                        merchantName = normalizedMerchant,
+                        correctCategoryId = finalCategoryId,
+                        amount = amount
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("ReceiptRepo", "Failed to learn categorization", e)
+                }
                 merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
             }
         }
@@ -4417,7 +4711,12 @@ class ReceiptRepository @Inject constructor(
         parsedTransactions.forEach { tx ->
             try {
                 // Normalize merchant
-                val normalizedMerchant = merchantNormalizer.applyUserCorrections(tx.merchant)
+                val lookupResult = merchantNormalizer.normalize(tx.merchant, autoCreate = true)
+                val normalizedMerchant = lookupResult.canonical.normalizedName
+                val classification = hybridClassifier.classify(
+                    merchantName = normalizedMerchant,
+                    amount = tx.amount
+                )
                 val review = PendingReview(
                     rawNotificationId = null,
                     scannedReceiptId = receiptId,
@@ -4425,7 +4724,7 @@ class ReceiptRepository @Inject constructor(
                     suggestedCurrency = tx.currency,
                     suggestedMerchant = normalizedMerchant,
                     suggestedType = tx.type.name,
-                    suggestedCategoryId = categorizationEngine.categorize(normalizedMerchant),
+                    suggestedCategoryId = classification.categoryId.takeIf { id -> id > 0 },
                     suggestedDate = System.currentTimeMillis(),
                     confidence = tx.confidence,
                     packageName = "statement.import",
@@ -4508,7 +4807,8 @@ object AppModule {
             AppDatabase.MIGRATION_12_13,
             AppDatabase.MIGRATION_13_14,
             AppDatabase.MIGRATION_14_15,
-            AppDatabase.MIGRATION_15_16
+            AppDatabase.MIGRATION_15_16,
+            AppDatabase.MIGRATION_16_17
         )
             .addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -4573,6 +4873,9 @@ object AppModule {
     @Provides
     @Singleton
     fun provideRecurringExpenseDao(database: AppDatabase): RecurringExpenseDao = database.recurringExpenseDao()
+    @Provides
+    @Singleton
+    fun provideMerchantNormalizationDao(database: AppDatabase): MerchantNormalizationDao = database.merchantNormalizationDao()
 }
 
 ```
@@ -5536,6 +5839,7 @@ class BudgetMonitor @Inject constructor(
 package com.yourname.expensetracker.domain.categorization
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
@@ -5543,7 +5847,7 @@ import kotlinx.coroutines.sync.withLock
 @Singleton
 class CategorizationEngine @Inject constructor(
     private val merchantCategoryDao: MerchantCategoryDao,
-    private val merchantNormalizer: com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
+    private val merchantNormalizer: NewMerchantNormalizer
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
@@ -5552,7 +5856,8 @@ class CategorizationEngine @Inject constructor(
     private val CACHE_EXPIRY_MS = 300_000 // 5 minutes
     // Regex moved to MerchantNormalizer
     suspend fun categorize(merchant: String): Long? {
-        val normalized = normalize(merchant)
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = false)
+        val normalized = lookupResult.canonical.normalizedName.lowercase()
         // Ensure cache is loaded
         val (sortedMappings, mappingsMap) = getCache()
         // 1. Exact match (from cache)
@@ -5578,8 +5883,8 @@ class CategorizationEngine @Inject constructor(
         }
         return null
     }
-    fun normalize(merchant: String): String {
-        return merchantNormalizer.normalize(merchant)
+    suspend fun normalize(merchant: String): String {
+        return merchantNormalizer.normalize(merchant, autoCreate = false).canonical.normalizedName
     }
     private suspend fun getCache(): Pair<List<MerchantCategory>, Map<String, MerchantCategory>> {
         cacheMutex.withLock {
@@ -5964,190 +6269,6 @@ class ConfidenceRouter @Inject constructor(
 
 ---
 
-## main\java\com\yourname\expensetracker\domain\intelligence\MerchantNormalizer.kt <a name="mainjavacomyournameexpensetrackerdomainintelligencemerchantnormalizerkt"></a>
-```kotlin
-package com.yourname.expensetracker.domain.intelligence
-import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import javax.inject.Inject
-import javax.inject.Singleton
-@Singleton
-class MerchantNormalizer @Inject constructor(
-    private val userCorrectionDao: UserCorrectionDao
-) {
-    private val correctionCache = mutableMapOf<String, String>()
-    private var lastCacheClear = 0L
-    private val CACHE_DURATION = 300_000 // 5 min
-    private val cacheMutex = Mutex()
-    // Suffixes/noise to strip
-    private val noisePatterns by lazy {
-        listOf(
-            Regex("""\s*#?\d{3,}.*$"""),
-            Regex("""\s*\*+\d+.*$"""),
-            Regex("""\s+(?:GR|ATH|THES|ATHENS|THESSALONIKI|THESSALONIK).*$"""),
-            Regex("""\s+(?:BRANCH|STORE|SHOP|KATAST|ΚΑΤΑΣΤ)\s*\d*$"""),
-            Regex("""\s+\d{1,2}/\d{1,2}/?\d{0,4}$"""),
-            Regex("""\s+(?:SA|AE|ΑΕ|EPE|ΕΠΕ|IKE|ΙΚΕ|LTD|GMBH|SRL|OE|ΟΕ|EE|ΕΕ)\s*$"""),
-            Regex("""\s+(?:CARD|VISA|MASTER|MC|AMEX)\s*\**\d*$"""),
-            Regex("""\s*-\s*\d+$"""),  // trailing dash + numbers
-            Regex("""\s+\d{4,}$"""),   // trailing long number
-        )
-    }
-    private val cleanupRegex1 by lazy { Regex("[^A-ZΑ-Ω0-9 &]") }
-    private val cleanupRegex2 by lazy { Regex("\\s+") }
-    // Known merchant aliases (common variations → canonical name)
-    private val KNOWN_ALIASES = mapOf(
-        "SKLAVENITIS" to "Sklavenitis",
-        "ΣΚΛΑΒΕΝΙΤΗΣ" to "Sklavenitis",
-        "AB VASILOPOULOS" to "AB Vassilopoulos",
-        "AB ΒΑΣΙΛΟΠΟΥΛΟΣ" to "AB Vassilopoulos",
-        "LIDL" to "Lidl",
-        "STARBUCKS" to "Starbucks",
-        "SHELL" to "Shell",
-        "BP" to "BP",
-        "EFOOD" to "e-food",
-        "WOLT" to "Wolt",
-        "NETFLIX" to "Netflix",
-        "SPOTIFY" to "Spotify",
-        "AMAZON" to "Amazon",
-        "UBER" to "Uber",
-        "BOLT" to "Bolt",
-        "COSMOTE" to "Cosmote",
-        "VODAFONE" to "Vodafone",
-        "WIND" to "Wind",
-        "DEH" to "DEH",
-        "ΔΕΗ" to "DEH",
-        "EYDAP" to "EYDAP",
-        "ΕΥΔΑΠ" to "EYDAP",
-    )
-    fun normalize(merchant: String): String {
-        var result = merchant.uppercase().trim()
-        // Apply noise removal patterns
-        for (pattern in noisePatterns) {
-            result = result.replace(pattern, "")
-        }
-        result = result
-            .replace(cleanupRegex1, "")
-            .replace(cleanupRegex2, " ")
-            .trim()
-        return result
-    }
-    /**
-     * Full normalization: strip noise, apply known aliases, apply user corrections
-     */
-    suspend fun normalizeAndCorrect(merchant: String): String {
-        return applyUserCorrections(merchant)
-    }
-    /**
-     * Apply user corrections only (for pipeline use)
-     */
-    suspend fun applyUserCorrections(merchant: String): String {
-        val normalized = normalize(merchant)
-        // Check known aliases first
-        for ((key, canonical) in KNOWN_ALIASES) {
-            if (normalized.contains(key)) {
-                return canonical
-            }
-        }
-        return cacheMutex.withLock {
-            val now = System.currentTimeMillis()
-            if (now - lastCacheClear > CACHE_DURATION) {
-                correctionCache.clear()
-                lastCacheClear = now
-            }
-            val cached = correctionCache[normalized]
-            if (cached != null) {
-                cached
-            } else {
-                val corrected = userCorrectionDao.getMostCommonMerchantCorrection(normalized)
-                val result = corrected ?: toTitleCase(normalized)
-                correctionCache[normalized] = result
-                result
-            }
-        }
-    }
-    /**
-     * Jaccard similarity for matching merchant names
-     */
-    fun similarity(a: String, b: String): Float {
-        val na = normalize(a)
-        val nb = normalize(b)
-        if (na == nb) return 1.0f
-        if (na.isEmpty() || nb.isEmpty()) return 0f
-        if (na.contains(nb) || nb.contains(na)) return 0.9f
-        // Word overlap (Jaccard)
-        val wordsA = na.split(" ").toSet()
-        val wordsB = nb.split(" ").toSet()
-        val intersection = wordsA.intersect(wordsB)
-        val union = wordsA.union(wordsB)
-        return if (union.isNotEmpty()) intersection.size.toFloat() / union.size else 0f
-    }
-    /**
-     * Levenshtein distance for close matches
-     */
-    fun levenshteinDistance(a: String, b: String): Int {
-        if (a == b) return 0
-        if (a.isEmpty()) return b.length
-        if (b.isEmpty()) return a.length
-        val n = b.length
-        var prev = IntArray(n + 1) { it }
-        var curr = IntArray(n + 1)
-        for (i in 1..a.length) {
-            curr[0] = i
-            for (j in 1..n) {
-                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
-                curr[j] = minOf(
-                    minOf(curr[j - 1] + 1, prev[j] + 1),
-                    prev[j - 1] + cost
-                )
-            }
-            val temp = prev
-            prev = curr
-            curr = temp
-        }
-        return prev[n]
-    }
-    /**
-     * Normalized Levenshtein similarity (0.0 to 1.0)
-     */
-    fun levenshteinSimilarity(a: String, b: String): Float {
-        val na = normalize(a)
-        val nb = normalize(b)
-        if (na == nb) return 1.0f
-        val maxLen = maxOf(na.length, nb.length)
-        if (maxLen == 0) return 1.0f
-        return 1.0f - levenshteinDistance(na, nb).toFloat() / maxLen
-    }
-    /**
-     * Find best matching merchant name from a list
-     */
-    fun findBestMatch(merchant: String, candidates: List<String>, threshold: Float = 0.85f): String? {
-        var bestMatch: String? = null
-        var bestScore = 0f
-        for (candidate in candidates) {
-            val jaccardScore = similarity(merchant, candidate)
-            val levenScore = levenshteinSimilarity(merchant, candidate)
-            // Weighted combination
-            val score = jaccardScore * 0.4f + levenScore * 0.6f
-            if (score > bestScore && score >= threshold) {
-                bestScore = score
-                bestMatch = candidate
-            }
-        }
-        return bestMatch
-    }
-    private fun toTitleCase(text: String): String {
-        return text.split(" ").joinToString(" ") { word ->
-            word.lowercase().replaceFirstChar { it.uppercaseChar() }
-        }
-    }
-}
-
-```
-
----
-
 ## main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt <a name="mainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt"></a>
 ```kotlin
 // domain/intelligence/TransactionClassifier.kt
@@ -6505,6 +6626,650 @@ data class ClassifierStats(
     val vocabularySize: Int,
     val isReady: Boolean
 )
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseCategoryClassifier.kt <a name="mainjavacomyournameexpensetrackerdomainintelligencemlexpensecategoryclassifierkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.intelligence.ml
+import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
+/**
+ * Naive Bayes Classifier for Expense Categorization.
+ * Uses multinomial Naive Bayes with Laplace smoothing.
+ */
+@Singleton
+class ExpenseCategoryClassifier @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
+    companion object {
+        private const val TAG = "ExpenseCategoryNB"
+        private const val MODEL_FILE = "expense_category_model.json"
+        private const val SMOOTHING = 1.0
+        private const val MIN_SAMPLES = 20
+    }
+    private var categoryCounts = mutableMapOf<Long, Int>()
+    private var totalSamples = 0
+    private var wordCounts = mutableMapOf<Long, MutableMap<String, Int>>()
+    private var wordTotals = mutableMapOf<Long, Int>()
+    private var vocabulary = mutableSetOf<String>()
+    private var isLoaded = false
+    suspend fun classify(features: ExpenseFeatures): List<CategoryScore> {
+        if (!isLoaded) loadModel()
+        if (totalSamples < MIN_SAMPLES || categoryCounts.isEmpty()) {
+            return emptyList()
+        }
+        val scores = mutableMapOf<Long, Double>()
+        categoryCounts.keys.forEach { categoryId ->
+            scores[categoryId] = calculateLogProbability(features, categoryId)
+        }
+        // Softmax normalization
+        val maxLog = scores.values.maxOrNull() ?: 0.0
+        val expScores = scores.mapValues { Math.exp(it.value - maxLog).coerceAtLeast(1e-10) }
+        val sumExp = expScores.values.sum()
+        return expScores
+            .map { (categoryId, expVal) ->
+                CategoryScore(
+                    categoryId = categoryId,
+                    categoryName = "Category_$categoryId", // Resolved by HybridClassifier
+                    score = (expVal / sumExp).toFloat()
+                )
+            }
+            .filter { it.score > 0.01f }
+            .sortedByDescending { it.score }
+    }
+    suspend fun train(features: ExpenseFeatures, categoryId: Long) {
+        if (!isLoaded) loadModel()
+        categoryCounts[categoryId] = (categoryCounts[categoryId] ?: 0) + 1
+        totalSamples++
+        val catWordCounts = wordCounts.getOrPut(categoryId) { mutableMapOf() }
+        features.merchantTokens.forEach { token ->
+            catWordCounts[token] = (catWordCounts[token] ?: 0) + 1
+            vocabulary.add(token)
+        }
+        wordTotals[categoryId] = (wordTotals[categoryId] ?: 0) + features.merchantTokens.size
+        saveModel()
+    }
+    private fun calculateLogProbability(features: ExpenseFeatures, categoryId: Long): Double {
+        var logProb = Math.log(
+            (categoryCounts[categoryId] ?: 1).toDouble() / 
+            totalSamples.coerceAtLeast(1)
+        )
+        val catWordCounts = wordCounts[categoryId] ?: mutableMapOf()
+        val catWordTotal = wordTotals[categoryId] ?: 0
+        val vocabSize = vocabulary.size.coerceAtLeast(1)
+        features.merchantTokens.forEach { token ->
+            val wordCount = catWordCounts[token]?.toDouble() ?: 0.0
+            val wordProb = (wordCount + SMOOTHING) / (catWordTotal + SMOOTHING * vocabSize)
+            logProb += Math.log(wordProb.coerceAtLeast(1e-10))
+        }
+        return logProb
+    }
+    fun isReady(): Boolean = totalSamples >= MIN_SAMPLES
+    fun getStats(): CategoryClassifierStats {
+        return CategoryClassifierStats(
+            totalSamples = totalSamples,
+            categoryCount = categoryCounts.size,
+            vocabularySize = vocabulary.size,
+            isReady = isReady()
+        )
+    }
+    private suspend fun saveModel() = withContext(Dispatchers.IO) {
+        try {
+            val json = JSONObject().apply {
+                put("totalSamples", totalSamples)
+                put("vocabulary", JSONObject(vocabulary.associateWith { 1 }))
+                val countsJson = JSONObject()
+                categoryCounts.forEach { (id, count) -> countsJson.put(id.toString(), count) }
+                put("categoryCounts", countsJson)
+                val wordCountsJson = JSONObject()
+                wordCounts.forEach { (catId, words) ->
+                    val wordsJson = JSONObject()
+                    words.forEach { (word, count) -> wordsJson.put(word, count) }
+                    wordCountsJson.put(catId.toString(), wordsJson)
+                }
+                put("wordCounts", wordCountsJson)
+            }
+            File(context.filesDir, MODEL_FILE).writeText(json.toString())
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save model", e)
+        }
+    }
+    private suspend fun loadModel() = withContext(Dispatchers.IO) {
+        try {
+            val file = File(context.filesDir, MODEL_FILE)
+            if (!file.exists()) {
+                isLoaded = true
+                return@withContext
+            }
+            val json = JSONObject(file.readText())
+            totalSamples = json.getInt("totalSamples")
+            categoryCounts.clear()
+            val catCounts = json.getJSONObject("categoryCounts")
+            catCounts.keys().forEach { key -> categoryCounts[key.toLong()] = catCounts.getInt(key) }
+            vocabulary.clear()
+            val vocab = json.getJSONObject("vocabulary")
+            vocab.keys().forEach { vocabulary.add(it) }
+            wordCounts.clear()
+            val wc = json.getJSONObject("wordCounts")
+            wc.keys().forEach { catId ->
+                val wordsJson = wc.getJSONObject(catId)
+                val words = mutableMapOf<String, Int>()
+                wordsJson.keys().forEach { word -> words[word] = wordsJson.getInt(word) }
+                wordCounts[catId.toLong()] = words
+            }
+            wordTotals.clear()
+            wordCounts.forEach { (catId, words) -> wordTotals[catId] = words.values.sum() }
+            isLoaded = true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load model", e)
+            isLoaded = true
+        }
+    }
+}
+data class CategoryClassifierStats(
+    val totalSamples: Int,
+    val categoryCount: Int,
+    val vocabularySize: Int,
+    val isReady: Boolean
+)
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseClassifier.kt <a name="mainjavacomyournameexpensetrackerdomainintelligencemlexpenseclassifierkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.intelligence.ml
+/**
+ * Match type for categorization results.
+ */
+enum class MatchType {
+    RULE_MATCH,        // Keyword based
+    HISTORY_MATCH,     // Previous user choice
+    ML_PREDICTION,     // Naive Bayes prediction
+    FALLBACK,          // Default category
+    EXACT_MATCH,       // Exact string match (for normalization)
+    ALIAS_MATCH,       // Known alias (for normalization)
+    FUZZY_MATCH,       // Fuzzy/string similarity (for normalization)
+    PARTIAL_MATCH,     // Substring match
+    USER_DEFINED,      // User explicitly linked
+    NEW_MERCHANT       // No match found
+}
+/**
+ * Score for a specific category prediction.
+ */
+data class CategoryScore(
+    val categoryId: Long,
+    val categoryName: String,
+    val score: Float
+)
+/**
+ * Result of the classification process.
+ */
+data class ClassificationResult(
+    val categoryId: Long,
+    val categoryName: String,
+    val confidence: Float,
+    val alternatives: List<CategoryScore> = emptyList(),
+    val matchType: MatchType
+)
+/**
+ * Features extracted for classification.
+ */
+data class ExpenseFeatures(
+    val merchantName: String,
+    val merchantTokens: List<String>,
+    val notificationTitle: String?,
+    val notificationText: String?,
+    val allText: String,
+    val amount: Double,
+    val amountBucket: AmountBucket,
+    val dayOfWeek: Int, // 0 = Monday, 6 = Sunday
+    val hourOfDay: Int,
+    val isWeekend: Boolean,
+    val sourcePackage: String
+)
+/**
+ * Amount buckets for qualitative amount features.
+ */
+enum class AmountBucket {
+    TINY,   // < 5
+    SMALL,  // 5 - 20
+    MEDIUM, // 20 - 50
+    LARGE,  // 50 - 200
+    HUGE;   // > 200
+    companion object {
+        fun fromAmount(amount: Double): AmountBucket {
+            return when {
+                amount < 5.0 -> TINY
+                amount < 20.0 -> SMALL
+                amount < 50.0 -> MEDIUM
+                amount < 200.0 -> LARGE
+                else -> HUGE
+            }
+        }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\intelligence\ml\FeatureExtractor.kt <a name="mainjavacomyournameexpensetrackerdomainintelligencemlfeatureextractorkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.intelligence.ml
+import com.yourname.expensetracker.data.database.entity.Expense
+import java.util.Calendar
+/**
+ * Extracts features from expenses and notifications for ML classification.
+ */
+class FeatureExtractor {
+    companion object {
+        private val STOP_WORDS = setOf(
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
+            // Greek stop words
+            "και", "το", "η", "τα", "του", "την", "των", "με", "σε", "για"
+        )
+        private val WORD_PATTERN = Regex("[a-zA-Zα-ωά-ώΑ-ΩΆ-Ώ]+")
+    }
+    /**
+     * Extract features from an expense.
+     */
+    fun extractFromExpense(
+        expense: Expense,
+        notificationTitle: String? = null,
+        notificationText: String? = null,
+        packageName: String = ""
+    ): ExpenseFeatures {
+        val calendar = Calendar.getInstance().apply { timeInMillis = expense.date }
+        val allText = listOfNotNull(
+            expense.merchant,
+            notificationTitle,
+            notificationText
+        ).joinToString(" ")
+        val tokens = tokenize(allText)
+        return ExpenseFeatures(
+            merchantName = expense.merchant,
+            merchantTokens = tokens,
+            notificationTitle = notificationTitle,
+            notificationText = notificationText,
+            allText = allText,
+            amount = expense.amount,
+            amountBucket = AmountBucket.fromAmount(expense.amount),
+            dayOfWeek = (calendar.get(Calendar.DAY_OF_WEEK) + 5) % 7, // 0 = Monday
+            hourOfDay = calendar.get(Calendar.HOUR_OF_DAY),
+            isWeekend = calendar.get(Calendar.DAY_OF_WEEK) in listOf(Calendar.SATURDAY, Calendar.SUNDAY),
+            sourcePackage = packageName
+        )
+    }
+    /**
+     * Extract features from notification text (before expense is created).
+     */
+    fun extractFromNotification(
+        title: String?,
+        text: String?,
+        packageName: String,
+        amount: Double,
+        merchant: String
+    ): ExpenseFeatures {
+        val calendar = Calendar.getInstance()
+        val allText = listOfNotNull(title, text, merchant).joinToString(" ")
+        val tokens = tokenize(allText)
+        return ExpenseFeatures(
+            merchantName = merchant,
+            merchantTokens = tokens,
+            notificationTitle = title,
+            notificationText = text,
+            allText = allText,
+            amount = amount,
+            amountBucket = AmountBucket.fromAmount(amount),
+            dayOfWeek = (calendar.get(Calendar.DAY_OF_WEEK) + 5) % 7,
+            hourOfDay = calendar.get(Calendar.HOUR_OF_DAY),
+            isWeekend = calendar.get(Calendar.DAY_OF_WEEK) in listOf(Calendar.SATURDAY, Calendar.SUNDAY),
+            sourcePackage = packageName
+        )
+    }
+    /**
+     * Tokenize text into words.
+     */
+    fun tokenize(text: String): List<String> {
+        return WORD_PATTERN.findAll(text.lowercase())
+            .map { it.value }
+            .filter { it.length >= 2 && it !in STOP_WORDS }
+            .toList()
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\intelligence\ml\HybridExpenseClassifier.kt <a name="mainjavacomyournameexpensetrackerdomainintelligencemlhybridexpenseclassifierkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.intelligence.ml
+import android.content.Context
+import android.util.Log
+import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.database.entity.Category
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
+/**
+ * Hybrid Expense Classifier for CATEGORIZATION.
+ * Strategy priority: Rule-based -> History (TBD) -> ML prediction.
+ */
+@Singleton
+class HybridExpenseClassifier @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val categoryDao: CategoryDao,
+    private val nbClassifier: ExpenseCategoryClassifier
+) {
+    companion object {
+        private const val TAG = "HybridClassifier"
+        const val RULE_CONFIDENCE = 0.95f
+        const val ML_THRESHOLD = 0.60f
+        private val CATEGORY_KEYWORDS: Map<String, String> = mapOf(
+            "mcdonalds" to "Food", "starbucks" to "Food", "pizza" to "Food",
+            "restaurant" to "Food", "cafe" to "Food", "coffee" to "Food",
+            "supermarket" to "Groceries", "lidl" to "Groceries", "sklavenitis" to "Groceries",
+            "uber" to "Transport", "taxi" to "Transport", "bolt" to "Transport",
+            "fuel" to "Transport", "gas" to "Transport", "shell" to "Transport", "bp" to "Transport",
+            "amazon" to "Shopping", "netflix" to "Entertainment", "spotify" to "Entertainment"
+        )
+    }
+    private val featureExtractor = FeatureExtractor()
+    private var categories: List<Category> = emptyList()
+    private var categoryMap: Map<String, Category> = emptyMap()
+    suspend fun initialize() {
+        categories = categoryDao.getAll()
+        categoryMap = categories.associateBy { it.name.lowercase() }
+    }
+    suspend fun classify(
+        merchantName: String,
+        amount: Double,
+        notificationTitle: String? = null,
+        notificationText: String? = null,
+        packageName: String = ""
+    ): ClassificationResult = withContext(Dispatchers.Default) {
+        if (categories.isEmpty()) initialize()
+        val features = featureExtractor.extractFromNotification(
+            title = notificationTitle,
+            text = notificationText,
+            packageName = packageName,
+            amount = amount,
+            merchant = merchantName
+        )
+        // 1. Rules
+        val ruleResult = classifyWithRules(features)
+        if (ruleResult != null && ruleResult.confidence >= RULE_CONFIDENCE) {
+            return@withContext ruleResult
+        }
+        // 2. ML Prediction
+        if (nbClassifier.isReady()) {
+            val mlResults = nbClassifier.classify(features)
+            if (mlResults.isNotEmpty()) {
+                val best = mlResults.first()
+                if (best.score >= ML_THRESHOLD) {
+                    val category = categories.find { it.id == best.categoryId }
+                    return@withContext ClassificationResult(
+                        categoryId = best.categoryId,
+                        categoryName = category?.name ?: "Unknown",
+                        confidence = best.score,
+                        alternatives = mlResults.take(3).map { res ->
+                            res.copy(categoryName = categories.find { it.id == res.categoryId }?.name ?: "Unknown")
+                        },
+                        matchType = MatchType.ML_PREDICTION
+                    )
+                }
+            }
+        }
+        // 3. Fallback
+        val defaultCategory = categories.firstOrNull()
+        ClassificationResult(
+            categoryId = defaultCategory?.id ?: -1,
+            categoryName = defaultCategory?.name ?: "Uncategorized",
+            confidence = 0.0f,
+            matchType = MatchType.FALLBACK
+        )
+    }
+    private fun classifyWithRules(features: ExpenseFeatures): ClassificationResult? {
+        val tokens = features.merchantTokens.map { it.lowercase() }
+        for (token in tokens) {
+            val catName = CATEGORY_KEYWORDS[token]
+            if (catName != null) {
+                val category = categoryMap[catName.lowercase()]
+                if (category != null) {
+                    return ClassificationResult(
+                        categoryId = category.id,
+                        categoryName = category.name,
+                        confidence = 0.98f,
+                        matchType = MatchType.RULE_MATCH
+                    )
+                }
+            }
+        }
+        return null
+    }
+    suspend fun learnFromCorrection(
+        merchantName: String,
+        correctCategoryId: Long,
+        amount: Double = 0.0,
+        packageName: String = ""
+    ) {
+        val features = featureExtractor.extractFromNotification(
+            title = null,
+            text = null,
+            packageName = packageName,
+            amount = amount,
+            merchant = merchantName
+        )
+        nbClassifier.train(features, correctCategoryId)
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\intelligence\ml\MerchantNormalizer.kt <a name="mainjavacomyournameexpensetrackerdomainintelligencemlmerchantnormalizerkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.intelligence.ml
+import android.content.Context
+import android.util.Log
+import com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+import com.yourname.expensetracker.data.database.entity.MerchantAlias
+import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.domain.util.StringBKTree
+import com.yourname.expensetracker.domain.util.StringDistanceUtils
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
+/**
+ * Result of a merchant lookup operation
+ */
+data class MerchantLookupResult(
+    val canonical: MerchantCanonical,
+    val alias: MerchantAlias?,
+    val confidence: Float,
+    val matchType: MatchType
+)
+/**
+ * Advanced Merchant Name Normalization System.
+ */
+@Singleton
+class MerchantNormalizer @Inject constructor(
+    private val dao: MerchantNormalizationDao,
+    @ApplicationContext private val context: Context
+) {
+    companion object {
+        private const val TAG = "MerchantNormalizer"
+        private val LOCATION_PATTERN = Regex(
+            """\s*#[\dA-Za-z]+|""" +
+            """\s*-\s*\d+\s*$|""" +
+            """\s*Store\s*#?\s*\d+|""" +
+            """\s*Branch\s*#?\s*\d+|""" +
+            """\s*Unit\s*#?\s*\d+|""" +
+            """\s*\([\d\s]+\)|""" +
+            """\s*(AT|at|@)\s+.*$"""
+        )
+        private val CORPORATE_SUFFIXES = listOf(
+            "INC", "INC.", "LLC", "LTD", "LTD.", "CORP", "CORP.", "CORPORATION",
+            "CO", "CO.", "COMPANY", "GMBH", "S.A.", "S.A.S", "B.V.", "A.G."
+        )
+        private val COMMON_IGNORE_WORDS = listOf("THE", "A", "AN", "OF", "AND", "OR", "&")
+    }
+    private var bkTree: StringBKTree? = null
+    private val treeMutex = Mutex()
+    private var lastTreeRebuild = 0L
+    private val TREE_REBUILD_INTERVAL = 300_000L // 5 minutes
+    suspend fun normalize(
+        rawName: String,
+        autoCreate: Boolean = true,
+        categoryId: Long? = null
+    ): MerchantLookupResult = withContext(Dispatchers.Default) {
+        if (rawName.isBlank()) {
+            return@withContext createPlaceholder("Unknown", "unknown", categoryId)
+        }
+        val cleaned = cleanMerchantName(rawName)
+        val normalizedKey = createSearchKey(cleaned)
+        // 1. Alias match
+        dao.getAliasByNormalizedKey(normalizedKey)?.let { alias ->
+            val canonical = dao.getCanonicalById(alias.canonicalId)
+            if (canonical != null) {
+                return@withContext MerchantLookupResult(
+                    canonical = canonical,
+                    alias = alias,
+                    confidence = if (alias.isUserDefined) 1.0f else 0.95f,
+                    matchType = if (alias.isUserDefined) MatchType.USER_DEFINED else MatchType.ALIAS_MATCH
+                )
+            }
+        }
+        // 2. Exact canonical match
+        dao.getCanonicalBySearchKey(normalizedKey)?.let { canonical ->
+            return@withContext MerchantLookupResult(
+                canonical = canonical,
+                alias = null,
+                confidence = 1.0f,
+                matchType = MatchType.EXACT_MATCH
+            )
+        }
+        // 3. Fuzzy matching
+        val fuzzyResult = fuzzyMatch(cleaned, normalizedKey)
+        if (fuzzyResult != null && fuzzyResult.confidence >= 0.80f) {
+            dao.linkAliasToCanonical(rawName, fuzzyResult.canonical.id, isUserDefined = false)
+            return@withContext fuzzyResult
+        }
+        // 4. Create new
+        if (autoCreate) {
+            val newCanonical = createNewMerchant(cleaned, normalizedKey, categoryId)
+            dao.linkAliasToCanonical(rawName, newCanonical.id, isUserDefined = false)
+            invalidateTreeCache()
+            return@withContext MerchantLookupResult(
+                canonical = newCanonical,
+                alias = null,
+                confidence = 1.0f,
+                matchType = MatchType.NEW_MERCHANT
+            )
+        } else {
+            return@withContext createPlaceholder(cleaned, normalizedKey, categoryId)
+        }
+    }
+    fun cleanMerchantName(rawName: String): String {
+        var cleaned = rawName.trim()
+        cleaned = LOCATION_PATTERN.replace(cleaned, "")
+        val upper = cleaned.uppercase()
+        for (suffix in CORPORATE_SUFFIXES) {
+            if (upper.endsWith(" $suffix") || upper.endsWith(",$suffix")) {
+                cleaned = cleaned.dropLast(suffix.length + 2).trim()
+            }
+        }
+        cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
+        cleaned = cleaned.trim { !it.isLetterOrDigit() }
+        return cleaned.ifEmpty { rawName.trim() }
+    }
+    private fun createSearchKey(name: String): String {
+        return name.lowercase()
+            .replace(Regex("[^a-z0-9α-ωά-ώ]"), "")
+            .trim()
+    }
+    private suspend fun fuzzyMatch(cleaned: String, normalizedKey: String): MerchantLookupResult? {
+        val tree = getOrBuildTree()
+        val maxDist = if (normalizedKey.length < 6) 1 else 2
+        val matches = tree.search(normalizedKey, maxDist)
+        if (matches.isEmpty()) return null
+        val best = matches.first()
+        val canonical = dao.getCanonicalBySearchKey(best.first) ?: return null
+        val similarity = StringDistanceUtils.jaroWinklerSimilarity(normalizedKey, best.first)
+        return MerchantLookupResult(
+            canonical = canonical,
+            alias = null,
+            confidence = similarity.toFloat(),
+            matchType = if (best.second == 0) MatchType.EXACT_MATCH else MatchType.FUZZY_MATCH
+        )
+    }
+    private suspend fun createNewMerchant(cleaned: String, key: String, catId: Long?): MerchantCanonical {
+        val canonical = MerchantCanonical(
+            normalizedName = formatDisplayName(cleaned),
+            searchKey = key,
+            categoryId = catId,
+            totalOccurrences = 1,
+            isVerified = false
+        )
+        var id = dao.insertCanonical(canonical)
+        if (id == -1L) {
+            // Fix: Handle race condition where another thread created this merchant concurrently
+            id = dao.getCanonicalBySearchKey(key)?.id ?: -1L
+            if (id == -1L) {
+                // This shouldn't happen unless something is deleting records simultaneously
+                Log.e(TAG, "FATAL: Could not retrieve ID for existing canonical $key")
+                throw IllegalStateException("Failed to create or retrieve merchant: $key")
+            }
+        }
+        return canonical.copy(id = id)
+    }
+    private fun createPlaceholder(cleaned: String, key: String, catId: Long?): MerchantLookupResult {
+        return MerchantLookupResult(
+            canonical = MerchantCanonical(normalizedName = cleaned, searchKey = key, categoryId = catId),
+            alias = null, confidence = 0.0f, matchType = MatchType.NEW_MERCHANT
+        )
+    }
+    private fun formatDisplayName(name: String): String {
+        return name.split(" ").joinToString(" ") { word ->
+            if (word.uppercase() in COMMON_IGNORE_WORDS) word.lowercase()
+            else word.lowercase().replaceFirstChar { it.uppercase() }
+        }
+    }
+    private suspend fun getOrBuildTree(): StringBKTree {
+        return treeMutex.withLock {
+            val now = System.currentTimeMillis()
+            if (bkTree == null || now - lastTreeRebuild > TREE_REBUILD_INTERVAL) {
+                val tree = StringBKTree.create()
+                dao.getTopMerchants(1000).forEach { tree.insert(it.searchKey) }
+                bkTree = tree
+                lastTreeRebuild = now
+            }
+            bkTree!!
+        }
+    }
+    private suspend fun invalidateTreeCache() = treeMutex.withLock { bkTree = null }
+}
 
 ```
 
@@ -8450,6 +9215,115 @@ class ReceiptParser @Inject constructor() {
 
 ---
 
+## main\java\com\yourname\expensetracker\domain\util\BKTree.kt <a name="mainjavacomyournameexpensetrackerdomainutilbktreekt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.util
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+/**
+ * BK-Tree (Burkhard-Keller Tree) for efficient fuzzy string searching.
+ * 
+ * Allows finding all strings within a certain edit distance in O(log n)
+ * instead of O(n) for linear search.
+ */
+class StringBKTree private constructor(
+    private val distanceFunction: (String, String) -> Int
+) {
+    private data class Node(
+        val item: String,
+        val children: MutableMap<Int, Node> = mutableMapOf()
+    )
+    private var root: Node? = null
+    private var _size = 0
+    private val mutex = Mutex()
+    val size: Int get() = _size
+    val isEmpty: Boolean get() = root == null
+    companion object {
+        /**
+         * Create a BK-Tree using Levenshtein distance.
+         */
+        fun create(): StringBKTree {
+            return StringBKTree { s1, s2 -> 
+                StringDistanceUtils.levenshteinDistance(s1, s2) 
+            }
+        }
+    }
+    /**
+     * Insert an item into the tree.
+     */
+    suspend fun insert(item: String) = mutex.withLock {
+        val normalized = item.lowercase().trim()
+        if (root == null) {
+            root = Node(normalized)
+            _size = 1
+            return@withLock
+        }
+        var current = root!!
+        while (true) {
+            val dist = distanceFunction(current.item, normalized)
+            if (dist == 0) return@withLock // Duplicate
+            val child = current.children[dist]
+            if (child == null) {
+                current.children[dist] = Node(normalized)
+                _size++
+                return@withLock
+            }
+            current = child
+        }
+    }
+    /**
+     * Insert multiple items.
+     */
+    suspend fun insertAll(items: Collection<String>) {
+        items.forEach { insert(it) }
+    }
+    /**
+     * Find all items within a maximum distance from the query.
+     */
+    suspend fun search(query: String, maxDistance: Int): List<Pair<String, Int>> = mutex.withLock {
+        val results = mutableListOf<Pair<String, Int>>()
+        val normalized = query.lowercase().trim()
+        searchRecursive(root, normalized, maxDistance, results)
+        results.sortedBy { it.second }
+    }
+    private fun searchRecursive(
+        node: Node?,
+        query: String,
+        maxDistance: Int,
+        results: MutableList<Pair<String, Int>>
+    ) {
+        if (node == null) return
+        val dist = distanceFunction(node.item, query)
+        if (dist <= maxDistance) {
+            results.add(node.item to dist)
+        }
+        val minDist = maxOf(0, dist - maxDistance)
+        val maxDist = dist + maxDistance
+        for ((edgeDist, child) in node.children) {
+            if (edgeDist in minDist..maxDist) {
+                searchRecursive(child, query, maxDistance, results)
+            }
+        }
+    }
+    /**
+     * Find the single best match within maxDistance.
+     */
+    suspend fun findBestMatch(query: String, maxDistance: Int): Pair<String, Int>? {
+        return search(query, maxDistance).minByOrNull { it.second }
+    }
+    /**
+     * Clear all items.
+     */
+    suspend fun clear() = mutex.withLock {
+        root = null
+        _size = 0
+    }
+}
+
+```
+
+---
+
 ## main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt <a name="mainjavacomyournameexpensetrackerdomainutilcalendarutilskt"></a>
 ```kotlin
 package com.yourname.expensetracker.domain.util
@@ -8587,6 +9461,110 @@ object StatisticsUtils {
         val mean = values.average()
         val sumSq = values.sumOf { (it - mean) * (it - mean) }
         return sqrt(sumSq / (values.size - 1))
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt <a name="mainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.util
+/**
+ * Utility functions for calculating string distances and similarities.
+ */
+object StringDistanceUtils {
+    /**
+     * Calculate Levenshtein distance between two strings.
+     */
+    fun levenshteinDistance(s1: String, s2: String): Int {
+        if (s1 == s2) return 0
+        if (s1.isEmpty()) return s2.length
+        if (s2.isEmpty()) return s1.length
+        val n = s2.length
+        var prev = IntArray(n + 1) { it }
+        var curr = IntArray(n + 1)
+        for (i in 1..s1.length) {
+            curr[0] = i
+            for (j in 1..n) {
+                val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
+                curr[j] = minOf(
+                    minOf(curr[j - 1] + 1, prev[j] + 1),
+                    prev[j - 1] + cost
+                )
+            }
+            val temp = prev
+            prev = curr
+            curr = temp
+        }
+        return prev[n]
+    }
+    /**
+     * Calculate Levenshtein similarity (0.0 to 1.0).
+     */
+    fun levenshteinSimilarity(s1: String, s2: String): Double {
+        val dist = levenshteinDistance(s1, s2)
+        val maxLen = maxOf(s1.length, s2.length)
+        if (maxLen == 0) return 1.0
+        return 1.0 - dist.toDouble() / maxLen
+    }
+    /**
+     * Calculate Jaro similarity between two strings.
+     */
+    fun jaroSimilarity(s1: String, s2: String): Double {
+        if (s1 == s2) return 1.0
+        if (s1.isEmpty() || s2.isEmpty()) return 0.0
+        val matchWindow = maxOf(0, maxOf(s1.length, s2.length) / 2 - 1)
+        val s1Matches = BooleanArray(s1.length)
+        val s2Matches = BooleanArray(s2.length)
+        var matches = 0
+        for (i in s1.indices) {
+            val start = maxOf(0, i - matchWindow)
+            val end = minOf(i + matchWindow + 1, s2.length)
+            for (j in start until end) {
+                if (!s2Matches[j] && s1[i] == s2[j]) {
+                    s1Matches[i] = true
+                    s2Matches[j] = true
+                    matches++
+                    break
+                }
+            }
+        }
+        if (matches == 0) return 0.0
+        var transpositions = 0.0
+        var k = 0
+        for (i in s1.indices) {
+            if (s1Matches[i]) {
+                while (!s2Matches[k]) k++
+                if (s1[i] != s2[k]) transpositions++
+                k++
+            }
+        }
+        return (matches.toDouble() / s1.length + 
+                matches.toDouble() / s2.length + 
+                (matches - transpositions / 2.0) / matches) / 3.0
+    }
+    /**
+     * Calculate Jaro-Winkler similarity.
+     */
+    fun jaroWinklerSimilarity(s1: String, s2: String, prefixWeight: Double = 0.1): Double {
+        val jaro = jaroSimilarity(s1, s2)
+        if (jaro < 0.7) return jaro
+        var prefix = 0
+        for (i in 0 until minOf(4, minOf(s1.length, s2.length))) {
+            if (s1[i] == s2[i]) prefix++
+            else break
+        }
+        return jaro + prefix * prefixWeight * (1.0 - jaro)
+    }
+    /**
+     * Combined similarity measure.
+     */
+    fun combinedSimilarity(s1: String, s2: String): Double {
+        val jaroWinkler = jaroWinklerSimilarity(s1, s2)
+        val levenshtein = levenshteinSimilarity(s1, s2)
+        return 0.7 * jaroWinkler + 0.3 * levenshtein
     }
 }
 

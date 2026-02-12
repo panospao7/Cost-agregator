@@ -32,8 +32,14 @@ class NotificationCaptureService : NotificationListenerService() {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     
-    // Thread-safe, bounded deduplication cache
-    private val processedNotifications = ConcurrentHashMap<String, Long>()
+    // Thread-safe, bounded deduplication cache (INS-005)
+    private val processedNotifications = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Long>(100, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
+                return size > 500 // Limit to 500 entries
+            }
+        }
+    )
     private val processCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     companion object {

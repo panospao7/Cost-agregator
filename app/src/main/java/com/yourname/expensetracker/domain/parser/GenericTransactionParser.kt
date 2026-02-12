@@ -51,10 +51,7 @@ class GenericTransactionParser @Inject constructor(
     }
 
     private val amountPattern by lazy {
-        Pattern.compile(
-            """([€$£])\s*(\d+(?:[.,]\d{2})?)|(\d+(?:[.,]\d{2})?)\s*([€$£]|EUR|USD|GBP)""",
-            Pattern.CASE_INSENSITIVE
-        )
+        com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX
     }
 
     private val MERCHANT_PREFIXES = listOf(" at ", " to ", " σε ", " στον ", " στην ", " στο ", " για ", " sto ", " ston ", " stin ", " se ")
@@ -90,15 +87,15 @@ class GenericTransactionParser @Inject constructor(
             currency = amountResult.second,
             merchant = merchant,
             type = TransactionType.PURCHASE,
-            confidence = 0.60f // Lower confidence for generic parser
+            confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.ML_PREDICTION // LOGIC-004
         )
     }
 
     private fun extractAmount(text: String): Pair<Double, String>? {
         val matcher = amountPattern.matcher(text)
         if (matcher.find()) {
-            val currency = matcher.group(1) ?: matcher.group(4) ?: "€"
-            val amountStr = (matcher.group(2) ?: matcher.group(3))?.replace(",", ".") ?: return null
+            val currency = matcher.group(1) ?: matcher.group(3) ?: "€"
+            val amountStr = matcher.group(2)?.replace(",", ".") ?: return null
             val amount = amountStr.toDoubleOrNull() ?: return null
             return Pair(amount, currencyNormalizer.normalize(currency))
         }

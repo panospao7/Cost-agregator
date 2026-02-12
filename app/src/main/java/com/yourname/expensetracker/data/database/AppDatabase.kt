@@ -18,9 +18,11 @@ import androidx.room.*
         ScannedReceipt::class,
         ManualRecurringExpense::class,
         PlannedExpense::class,
-        SavingsGoal::class
+        SavingsGoal::class,
+        MerchantCanonical::class,
+        MerchantAlias::class
     ],
-    version = 16,
+    version = 18,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -39,6 +41,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recurringExpenseDao(): RecurringExpenseDao
     abstract fun plannedExpenseDao(): PlannedExpenseDao
     abstract fun savingsGoalDao(): SavingsGoalDao
+    abstract fun merchantNormalizationDao(): MerchantNormalizationDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -311,6 +314,88 @@ abstract class AppDatabase : RoomDatabase() {
                 } finally {
                     database.endTransaction()
                 }
+            }
+        }
+
+        val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create canonical merchants table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS merchant_canonicals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        normalizedName TEXT NOT NULL,
+                        searchKey TEXT NOT NULL,
+                        categoryId INTEGER,
+                        totalOccurrences INTEGER NOT NULL DEFAULT 0,
+                        totalSpent REAL NOT NULL DEFAULT 0.0,
+                        isVerified INTEGER NOT NULL DEFAULT 0,
+                        logoUrl TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                    )
+                """)
+                
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_canonicals_normalizedName ON merchant_canonicals (normalizedName)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_canonicals_searchKey ON merchant_canonicals (searchKey)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_canonicals_categoryId ON merchant_canonicals (categoryId)")
+
+                // Create merchant aliases table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS merchant_aliases (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        rawName TEXT NOT NULL,
+                        normalizedKey TEXT NOT NULL,
+                        canonicalId INTEGER NOT NULL,
+                        occurrenceCount INTEGER NOT NULL DEFAULT 1,
+                        isUserDefined INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL,
+                        lastUsedAt INTEGER NOT NULL,
+                        FOREIGN KEY(canonicalId) REFERENCES merchant_canonicals(id) ON DELETE CASCADE
+                    )
+                """)
+                
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_aliases_rawName ON merchant_aliases (rawName)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_aliases_normalizedKey ON merchant_aliases (normalizedKey)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_aliases_canonicalId ON merchant_aliases (canonicalId)")
+
+                // Migrate existing merchants
+                val now = System.currentTimeMillis()
+                database.execSQL("""
+                    INSERT INTO merchant_canonicals (normalizedName, searchKey, categoryId, totalOccurrences, totalSpent, isVerified, createdAt, updatedAt)
+                    SELECT 
+                        merchant as normalizedName,
+                        LOWER(REPLACE(REPLACE(REPLACE(merchant, '.', ''), '''', ''), ' ', '')) as searchKey,
+                        categoryId,
+                        COUNT(*) as totalOccurrences,
+                        SUM(amount) as totalSpent,
+                        0 as isVerified,
+                        $now as createdAt,
+                        $now as updatedAt
+                    FROM expenses
+                    WHERE merchant IS NOT NULL AND transactionType IN ('PURCHASE', 'WITHDRAWAL', 'TRANSFER')
+                    GROUP BY merchant
+                """)
+
+                database.execSQL("""
+                    INSERT INTO merchant_aliases (rawName, normalizedKey, canonicalId, occurrenceCount, isUserDefined, createdAt, lastUsedAt)
+                    SELECT 
+                        mc.normalizedName as rawName,
+                        mc.searchKey as normalizedKey,
+                        mc.id as canonicalId,
+                        mc.totalOccurrences as occurrenceCount,
+                        0 as isUserDefined,
+                        mc.createdAt,
+                        mc.updatedAt as lastUsedAt
+                    FROM merchant_canonicals mc
+                """)
+            }
+        }
+
+        val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // INS-008: Standalone date index for efficient range queries and ordering
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses (date)")
             }
         }
     }

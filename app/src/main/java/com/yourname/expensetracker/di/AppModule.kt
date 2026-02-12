@@ -39,7 +39,9 @@ object AppModule {
             AppDatabase.MIGRATION_12_13,
             AppDatabase.MIGRATION_13_14,
             AppDatabase.MIGRATION_14_15,
-            AppDatabase.MIGRATION_15_16
+            AppDatabase.MIGRATION_15_16,
+            AppDatabase.MIGRATION_16_17,
+            AppDatabase.MIGRATION_17_18
         )
             .addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -120,4 +122,8 @@ object AppModule {
     @Provides
     @Singleton
     fun provideRecurringExpenseDao(database: AppDatabase): RecurringExpenseDao = database.recurringExpenseDao()
+
+    @Provides
+    @Singleton
+    fun provideMerchantNormalizationDao(database: AppDatabase): MerchantNormalizationDao = database.merchantNormalizationDao()
 }

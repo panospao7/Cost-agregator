@@ -99,6 +99,8 @@ class BudgetRepository @Inject constructor(
 
     suspend fun addBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Long> {
         return try {
+            if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
+            if (budget.startDate <= 0) throw IllegalArgumentException("Invalid budget start date")
             val id = budgetDao.insert(budget)
             budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(id)
@@ -110,6 +112,7 @@ class BudgetRepository @Inject constructor(
 
     suspend fun updateBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
+            if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
             // Reset notifications when budget is edited so user gets fresh alerts (BUG-7 Fix)
             val resetBudget = budget.copy(
                 lastWarningNotifiedAt = null,

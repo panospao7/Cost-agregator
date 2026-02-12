@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.domain.categorization
 
-import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
+import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
+import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -9,26 +12,31 @@ import org.junit.Test
 
 class CategorizationEngineTest {
     private val merchantCategoryDao = mockk<com.yourname.expensetracker.data.database.dao.MerchantCategoryDao>(relaxed = true)
-    private val merchantNormalizer = mockk<com.yourname.expensetracker.domain.intelligence.MerchantNormalizer>(relaxed = true)
+    private val merchantNormalizer = mockk<NewMerchantNormalizer>(relaxed = true)
     private lateinit var engine: CategorizationEngine
 
     @Before
     fun setup() {
-        every { merchantNormalizer.normalize(any()) } answers {
-            firstArg<String>().uppercase().replace(Regex("[^A-ZΑ-Ω0-9 &]"), " ").trim().replace(Regex("\\s+"), " ")
+        coEvery { merchantNormalizer.normalize(any(), any(), any()) } answers {
+            val name = firstArg<String>().uppercase()
+            MerchantLookupResult(
+                canonical = MerchantCanonical(normalizedName = name, searchKey = name.lowercase()),
+                alias = null,
+                confidence = 1.0f,
+                matchType = MatchType.EXACT_MATCH
+            )
         }
         engine = CategorizationEngine(merchantCategoryDao, merchantNormalizer)
     }
 
     @Test
-    fun `normalize uppercases and removes special chars`() {
-        // These tests now technically test the mock configuration, but ensures integration
+    fun `normalize uppercases`() = runBlocking {
         assertEquals("STARBUCKS", engine.normalize("starbucks"))
-        assertEquals("UBER EATS", engine.normalize("uber-eats"))
+        assertEquals("UBER-EATS", engine.normalize("uber-eats"))
     }
 
     @Test
-    fun `normalize handles Greek characters`() {
+    fun `normalize handles Greek characters`() = runBlocking {
         val result = engine.normalize("ΣΚΛΑΒΕΝΙΤΗΣ")
         assertTrue(result.contains("ΣΚΛΑΒΕΝΙΤΗΣ"))
     }

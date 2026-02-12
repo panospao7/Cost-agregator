@@ -241,12 +241,7 @@ class HomeViewModel @Inject constructor(
         val pacePercentage = if (baseline != null && baseline > 0) {
             val expected = baseline * dayOfMonthCoerced / daysInMonth
             val calculated = (monthSpent / expected * 100).toFloat()
-            // Dampen day 1 pace
-            if (dayOfMonth == 1) {
-                if (calculated > 110f) 110f else if (calculated < 90f) 90f else calculated
-            } else {
-                if (calculated.isFinite()) calculated else 0f
-            }
+            if (calculated.isFinite()) calculated else 0f
         } else 0f
 
         val pace = SpendingPace(
@@ -427,18 +422,6 @@ class HomeViewModel @Inject constructor(
         // isEditMode.value = isEditMode.value
     }
 
-    private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
-        is DashboardWidget.SafeToSpend -> "safe_to_spend"
-        is DashboardWidget.SpendingPaceWidget -> "spending_pace"
-        is DashboardWidget.PendingReviewAlert -> "review_alert"
-        is DashboardWidget.SpendingTrend -> "spending_trend"
-        is DashboardWidget.NaturalLanguageInsight -> "insight"
-        is DashboardWidget.PeriodSummary -> "period_summary"
-        is DashboardWidget.BudgetHealthWidget -> "budget_health"
-        is DashboardWidget.TopCategories -> "top_categories"
-        is DashboardWidget.RecentTransactions -> "recent_transactions"
-        is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
-    }
 
     private fun buildNaturalLanguageInsight(
         monthSpent: Double,
@@ -488,7 +471,22 @@ class HomeViewModel @Inject constructor(
             )
         }
     }
+    companion object {
+        fun getWidgetId(widget: DashboardWidget): String = when (widget) {
+            is DashboardWidget.SafeToSpend -> "safe_to_spend"
+            is DashboardWidget.SpendingPaceWidget -> "spending_pace"
+            is DashboardWidget.PendingReviewAlert -> "review_alert"
+            is DashboardWidget.SpendingTrend -> "spending_trend"
+            is DashboardWidget.NaturalLanguageInsight -> "insight"
+            is DashboardWidget.PeriodSummary -> "period_summary"
+            is DashboardWidget.BudgetHealthWidget -> "budget_health"
+            is DashboardWidget.TopCategories -> "top_categories"
+            is DashboardWidget.RecentTransactions -> "recent_transactions"
+            is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
+        }
+    }
 }
+
 data class FiveData(
     val expenses: List<Expense>,
     val categories: List<Category>,

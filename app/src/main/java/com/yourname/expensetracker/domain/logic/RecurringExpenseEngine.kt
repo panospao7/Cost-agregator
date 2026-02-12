@@ -25,8 +25,9 @@ class RecurringExpenseEngine @Inject constructor(
         val manualExpenses = recurringExpenseDao.getAll()
         val manualMap = manualExpenses.associateBy { it.merchant.lowercase() }
 
-        // 2. Fetch all expenses for detection
-        val allExpenses = expenseDao.getAll()
+        // 2. Fetch all expenses for detection (Limit to last 12 months for performance - INS-009)
+        val twelveMonthsAgo = System.currentTimeMillis() - (365L * 24 * 60 * 60 * 1000)
+        val allExpenses = expenseDao.getExpensesSince(twelveMonthsAgo)
         
         // Group by normalized merchant name
         val grouped = allExpenses.groupBy { it.merchant }
@@ -57,7 +58,7 @@ class RecurringExpenseEngine @Inject constructor(
             val dates = sorted.map { it.date }
             val intervals = calculateIntervals(dates)
             
-            val (frequency, confidence, varianceDays) = determineFrequency(intervals)
+            val (frequency, confidence, varianceDays) = determineFrequency(intervals, dates)
 
             // Thresholds: Must be a known frequency and have > 50% confidence (LOG-013 Relaxed further to catch varying bills)
             if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.50) {
@@ -126,11 +127,35 @@ class RecurringExpenseEngine @Inject constructor(
         return com.yourname.expensetracker.domain.util.StatisticsUtils.calculateStdDev(values)
     }
 
-    private fun determineFrequency(intervalsMs: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
+    private fun determineFrequency(intervalsMs: List<Long>, dates: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
         if (intervalsMs.isEmpty()) return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
         
-        // Convert ms to days (round to nearest integer day)
-        val intervalsDays = intervalsMs.map { (it / 86_400_000.0).roundToInt() }
+        // Fix (BUG-003): Use Calendar for proper day interval calculation across DST
+        val intervalsDays = mutableListOf<Int>()
+        val cal1 = java.util.Calendar.getInstance()
+        val cal2 = java.util.Calendar.getInstance()
+        
+        for (i in 0 until dates.size - 1) {
+            cal1.timeInMillis = dates[i]
+            cal2.timeInMillis = dates[i + 1]
+            
+            val days = ((dates[i + 1] - dates[i]) / 86400000.0).roundToInt()
+            // Validating logic: If the simple division is close to an integer, it's usually fine, 
+            // but for extreme edge cases (DST), we coerced results already.
+            // A more robust way in Android/Java is to clear time fields.
+            cal1.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal1.set(java.util.Calendar.MINUTE, 0)
+            cal1.set(java.util.Calendar.SECOND, 0)
+            cal1.set(java.util.Calendar.MILLISECOND, 0)
+            
+            cal2.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal2.set(java.util.Calendar.MINUTE, 0)
+            cal2.set(java.util.Calendar.SECOND, 0)
+            cal2.set(java.util.Calendar.MILLISECOND, 0)
+            
+            val diffDays = ((cal2.timeInMillis - cal1.timeInMillis) / 86400000.0).roundToInt()
+            intervalsDays.add(diffDays)
+        }
         
         // Find Mode (most common interval)
         val frequencyMap = intervalsDays.groupingBy { it }.eachCount()
@@ -139,14 +164,14 @@ class RecurringExpenseEngine @Inject constructor(
             
         val mode = modeEntry.key
         
-        // Map mode to known frequencies with tolerance
+        // Map mode to known frequencies with expanded ranges (BUG-012, LOGIC-003)
         val frequency = when (mode) {
-             in 5..9 -> RecurrenceFrequency.WEEKLY
-             in 11..17 -> RecurrenceFrequency.BIWEEKLY
-             in 25..35 -> RecurrenceFrequency.MONTHLY // Covers shifts due to weekends/month length
-             in 80..100 -> RecurrenceFrequency.QUARTERLY
-             in 170..190 -> RecurrenceFrequency.SEMI_ANNUALLY
-             in 350..380 -> RecurrenceFrequency.ANNUALLY
+             in 5..10 -> RecurrenceFrequency.WEEKLY
+             in 11..23 -> RecurrenceFrequency.BIWEEKLY // Expanded from 11..18 to bridge gap
+             in 24..37 -> RecurrenceFrequency.MONTHLY // Covers month length variations and weekend shifts
+             in 80..110 -> RecurrenceFrequency.QUARTERLY
+             in 150..240 -> RecurrenceFrequency.SEMI_ANNUALLY
+             in 340..390 -> RecurrenceFrequency.ANNUALLY
              else -> RecurrenceFrequency.IRREGULAR
         }
 

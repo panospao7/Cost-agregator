@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.categorization
 
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
@@ -10,7 +11,7 @@ import kotlinx.coroutines.sync.withLock
 @Singleton
 class CategorizationEngine @Inject constructor(
     private val merchantCategoryDao: MerchantCategoryDao,
-    private val merchantNormalizer: com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
+    private val merchantNormalizer: NewMerchantNormalizer
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
@@ -21,7 +22,8 @@ class CategorizationEngine @Inject constructor(
     // Regex moved to MerchantNormalizer
 
     suspend fun categorize(merchant: String): Long? {
-        val normalized = normalize(merchant)
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = false)
+        val normalized = lookupResult.canonical.normalizedName.lowercase()
 
         // Ensure cache is loaded
         val (sortedMappings, mappingsMap) = getCache()
@@ -55,8 +57,8 @@ class CategorizationEngine @Inject constructor(
         return null
     }
 
-    fun normalize(merchant: String): String {
-        return merchantNormalizer.normalize(merchant)
+    suspend fun normalize(merchant: String): String {
+        return merchantNormalizer.normalize(merchant, autoCreate = false).canonical.normalizedName
     }
 
     private suspend fun getCache(): Pair<List<MerchantCategory>, Map<String, MerchantCategory>> {

@@ -7,12 +7,15 @@ import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
-import com.yourname.expensetracker.domain.intelligence.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
+import com.yourname.expensetracker.domain.model.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.*
 import javax.inject.Inject
@@ -33,9 +36,10 @@ class NotificationRepository @Inject constructor(
     private val parserRegistry: AppParserRegistry,
     private val categorizationEngine: CategorizationEngine,
     private val confidenceRouter: ConfidenceRouter,
-    private val merchantNormalizer: MerchantNormalizer,
+    private val merchantNormalizer: NewMerchantNormalizer,
+    private val hybridClassifier: HybridExpenseClassifier,
     private val classifier: TransactionClassifier,
-    private val budgetMonitor: BudgetMonitor // <-- NEW
+    private val budgetMonitor: BudgetMonitor 
 ) {
     private val repositoryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
 
@@ -99,18 +103,22 @@ class NotificationRepository @Inject constructor(
         paymentMethod: PaymentMethod = PaymentMethod.CASH,
         date: Long = System.currentTimeMillis(),
         notes: String? = null
-    ): Long {
+    ): OperationResult<Long> {
         // Fix 4.12: Large amount validation
         if (amount > 1000000.0) {
             android.util.Log.w("NotificationRepo", "Manual expense amount too large: $amount")
-            return -1L
+            return OperationResult.Error("Amount exceeds limit")
         }
 
         // 1. Normalize merchant name
-        val normalizedMerchant = merchantNormalizer.applyUserCorrections(merchant)
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
+        val normalizedMerchant = lookupResult.canonical.normalizedName
 
         // 2. Auto-categorize if no category provided
-        val finalCategoryId = categoryId ?: categorizationEngine.categorize(normalizedMerchant)
+        val finalCategoryId = categoryId ?: hybridClassifier.classify(
+            merchantName = normalizedMerchant,
+            amount = amount
+        ).categoryId.takeIf { it > 0 }
 
                 // 3. Dedup check with tighter window for manual entries (1 minute)
                 // For manual entries, we trust the user but want to avoid accidental double-taps.
@@ -120,7 +128,7 @@ class NotificationRepository @Inject constructor(
                     date = date,
                     windowMs = 60000 // 1 minute window for manual double-entry prevention
                 )
-        if (isDuplicate) return -1L
+        if (isDuplicate) return OperationResult.Duplicate
 
         // 4. Create expense
         val expense = Expense(
@@ -146,7 +154,7 @@ class NotificationRepository @Inject constructor(
             merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
         }
 
-        return id
+        return OperationResult.Success(id)
     }
 
     /**
@@ -208,7 +216,8 @@ class NotificationRepository @Inject constructor(
         }
 
         // Apply merchant normalization & user corrections
-        val correctedMerchant = merchantNormalizer.applyUserCorrections(parsed.merchant)
+        val lookupResult = merchantNormalizer.normalize(parsed.merchant)
+        val correctedMerchant = lookupResult.canonical.normalizedName
 
         // 3. Database Transaction - ONLY MINIMAL DB WRITES
         database.withTransaction {
@@ -240,7 +249,14 @@ class NotificationRepository @Inject constructor(
                         return@withTransaction
                     }
 
-                    val categoryId = categorizationEngine.categorize(correctedMerchant)
+                    val classification = hybridClassifier.classify(
+                        merchantName = correctedMerchant,
+                        amount = parsed.amount,
+                        notificationTitle = notification.title,
+                        notificationText = notification.text,
+                        packageName = notification.packageName
+                    )
+                    val categoryId = classification.categoryId.takeIf { it > 0 }
 
                     val expense = Expense(
                         amount = parsed.amount,
@@ -269,7 +285,14 @@ class NotificationRepository @Inject constructor(
                 }
 
                 RoutingDecision.NEEDS_REVIEW -> {
-                    val suggestedCategoryId = categorizationEngine.categorize(correctedMerchant)
+                    val classification = hybridClassifier.classify(
+                        merchantName = correctedMerchant,
+                        amount = parsed.amount,
+                        notificationTitle = notification.title,
+                        notificationText = notification.text,
+                        packageName = notification.packageName
+                    )
+                    val suggestedCategoryId = classification.categoryId.takeIf { it > 0 }
 
                     val review = PendingReview(
                         rawNotificationId = rawId,
@@ -310,12 +333,12 @@ class NotificationRepository @Inject constructor(
         finalAmount: Double? = null,
         finalMerchant: String? = null,
         finalCategoryId: Long? = null
-    ) {
-        val review = pendingReviewDao.getById(reviewId) ?: return
+    ): OperationResult<Long> {
+        val review = pendingReviewDao.getById(reviewId) ?: return OperationResult.Error("Review not found")
         
         // Critical Fix: Atomically check and update status to prevent double-processing
         val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING")
-        if (rowsUpdated == 0) return  // Already processed or not PENDING
+        if (rowsUpdated == 0) return OperationResult.Error("Review already processed")
 
         // If we fail later, we should ideally revert this, but for now we secure the lock.
         // We will update to APPROVED at the end.
@@ -326,7 +349,8 @@ class NotificationRepository @Inject constructor(
         // Fix 4.12: Large amount validation
         if (amount > 1000000.0) {
             android.util.Log.w("NotificationRepo", "Approval suppressed due to large amount: $amount")
-            return
+            pendingReviewDao.updateStatus(reviewId, "PENDING") // Revert status
+            return OperationResult.Error("Amount exceeds limit")
         }
 
         val type: com.yourname.expensetracker.data.database.entity.TransactionType = try {
@@ -347,8 +371,6 @@ class NotificationRepository @Inject constructor(
             date = transactionDate,
             windowMs = 60000
         )
-        
-        var operationSuccessful = true
         
         if (!isDuplicate) {
             // Create the expense
@@ -382,57 +404,60 @@ class NotificationRepository @Inject constructor(
 
                     // Check budgets
                     budgetMonitor.checkBudgets()
+
+                    // Fix 1.19 status update: We update it to APPROVED
+                    pendingReviewDao.updateStatus(reviewId, "APPROVED")
+                    
+                    // Record user correction for learning
+                    val correction = UserCorrection(
+                        packageName = review.packageName,
+                        originalMerchant = review.suggestedMerchant,
+                        correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
+                            finalMerchant else null,
+                        originalAmount = review.suggestedAmount,
+                        correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
+                            finalAmount else null,
+                        originalCategoryId = review.suggestedCategoryId,
+                        correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
+                            finalCategoryId else null,
+                        wasRejected = false,
+                        wasApproved = true,
+                        notificationTitle = review.notificationTitle,
+                        notificationText = review.notificationText
+                    )
+                    userCorrectionDao.insert(correction)
+
+                    // Retrain classifier
+                    try {
+                        classifier.retrainFromCorrections()
+                    } catch (e: Exception) {
+                        android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
+                    }
+
+                    // Learn mapping
+                    if (categoryId != null) {
+                        merchantCategoryRepository.learnPattern(merchant, categoryId)
+                    }
+                    
+                    return OperationResult.Success(expenseId)
                 } else {
-                    // Insertion failed (likely IGNORE strategy due to same ID, which shouldn't happen here as ID is 0L)
-                    operationSuccessful = false
+                    pendingReviewDao.updateStatus(reviewId, "PENDING") // Revert status
+                    return OperationResult.Error("Insertion failed")
                 }
             } catch (e: android.database.sqlite.SQLiteConstraintException) {
                 // Unexpected constraint error, fail the operation
-                operationSuccessful = false
+                pendingReviewDao.updateStatus(reviewId, "PENDING") // Revert status
+                return OperationResult.Error("Database constraint error: ${e.message}")
             }
         } else {
              // It's a duplicate, we treat this as "processed" to clear the review
              sourceStatsDao.decrementPending(review.packageName)
-        }
-
-        if (operationSuccessful) {
-            // Fix 1.19 status update: We update it to APPROVED even if it was a duplicate
-            // so it leaves the queue. If it truly failed insertion (operationSuccessful = false),
-            // we should probably still mark it as something else or just skip it for now.
-            pendingReviewDao.updateStatus(reviewId, "APPROVED")
-            
-            // Record user correction for learning
-            val correction = UserCorrection(
-                packageName = review.packageName,
-                originalMerchant = review.suggestedMerchant,
-                correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
-                    finalMerchant else null,
-                originalAmount = review.suggestedAmount,
-                correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
-                    finalAmount else null,
-                originalCategoryId = review.suggestedCategoryId,
-                correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
-                    finalCategoryId else null,
-                wasRejected = false,
-                wasApproved = true,
-                notificationTitle = review.notificationTitle,
-                notificationText = review.notificationText
-            )
-            userCorrectionDao.insert(correction)
-
-            // Retrain classifier
-            try {
-                classifier.retrainFromCorrections()
-            } catch (e: Exception) {
-                android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
-            }
-
-            // Learn mapping
-            if (categoryId != null) {
-                merchantCategoryRepository.learnPattern(merchant, categoryId)
-            }
+             pendingReviewDao.updateStatus(reviewId, "DUPLICATE")
+             return OperationResult.Duplicate
         }
     }
+
+
 
     /**
      * User rejects a pending review

@@ -18,6 +18,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,6 +80,22 @@ class RecurringExpensesViewModel @Inject constructor(
             }
         }
     }
+
+    fun confirmPattern(pattern: RecurringPattern) {
+        viewModelScope.launch {
+            val manual = ManualRecurringExpense(
+                merchant = pattern.merchantName,
+                amount = pattern.averageAmount,
+                currency = pattern.currency,
+                frequency = pattern.frequency,
+                nextDate = pattern.nextExpectedDate,
+                note = "Detected and confirmed by user"
+            )
+            recurringExpenseDao.insert(manual)
+            refreshTrigger.value += 1
+        }
+    }
+
 
     fun deletePlannedExpense(planned: com.yourname.expensetracker.domain.model.PlannedExpense) {
         viewModelScope.launch {
@@ -142,9 +159,11 @@ fun RecurringExpensesScreen(
                         items(patterns) { pattern ->
                             RecurringExpenseItem(
                                 pattern = pattern,
-                                onDelete = { viewModel.deleteManualRule(pattern) }
+                                onDelete = { viewModel.deleteManualRule(pattern) },
+                                onConfirm = { viewModel.confirmPattern(pattern) }
                             )
                         }
+
                     }
                 }
             } else {
@@ -218,8 +237,10 @@ fun PlannedExpenseItem(
 @Composable
 fun RecurringExpenseItem(
     pattern: RecurringPattern,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onConfirm: () -> Unit
 ) {
+
     val isManual = pattern.id != null || pattern.confidence >= 0.99f
     
     Card(
@@ -259,10 +280,11 @@ fun RecurringExpenseItem(
                 }
             } else {
                 SuggestionChip(
-                    onClick = { /* TODO: Confirm/Convert to Manual */ },
-                    label = { Text("Detected") }
+                    onClick = onConfirm,
+                    label = { Text("Confirm Pattern") }
                 )
             }
+
         }
     }
 }

@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.model.OperationResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -216,22 +217,34 @@ class ReceiptScanViewModel @Inject constructor(
                     notes = currentState.notes.takeIf { it.isNotBlank() }
                 )
 
-                if (result == -1L) {
-                    _state.update {
-                        it.copy(
-                            isSaving = false,
-                            saveResult = SaveReceiptResult.Duplicate
-                        )
+                when (result) {
+                    is OperationResult.Success -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                step = ScanStep.DONE,
+                                saveResult = SaveReceiptResult.Success
+                            )
+                        }
                     }
-                } else {
-                    _state.update {
-                        it.copy(
-                            isSaving = false,
-                            step = ScanStep.DONE,
-                            saveResult = SaveReceiptResult.Success
-                        )
+                    is OperationResult.Duplicate -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveReceiptResult.Duplicate
+                            )
+                        }
+                    }
+                    is OperationResult.Error -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveReceiptResult.Error(result.message)
+                            )
+                        }
                     }
                 }
+
             } catch (e: Exception) {
                 _state.update {
                     it.copy(

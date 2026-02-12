@@ -35,9 +35,11 @@ data class ExpenseWithCategory(
         try {
             category?.color?.let { android.graphics.Color.parseColor(it).toLong() } ?: android.graphics.Color.GRAY.toLong()
         } catch (e: Exception) {
+            android.util.Log.e("ExpenseWithCategory", "Error parsing category color: ${category?.color}", e)
             android.graphics.Color.GRAY.toLong()
         }
     }
+
 
     companion object {
         private val FORMATTER = object : ThreadLocal<SimpleDateFormat>() {

@@ -104,7 +104,7 @@ fun HomeScreen(
             ) {
                 items(
                     items = state.widgets,
-                    key = { getWidgetId(it) },
+                    key = { HomeViewModel.getWidgetId(it) },
                     span = { widget ->
                         GridItemSpan(if (isFullSpan(widget)) 2 else 1)
                     },
@@ -113,9 +113,9 @@ fun HomeScreen(
                     WidgetWrapper(
                         widget = widget,
                         isEditMode = state.isEditMode,
-                        onMoveUp = { viewModel.moveWidget(getWidgetId(widget), true) },
-                        onMoveDown = { viewModel.moveWidget(getWidgetId(widget), false) },
-                        onToggleVisibility = { viewModel.toggleWidgetVisibility(getWidgetId(widget)) }
+                        onMoveUp = { viewModel.moveWidget(HomeViewModel.getWidgetId(widget), true) },
+                        onMoveDown = { viewModel.moveWidget(HomeViewModel.getWidgetId(widget), false) },
+                        onToggleVisibility = { viewModel.toggleWidgetVisibility(HomeViewModel.getWidgetId(widget)) }
                     ) {
                         when (widget) {
                             is DashboardWidget.SafeToSpend -> {
@@ -399,18 +399,7 @@ fun WidgetWrapper(
     }
 }
 
-private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
-    is DashboardWidget.SafeToSpend -> "safe_to_spend"
-    is DashboardWidget.SpendingPaceWidget -> "spending_pace"
-    is DashboardWidget.PendingReviewAlert -> "review_alert"
-    is DashboardWidget.SpendingTrend -> "spending_trend"
-    is DashboardWidget.NaturalLanguageInsight -> "insight"
-    is DashboardWidget.PeriodSummary -> "period_summary"
-    is DashboardWidget.BudgetHealthWidget -> "budget_health"
-    is DashboardWidget.TopCategories -> "top_categories"
-    is DashboardWidget.RecentTransactions -> "recent_transactions"
-    is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
-}
+// getWidgetId removed - using HomeViewModel.getWidgetId instead
 
 private fun isFullSpan(widget: DashboardWidget): Boolean = when (widget) {
     is DashboardWidget.SpendingPaceWidget,

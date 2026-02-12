@@ -82,14 +82,17 @@ class GreekBankParser @Inject constructor(
 
         for (i in 1..matcher.groupCount()) {
             val group = matcher.group(i) ?: continue
-            if (group.matches(Regex("""\d+[.,]\d{2}"""))) {
+            
+            // Fix (BUG-010): Use more specific currency check to avoid partial merchant matches
+            if (group.matches(Regex("""^\d+[.,]\d{2}$"""))) {
                 amountStr = group
-            } else if (group.matches(Regex("""[€$£]|EUR|USD|GBP""", RegexOption.IGNORE_CASE))) {
+            } else if (group.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
                 currency = currencyNormalizer.normalize(group)
-            } else if (group.length > 2) {
+            } else if (group.length > 2 && merchant == "Unknown") {
                 merchant = merchantCleaner.clean(group)
             }
         }
+
 
         val amount = amountStr?.replace(",", ".")?.toDoubleOrNull() ?: return null
         if (amount < 0.01 || amount > 50000) return null

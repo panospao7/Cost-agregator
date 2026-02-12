@@ -65,8 +65,8 @@ class SynthesisEngine @Inject constructor() {
         
         val monthlyRecurringTotal = recurringPatterns.sumOf { pattern ->
             when (pattern.frequency) {
-                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (30.0 / 7.0)
-                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (30.0 / 14.0)
+                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 7.0)
+                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 14.0)
                 RecurrenceFrequency.MONTHLY -> pattern.averageAmount
                 RecurrenceFrequency.QUARTERLY -> pattern.averageAmount / 3.0
                 RecurrenceFrequency.SEMI_ANNUALLY -> pattern.averageAmount / 6.0
@@ -95,8 +95,9 @@ class SynthesisEngine @Inject constructor() {
                      if (targetDate == null || targetDate <= now) remaining // Due now or past due
                      else {
                          val msRemaining = targetDate - now
-                         val monthsRemaining = (msRemaining / (30.0 * 24 * 60 * 60 * 1000)).coerceAtLeast(1.0)
-                         remaining / monthsRemaining
+                         val daysRemainingInGoal = (msRemaining / (24 * 60 * 60 * 1000.0)).coerceAtLeast(1.0)
+                         val targetMonthsRemaining = (daysRemainingInGoal / daysInMonth.toDouble()).coerceAtLeast(1.0)
+                         remaining / targetMonthsRemaining
                      }
                  }
             }

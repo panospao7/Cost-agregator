@@ -52,14 +52,18 @@ class SmsParser @Inject constructor(
         subText: String?,
         packageName: String
     ): ParsedTransaction? {
-        // For SMS, the title is usually the sender
-        val sender = title?.lowercase() ?: return null
+        // Fix (BUG-011): Handle null title by looking for sender in body or skipping if body looks like bank SMS
+        val sender = title?.lowercase() ?: ""
         val body = listOfNotNull(text, bigText).joinToString(" ")
         val lowerBody = body.lowercase()
-
-        // Only process if sender looks like a bank
-        val isBankSms = BANK_SENDERS.any { sender.contains(it) }
+        
+        // Sender check - either from title or start of body (e.g., "From: NBG")
+        val isBankSms = BANK_SENDERS.any { 
+            sender.contains(it) || lowerBody.startsWith(it) || lowerBody.contains("from: $it")
+        }
+        
         if (!isBankSms) return null
+
 
         // Must contain transaction keywords
         val hasKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) }

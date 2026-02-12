@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.domain.model.OperationResult
 // ...
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,13 +51,19 @@ class ReviewViewModel @Inject constructor(
 
     fun approveReview(reviewId: Long) {
         viewModelScope.launch {
-            try {
-                repository.approveReview(reviewId)
-            } catch (e: Exception) {
-                _errorMessage.value = "Failed to approve: ${e.message}"
-            }
+            val result = repository.approveReview(reviewId)
+            handleResult(result, "Failed to approve")
         }
     }
+
+    private fun handleResult(result: OperationResult<Long>, prefix: String) {
+        when (result) {
+            is OperationResult.Success -> { /* Handled by UI observing DB change */ }
+            is OperationResult.Duplicate -> _errorMessage.value = "Duplicate transaction detected"
+            is OperationResult.Error -> _errorMessage.value = "$prefix: ${result.message}"
+        }
+    }
+
 
     fun rejectReview(reviewId: Long) {
         viewModelScope.launch {
@@ -71,18 +78,16 @@ class ReviewViewModel @Inject constructor(
         finalCategoryId: Long?
     ) {
         viewModelScope.launch {
-            try {
-                repository.approveReview(
-                    reviewId = reviewId,
-                    finalAmount = finalAmount,
-                    finalMerchant = finalMerchant,
-                    finalCategoryId = finalCategoryId
-                )
-            } catch (e: Exception) {
-                _errorMessage.value = "Failed to approve edits: ${e.message}"
-            }
+            val result = repository.approveReview(
+                reviewId = reviewId,
+                finalAmount = finalAmount,
+                finalMerchant = finalMerchant,
+                finalCategoryId = finalCategoryId
+            )
+            handleResult(result, "Failed to approve edits")
         }
     }
+
 
     fun clearError() {
         _errorMessage.value = null
