@@ -64,13 +64,20 @@ fun ReviewScreen(
     val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
     var showDebugMenu by remember { mutableStateOf(false) }
+    var debugInfoDialogText by remember { mutableStateOf<String?>(null) }
 
     val batchLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+        ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         if (uris.isNotEmpty()) {
             viewModel.processBatch(uris)
         }
+    }
+
+    val statementLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { viewModel.processStatement(it) }
     }
 
     LaunchedEffect(errorMessage) {
@@ -111,13 +118,17 @@ fun ReviewScreen(
                                 text = { Text("Mass Insert (Batch)") },
                                 onClick = {
                                     showDebugMenu = false
-                                    batchLauncher.launch(
-                                        androidx.activity.result.PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
+                                    batchLauncher.launch(arrayOf("image/*", "application/pdf"))
                                 },
                                 leadingIcon = { Icon(Icons.Rounded.Layers, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Import Bank Statement") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    statementLauncher.launch(arrayOf("image/*", "application/pdf"))
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.ReceiptLong, null) }
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -246,7 +257,19 @@ fun ReviewScreen(
                                 item = item,
                                 onApprove = { viewModel.approveReview(item.review.id) },
                                 onReject = { viewModel.rejectReview(item.review.id) },
-                                onEdit = { editingReview = item.review }
+                                onEdit = { editingReview = item.review },
+                                onDebug = {
+                                    item.receipt?.let { receipt ->
+                                        coroutineScope.launch {
+                                            debugInfoDialogText = "Loading..."
+                                            debugInfoDialogText = viewModel.getReceiptDebugInfo(receipt.id)
+                                        }
+                                    } ?: run {
+                                        coroutineScope.launch {
+                                            snackbarHostState.showSnackbar("No automated receipt info available")
+                                        }
+                                    }
+                                }
                             )
                         }
                     )
@@ -267,6 +290,43 @@ fun ReviewScreen(
                         finalCategoryId = categoryId
                     )
                     editingReview = null
+                }
+            )
+        }
+
+        debugInfoDialogText?.let { info ->
+            AlertDialog(
+                onDismissRequest = { debugInfoDialogText = null },
+                title = { Text("Receipt Debug Info") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .verticalScroll(rememberScrollState())
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = info,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(info))
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar("Copied to clipboard")
+                            }
+                        }
+                    ) {
+                        Text("Copy")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { debugInfoDialogText = null }) {
+                        Text("Close")
+                    }
                 }
             )
         }
@@ -314,7 +374,8 @@ fun ReviewCard(
     item: PendingReviewWithReceipt,
     onApprove: () -> Unit,
     onReject: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    onDebug: () -> Unit
 ) {
     val review = item.review
     val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, HH:mm", Locale.getDefault()) }
@@ -428,7 +489,8 @@ fun ReviewCard(
                     .border(1.dp, SemanticColors.GlassBorder.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
                     .clickable { 
                         haptic(HapticType.Standard)
-                        showTrustSignal = !showTrustSignal 
+                        onDebug() // Tap the evidence area to show debug info instead of expanding
+                        // showTrustSignal = !showTrustSignal 
                     }
                     .padding(12.dp)
             ) {
@@ -438,14 +500,14 @@ fun ReviewCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "RAW SOURCE EVIDENCE",
+                        "RAW SOURCE EVIDENCE (TAP FOR DEBUG)",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = SemanticColors.TextSecondary,
                         letterSpacing = 1.sp
                     )
                     Icon(
-                        if (showTrustSignal) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                        Icons.Rounded.BugReport, // Changed icon
                         null,
                         tint = SemanticColors.TextMuted,
                         modifier = Modifier.size(20.dp)

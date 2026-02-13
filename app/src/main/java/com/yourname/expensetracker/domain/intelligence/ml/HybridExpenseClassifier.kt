@@ -29,6 +29,8 @@ class HybridExpenseClassifier @Inject constructor(
             "mcdonalds" to "Food", "starbucks" to "Food", "pizza" to "Food",
             "restaurant" to "Food", "cafe" to "Food", "coffee" to "Food",
             "supermarket" to "Groceries", "lidl" to "Groceries", "sklavenitis" to "Groceries",
+            "βασιλόπουλος" to "Groceries", "σκλαβενίτης" to "Groceries", "μασούτης" to "Groceries",
+            "γαλαξίας" to "Groceries", "κρητικός" to "Groceries", "φούρνος" to "Groceries",
             "uber" to "Transport", "taxi" to "Transport", "bolt" to "Transport",
             "fuel" to "Transport", "gas" to "Transport", "shell" to "Transport", "bp" to "Transport",
             "amazon" to "Shopping", "netflix" to "Entertainment", "spotify" to "Entertainment"
@@ -88,8 +90,11 @@ class HybridExpenseClassifier @Inject constructor(
             }
         }
 
-        // 3. Fallback
-        val defaultCategory = categories.firstOrNull()
+        // 3. Fallback (Improved for BUG-012)
+        val defaultCategory = categories.find { it.name.contains("Groceries", ignoreCase = true) } 
+            ?: categories.find { it.name.contains("Other", ignoreCase = true) }
+            ?: categories.firstOrNull()
+
         ClassificationResult(
             categoryId = defaultCategory?.id ?: -1,
             categoryName = defaultCategory?.name ?: "Uncategorized",

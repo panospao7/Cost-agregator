@@ -15,19 +15,20 @@ class HybridExpenseClassifierTest {
     private val context = mockk<Context>(relaxed = true)
     private lateinit var hybridClassifier: HybridExpenseClassifier
 
-    private val foodCategory = Category(id = 1, name = "Food", icon = "food")
-    private val groceriesCategory = Category(id = 2, name = "Groceries", icon = "shop")
+    private val foodCategory = Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")
+    private val groceriesCategory = Category(id = 2L, name = "Groceries", icon = "shop", color = "#CCCCCC")
+    private val miscCategory = Category(id = 3L, name = "Miscellaneous", icon = "misc", color = "#888888")
 
     @Before
     fun setup() {
-        coEvery { categoryDao.getAll() } returns listOf(foodCategory, groceriesCategory)
+        coEvery { categoryDao.getAll() } returns listOf(foodCategory, groceriesCategory, miscCategory)
         hybridClassifier = HybridExpenseClassifier(context, categoryDao, nbClassifier)
     }
 
     @Test
     fun `rule-based matching takes priority`() = runBlocking {
         val result = hybridClassifier.classify(
-            merchantName = "McDonald's",
+            merchantName = "Starbucks",
             amount = 15.0
         )
         
@@ -61,7 +62,7 @@ class HybridExpenseClassifierTest {
             amount = 0.0
         )
 
-        assertEquals(foodCategory.id, result.categoryId) // First in list
+        assertEquals(groceriesCategory.id, result.categoryId) // Finds Groceries via substring/search first
         assertEquals(MatchType.FALLBACK, result.matchType)
     }
 }

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import android.net.Uri
+import java.util.Date
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -19,6 +20,11 @@ import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -49,10 +55,23 @@ class ReceiptRepository @Inject constructor(
         imageUri: Uri,
         autoCreateReview: Boolean = false
     ): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
-        try {
-            // 1. Run OCR
-            val ocrResult: OcrResult = ocrService.processImage(imageUri)
+        // 1. Run OCR (Separate Try-Catch to distinguish OCR failure vs Parse failure)
+        val ocrResult = try {
+            ocrService.processUri(imageUri)
+        } catch (e: Exception) {
+            android.util.Log.e("ReceiptRepository", "OCR Failed for $imageUri", e)
+            // Fallback: Try to save the image using manual record logic
+            return saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
+                val failedReceipt = receipt.copy(
+                    rawOcrText = "Scan Failed: ${e.message}", 
+                    confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK
+                )
+                scannedReceiptDao.update(failedReceipt)
+                Pair(failedReceipt, parsed)
+            }
+        }
 
+        try {
             // 2. Parse the OCR text
             val parsed = receiptParser.parse(ocrResult.fullText)
 
@@ -101,18 +120,41 @@ class ReceiptRepository @Inject constructor(
             return Pair(receipt.copy(id = receiptId), parsed)
 
         } catch (e: Exception) {
-            // Log error and save a "failed" record so we don't lose the image/Scan attempt
-            android.util.Log.e("ReceiptRepository", "Failed to process receipt", e)
+            // Parsing Logic Failed, but we HAVE the OCR text!
+            // Save it so user can manually edit without losing the text.
+            android.util.Log.e("ReceiptRepository", "Parsing Failed for $imageUri", e)
             
-            // Fallback: Try to save the image using manual record logic
-            return saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
-                val failedReceipt = receipt.copy(
-                    rawOcrText = "Scan Failed: ${e.message}", 
-                    confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK
+            val failedReceipt = ScannedReceipt(
+                imagePath = ocrResult.savedImagePath,
+                rawOcrText = ocrResult.fullText, // PRESERVED!
+                parsedTotal = null,
+                parsedMerchant = null,
+                parsedDate = null, 
+                parsedItems = null,
+                parsedTaxAmount = null, // Explicitly null for failed parse
+                currency = "EUR",
+                confidence = 0f
+            )
+            val receiptId = scannedReceiptDao.insert(failedReceipt)
+            
+            if (autoCreateReview) {
+                 val review = PendingReview(
+                    rawNotificationId = null,
+                    scannedReceiptId = receiptId,
+                    suggestedAmount = 0.0,
+                    suggestedCurrency = "EUR",
+                    suggestedMerchant = "Parsing Failed",
+                    suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
+                    suggestedCategoryId = null, // No category for failed parse
+                    confidence = 0f,
+                    packageName = "receipt.scan.error",
+                    notificationTitle = "Parsing Failed",
+                    notificationText = "OCR Text preserved. Manual entry required."
                 )
-                scannedReceiptDao.update(failedReceipt) // Update the record created by saveManualReceiptRecord
-                Pair(failedReceipt, parsed)
+                pendingReviewDao.insert(review)
             }
+
+            return Pair(failedReceipt.copy(id = receiptId), ReceiptParser.ParsedReceipt(null, null, null, null, System.currentTimeMillis(), "EUR", emptyList(), 0f))
         }
     }
 
@@ -252,26 +294,44 @@ class ReceiptRepository @Inject constructor(
     )
 
     /**
-     * Process multiple receipts in a loop
+     * Process multiple receipts in parallel with a concurrency limit to prevent OOM.
      */
-    suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult {
+    suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult = coroutineScope {
+        // Deduplicate URIs to avoid processing the same file twice
+        val uniqueUris = uris.distinctBy { it.toString() }
+        if (uniqueUris.size < uris.size) {
+            android.util.Log.d("ReceiptRepository", "Removed ${uris.size - uniqueUris.size} duplicate URIs")
+        }
+
+        val semaphore = Semaphore(3) // Limit to 3 concurrent OCR tasks
+        val total = uniqueUris.size
         var successes = 0
         var failures = 0
         val errors = mutableListOf<String>()
+        val mutex = Mutex()
 
-        uris.forEachIndexed { index, uri ->
-            try {
-                // Batch always creates reviews
-                processReceipt(uri, autoCreateReview = true)
-                successes++
-                onProgress(index + 1, uris.size)
-            } catch (e: Exception) {
-                failures++
-                errors.add("Failed to process $uri: ${e.message}")
-                onProgress(index + 1, uris.size)
+        val jobs = uniqueUris.map { uri ->
+            async {
+                try {
+                    semaphore.withPermit {
+                        processReceipt(uri, autoCreateReview = true)
+                    }
+                    mutex.withLock {
+                        successes++
+                        onProgress(successes + failures, total)
+                    }
+                } catch (e: Exception) {
+                    mutex.withLock {
+                        failures++
+                        errors.add("Failed to process $uri: ${e.message}")
+                        onProgress(successes + failures, total)
+                    }
+                }
             }
         }
-        return BatchResult(successes, failures, errors)
+
+        jobs.awaitAll()
+        BatchResult(successes, failures, errors)
     }
 
     /**
@@ -279,7 +339,7 @@ class ReceiptRepository @Inject constructor(
      */
     suspend fun processStatement(imageUri: Uri): BatchResult {
         // 1. Run OCR
-        val ocrResult: OcrResult = ocrService.processImage(imageUri)
+        val ocrResult: OcrResult = ocrService.processUri(imageUri)
 
         // 2. Parse as multiple transactions using spatial data
         val parsedTransactions = statementParser.parse(ocrResult.blocks)
@@ -325,7 +385,7 @@ class ReceiptRepository @Inject constructor(
                     suggestedMerchant = normalizedMerchant,
                     suggestedType = tx.type.name,
                     suggestedCategoryId = classification.categoryId.takeIf { id -> id > 0 },
-                    suggestedDate = System.currentTimeMillis(),
+                    suggestedDate = tx.date ?: System.currentTimeMillis(),
                     confidence = tx.confidence,
                     packageName = "statement.import",
                     notificationTitle = "Bank Screenshot",
@@ -364,5 +424,38 @@ class ReceiptRepository @Inject constructor(
             sb.append("\n\n")
         }
         return sb.toString()
+    }
+
+    /**
+     * Debug function to get detailed info about a scanned receipt
+     */
+    suspend fun debugReceipt(receiptId: Long): String {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return "Not found"
+        
+        return """
+            ═════════════════════════════════════════
+            RECEIPT DEBUG REPORT
+            ═════════════════════════════════════════
+            
+            IMAGE PATH: ${receipt.imagePath}
+            
+            RAW OCR TEXT:
+            ┌─────────────────────────────────────┐
+            ${receipt.rawOcrText}
+            └─────────────────────────────────────┘
+            
+            PARSED VALUES:
+            • Merchant:  ${receipt.parsedMerchant ?: "NULL"}
+            • Total:     ${receipt.parsedTotal ?: "NULL"}
+            • Date:      ${receipt.parsedDate?.let { Date(it) } ?: "NULL"}
+            • Tax:       ${receipt.parsedTaxAmount ?: "NULL"}
+            • Currency:  ${receipt.currency}
+            • Confidence: ${receipt.confidence}
+            
+            LINE ITEMS:
+            ${receipt.parsedItems ?: "None"}
+            
+            ═════════════════════════════════════════
+        """.trimIndent()
     }
 }

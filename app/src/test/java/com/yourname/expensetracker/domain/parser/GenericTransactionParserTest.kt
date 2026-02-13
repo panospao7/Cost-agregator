@@ -7,10 +7,18 @@ import org.junit.Test
 
 class GenericTransactionParserTest {
     private lateinit var parser: GenericTransactionParser
+    private lateinit var currencyNormalizer: com.yourname.expensetracker.domain.util.CurrencyNormalizer
+    private lateinit var merchantCleaner: com.yourname.expensetracker.domain.util.MerchantCleaner
 
     @Before
     fun setup() {
-        parser = GenericTransactionParser()
+        currencyNormalizer = io.mockk.mockk {
+            io.mockk.every { normalize(any()) } answers { firstArg() }
+        }
+        merchantCleaner = io.mockk.mockk {
+            io.mockk.every { clean(any()) } answers { firstArg() }
+        }
+        parser = GenericTransactionParser(currencyNormalizer, merchantCleaner)
     }
 
     // === SUCCESSFUL PARSING ===

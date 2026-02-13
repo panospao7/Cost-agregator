@@ -84,6 +84,7 @@ fun TransactionsScreen(
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
     var expenseToRecurring by remember { mutableStateOf<Expense?>(null) }
+    var expenseToRename by remember { mutableStateOf<Expense?>(null) }
 
     Scaffold(
         topBar = {
@@ -151,7 +152,8 @@ fun TransactionsScreen(
                         transaction = item,
                         onDelete = { expenseToDelete = item.expense },
                         onEditCategory = { expenseToCategorize = item.expense },
-                        onMarkRecurring = { expenseToRecurring = item.expense }
+                        onMarkRecurring = { expenseToRecurring = item.expense },
+                        onRename = { expenseToRename = item.expense }
                     )
                 }
             }
@@ -204,7 +206,62 @@ fun TransactionsScreen(
                 }
             )
         }
+
+        // Rename Merchant Dialog
+        if (expenseToRename != null) {
+            RenameMerchantDialog(
+                currentName = expenseToRename?.merchant ?: "",
+                onDismiss = { expenseToRename = null },
+                onConfirm = { newName ->
+                    expenseToRename?.let { viewModel.updateMerchant(it, newName) }
+                    expenseToRename = null
+                }
+            )
+        }
     }
+}
+
+@Composable
+fun RenameMerchantDialog(
+    currentName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var name by remember { mutableStateOf(currentName) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename Merchant") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Assigning a brand name helps the app learn. Future transactions from this source will be auto-corrected.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Brand Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(name) },
+                enabled = name.isNotBlank() && name != currentName
+            ) {
+                Text("Update")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
@@ -254,7 +311,8 @@ fun TransactionItem(
     transaction: ExpenseWithCategory,
     onDelete: () -> Unit,
     onEditCategory: () -> Unit,
-    onMarkRecurring: () -> Unit
+    onMarkRecurring: () -> Unit,
+    onRename: () -> Unit
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -300,7 +358,9 @@ fun TransactionItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         maxLines = 1,
-                        modifier = Modifier.weight(1f, fill = false)
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clickable { onRename() }
                     )
                     if (expense.isManualEntry) {
                         Spacer(modifier = Modifier.width(4.dp))

@@ -7,10 +7,18 @@ import org.junit.Test
 
 class SmsParserTest {
     private lateinit var parser: SmsParser
+    private lateinit var currencyNormalizer: com.yourname.expensetracker.domain.util.CurrencyNormalizer
+    private lateinit var merchantCleaner: com.yourname.expensetracker.domain.util.MerchantCleaner
 
     @Before
     fun setup() {
-        parser = SmsParser()
+        currencyNormalizer = io.mockk.mockk {
+            io.mockk.every { normalize(any()) } answers { firstArg() ?: "EUR" }
+        }
+        merchantCleaner = io.mockk.mockk {
+            io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }
+        }
+        parser = SmsParser(currencyNormalizer, merchantCleaner)
     }
 
     @Test

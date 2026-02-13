@@ -24,7 +24,7 @@ class ConfidenceRouterTest {
         coEvery { userCorrectionDao.getMerchantTotalCorrections(any()) } returns 0
         coEvery { userCorrectionDao.getTotalCorrections(any()) } returns 0
         coEvery { userCorrectionDao.hasPreviousApprovals(any(), any()) } returns false
-        every { classifier.getStats() } returns ClassifierStats(0, 0, 0, false)
+        coEvery { classifier.getStats() } returns ClassifierStats(0, 0, 0, false)
         coEvery { classifier.predict(any()) } returns 0.5f
     }
 

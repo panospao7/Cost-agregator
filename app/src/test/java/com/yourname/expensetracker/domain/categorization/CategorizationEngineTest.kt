@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as 
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType
+import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -44,7 +45,7 @@ class CategorizationEngineTest {
     @Test
     fun `exact match returns category`() = runBlocking {
         coEvery { merchantCategoryDao.getAll() } returns listOf(
-            MerchantCategory("STARBUCKS", 5L)
+            MerchantCategory("starbucks", 5L)
         )
 
         val result = engine.categorize("starbucks")
@@ -55,12 +56,12 @@ class CategorizationEngineTest {
     fun `substring match finds pattern within merchant name`() = runBlocking {
         coEvery { merchantCategoryDao.getCategoryForMerchant("UBER EATS DELIVERY 1234") } returns null
         coEvery { merchantCategoryDao.getAll() } returns listOf(
-            MerchantCategory("UBER EATS", 3L),
-            MerchantCategory("UBER", 4L)
+            MerchantCategory("uber eats", 3L),
+            MerchantCategory("uber", 4L)
         )
-        // Word-level match for "UBER"
-        coEvery { merchantCategoryDao.getCategoryForMerchant("UBER") } returns
-            MerchantCategory("UBER", 4L)
+        // Word-level match for "uber"
+        coEvery { merchantCategoryDao.getCategoryForMerchant("uber") } returns
+            MerchantCategory("uber", 4L)
 
         val result = engine.categorize("UBER EATS DELIVERY 1234")
         // Should match "UBER EATS" first (longer pattern) via substring, returning 3L

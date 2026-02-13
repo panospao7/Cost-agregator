@@ -93,7 +93,9 @@ class SmsParser @Inject constructor(
 
     private val merchantPatterns by lazy {
         listOf(
-            Pattern.compile("""(?:στ[οη]ν?|at|sto|stin?|ston?|se|sta)\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{2,30})""", Pattern.CASE_INSENSITIVE),
+            // Logic: look for STO/AT/etc, then capture until common delimiters like "στις", "on", "at", or date-like patterns
+            // Use non-greedy match to stop at the first delimiter.
+            Pattern.compile("""(?:στ[οη]ν?|at|sto|stin?|ston?|se|sta)\s+(.+?)(?:\s+(?:στις|on|at|stis|athens|at-|\d{1,2}[/.-])|$)""", Pattern.CASE_INSENSITIVE),
             Pattern.compile("""-\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{2,30})""", Pattern.CASE_INSENSITIVE)
         )
     }

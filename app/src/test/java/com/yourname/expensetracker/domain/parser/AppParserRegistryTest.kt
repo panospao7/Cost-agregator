@@ -12,14 +12,19 @@ import org.junit.Test
 
 class AppParserRegistryTest {
 
+    private val currencyNormalizer = io.mockk.mockk<com.yourname.expensetracker.domain.util.CurrencyNormalizer> {
+        io.mockk.every { normalize(any()) } answers { firstArg() ?: "EUR" }
+    }
+    private val merchantCleaner = io.mockk.mockk<com.yourname.expensetracker.domain.util.MerchantCleaner> {
+        io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }
+    }
+
     private val registry = AppParserRegistry(
-        appParsers = listOf(
-            RevolutParser(),
-            GoogleWalletParser(),
-            GreekBankParser(),
-            SmsParser()
-        ),
-        fallbackParser = GenericTransactionParser()
+        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner),
+        revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
+        smsParser = SmsParser(currencyNormalizer, merchantCleaner),
+        googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
+        genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner)
     )
 
     @Test

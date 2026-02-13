@@ -3,6 +3,9 @@ package com.yourname.expensetracker.domain.receipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import java.util.regex.Pattern
+import java.util.Calendar
+import java.util.Locale
+import java.text.SimpleDateFormat
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
@@ -57,16 +60,19 @@ class BankStatementParser @Inject constructor(
      * Heuristic to determine if two text blocks belong to the same horizontal row.
      */
     private fun isSameRow(lastBlock: TextBlock, currentBlock: TextBlock): Boolean {
+        // Find the vertical overlap
+        val overlapTop = maxOf(lastBlock.top, currentBlock.top)
+        val overlapBottom = minOf(lastBlock.bottom, currentBlock.bottom)
+        val overlapHeight = (overlapBottom - overlapTop).coerceAtLeast(0)
+        
         val lastHeight = lastBlock.bottom - lastBlock.top
         val currentHeight = currentBlock.bottom - currentBlock.top
-        val avgHeight = (lastHeight + currentHeight) / 2
+        val minHeight = minOf(lastHeight, currentHeight)
         
-        // Use center point comparison with a threshold based on font size (height)
-        val lastCenter = (lastBlock.top + lastBlock.bottom) / 2
-        val currentCenter = (currentBlock.top + currentBlock.bottom) / 2
+        if (minHeight <= 0) return false
         
-        // 60% of average height is a safe overlap threshold for rows
-        return kotlin.math.abs(lastCenter - currentCenter) < (avgHeight * 0.6)
+        // If they overlap by more than 50% of the smaller block's height, they are likely same row
+        return overlapHeight.toDouble() / minHeight > 0.5
     }
 
     private fun extractTransactionFromRow(rowText: String): ParsedTransaction? {
@@ -78,7 +84,7 @@ class BankStatementParser @Inject constructor(
         
         if (!amountMatcher.find()) return null
         
-        // Fix (BUG-009): Robust European & US decimal parsing (Updated groups for DUP-005)
+        // Fix (BUG-009): Robust European & US decimal parsing
         val rawAmount = amountMatcher.group(2)?.replace(" ", "") ?: return null
         val lastSep = rawAmount.findLastAnyOf(listOf(".", ","))
         
@@ -93,18 +99,40 @@ class BankStatementParser @Inject constructor(
         
         val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
         
-        // Fix (BUG-010): Use more specific currency check (Updated groups for DUP-005)
+        // Fix (BUG-010): Use more specific currency check
         var currency = "EUR" // Default currency
         val currencyGroup = amountMatcher.group(1) ?: amountMatcher.group(3)
         if (currencyGroup != null && currencyGroup.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
             currency = currencyNormalizer.normalize(currencyGroup)
         }
 
-        // 3. Extract logic for merchant
+        // 3. Detect Transaction Type (ISSUE-008)
+        val upperRow = cleanRow.uppercase()
+        val isPurchase = upperRow.contains("ΑΓΟΡΑ") || upperRow.contains("PURCHASE") || 
+                         upperRow.contains("ΧΡΕΩΣΗ") || upperRow.contains("DEBIT") ||
+                         upperRow.contains("PAYMENT") || upperRow.contains("CARD")
+        
+        val isDeposit = upperRow.contains("ΚΑΤΑΘΕΣΗ") || upperRow.contains("DEPOSIT") ||
+                        upperRow.contains("ΠΙΣΤΩΣΗ") || upperRow.contains("CREDIT") ||
+                        upperRow.contains("REFUND") || upperRow.contains("MISTHODOSIA")
+
+        val type = when {
+            isDeposit -> TransactionType.DEPOSIT
+            isPurchase -> TransactionType.PURCHASE
+            amountStr.contains("-") -> TransactionType.PURCHASE
+            else -> TransactionType.PURCHASE // Default to Purchase if ambiguous (Expense Tracker context) 
+        }
+
+        // 4. Extract logic for merchant (ISSUE-010)
         // Usually merchant is the text that is NOT the amount and NOT a date/time
+        val dateValue = extractDate(cleanRow)
+        
         var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
-            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Date
+            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Date (for cleaning)
             .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "") // Time
+            // Remove common bank prefixes/suffixes
+            .replace(Regex("""(?i)^(AGORA|ΑΓΟΡΑ|PURCHASE|PAYMENT)\s*[:\-]?\s*"""), "")
+            .replace(Regex("""(?i)\s*(STO|ΣΤΟ|AT)\s*$"""), "")
             .replace(Regex("""\s{2,}"""), " ") // Double spaces
             .trim()
 
@@ -113,15 +141,38 @@ class BankStatementParser @Inject constructor(
             merchant = "Unknown Merchant"
         }
 
-        // Sanity checks: amount shouldn't be zero, merchant shouldn't be too long
-        if (absAmount < 0.01) return null
-        
         return ParsedTransaction(
             amount = absAmount,
             currency = currency,
             merchant = merchantCleaner.clean(merchant),
-            type = if (amountStr.contains("-")) TransactionType.PURCHASE else TransactionType.DEPOSIT,
-            confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK // LOGIC-004
+            type = type,
+            confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK,
+            date = dateValue
         )
+    }
+
+    private fun extractDate(text: String): Long? {
+        val datePatterns = listOf(
+            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})"""),
+            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})""")
+        )
+
+        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
+        sdf.isLenient = false
+
+        for (pattern in datePatterns) {
+            pattern.find(text)?.let { match ->
+                val (d, m, y) = match.destructured
+                val year = if (y.length == 2) "20$y" else y
+                val yearInt = year.toIntOrNull() ?: 0
+                
+                if (yearInt in 2015..2035) {
+                    try {
+                        return sdf.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year")?.time
+                    } catch (e: Exception) {}
+                }
+            }
+        }
+        return null
     }
 }

@@ -42,8 +42,8 @@ class MerchantNormalizer @Inject constructor(
             """\s*Store\s*#?\s*\d+|""" +
             """\s*Branch\s*#?\s*\d+|""" +
             """\s*Unit\s*#?\s*\d+|""" +
-            """\s*\([\d\s]+\)|""" +
-            """\s*(AT|at|@)\s+.*$"""
+            """\s*At\s+[A-Z][a-z]+|""" + // Matches " At Athens", " At London"
+            """\s*\([\d\s]+\)"""
         )
         
         private val CORPORATE_SUFFIXES = listOf(
@@ -118,14 +118,34 @@ class MerchantNormalizer @Inject constructor(
         }
     }
 
+    /**
+     * Learns a manual mapping from a cryptic POS name to a user-defined brand name.
+     */
+    suspend fun learnMerchantAlias(rawName: String, brandName: String) = withContext(Dispatchers.IO) {
+        if (rawName.isBlank() || brandName.isBlank()) return@withContext
+        if (rawName.equals(brandName, ignoreCase = true)) return@withContext
+
+        // 1. Ensure the brand name exists as a canonical merchant
+        val brandLookup = normalize(brandName, autoCreate = true)
+        val brandId = brandLookup.canonical.id
+
+        // 2. Link the original POS name to this brand ID
+        dao.linkAliasToCanonical(rawName, brandId, isUserDefined = true)
+        
+        Log.i(TAG, "Learned alias: $rawName -> $brandName")
+        invalidateTreeCache()
+    }
+
     fun cleanMerchantName(rawName: String): String {
         var cleaned = rawName.trim()
         cleaned = LOCATION_PATTERN.replace(cleaned, "")
         
         val upper = cleaned.uppercase()
         for (suffix in CORPORATE_SUFFIXES) {
-            if (upper.endsWith(" $suffix") || upper.endsWith(",$suffix")) {
-                cleaned = cleaned.dropLast(suffix.length + 2).trim()
+            if (upper.endsWith(" $suffix")) {
+                cleaned = cleaned.dropLast(suffix.length + 1).trim()
+            } else if (upper.endsWith(",$suffix")) {
+                cleaned = cleaned.dropLast(suffix.length + 1).trim()
             }
         }
         

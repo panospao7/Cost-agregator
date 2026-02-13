@@ -9,10 +9,10 @@ class NotificationSeeder @Inject constructor() {
     val categories = mapOf(
         "Groceries" to listOf("AB Vassilopoulos", "Sklavenitis", "Lidl", "Masoutis", "My Market"),
         "Transport" to listOf("Uber", "Beat", "OASA", "Shell", "EKO", "Aegean Airlines"),
-        "Bills" to listOf("DEI", "EYDAP", "Vodafone", "Cosmote", "Wind"),
+        "Utilities" to listOf("DEI", "EYDAP", "Vodafone", "Cosmote", "Wind"),
         "Entertainment" to listOf("Netflix", "Spotify", "Village Cinemas", "Steam", "PlayStation"),
         "Shopping" to listOf("Amazon", "Skroutz", "Zara", "H&M", "Public", "Plaisio"),
-        "Dining" to listOf("Goody's", "Wolt", "E-Food", "Starbucks", "Gregorys")
+        "Food" to listOf("Goody's", "Wolt", "E-Food", "Starbucks", "Gregorys")
     )
 
     private val spamTemplates = listOf(

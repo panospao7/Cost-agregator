@@ -67,7 +67,7 @@ fun ReceiptScanScreen(
 
     // Gallery launcher
     val galleryLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.processGalleryImage(it) }
     }
@@ -139,7 +139,7 @@ fun ReceiptScanScreen(
                         }
                     },
                     onGalleryClick = {
-                        galleryLauncher.launch("image/*")
+                        galleryLauncher.launch(arrayOf("image/*", "application/pdf"))
                     }
                 )
 

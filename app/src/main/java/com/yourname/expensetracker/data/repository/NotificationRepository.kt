@@ -438,6 +438,11 @@ class NotificationRepository @Inject constructor(
                     if (categoryId != null) {
                         merchantCategoryRepository.learnPattern(merchant, categoryId)
                     }
+
+                    // Learn alias if merchant name was changed (BUG-MERC-001)
+                    if (finalMerchant != null && finalMerchant != review.suggestedMerchant) {
+                        merchantNormalizer.learnMerchantAlias(review.suggestedMerchant, finalMerchant)
+                    }
                     
                     return OperationResult.Success(expenseId)
                 } else {
@@ -584,6 +589,21 @@ class NotificationRepository @Inject constructor(
             notificationText = null
         )
         userCorrectionDao.insert(correction)
+    }
+
+    suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String) {
+        if (expense.merchant == newMerchant) return
+        
+        expenseDao.updateMerchant(expense.id, newMerchant)
+        
+        // Catch the rename for future auto-correction (BUG-MERC-001)
+        // We link whatever the current normalized merchant name is to the new brand name
+        merchantNormalizer.learnMerchantAlias(expense.merchant, newMerchant)
+        
+        // Also learn the category for this brand name
+        expense.categoryId?.let { 
+            merchantCategoryRepository.learnPattern(newMerchant, it)
+        }
     }
 
     suspend fun delete(notification: RawNotification) {

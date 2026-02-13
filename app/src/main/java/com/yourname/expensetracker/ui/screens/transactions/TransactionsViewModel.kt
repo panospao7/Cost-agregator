@@ -152,6 +152,12 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
+    fun updateMerchant(expense: Expense, newMerchant: String) {
+        viewModelScope.launch {
+            repository.updateExpenseMerchant(expense, newMerchant)
+        }
+    }
+
     fun markAsRecurring(expense: Expense, frequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency) {
         viewModelScope.launch {
             val rule = com.yourname.expensetracker.data.database.entity.ManualRecurringExpense(

@@ -8,10 +8,30 @@ import org.junit.Test
 
 class RevolutParserTest {
     private lateinit var parser: RevolutParser
+    private lateinit var currencyNormalizer: com.yourname.expensetracker.domain.util.CurrencyNormalizer
+    private lateinit var merchantCleaner: com.yourname.expensetracker.domain.util.MerchantCleaner
 
     @Before
     fun setup() {
-        parser = RevolutParser()
+        currencyNormalizer = io.mockk.mockk {
+            io.mockk.every { normalize(any()) } answers { 
+                val symbol = firstArg<String?>()
+                when (symbol) {
+                    "€" -> "EUR"
+                    "$" -> "USD"
+                    "£" -> "GBP"
+                    else -> symbol ?: "EUR"
+                }
+            }
+        }
+        merchantCleaner = io.mockk.mockk {
+            io.mockk.every { clean(any()) } answers { 
+                var name = firstArg<String?>() ?: "Unknown"
+                if (name.length > 40) name = name.substring(0, 40)
+                name.removeSuffix(".")
+            }
+        }
+        parser = RevolutParser(currencyNormalizer, merchantCleaner)
     }
 
     // === PURCHASE PARSING ===

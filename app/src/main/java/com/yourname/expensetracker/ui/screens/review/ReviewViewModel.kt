@@ -165,6 +165,10 @@ class ReviewViewModel @Inject constructor(
         return receiptRepository.exportParserDebugData()
     }
 
+    suspend fun getReceiptDebugInfo(receiptId: Long): String {
+        return receiptRepository.debugReceipt(receiptId)
+    }
+
     fun clearScannedData() {
         viewModelScope.launch {
             receiptRepository.clearAllScannedReceipts()

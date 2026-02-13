@@ -34,13 +34,13 @@ class RecurringExpenseEngineTest {
     fun `should detect perfect monthly subscription`() = runTest {
         // Arrange: Netflix on the 1st of every month
         val expenses = listOf(
-            createExpense("Netflix", 15.0, "2024-01-01"),
-            createExpense("Netflix", 15.0, "2024-02-01"), // 31 days
-            createExpense("Netflix", 15.0, "2024-03-01"), // 29 days (leap year 2024)
-            createExpense("Netflix", 15.0, "2024-04-01")  // 31 days
+            createExpense("Netflix", 15.0, "2026-01-01"),
+            createExpense("Netflix", 15.0, "2026-02-01"), // 31 days
+            createExpense("Netflix", 15.0, "2026-03-01"), // 28 days (non-leap year 2026)
+            createExpense("Netflix", 15.0, "2026-04-01")  // 31 days
         )
         
-        coEvery { expenseDao.getAll() } returns expenses
+        coEvery { expenseDao.getExpensesSince(any()) } returns expenses
 
         // Act
         val patterns = engine.getPatterns()
@@ -57,13 +57,13 @@ class RecurringExpenseEngineTest {
     fun `should detect bi-weekly salary`() = runTest {
         // Arrange: Salary every 14 days
         val expenses = listOf(
-            createExpense("Corp Inc", 2000.0, "2024-01-05"), // Fri
-            createExpense("Corp Inc", 2000.0, "2024-01-19"), // Fri + 14
-            createExpense("Corp Inc", 2000.0, "2024-02-02"), // Fri + 14
-            createExpense("Corp Inc", 2000.0, "2024-02-16")  // Fri + 14
+            createExpense("Corp Inc", 2000.0, "2026-01-05"), // Fri
+            createExpense("Corp Inc", 2000.0, "2026-01-19"), // Fri + 14
+            createExpense("Corp Inc", 2000.0, "2026-02-02"), // Fri + 14
+            createExpense("Corp Inc", 2000.0, "2026-02-16")  // Fri + 14
         )
         
-        coEvery { expenseDao.getAll() } returns expenses
+        coEvery { expenseDao.getExpensesSince(any()) } returns expenses
 
         // Act
         val patterns = engine.getPatterns()
@@ -79,14 +79,14 @@ class RecurringExpenseEngineTest {
     fun `should ignore random coffee purchases`() = runTest {
         // Arrange: Random coffee dates
         val expenses = listOf(
-            createExpense("Starbucks", 5.0, "2024-01-01"),
-            createExpense("Starbucks", 5.0, "2024-01-02"), // 1 day
-            createExpense("Starbucks", 6.5, "2024-01-08"), // 6 days
-            createExpense("Starbucks", 4.5, "2024-01-20")  // 12 days
+            createExpense("Starbucks", 5.0, "2026-01-01"),
+            createExpense("Starbucks", 5.0, "2026-01-02"), // 1 day
+            createExpense("Starbucks", 6.5, "2026-01-08"), // 6 days
+            createExpense("Starbucks", 4.5, "2026-01-20")  // 12 days
         )
         // Intervals: 1, 6, 12 -> Irregular
         
-        coEvery { expenseDao.getAll() } returns expenses
+        coEvery { expenseDao.getExpensesSince(any()) } returns expenses
 
         // Act
         val patterns = engine.getPatterns()
@@ -99,13 +99,13 @@ class RecurringExpenseEngineTest {
     fun `should ignore variable bills (high amount variance)`() = runTest {
         // Arrange: Electricity bill with huge variance
         val expenses = listOf(
-            createExpense("Electric Co", 50.0, "2024-01-01"),
-            createExpense("Electric Co", 150.0, "2024-02-01"), 
-            createExpense("Electric Co", 80.0, "2024-03-01"), 
-            createExpense("Electric Co", 200.0, "2024-04-01")  
+            createExpense("Electric Co", 50.0, "2026-01-01"),
+            createExpense("Electric Co", 150.0, "2026-02-01"), 
+            createExpense("Electric Co", 80.0, "2026-03-01"), 
+            createExpense("Electric Co", 200.0, "2026-04-01")  
         )
         
-        coEvery { expenseDao.getAll() } returns expenses
+        coEvery { expenseDao.getExpensesSince(any()) } returns expenses
 
         // Act
         val patterns = engine.getPatterns()
@@ -119,12 +119,12 @@ class RecurringExpenseEngineTest {
     fun `manual override should take precedence`() = runTest {
         // Arrange: detected pattern is Monthly, but Manual Overrides says Weekly
         val expenses = listOf(
-            createExpense("Gym", 50.0, "2024-01-01"),
-            createExpense("Gym", 50.0, "2024-02-01"),
-            createExpense("Gym", 50.0, "2024-03-01")
+            createExpense("Gym", 50.0, "2026-01-01"),
+            createExpense("Gym", 50.0, "2026-02-01"),
+            createExpense("Gym", 50.0, "2026-03-01")
         )
         
-        coEvery { expenseDao.getAll() } returns expenses
+        coEvery { expenseDao.getExpensesSince(any()) } returns expenses
         
         val manualOverride = ManualRecurringExpense(
             merchant = "Gym",

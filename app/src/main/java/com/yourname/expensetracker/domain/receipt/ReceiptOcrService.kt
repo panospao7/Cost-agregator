@@ -9,6 +9,8 @@ import androidx.exifinterface.media.ExifInterface
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
@@ -38,7 +40,20 @@ data class TextBlock(
 class ReceiptOcrService @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
+    // Reverting to DEFAULT_OPTIONS as Builder might not be available in current dependency version
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+    /**
+     * Dispatcher that automatically routes URIs to the correct processor based on MIME type.
+     */
+    suspend fun processUri(uri: Uri): OcrResult {
+        val mimeType = context.contentResolver.getType(uri) ?: ""
+        return if (mimeType == "application/pdf") {
+            processPdf(uri)
+        } else {
+            processImage(uri)
+        }
+    }
 
     /**
      * Process an image URI and return OCR results.
@@ -56,26 +71,129 @@ class ReceiptOcrService @Inject constructor(
             val inputImage = InputImage.fromBitmap(bitmap, 0)
             val visionText = recognizeText(inputImage)
 
-            // 4. Extract blocks
-            val blocks = visionText.textBlocks.map { block ->
-                TextBlock(
-                    text = block.text,
-                    confidence = block.lines.firstOrNull()?.confidence,
-                    left = block.boundingBox?.left ?: 0,
-                    top = block.boundingBox?.top ?: 0,
-                    right = block.boundingBox?.right ?: 0,
-                    bottom = block.boundingBox?.bottom ?: 0
-                )
+            // 4. Extract blocks with confidence filtering
+            val blocks = visionText.textBlocks.mapNotNull { block ->
+                val avgConfidence = block.lines.mapNotNull { it.confidence }.average().toFloat()
+                // If confidence is available and very low (< 0.2), skip it.
+                // Note: ML Kit often returns null confidence for Latin/Default models, so we default to 1.0 if null
+                val safeConfidence = if (block.lines.firstOrNull()?.confidence != null) avgConfidence else 1.0f
+                
+                if (safeConfidence < 0.2f && block.text.length < 3) {
+                    // Skip very low confidence noise (usually single characters)
+                    null
+                } else {
+                    TextBlock(
+                        text = block.text,
+                        confidence = safeConfidence,
+                        // lines argument removed as it's not in TextBlock definition
+                        left = block.boundingBox?.left ?: 0,
+                        top = block.boundingBox?.top ?: 0,
+                        right = block.boundingBox?.right ?: 0,
+                        bottom = block.boundingBox?.bottom ?: 0
+                    )
+                }
             }
 
             return OcrResult(
-                fullText = visionText.text,
+                fullText = blocks.joinToString("\n\n") { it.text },
                 blocks = blocks,
                 savedImagePath = savedPath
             )
         } finally {
             // CRITICAL: Prevent memory leaks during batch processing
             bitmap.recycle()
+        }
+    }
+
+    /**
+     * Process a PDF URI by rendering pages to bitmaps and running OCR on each.
+     */
+    suspend fun processPdf(pdfUri: Uri): OcrResult {
+        val tempFile = File(context.cacheDir, "temp_pdf_${System.nanoTime()}.pdf")
+        var renderer: PdfRenderer? = null
+        var pfd: ParcelFileDescriptor? = null
+        
+        try {
+            // 1. Copy PDF to local file (PdfRenderer needs a ParcelFileDescriptor from a file or pipe)
+            context.contentResolver.openInputStream(pdfUri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: throw IllegalStateException("Failed to open PDF stream: $pdfUri")
+
+            pfd = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            renderer = PdfRenderer(pfd)
+            
+            val allFullText = StringBuilder()
+            val allBlocks = mutableListOf<TextBlock>()
+            var savedThumbnailPath = ""
+            
+            // Limit to first 3-5 pages for performance (Rich functionality requirement)
+            val pageLimit = 5 
+            val pagesToProcess = minOf(renderer.pageCount, pageLimit)
+            
+            var verticalOffset = 0
+            
+            for (i in 0 until pagesToProcess) {
+                val page = renderer.openPage(i)
+                
+                // Render page to high-quality Bitmap (OCR prefers ~200-300 DPI equivalent)
+                // 1024 width is our standard for OCR in loadAndCorrectBitmap
+                val scale = 1024f / page.width
+                val bitmapWidth = 1024
+                val bitmapHeight = (page.height * scale).toInt()
+                
+                val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                
+                try {
+                    // Save first page as JPG for UI preview/record
+                    if (i == 0) {
+                        savedThumbnailPath = saveReceiptImage(bitmap)
+                    }
+                    
+                    // Run OCR on this page
+                    val inputImage = InputImage.fromBitmap(bitmap, 0)
+                    val visionText = recognizeText(inputImage)
+                    
+                    // Add full text
+                    allFullText.append(visionText.text).append("\n\n")
+                    
+                    // Add blocks with offset (Virtual Long Page strategy)
+                    visionText.textBlocks.forEach { block ->
+                        allBlocks.add(
+                            TextBlock(
+                                text = block.text,
+                                confidence = block.lines.firstOrNull()?.confidence,
+                                left = block.boundingBox?.left ?: 0,
+                                top = (block.boundingBox?.top ?: 0) + verticalOffset,
+                                right = block.boundingBox?.right ?: 0,
+                                bottom = (block.boundingBox?.bottom ?: 0) + verticalOffset
+                            )
+                        )
+                    }
+                    
+                    verticalOffset += bitmapHeight
+                    
+                } finally {
+                    bitmap.recycle() // CRITICAL: Release memory immediately
+                    page.close()
+                }
+            }
+            
+            return OcrResult(
+                fullText = allFullText.toString().trim(),
+                blocks = allBlocks,
+                savedImagePath = savedThumbnailPath
+            )
+            
+        } catch (e: Exception) {
+            android.util.Log.e("ReceiptOcrService", "PDF processing failed for $pdfUri", e)
+            throw IllegalStateException("Failed to scan PDF: ${e.message}", e)
+        } finally {
+            try { renderer?.close() } catch (_: Exception) {}
+            try { pfd?.close() } catch (_: Exception) {}
+            if (tempFile.exists()) tempFile.delete()
         }
     }
 

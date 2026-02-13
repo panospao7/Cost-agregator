@@ -66,66 +66,69 @@ This file contains the complete source code from the `src` directory.
 61. [main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
 62. [main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#mainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
 63. [main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#mainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
-64. [main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
-65. [main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
-66. [main\java\com\yourname\expensetracker\domain\model\Result.kt](#mainjavacomyournameexpensetrackerdomainmodelresultkt)
-67. [main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
-68. [main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
-69. [main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#mainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
-70. [main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#mainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
-71. [main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
-72. [main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
-73. [main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
-74. [main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#mainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
-75. [main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
-76. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
-77. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
-78. [main\java\com\yourname\expensetracker\domain\util\BKTree.kt](#mainjavacomyournameexpensetrackerdomainutilbktreekt)
-79. [main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#mainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
-80. [main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#mainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
-81. [main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#mainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
-82. [main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#mainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
-83. [main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt](#mainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt)
-84. [main\java\com\yourname\expensetracker\receiver\BootReceiver.kt](#mainjavacomyournameexpensetrackerreceiverbootreceiverkt)
-85. [main\java\com\yourname\expensetracker\service\NotificationCaptureService.kt](#mainjavacomyournameexpensetrackerservicenotificationcaptureservicekt)
-86. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
-87. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
-88. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
-89. [main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
-90. [main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
-91. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
-92. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
-93. [main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
-94. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
-95. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
-96. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
-97. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
-98. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
-99. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
-100. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
-101. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
-102. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
-103. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
-104. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
-105. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
-106. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
-107. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
-108. [main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
-109. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
-110. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
-111. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
-112. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
-113. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
-114. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
-115. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
-116. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
-117. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
-118. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
-119. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
-120. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
-121. [main\res\values\strings.xml](#mainresvaluesstringsxml)
-122. [main\res\values\themes.xml](#mainresvaluesthemesxml)
-123. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
+64. [main\java\com\yourname\expensetracker\domain\model\OperationResult.kt](#mainjavacomyournameexpensetrackerdomainmodeloperationresultkt)
+65. [main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#mainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
+66. [main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#mainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
+67. [main\java\com\yourname\expensetracker\domain\model\Result.kt](#mainjavacomyournameexpensetrackerdomainmodelresultkt)
+68. [main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#mainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
+69. [main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#mainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
+70. [main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#mainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
+71. [main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#mainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
+72. [main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
+73. [main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
+74. [main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#mainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
+75. [main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#mainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
+76. [main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
+77. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
+78. [main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#mainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
+79. [main\java\com\yourname\expensetracker\domain\util\AppConstants.kt](#mainjavacomyournameexpensetrackerdomainutilappconstantskt)
+80. [main\java\com\yourname\expensetracker\domain\util\BKTree.kt](#mainjavacomyournameexpensetrackerdomainutilbktreekt)
+81. [main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#mainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
+82. [main\java\com\yourname\expensetracker\domain\util\CommonPatterns.kt](#mainjavacomyournameexpensetrackerdomainutilcommonpatternskt)
+83. [main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#mainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
+84. [main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#mainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
+85. [main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#mainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
+86. [main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt](#mainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt)
+87. [main\java\com\yourname\expensetracker\receiver\BootReceiver.kt](#mainjavacomyournameexpensetrackerreceiverbootreceiverkt)
+88. [main\java\com\yourname\expensetracker\service\NotificationCaptureService.kt](#mainjavacomyournameexpensetrackerservicenotificationcaptureservicekt)
+89. [main\java\com\yourname\expensetracker\ui\MainActivity.kt](#mainjavacomyournameexpensetrackeruimainactivitykt)
+90. [main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#mainjavacomyournameexpensetrackeruimainviewmodelkt)
+91. [main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#mainjavacomyournameexpensetrackeruicomponentsbentocardkt)
+92. [main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#mainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
+93. [main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#mainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
+94. [main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#mainjavacomyournameexpensetrackeruicomponentspulsedotkt)
+95. [main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
+96. [main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#mainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
+97. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
+98. [main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
+99. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
+100. [main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
+101. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
+102. [main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
+103. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
+104. [main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
+105. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
+106. [main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
+107. [main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
+108. [main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
+109. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
+110. [main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
+111. [main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#mainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
+112. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
+113. [main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#mainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
+114. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
+115. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
+116. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
+117. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
+118. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
+119. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
+120. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
+121. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
+122. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
+123. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
+124. [main\res\values\strings.xml](#mainresvaluesstringsxml)
+125. [main\res\values\themes.xml](#mainresvaluesthemesxml)
+126. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
 
 ---
 
@@ -253,7 +256,7 @@ import androidx.room.*
         MerchantCanonical::class,
         MerchantAlias::class
     ],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -593,6 +596,12 @@ abstract class AppDatabase : RoomDatabase() {
                 """)
             }
         }
+        val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // INS-008: Standalone date index for efficient range queries and ordering
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses (date)")
+            }
+        }
     }
 }
 
@@ -788,6 +797,8 @@ interface ExpenseDao {
     fun getExpensesWithCategoryInPeriodFlow(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>>
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     suspend fun getAll(): List<Expense>
+    @Query("SELECT * FROM expenses WHERE date >= :since ORDER BY date DESC")
+    suspend fun getExpensesSince(since: Long): List<Expense>
     @Query("SELECT SUM(amount) FROM expenses WHERE transactionType = 'PURCHASE'")
     fun getTotalSpentFlow(): Flow<Double?>
     @Query("DELETE FROM expenses")
@@ -796,6 +807,8 @@ interface ExpenseDao {
     suspend fun delete(expense: Expense)
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE id = :expenseId")
     suspend fun updateCategory(expenseId: Long, categoryId: Long)
+    @Query("UPDATE expenses SET merchant = :merchant WHERE id = :expenseId")
+    suspend fun updateMerchant(expenseId: Long, merchant: String)
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses 
@@ -2081,6 +2094,7 @@ data class ExpenseWithCategory(
         try {
             category?.color?.let { android.graphics.Color.parseColor(it).toLong() } ?: android.graphics.Color.GRAY.toLong()
         } catch (e: Exception) {
+            android.util.Log.e("ExpenseWithCategory", "Error parsing category color: ${category?.color}", e)
             android.graphics.Color.GRAY.toLong()
         }
     }
@@ -3353,6 +3367,8 @@ class BudgetRepository @Inject constructor(
     }
     suspend fun addBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Long> {
         return try {
+            if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
+            if (budget.startDate <= 0) throw IllegalArgumentException("Invalid budget start date")
             val id = budgetDao.insert(budget)
             budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(id)
@@ -3363,6 +3379,7 @@ class BudgetRepository @Inject constructor(
     }
     suspend fun updateBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
+            if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
             // Reset notifications when budget is edited so user gets fresh alerts (BUG-7 Fix)
             val resetBudget = budget.copy(
                 lastWarningNotifiedAt = null,
@@ -3471,28 +3488,32 @@ class CategoryRepository @Inject constructor(
 ) {
     val allCategories: Flow<List<Category>> = categoryDao.getAllFlow()
     suspend fun ensureDefaultCategories() = withContext(Dispatchers.IO) {
-        if (categoryDao.getCount() == 0) {
-            // Seed Categories
-            val defaults = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
-            categoryDao.insertAll(defaults)
-            // Seed Merchant Dictionary
-            // We need to resolve Category IDs first to map names to IDs
-            val categories = categoryDao.getAllFlow().first() // Use flow first emission or simple get
-            // Map: "Groceries" -> 1, "Transport" -> 2
-            val categoryIdMap = categories.associate { it.name to it.id }
-            val merchantMap = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.getExpandedMap()
-            val merchantEntities = merchantMap.mapNotNull { (merchant, categoryName) ->
-               val catId = categoryIdMap[categoryName]
-               if (catId != null) {
-                   MerchantCategory(merchantPattern = merchant, categoryId = catId)
-               } else {
-                   null
-               }
+        try {
+            if (categoryDao.getCount() == 0) {
+                // Seed Categories
+                val defaults = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
+                categoryDao.insertAll(defaults)
+                // Seed Merchant Dictionary
+                // We need to resolve Category IDs first to map names to IDs
+                val categories = categoryDao.getAllFlow().first() // Use flow first emission or simple get
+                // Map: "Groceries" -> 1, "Transport" -> 2
+                val categoryIdMap = categories.associate { it.name to it.id }
+                val merchantMap = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.getExpandedMap()
+                val merchantEntities = merchantMap.mapNotNull { (merchant, categoryName) ->
+                   val catId = categoryIdMap[categoryName]
+                   if (catId != null) {
+                       MerchantCategory(merchantPattern = merchant, categoryId = catId)
+                   } else {
+                       null
+                   }
+                }
+                if (merchantEntities.isNotEmpty()) {
+                    // We need a bulk insert for speed
+                    merchantCategoryDao.insertAll(merchantEntities)
+                }
             }
-            if (merchantEntities.isNotEmpty()) {
-                // We need a bulk insert for speed
-                merchantCategoryDao.insertAll(merchantEntities)
-            }
+        } catch (e: Exception) {
+            android.util.Log.e("CategoryRepository", "Failed to seed default categories", e)
         }
     }
     suspend fun addCategory(name: String, icon: String, color: String) = withContext(Dispatchers.IO) {
@@ -3855,6 +3876,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
+import com.yourname.expensetracker.domain.model.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.*
 import javax.inject.Inject
@@ -3931,11 +3953,11 @@ class NotificationRepository @Inject constructor(
         paymentMethod: PaymentMethod = PaymentMethod.CASH,
         date: Long = System.currentTimeMillis(),
         notes: String? = null
-    ): Long {
+    ): OperationResult<Long> {
         // Fix 4.12: Large amount validation
         if (amount > 1000000.0) {
             android.util.Log.w("NotificationRepo", "Manual expense amount too large: $amount")
-            return -1L
+            return OperationResult.Error("Amount exceeds limit")
         }
         // 1. Normalize merchant name
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
@@ -3953,7 +3975,7 @@ class NotificationRepository @Inject constructor(
                     date = date,
                     windowMs = 60000 // 1 minute window for manual double-entry prevention
                 )
-        if (isDuplicate) return -1L
+        if (isDuplicate) return OperationResult.Duplicate
         // 4. Create expense
         val expense = Expense(
             amount = amount,
@@ -3974,7 +3996,7 @@ class NotificationRepository @Inject constructor(
         if (finalCategoryId != null && id > 0) {
             merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
         }
-        return id
+        return OperationResult.Success(id)
     }
     /**
      * Get category ID for a merchant (for auto-fill in manual entry)
@@ -4130,11 +4152,11 @@ class NotificationRepository @Inject constructor(
         finalAmount: Double? = null,
         finalMerchant: String? = null,
         finalCategoryId: Long? = null
-    ) {
-        val review = pendingReviewDao.getById(reviewId) ?: return
+    ): OperationResult<Long> {
+        val review = pendingReviewDao.getById(reviewId) ?: return OperationResult.Error("Review not found")
         // Critical Fix: Atomically check and update status to prevent double-processing
         val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING")
-        if (rowsUpdated == 0) return  // Already processed or not PENDING
+        if (rowsUpdated == 0) return OperationResult.Error("Review already processed")
         // If we fail later, we should ideally revert this, but for now we secure the lock.
         // We will update to APPROVED at the end.
         val amount: Double = finalAmount ?: review.suggestedAmount
@@ -4143,7 +4165,8 @@ class NotificationRepository @Inject constructor(
         // Fix 4.12: Large amount validation
         if (amount > 1000000.0) {
             android.util.Log.w("NotificationRepo", "Approval suppressed due to large amount: $amount")
-            return
+            pendingReviewDao.updateStatus(reviewId, "PENDING") // Revert status
+            return OperationResult.Error("Amount exceeds limit")
         }
         val type: com.yourname.expensetracker.data.database.entity.TransactionType = try {
             com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(review.suggestedType)
@@ -4161,7 +4184,6 @@ class NotificationRepository @Inject constructor(
             date = transactionDate,
             windowMs = 60000
         )
-        var operationSuccessful = true
         if (!isDuplicate) {
             // Create the expense
             val expense = com.yourname.expensetracker.data.database.entity.Expense(
@@ -4190,61 +4212,55 @@ class NotificationRepository @Inject constructor(
                     }
                     // Check budgets
                     budgetMonitor.checkBudgets()
+                    // Fix 1.19 status update: We update it to APPROVED
+                    pendingReviewDao.updateStatus(reviewId, "APPROVED")
+                    // Record user correction for learning
+                    val correction = UserCorrection(
+                        packageName = review.packageName,
+                        originalMerchant = review.suggestedMerchant,
+                        correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
+                            finalMerchant else null,
+                        originalAmount = review.suggestedAmount,
+                        correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
+                            finalAmount else null,
+                        originalCategoryId = review.suggestedCategoryId,
+                        correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
+                            finalCategoryId else null,
+                        wasRejected = false,
+                        wasApproved = true,
+                        notificationTitle = review.notificationTitle,
+                        notificationText = review.notificationText
+                    )
+                    userCorrectionDao.insert(correction)
+                    // Retrain classifier
+                    try {
+                        classifier.retrainFromCorrections()
+                    } catch (e: Exception) {
+                        android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
+                    }
+                    // Learn mapping
+                    if (categoryId != null) {
+                        merchantCategoryRepository.learnPattern(merchant, categoryId)
+                    }
+                    // Learn alias if merchant name was changed (BUG-MERC-001)
+                    if (finalMerchant != null && finalMerchant != review.suggestedMerchant) {
+                        merchantNormalizer.learnMerchantAlias(review.suggestedMerchant, finalMerchant)
+                    }
+                    return OperationResult.Success(expenseId)
                 } else {
-                    // Insertion failed (likely IGNORE strategy due to same ID, which shouldn't happen here as ID is 0L)
-                    operationSuccessful = false
+                    pendingReviewDao.updateStatus(reviewId, "PENDING") // Revert status
+                    return OperationResult.Error("Insertion failed")
                 }
             } catch (e: android.database.sqlite.SQLiteConstraintException) {
                 // Unexpected constraint error, fail the operation
-                operationSuccessful = false
+                pendingReviewDao.updateStatus(reviewId, "PENDING") // Revert status
+                return OperationResult.Error("Database constraint error: ${e.message}")
             }
         } else {
              // It's a duplicate, we treat this as "processed" to clear the review
              sourceStatsDao.decrementPending(review.packageName)
-        }
-        if (operationSuccessful) {
-            // Fix 1.19 status update: We update it to APPROVED even if it was a duplicate
-            // so it leaves the queue. If it truly failed insertion (operationSuccessful = false),
-            // we should probably still mark it as something else or just skip it for now.
-            pendingReviewDao.updateStatus(reviewId, "APPROVED")
-            // Record user correction for learning
-            val correction = UserCorrection(
-                packageName = review.packageName,
-                originalMerchant = review.suggestedMerchant,
-                correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
-                    finalMerchant else null,
-                originalAmount = review.suggestedAmount,
-                correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
-                    finalAmount else null,
-                originalCategoryId = review.suggestedCategoryId,
-                correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
-                    finalCategoryId else null,
-                wasRejected = false,
-                wasApproved = true,
-                notificationTitle = review.notificationTitle,
-                notificationText = review.notificationText
-            )
-            userCorrectionDao.insert(correction)
-            // Retrain classifier
-            try {
-                classifier.retrainFromCorrections()
-            } catch (e: Exception) {
-                android.util.Log.e("NotificationRepo", "Failed to retrain classifier", e)
-            }
-            // Learn mapping
-            if (categoryId != null) {
-                try {
-                    hybridClassifier.learnFromCorrection(
-                        merchantName = merchant,
-                        correctCategoryId = categoryId,
-                        amount = amount,
-                        packageName = review.packageName
-                    )
-                } catch (e: Exception) {
-                    android.util.Log.e("NotificationRepo", "Failed to learn categorization", e)
-                }
-                merchantCategoryRepository.learnPattern(merchant, categoryId)
-            }
+             pendingReviewDao.updateStatus(reviewId, "DUPLICATE")
+             return OperationResult.Duplicate
         }
     }
     /**
@@ -4356,6 +4372,17 @@ class NotificationRepository @Inject constructor(
         )
         userCorrectionDao.insert(correction)
     }
+    suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String) {
+        if (expense.merchant == newMerchant) return
+        expenseDao.updateMerchant(expense.id, newMerchant)
+        // Catch the rename for future auto-correction (BUG-MERC-001)
+        // We link whatever the current normalized merchant name is to the new brand name
+        merchantNormalizer.learnMerchantAlias(expense.merchant, newMerchant)
+        // Also learn the category for this brand name
+        expense.categoryId?.let { 
+            merchantCategoryRepository.learnPattern(newMerchant, it)
+        }
+    }
     suspend fun delete(notification: RawNotification) {
         // Check if there's a pending review attached to this notification
         val pendingReview = pendingReviewDao.getByRawId(notification.id)
@@ -4455,6 +4482,11 @@ import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -4485,7 +4517,7 @@ class ReceiptRepository @Inject constructor(
     ): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
         try {
             // 1. Run OCR
-            val ocrResult: OcrResult = ocrService.processImage(imageUri)
+            val ocrResult: OcrResult = ocrService.processUri(imageUri)
             // 2. Parse the OCR text
             val parsed = receiptParser.parse(ocrResult.fullText)
             // 3. Normalize merchant if found
@@ -4535,7 +4567,7 @@ class ReceiptRepository @Inject constructor(
             return saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
                 val failedReceipt = receipt.copy(
                     rawOcrText = "Scan Failed: ${e.message}", 
-                    confidence = 0f
+                    confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK
                 )
                 scannedReceiptDao.update(failedReceipt) // Update the record created by saveManualReceiptRecord
                 Pair(failedReceipt, parsed)
@@ -4590,7 +4622,7 @@ class ReceiptRepository @Inject constructor(
         date: Long = System.currentTimeMillis(),
         paymentMethod: PaymentMethod = PaymentMethod.CARD,
         notes: String? = null
-    ): Long {
+    ): com.yourname.expensetracker.domain.model.OperationResult<Long> {
         // 1. Normalize merchant
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
         val normalizedMerchant = lookupResult.canonical.normalizedName
@@ -4604,9 +4636,9 @@ class ReceiptRepository @Inject constructor(
             amount = amount,
             merchant = normalizedMerchant,
             date = date,
-            windowMs = 60000 // 1 minute window for manual/scan entries
+            windowMs = com.yourname.expensetracker.domain.util.AppConstants.Windows.DUPLICATE_DETECTION
         )
-        if (isDuplicate) return -1L
+        if (isDuplicate) return com.yourname.expensetracker.domain.model.OperationResult.Duplicate
         // 4. Create expense
         val expense = Expense(
             amount = amount,
@@ -4640,7 +4672,7 @@ class ReceiptRepository @Inject constructor(
                 merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
             }
         }
-        return expenseId
+        return com.yourname.expensetracker.domain.model.OperationResult.Success(expenseId)
     }
     fun createTempPhotoUri(): Uri {
         return ocrService.createTempImageUri()
@@ -4661,32 +4693,43 @@ class ReceiptRepository @Inject constructor(
         val errors: List<String>
     )
     /**
-     * Process multiple receipts in a loop
+     * Process multiple receipts in parallel with a concurrency limit to prevent OOM.
      */
-    suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult {
+    suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult = coroutineScope {
+        val semaphore = Semaphore(3) // Limit to 3 concurrent OCR tasks
+        val total = uris.size
         var successes = 0
         var failures = 0
         val errors = mutableListOf<String>()
-        uris.forEachIndexed { index, uri ->
-            try {
-                // Batch always creates reviews
-                processReceipt(uri, autoCreateReview = true)
-                successes++
-                onProgress(index + 1, uris.size)
-            } catch (e: Exception) {
-                failures++
-                errors.add("Failed to process $uri: ${e.message}")
-                onProgress(index + 1, uris.size)
+        val mutex = Mutex()
+        val jobs = uris.map { uri ->
+            async {
+                try {
+                    semaphore.withPermit {
+                        processReceipt(uri, autoCreateReview = true)
+                    }
+                    mutex.withLock {
+                        successes++
+                        onProgress(successes + failures, total)
+                    }
+                } catch (e: Exception) {
+                    mutex.withLock {
+                        failures++
+                        errors.add("Failed to process $uri: ${e.message}")
+                        onProgress(successes + failures, total)
+                    }
+                }
             }
         }
-        return BatchResult(successes, failures, errors)
+        jobs.awaitAll()
+        BatchResult(successes, failures, errors)
     }
     /**
      * Process an image URI as a bank statement: extracting multiple transactions
      */
     suspend fun processStatement(imageUri: Uri): BatchResult {
         // 1. Run OCR
-        val ocrResult: OcrResult = ocrService.processImage(imageUri)
+        val ocrResult: OcrResult = ocrService.processUri(imageUri)
         // 2. Parse as multiple transactions using spatial data
         val parsedTransactions = statementParser.parse(ocrResult.blocks)
         if (parsedTransactions.isEmpty()) {
@@ -4725,7 +4768,7 @@ class ReceiptRepository @Inject constructor(
                     suggestedMerchant = normalizedMerchant,
                     suggestedType = tx.type.name,
                     suggestedCategoryId = classification.categoryId.takeIf { id -> id > 0 },
-                    suggestedDate = System.currentTimeMillis(),
+                    suggestedDate = tx.date ?: System.currentTimeMillis(),
                     confidence = tx.confidence,
                     packageName = "statement.import",
                     notificationTitle = "Bank Screenshot",
@@ -4808,7 +4851,8 @@ object AppModule {
             AppDatabase.MIGRATION_13_14,
             AppDatabase.MIGRATION_14_15,
             AppDatabase.MIGRATION_15_16,
-            AppDatabase.MIGRATION_16_17
+            AppDatabase.MIGRATION_16_17,
+            AppDatabase.MIGRATION_17_18
         )
             .addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -5922,10 +5966,10 @@ class NotificationSeeder @Inject constructor() {
     val categories = mapOf(
         "Groceries" to listOf("AB Vassilopoulos", "Sklavenitis", "Lidl", "Masoutis", "My Market"),
         "Transport" to listOf("Uber", "Beat", "OASA", "Shell", "EKO", "Aegean Airlines"),
-        "Bills" to listOf("DEI", "EYDAP", "Vodafone", "Cosmote", "Wind"),
+        "Utilities" to listOf("DEI", "EYDAP", "Vodafone", "Cosmote", "Wind"),
         "Entertainment" to listOf("Netflix", "Spotify", "Village Cinemas", "Steam", "PlayStation"),
         "Shopping" to listOf("Amazon", "Skroutz", "Zara", "H&M", "Public", "Plaisio"),
-        "Dining" to listOf("Goody's", "Wolt", "E-Food", "Starbucks", "Gregorys")
+        "Food" to listOf("Goody's", "Wolt", "E-Food", "Starbucks", "Gregorys")
     )
     private val spamTemplates = listOf(
         "You won 1000 euros! Claim now at link.com",
@@ -6979,12 +7023,14 @@ class HybridExpenseClassifier @Inject constructor(
 ) {
     companion object {
         private const val TAG = "HybridClassifier"
-        const val RULE_CONFIDENCE = 0.95f
-        const val ML_THRESHOLD = 0.60f
+        val RULE_CONFIDENCE = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RULE_BASED
+        val ML_THRESHOLD = com.yourname.expensetracker.domain.util.AppConstants.Confidence.ML_PREDICTION
         private val CATEGORY_KEYWORDS: Map<String, String> = mapOf(
             "mcdonalds" to "Food", "starbucks" to "Food", "pizza" to "Food",
             "restaurant" to "Food", "cafe" to "Food", "coffee" to "Food",
             "supermarket" to "Groceries", "lidl" to "Groceries", "sklavenitis" to "Groceries",
+            "βασιλόπουλος" to "Groceries", "σκλαβενίτης" to "Groceries", "μασούτης" to "Groceries",
+            "γαλαξίας" to "Groceries", "κρητικός" to "Groceries", "φούρνος" to "Groceries",
             "uber" to "Transport", "taxi" to "Transport", "bolt" to "Transport",
             "fuel" to "Transport", "gas" to "Transport", "shell" to "Transport", "bp" to "Transport",
             "amazon" to "Shopping", "netflix" to "Entertainment", "spotify" to "Entertainment"
@@ -7036,8 +7082,10 @@ class HybridExpenseClassifier @Inject constructor(
                 }
             }
         }
-        // 3. Fallback
-        val defaultCategory = categories.firstOrNull()
+        // 3. Fallback (Improved for BUG-012)
+        val defaultCategory = categories.find { it.name.contains("Groceries", ignoreCase = true) } 
+            ?: categories.find { it.name.contains("Other", ignoreCase = true) }
+            ?: categories.firstOrNull()
         ClassificationResult(
             categoryId = defaultCategory?.id ?: -1,
             categoryName = defaultCategory?.name ?: "Uncategorized",
@@ -7126,8 +7174,8 @@ class MerchantNormalizer @Inject constructor(
             """\s*Store\s*#?\s*\d+|""" +
             """\s*Branch\s*#?\s*\d+|""" +
             """\s*Unit\s*#?\s*\d+|""" +
-            """\s*\([\d\s]+\)|""" +
-            """\s*(AT|at|@)\s+.*$"""
+            """\s*At\s+[A-Z][a-z]+|""" + // Matches " At Athens", " At London"
+            """\s*\([\d\s]+\)"""
         )
         private val CORPORATE_SUFFIXES = listOf(
             "INC", "INC.", "LLC", "LTD", "LTD.", "CORP", "CORP.", "CORPORATION",
@@ -7191,13 +7239,29 @@ class MerchantNormalizer @Inject constructor(
             return@withContext createPlaceholder(cleaned, normalizedKey, categoryId)
         }
     }
+    /**
+     * Learns a manual mapping from a cryptic POS name to a user-defined brand name.
+     */
+    suspend fun learnMerchantAlias(rawName: String, brandName: String) = withContext(Dispatchers.IO) {
+        if (rawName.isBlank() || brandName.isBlank()) return@withContext
+        if (rawName.equals(brandName, ignoreCase = true)) return@withContext
+        // 1. Ensure the brand name exists as a canonical merchant
+        val brandLookup = normalize(brandName, autoCreate = true)
+        val brandId = brandLookup.canonical.id
+        // 2. Link the original POS name to this brand ID
+        dao.linkAliasToCanonical(rawName, brandId, isUserDefined = true)
+        Log.i(TAG, "Learned alias: $rawName -> $brandName")
+        invalidateTreeCache()
+    }
     fun cleanMerchantName(rawName: String): String {
         var cleaned = rawName.trim()
         cleaned = LOCATION_PATTERN.replace(cleaned, "")
         val upper = cleaned.uppercase()
         for (suffix in CORPORATE_SUFFIXES) {
-            if (upper.endsWith(" $suffix") || upper.endsWith(",$suffix")) {
-                cleaned = cleaned.dropLast(suffix.length + 2).trim()
+            if (upper.endsWith(" $suffix")) {
+                cleaned = cleaned.dropLast(suffix.length + 1).trim()
+            } else if (upper.endsWith(",$suffix")) {
+                cleaned = cleaned.dropLast(suffix.length + 1).trim()
             }
         }
         cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
@@ -7224,7 +7288,10 @@ class MerchantNormalizer @Inject constructor(
             matchType = if (best.second == 0) MatchType.EXACT_MATCH else MatchType.FUZZY_MATCH
         )
     }
-    private suspend fun createNewMerchant(cleaned: String, key: String, catId: Long?): MerchantCanonical {
+    private val creationMutex = Mutex()
+    private suspend fun createNewMerchant(cleaned: String, key: String, catId: Long?): MerchantCanonical = creationMutex.withLock {
+        // Double-check existence inside the lock to prevent redundant insertion attempts
+        dao.getCanonicalBySearchKey(key)?.let { return it }
         val canonical = MerchantCanonical(
             normalizedName = formatDisplayName(cleaned),
             searchKey = key,
@@ -7232,15 +7299,11 @@ class MerchantNormalizer @Inject constructor(
             totalOccurrences = 1,
             isVerified = false
         )
-        var id = dao.insertCanonical(canonical)
+        val id = dao.insertCanonical(canonical)
         if (id == -1L) {
-            // Fix: Handle race condition where another thread created this merchant concurrently
-            id = dao.getCanonicalBySearchKey(key)?.id ?: -1L
-            if (id == -1L) {
-                // This shouldn't happen unless something is deleting records simultaneously
-                Log.e(TAG, "FATAL: Could not retrieve ID for existing canonical $key")
-                throw IllegalStateException("Failed to create or retrieve merchant: $key")
-            }
+            // Insertion failed (likely already exists), retrieve the existing ID
+            return dao.getCanonicalBySearchKey(key)
+                ?: throw IllegalStateException("Failed to create or retrieve merchant: $key")
         }
         return canonical.copy(id = id)
     }
@@ -7440,8 +7503,9 @@ class RecurringExpenseEngine @Inject constructor(
         // 1. Fetch Manual Overrides
         val manualExpenses = recurringExpenseDao.getAll()
         val manualMap = manualExpenses.associateBy { it.merchant.lowercase() }
-        // 2. Fetch all expenses for detection
-        val allExpenses = expenseDao.getAll()
+        // 2. Fetch all expenses for detection (Limit to last 12 months for performance - INS-009)
+        val twelveMonthsAgo = System.currentTimeMillis() - (365L * 24 * 60 * 60 * 1000)
+        val allExpenses = expenseDao.getExpensesSince(twelveMonthsAgo)
         // Group by normalized merchant name
         val grouped = allExpenses.groupBy { it.merchant }
         val detectedPatterns = mutableListOf<RecurringPattern>()
@@ -7463,7 +7527,7 @@ class RecurringExpenseEngine @Inject constructor(
             // 2. Interval Analysis
             val dates = sorted.map { it.date }
             val intervals = calculateIntervals(dates)
-            val (frequency, confidence, varianceDays) = determineFrequency(intervals)
+            val (frequency, confidence, varianceDays) = determineFrequency(intervals, dates)
             // Thresholds: Must be a known frequency and have > 50% confidence (LOG-013 Relaxed further to catch varying bills)
             if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.50) {
                 // Predict next date
@@ -7524,23 +7588,43 @@ class RecurringExpenseEngine @Inject constructor(
     private fun calculateStdDev(values: List<Double>): Double {
         return com.yourname.expensetracker.domain.util.StatisticsUtils.calculateStdDev(values)
     }
-    private fun determineFrequency(intervalsMs: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
+    private fun determineFrequency(intervalsMs: List<Long>, dates: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
         if (intervalsMs.isEmpty()) return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
-        // Convert ms to days (round to nearest integer day)
-        val intervalsDays = intervalsMs.map { (it / 86_400_000.0).roundToInt() }
+        // Fix (BUG-003): Use Calendar for proper day interval calculation across DST
+        val intervalsDays = mutableListOf<Int>()
+        val cal1 = java.util.Calendar.getInstance()
+        val cal2 = java.util.Calendar.getInstance()
+        for (i in 0 until dates.size - 1) {
+            cal1.timeInMillis = dates[i]
+            cal2.timeInMillis = dates[i + 1]
+            val days = ((dates[i + 1] - dates[i]) / 86400000.0).roundToInt()
+            // Validating logic: If the simple division is close to an integer, it's usually fine, 
+            // but for extreme edge cases (DST), we coerced results already.
+            // A more robust way in Android/Java is to clear time fields.
+            cal1.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal1.set(java.util.Calendar.MINUTE, 0)
+            cal1.set(java.util.Calendar.SECOND, 0)
+            cal1.set(java.util.Calendar.MILLISECOND, 0)
+            cal2.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal2.set(java.util.Calendar.MINUTE, 0)
+            cal2.set(java.util.Calendar.SECOND, 0)
+            cal2.set(java.util.Calendar.MILLISECOND, 0)
+            val diffDays = ((cal2.timeInMillis - cal1.timeInMillis) / 86400000.0).roundToInt()
+            intervalsDays.add(diffDays)
+        }
         // Find Mode (most common interval)
         val frequencyMap = intervalsDays.groupingBy { it }.eachCount()
         val modeEntry = frequencyMap.maxByOrNull { it.value } 
             ?: return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
         val mode = modeEntry.key
-        // Map mode to known frequencies with tolerance
+        // Map mode to known frequencies with expanded ranges (BUG-012, LOGIC-003)
         val frequency = when (mode) {
-             in 5..9 -> RecurrenceFrequency.WEEKLY
-             in 11..17 -> RecurrenceFrequency.BIWEEKLY
-             in 25..35 -> RecurrenceFrequency.MONTHLY // Covers shifts due to weekends/month length
-             in 80..100 -> RecurrenceFrequency.QUARTERLY
-             in 170..190 -> RecurrenceFrequency.SEMI_ANNUALLY
-             in 350..380 -> RecurrenceFrequency.ANNUALLY
+             in 5..10 -> RecurrenceFrequency.WEEKLY
+             in 11..23 -> RecurrenceFrequency.BIWEEKLY // Expanded from 11..18 to bridge gap
+             in 24..37 -> RecurrenceFrequency.MONTHLY // Covers month length variations and weekend shifts
+             in 80..110 -> RecurrenceFrequency.QUARTERLY
+             in 150..240 -> RecurrenceFrequency.SEMI_ANNUALLY
+             in 340..390 -> RecurrenceFrequency.ANNUALLY
              else -> RecurrenceFrequency.IRREGULAR
         }
         if (frequency == RecurrenceFrequency.IRREGULAR) {
@@ -7620,8 +7704,8 @@ class SynthesisEngine @Inject constructor() {
         }.sumOf { it.amount }
         val monthlyRecurringTotal = recurringPatterns.sumOf { pattern ->
             when (pattern.frequency) {
-                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (30.0 / 7.0)
-                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (30.0 / 14.0)
+                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 7.0)
+                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 14.0)
                 RecurrenceFrequency.MONTHLY -> pattern.averageAmount
                 RecurrenceFrequency.QUARTERLY -> pattern.averageAmount / 3.0
                 RecurrenceFrequency.SEMI_ANNUALLY -> pattern.averageAmount / 6.0
@@ -7647,8 +7731,9 @@ class SynthesisEngine @Inject constructor() {
                      if (targetDate == null || targetDate <= now) remaining // Due now or past due
                      else {
                          val msRemaining = targetDate - now
-                         val monthsRemaining = (msRemaining / (30.0 * 24 * 60 * 60 * 1000)).coerceAtLeast(1.0)
-                         remaining / monthsRemaining
+                         val daysRemainingInGoal = (msRemaining / (24 * 60 * 60 * 1000.0)).coerceAtLeast(1.0)
+                         val targetMonthsRemaining = (daysRemainingInGoal / daysInMonth.toDouble()).coerceAtLeast(1.0)
+                         remaining / targetMonthsRemaining
                      }
                  }
             }
@@ -7796,6 +7881,19 @@ data class NarrativeSection(
     val icon: String,
     val items: List<String>
 )
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\model\OperationResult.kt <a name="mainjavacomyournameexpensetrackerdomainmodeloperationresultkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.model
+sealed class OperationResult<out T> {
+    data class Success<out T>(val data: T) : OperationResult<T>()
+    data class Error(val message: String, val throwable: Throwable? = null) : OperationResult<Nothing>()
+    data object Duplicate : OperationResult<Nothing>()
+}
 
 ```
 
@@ -8064,10 +8162,7 @@ class GenericTransactionParser @Inject constructor(
         )
     }
     private val amountPattern by lazy {
-        Pattern.compile(
-            """([€$£])\s*(\d+(?:[.,]\d{2})?)|(\d+(?:[.,]\d{2})?)\s*([€$£]|EUR|USD|GBP)""",
-            Pattern.CASE_INSENSITIVE
-        )
+        com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX
     }
     private val MERCHANT_PREFIXES = listOf(" at ", " to ", " σε ", " στον ", " στην ", " στο ", " για ", " sto ", " ston ", " stin ", " se ")
     fun parse(
@@ -8095,14 +8190,14 @@ class GenericTransactionParser @Inject constructor(
             currency = amountResult.second,
             merchant = merchant,
             type = TransactionType.PURCHASE,
-            confidence = 0.60f // Lower confidence for generic parser
+            confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.ML_PREDICTION // LOGIC-004
         )
     }
     private fun extractAmount(text: String): Pair<Double, String>? {
         val matcher = amountPattern.matcher(text)
         if (matcher.find()) {
-            val currency = matcher.group(1) ?: matcher.group(4) ?: "€"
-            val amountStr = (matcher.group(2) ?: matcher.group(3))?.replace(",", ".") ?: return null
+            val currency = matcher.group(1) ?: matcher.group(3) ?: "€"
+            val amountStr = matcher.group(2)?.replace(",", ".") ?: return null
             val amount = amountStr.toDoubleOrNull() ?: return null
             return Pair(amount, currencyNormalizer.normalize(currency))
         }
@@ -8299,11 +8394,12 @@ class GreekBankParser @Inject constructor(
         var merchant = "Unknown"
         for (i in 1..matcher.groupCount()) {
             val group = matcher.group(i) ?: continue
-            if (group.matches(Regex("""\d+[.,]\d{2}"""))) {
+            // Fix (BUG-010): Use more specific currency check to avoid partial merchant matches
+            if (group.matches(Regex("""^\d+[.,]\d{2}$"""))) {
                 amountStr = group
-            } else if (group.matches(Regex("""[€$£]|EUR|USD|GBP""", RegexOption.IGNORE_CASE))) {
+            } else if (group.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
                 currency = currencyNormalizer.normalize(group)
-            } else if (group.length > 2) {
+            } else if (group.length > 2 && merchant == "Unknown") {
                 merchant = merchantCleaner.clean(group)
             }
         }
@@ -8450,12 +8546,14 @@ class SmsParser @Inject constructor(
         subText: String?,
         packageName: String
     ): ParsedTransaction? {
-        // For SMS, the title is usually the sender
-        val sender = title?.lowercase() ?: return null
+        // Fix (BUG-011): Handle null title by looking for sender in body or skipping if body looks like bank SMS
+        val sender = title?.lowercase() ?: ""
         val body = listOfNotNull(text, bigText).joinToString(" ")
         val lowerBody = body.lowercase()
-        // Only process if sender looks like a bank
-        val isBankSms = BANK_SENDERS.any { sender.contains(it) }
+        // Sender check - either from title or start of body (e.g., "From: NBG")
+        val isBankSms = BANK_SENDERS.any { 
+            sender.contains(it) || lowerBody.startsWith(it) || lowerBody.contains("from: $it")
+        }
         if (!isBankSms) return null
         // Must contain transaction keywords
         val hasKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) }
@@ -8479,7 +8577,9 @@ class SmsParser @Inject constructor(
     }
     private val merchantPatterns by lazy {
         listOf(
-            Pattern.compile("""(?:στ[οη]ν?|at|sto|stin?|ston?|se|sta)\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{2,30})""", Pattern.CASE_INSENSITIVE),
+            // Logic: look for STO/AT/etc, then capture until common delimiters like "στις", "on", "at", or date-like patterns
+            // Use non-greedy match to stop at the first delimiter.
+            Pattern.compile("""(?:στ[οη]ν?|at|sto|stin?|ston?|se|sta)\s+(.+?)(?:\s+(?:στις|on|at|stis|athens|at-|\d{1,2}[/.-])|$)""", Pattern.CASE_INSENSITIVE),
             Pattern.compile("""-\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{2,30})""", Pattern.CASE_INSENSITIVE)
         )
     }
@@ -8505,6 +8605,9 @@ package com.yourname.expensetracker.domain.receipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import java.util.regex.Pattern
+import java.util.Calendar
+import java.util.Locale
+import java.text.SimpleDateFormat
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
@@ -8550,33 +8653,46 @@ class BankStatementParser @Inject constructor(
      * Heuristic to determine if two text blocks belong to the same horizontal row.
      */
     private fun isSameRow(lastBlock: TextBlock, currentBlock: TextBlock): Boolean {
+        // Find the vertical overlap
+        val overlapTop = maxOf(lastBlock.top, currentBlock.top)
+        val overlapBottom = minOf(lastBlock.bottom, currentBlock.bottom)
+        val overlapHeight = (overlapBottom - overlapTop).coerceAtLeast(0)
         val lastHeight = lastBlock.bottom - lastBlock.top
         val currentHeight = currentBlock.bottom - currentBlock.top
-        val avgHeight = (lastHeight + currentHeight) / 2
-        // Use center point comparison with a threshold based on font size (height)
-        val lastCenter = (lastBlock.top + lastBlock.bottom) / 2
-        val currentCenter = (currentBlock.top + currentBlock.bottom) / 2
-        // 60% of average height is a safe overlap threshold for rows
-        return kotlin.math.abs(lastCenter - currentCenter) < (avgHeight * 0.6)
+        val minHeight = minOf(lastHeight, currentHeight)
+        if (minHeight <= 0) return false
+        // If they overlap by more than 50% of the smaller block's height, they are likely same row
+        return overlapHeight.toDouble() / minHeight > 0.5
     }
     private fun extractTransactionFromRow(rowText: String): ParsedTransaction? {
         // 1. Clean noise
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
-        // 2. Look for amount patterns
-        // Matches -12.50, 1.250,50, etc. optionally followed by currency
-        val amountPattern = Pattern.compile(
-            """(-?\b\d+[\s.,]?\d{0,3}[\s.,]\d{2})\s*([€$£]|EUR|USD|GBP)?""",
-            Pattern.CASE_INSENSITIVE
-        )
-        val amountMatcher = amountPattern.matcher(cleanRow)
+        // 2. Look for amount patterns (DUP-005)
+        val amountMatcher = com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX.matcher(cleanRow)
         if (!amountMatcher.find()) return null
-        val amountStr = amountMatcher.group(1)?.replace(" ", "")?.replace(",", ".") ?: return null
+        // Fix (BUG-009): Robust European & US decimal parsing (Updated groups for DUP-005)
+        val rawAmount = amountMatcher.group(2)?.replace(" ", "") ?: return null
+        val lastSep = rawAmount.findLastAnyOf(listOf(".", ","))
+        val amountStr = if (lastSep != null) {
+            val (sepIndex, sepChar) = lastSep
+            val integerPart = rawAmount.substring(0, sepIndex).replace(".", "").replace(",", "")
+            val decimalPart = rawAmount.substring(sepIndex + 1)
+            "$integerPart.$decimalPart"
+        } else {
+            rawAmount
+        }
         val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
-        val currency = currencyNormalizer.normalize(amountMatcher.group(2) ?: "EUR")
+        // Fix (BUG-010): Use more specific currency check (Updated groups for DUP-005)
+        var currency = "EUR" // Default currency
+        val currencyGroup = amountMatcher.group(1) ?: amountMatcher.group(3)
+        if (currencyGroup != null && currencyGroup.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
+            currency = currencyNormalizer.normalize(currencyGroup)
+        }
         // 3. Extract logic for merchant
         // Usually merchant is the text that is NOT the amount and NOT a date/time
+        val dateValue = extractDate(cleanRow)
         var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
-            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Date
+            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Date (for cleaning)
             .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "") // Time
             .replace(Regex("""\s{2,}"""), " ") // Double spaces
             .trim()
@@ -8584,15 +8700,35 @@ class BankStatementParser @Inject constructor(
         if (merchant.isBlank() || !merchant.any { it.isLetter() }) {
             merchant = "Unknown Merchant"
         }
-        // Sanity checks: amount shouldn't be zero, merchant shouldn't be too long
-        if (absAmount < 0.01) return null
         return ParsedTransaction(
             amount = absAmount,
             currency = currency,
             merchant = merchantCleaner.clean(merchant),
             type = if (amountStr.contains("-")) TransactionType.PURCHASE else TransactionType.DEPOSIT,
-            confidence = 0.70f // Base confidence for statement parsing
+            confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK,
+            date = dateValue
         )
+    }
+    private fun extractDate(text: String): Long? {
+        val datePatterns = listOf(
+            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})"""),
+            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})""")
+        )
+        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
+        sdf.isLenient = false
+        for (pattern in datePatterns) {
+            pattern.find(text)?.let { match ->
+                val (d, m, y) = match.destructured
+                val year = if (y.length == 2) "20$y" else y
+                val yearInt = year.toIntOrNull() ?: 0
+                if (yearInt in 2015..2035) {
+                    try {
+                        return sdf.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year")?.time
+                    } catch (e: Exception) {}
+                }
+            }
+        }
+        return null
     }
 }
 
@@ -8612,6 +8748,8 @@ import androidx.exifinterface.media.ExifInterface
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
@@ -8639,6 +8777,17 @@ class ReceiptOcrService @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    /**
+     * Dispatcher that automatically routes URIs to the correct processor based on MIME type.
+     */
+    suspend fun processUri(uri: Uri): OcrResult {
+        val mimeType = context.contentResolver.getType(uri) ?: ""
+        return if (mimeType == "application/pdf") {
+            processPdf(uri)
+        } else {
+            processImage(uri)
+        }
+    }
     /**
      * Process an image URI and return OCR results.
      * Also saves a compressed copy of the image for future reference.
@@ -8671,6 +8820,81 @@ class ReceiptOcrService @Inject constructor(
         } finally {
             // CRITICAL: Prevent memory leaks during batch processing
             bitmap.recycle()
+        }
+    }
+    /**
+     * Process a PDF URI by rendering pages to bitmaps and running OCR on each.
+     */
+    suspend fun processPdf(pdfUri: Uri): OcrResult {
+        val tempFile = File(context.cacheDir, "temp_pdf_${System.nanoTime()}.pdf")
+        var renderer: PdfRenderer? = null
+        var pfd: ParcelFileDescriptor? = null
+        try {
+            // 1. Copy PDF to local file (PdfRenderer needs a ParcelFileDescriptor from a file or pipe)
+            context.contentResolver.openInputStream(pdfUri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: throw IllegalStateException("Failed to open PDF stream: $pdfUri")
+            pfd = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            renderer = PdfRenderer(pfd)
+            val allFullText = StringBuilder()
+            val allBlocks = mutableListOf<TextBlock>()
+            var savedThumbnailPath = ""
+            // Limit to first 3-5 pages for performance (Rich functionality requirement)
+            val pageLimit = 5 
+            val pagesToProcess = minOf(renderer.pageCount, pageLimit)
+            var verticalOffset = 0
+            for (i in 0 until pagesToProcess) {
+                val page = renderer.openPage(i)
+                // Render page to high-quality Bitmap (OCR prefers ~200-300 DPI equivalent)
+                // 1024 width is our standard for OCR in loadAndCorrectBitmap
+                val scale = 1024f / page.width
+                val bitmapWidth = 1024
+                val bitmapHeight = (page.height * scale).toInt()
+                val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                try {
+                    // Save first page as JPG for UI preview/record
+                    if (i == 0) {
+                        savedThumbnailPath = saveReceiptImage(bitmap)
+                    }
+                    // Run OCR on this page
+                    val inputImage = InputImage.fromBitmap(bitmap, 0)
+                    val visionText = recognizeText(inputImage)
+                    // Add full text
+                    allFullText.append(visionText.text).append("\n\n")
+                    // Add blocks with offset (Virtual Long Page strategy)
+                    visionText.textBlocks.forEach { block ->
+                        allBlocks.add(
+                            TextBlock(
+                                text = block.text,
+                                confidence = block.lines.firstOrNull()?.confidence,
+                                left = block.boundingBox?.left ?: 0,
+                                top = (block.boundingBox?.top ?: 0) + verticalOffset,
+                                right = block.boundingBox?.right ?: 0,
+                                bottom = (block.boundingBox?.bottom ?: 0) + verticalOffset
+                            )
+                        )
+                    }
+                    verticalOffset += bitmapHeight
+                } finally {
+                    bitmap.recycle() // CRITICAL: Release memory immediately
+                    page.close()
+                }
+            }
+            return OcrResult(
+                fullText = allFullText.toString().trim(),
+                blocks = allBlocks,
+                savedImagePath = savedThumbnailPath
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("ReceiptOcrService", "PDF processing failed for $pdfUri", e)
+            throw IllegalStateException("Failed to scan PDF: ${e.message}", e)
+        } finally {
+            try { renderer?.close() } catch (_: Exception) {}
+            try { pfd?.close() } catch (_: Exception) {}
+            if (tempFile.exists()) tempFile.delete()
         }
     }
     private suspend fun recognizeText(
@@ -8930,29 +9154,25 @@ class ReceiptParser @Inject constructor() {
             confidence = confidence
         )
     }
-    /**
-     * Normalizes Greek OCR errors and cleans up number formatting.
-     */
     private fun normalizeGreekOcr(text: String): String {
-        return text.uppercase()
-            // --- 1. CRITICAL: Fix Numbers broken by spaces (e.g., "55, 00" -> "55,00") ---
-            .replace(Regex("(\\d+)[.,]\\s+(\\d{2})"), "$1.$2") 
-            .replace(Regex("(\\d+)\\s+[.,](\\d{2})"), "$1.$2")
-            // --- 2. Fix Total Keywords ---
-            .replace(Regex(".*[ΠN]O[SZ]O.*AMOUNT.*"), "TOTAL_KEY")
-            .replace(Regex(".*[ΠN]O[SZ]O.*"), "TOTAL_KEY")
-            .replace(Regex(".*[ΣE2ZXY]YN.*[AΛV][O0Ω].*"), "TOTAL_KEY") // ΣΥΝΟΛΟ variants
-            .replace("NAHPQTEO", "TOTAL_KEY")
-            .replace("AMOUNT", "TOTAL_KEY")
-            .replace("TOTAL", "TOTAL_KEY")
-            // --- 3. Fix Dates ---
-            .replace(Regex("(\\d{2})-[D0O]-(\\d{2})"), "$1-04-$2") // Fix "16-D4-2017"
-            .replace("HM/NIA", "ΗΜΕΡΟΜΗΝΙΑ")
-            // --- 4. Currency & Noise Cleaning ---
-            .replace("EVP9", "") 
-            .replace("EVP", "")
-            .replace("EUR", "")
-            .replace("€", "")
+        var normalized = text.uppercase()
+        // --- 1. Fix Numbers broken by spaces ---
+        // "4 5. 5 0" -> "45.50"
+        normalized = normalized.replace(Regex("""(?<=\d)\s+(?=\d)"""), "")
+        // "45 , 00" -> "45.00"
+        normalized = normalized.replace(Regex("""(\d+)\s*[.,]\s*(\d{2})\b"""), "$1.$2")
+        // --- 2. Greek keywords (Targeted) ---
+        normalized = normalized.replace(Regex("""\b[ΣE2ZXYS][YVUI]N[O0]?[AΛV][O0Ω]\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\b[NΠ][OA]S[OA]\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\b[NΠ][AΛ][HN][PR][ΩOQ]TE[OA]\b"""), "TOTAL_KEY")
+        // --- 3. Date Fixes ---
+        normalized = normalized.replace(Regex("""(\d{1,2})[-/][DO0](\d+)[-/](\d{4})"""), "$1-$2-$3")
+        normalized = normalized.replace("HM/NIA", "DATE_KEY")
+        normalized = normalized.replace("ΗΜΕΡΟΜΗΝΙΑ", "DATE_KEY")
+        // --- 4. Currency Noise ---
+        return normalized
+            .replace("EVP9", "").replace("EVP", "")
+            .replace("EUR", "").replace("€", "")
     }
     // --- MERCHANT EXTRACTION ---
     private fun extractMerchant(lines: List<String>): String? {
@@ -9014,8 +9234,8 @@ class ReceiptParser @Inject constructor() {
         // --- STRATEGY 2: Fallback (Smart Max) ---
         // If no keyword found, find the LARGEST plausible number.
         var maxAmount = 0.0
-        // Only scan the bottom 70% of the receipt (Price is rarely at the top)
-        val searchStart = (lines.size * 0.3).toInt() 
+        // Removed bottom 70% restriction to catch totals at top (rare but possible) or middle
+        val searchStart = 0
         for (i in searchStart until lines.size) {
             val line = lines[i]
             // FILTER: Ignore lines that definitely aren't the total
@@ -9044,16 +9264,30 @@ class ReceiptParser @Inject constructor() {
     private fun isValidAmount(amount: Double, line: String): Boolean {
         if (amount > 5000) return false
         if (amount == 0.0) return false
-        // Year check: 2020-2030 usually represents date, not price
-        if (amount >= 2020 && amount <= 2035 && amount % 1 == 0.0) return false
+        // Year check: 2015-2035 usually represents date, not price
+        if (amount >= 2015 && amount <= 2035 && amount % 1 == 0.0) return false
         // Time check: If line contains "ORA" or matches HH:MM pattern logic
         if (line.contains("QPA") || line.contains("ORA")) return false
         return true
     }
     private fun parseAmount(rawAmount: String): Double {
-        // Standardize: "1.250,50" -> "1250.50"
-        // Standardize: "12,50" -> "12.50"
-        val clean = rawAmount.replace(".", "").replace(",", ".")
+        // Safe parsing: 
+        // 1. Identify last separator (. or ,)
+        // 2. Everything before is thousands separator -> remove
+        // 3. Last separator is decimal -> replace with .
+        if (rawAmount.isBlank()) return 0.0
+        val lastComma = rawAmount.lastIndexOf(',')
+        val lastDot = rawAmount.lastIndexOf('.')
+        val lastSeparatorIndex = kotlin.math.max(lastComma, lastDot)
+        var clean = rawAmount
+        if (lastSeparatorIndex != -1) {
+            // Check if it's really a decimal separator (followed by 1 or 2 digits usually)
+            // But strict "last wins" is safer for mixed formats like 1.250,50
+            // Remove all OTHER separators
+            val prefix = rawAmount.substring(0, lastSeparatorIndex).replace(Regex("[.,]"), "")
+            val suffix = rawAmount.substring(lastSeparatorIndex + 1)
+            clean = "$prefix.$suffix"
+        }
         return clean.toDoubleOrNull() ?: 0.0
     }
     private fun extractAmountFromLine(line: String, regex: Regex): Double? {
@@ -9092,10 +9326,10 @@ class ReceiptParser @Inject constructor() {
             pattern.find(text)?.let { match ->
                 val (d, m, y) = match.destructured
                 val year = if (y.length == 2) "20$y" else y
-                // SANITY CHECK: Year must be reasonable (e.g., 2020-2030)
+                // SANITY CHECK: Year must be reasonable (e.g., 2015-2035)
                 // Fixes Receipt #8 where OCR read 2058
                 val yearInt = year.toIntOrNull() ?: 0
-                if (yearInt in 2020..2030) { 
+                if (yearInt in 2015..2035) { 
                     try {
                         return sdf.parse("$d/$m/$year")?.time
                     } catch (e: Exception) { }
@@ -9208,6 +9442,29 @@ class ReceiptParser @Inject constructor() {
         } catch (e: Exception) {
             emptyList()
         }
+    }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\util\AppConstants.kt <a name="mainjavacomyournameexpensetrackerdomainutilappconstantskt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.util
+object AppConstants {
+    // Confidence Thresholds (LOGIC-004 Consolidation)
+    object Confidence {
+        const val RULE_BASED = 0.95f
+        const val ML_PREDICTION = 0.60f
+        const val FUZZY_MATCH = 0.80f
+        const val MANUAL_OVERRIDE = 1.0f
+        const val RECEIPT_FALLBACK = 0.70f
+    }
+    // Time Windows (In Milliseconds)
+    object Windows {
+        const val DUPLICATE_DETECTION = 300_000L // 5 minutes (LOGIC-002 expansion)
+        const val NOTIFICATION_LRU_MAX_AGE = 30 * 60 * 1000L // 30 minutes
     }
 }
 
@@ -9354,6 +9611,28 @@ object CalendarUtils {
         val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
         return daysInMonth - dayOfMonth
     }
+}
+
+```
+
+---
+
+## main\java\com\yourname\expensetracker\domain\util\CommonPatterns.kt <a name="mainjavacomyournameexpensetrackerdomainutilcommonpatternskt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.util
+import java.util.regex.Pattern
+object CommonPatterns {
+    // Core amount extraction regex (DUP-005 consolidation)
+    // Matches patterns like 10.00, 1.234,56, € 10, 10 EUR, etc.
+    val AMOUNT_REGEX: Pattern = Pattern.compile(
+        """(?:([€$£]|EUR|USD|GBP)\s*)?([-+]?\s*\d+(?:[.,\s]\d{3})*(?:[.,]\d{2}))(?:\s*([€$£]|EUR|USD|GBP))?""",
+        Pattern.CASE_INSENSITIVE
+    )
+    // Common merchant noise prefixes (DUP-006 consolidation)
+    val MERCHANT_PREFIXES = listOf(
+        "VRP*", "SQ *", "PAYPAL *", "IZ *", "ZETTLE *", "SUMUP *", 
+        "STRIPE *", "AMZN Mktp", "APPLE.COM/BILL"
+    )
 }
 
 ```
@@ -9632,8 +9911,14 @@ class NotificationCaptureService : NotificationListenerService() {
     lateinit var repository: NotificationRepository
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
-    // Thread-safe, bounded deduplication cache
-    private val processedNotifications = ConcurrentHashMap<String, Long>()
+    // Thread-safe, bounded deduplication cache (INS-005)
+    private val processedNotifications = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Long>(100, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
+                return size > 500 // Limit to 500 entries
+            }
+        }
+    )
     private val processCount = java.util.concurrent.atomic.AtomicInteger(0)
     companion object {
         private const val TAG = "NotificationCapture"
@@ -11867,6 +12152,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.domain.model.OperationResult
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -12032,17 +12318,28 @@ class AddExpenseViewModel @Inject constructor(
                     date = currentState.date,
                     notes = currentState.notes.takeIf { it.isNotBlank() }
                 )
-                if (result == -1L) {
-                    _state.update {
-                        it.copy(isSaving = false, saveResult = SaveResult.Duplicate)
+                when (result) {
+                    is OperationResult.Success -> {
+                        // 2. If recurring, save the rule
+                        if (currentState.isRecurring) {
+                            saveRecurringRule(merchantTrimmed, normalizedAmount, currentState.recurrenceFrequency, currentState.date)
+                        }
+                        _state.update {
+                            it.copy(isSaving = false, saveResult = SaveResult.Success)
+                        }
                     }
-                } else {
-                    // 2. If recurring, save the rule
-                    if (currentState.isRecurring) {
-                        saveRecurringRule(merchantTrimmed, normalizedAmount, currentState.recurrenceFrequency, currentState.date)
+                    is OperationResult.Duplicate -> {
+                        _state.update {
+                            it.copy(isSaving = false, saveResult = SaveResult.Duplicate)
+                        }
                     }
-                    _state.update {
-                        it.copy(isSaving = false, saveResult = SaveResult.Success)
+                    is OperationResult.Error -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveResult.Error(result.message)
+                            )
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -14213,7 +14510,7 @@ fun HomeScreen(
             ) {
                 items(
                     items = state.widgets,
-                    key = { getWidgetId(it) },
+                    key = { HomeViewModel.getWidgetId(it) },
                     span = { widget ->
                         GridItemSpan(if (isFullSpan(widget)) 2 else 1)
                     },
@@ -14222,9 +14519,9 @@ fun HomeScreen(
                     WidgetWrapper(
                         widget = widget,
                         isEditMode = state.isEditMode,
-                        onMoveUp = { viewModel.moveWidget(getWidgetId(widget), true) },
-                        onMoveDown = { viewModel.moveWidget(getWidgetId(widget), false) },
-                        onToggleVisibility = { viewModel.toggleWidgetVisibility(getWidgetId(widget)) }
+                        onMoveUp = { viewModel.moveWidget(HomeViewModel.getWidgetId(widget), true) },
+                        onMoveDown = { viewModel.moveWidget(HomeViewModel.getWidgetId(widget), false) },
+                        onToggleVisibility = { viewModel.toggleWidgetVisibility(HomeViewModel.getWidgetId(widget)) }
                     ) {
                         when (widget) {
                             is DashboardWidget.SafeToSpend -> {
@@ -14501,18 +14798,7 @@ fun WidgetWrapper(
         }
     }
 }
-private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
-    is DashboardWidget.SafeToSpend -> "safe_to_spend"
-    is DashboardWidget.SpendingPaceWidget -> "spending_pace"
-    is DashboardWidget.PendingReviewAlert -> "review_alert"
-    is DashboardWidget.SpendingTrend -> "spending_trend"
-    is DashboardWidget.NaturalLanguageInsight -> "insight"
-    is DashboardWidget.PeriodSummary -> "period_summary"
-    is DashboardWidget.BudgetHealthWidget -> "budget_health"
-    is DashboardWidget.TopCategories -> "top_categories"
-    is DashboardWidget.RecentTransactions -> "recent_transactions"
-    is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
-}
+// getWidgetId removed - using HomeViewModel.getWidgetId instead
 private fun isFullSpan(widget: DashboardWidget): Boolean = when (widget) {
     is DashboardWidget.SpendingPaceWidget,
     is DashboardWidget.PendingReviewAlert -> false
@@ -15052,12 +15338,7 @@ class HomeViewModel @Inject constructor(
         val pacePercentage = if (baseline != null && baseline > 0) {
             val expected = baseline * dayOfMonthCoerced / daysInMonth
             val calculated = (monthSpent / expected * 100).toFloat()
-            // Dampen day 1 pace
-            if (dayOfMonth == 1) {
-                if (calculated > 110f) 110f else if (calculated < 90f) 90f else calculated
-            } else {
-                if (calculated.isFinite()) calculated else 0f
-            }
+            if (calculated.isFinite()) calculated else 0f
         } else 0f
         val pace = SpendingPace(
             currentMonthSpent = monthSpent,
@@ -15207,18 +15488,6 @@ class HomeViewModel @Inject constructor(
         dashboardRepository.saveDashboardConfig(currentConfig)
         // isEditMode.value = isEditMode.value
     }
-    private fun getWidgetId(widget: DashboardWidget): String = when (widget) {
-        is DashboardWidget.SafeToSpend -> "safe_to_spend"
-        is DashboardWidget.SpendingPaceWidget -> "spending_pace"
-        is DashboardWidget.PendingReviewAlert -> "review_alert"
-        is DashboardWidget.SpendingTrend -> "spending_trend"
-        is DashboardWidget.NaturalLanguageInsight -> "insight"
-        is DashboardWidget.PeriodSummary -> "period_summary"
-        is DashboardWidget.BudgetHealthWidget -> "budget_health"
-        is DashboardWidget.TopCategories -> "top_categories"
-        is DashboardWidget.RecentTransactions -> "recent_transactions"
-        is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
-    }
     private fun buildNaturalLanguageInsight(
         monthSpent: Double,
         previousMonthTotal: Double,
@@ -15264,6 +15533,20 @@ class HomeViewModel @Inject constructor(
                     priority = priority
                 )
             )
+        }
+    }
+    companion object {
+        fun getWidgetId(widget: DashboardWidget): String = when (widget) {
+            is DashboardWidget.SafeToSpend -> "safe_to_spend"
+            is DashboardWidget.SpendingPaceWidget -> "spending_pace"
+            is DashboardWidget.PendingReviewAlert -> "review_alert"
+            is DashboardWidget.SpendingTrend -> "spending_trend"
+            is DashboardWidget.NaturalLanguageInsight -> "insight"
+            is DashboardWidget.PeriodSummary -> "period_summary"
+            is DashboardWidget.BudgetHealthWidget -> "budget_health"
+            is DashboardWidget.TopCategories -> "top_categories"
+            is DashboardWidget.RecentTransactions -> "recent_transactions"
+            is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
         }
     }
 }
@@ -15350,7 +15633,7 @@ fun ReceiptScanScreen(
     }
     // Gallery launcher
     val galleryLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.processGalleryImage(it) }
     }
@@ -15418,7 +15701,7 @@ fun ReceiptScanScreen(
                         }
                     },
                     onGalleryClick = {
-                        galleryLauncher.launch("image/*")
+                        galleryLauncher.launch(arrayOf("image/*", "application/pdf"))
                     }
                 )
                 ScanStep.PROCESSING -> ProcessingStep()
@@ -15916,6 +16199,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.model.OperationResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -16096,20 +16380,31 @@ class ReceiptScanViewModel @Inject constructor(
                     paymentMethod = currentState.paymentMethod,
                     notes = currentState.notes.takeIf { it.isNotBlank() }
                 )
-                if (result == -1L) {
-                    _state.update {
-                        it.copy(
-                            isSaving = false,
-                            saveResult = SaveReceiptResult.Duplicate
-                        )
+                when (result) {
+                    is OperationResult.Success -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                step = ScanStep.DONE,
+                                saveResult = SaveReceiptResult.Success
+                            )
+                        }
                     }
-                } else {
-                    _state.update {
-                        it.copy(
-                            isSaving = false,
-                            step = ScanStep.DONE,
-                            saveResult = SaveReceiptResult.Success
-                        )
+                    is OperationResult.Duplicate -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveReceiptResult.Duplicate
+                            )
+                        }
+                    }
+                    is OperationResult.Error -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveReceiptResult.Error(result.message)
+                            )
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -16159,6 +16454,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16212,6 +16508,20 @@ class RecurringExpensesViewModel @Inject constructor(
                     refreshTrigger.value += 1
                 }
             }
+        }
+    }
+    fun confirmPattern(pattern: RecurringPattern) {
+        viewModelScope.launch {
+            val manual = ManualRecurringExpense(
+                merchant = pattern.merchantName,
+                amount = pattern.averageAmount,
+                currency = pattern.currency,
+                frequency = pattern.frequency,
+                nextDate = pattern.nextExpectedDate,
+                note = "Detected and confirmed by user"
+            )
+            recurringExpenseDao.insert(manual)
+            refreshTrigger.value += 1
         }
     }
     fun deletePlannedExpense(planned: com.yourname.expensetracker.domain.model.PlannedExpense) {
@@ -16272,7 +16582,8 @@ fun RecurringExpensesScreen(
                         items(patterns) { pattern ->
                             RecurringExpenseItem(
                                 pattern = pattern,
-                                onDelete = { viewModel.deleteManualRule(pattern) }
+                                onDelete = { viewModel.deleteManualRule(pattern) },
+                                onConfirm = { viewModel.confirmPattern(pattern) }
                             )
                         }
                     }
@@ -16345,7 +16656,8 @@ fun PlannedExpenseItem(
 @Composable
 fun RecurringExpenseItem(
     pattern: RecurringPattern,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onConfirm: () -> Unit
 ) {
     val isManual = pattern.id != null || pattern.confidence >= 0.99f
     Card(
@@ -16384,8 +16696,8 @@ fun RecurringExpenseItem(
                 }
             } else {
                 SuggestionChip(
-                    onClick = { /* TODO: Confirm/Convert to Manual */ },
-                    label = { Text("Detected") }
+                    onClick = onConfirm,
+                    label = { Text("Confirm Pattern") }
                 )
             }
         }
@@ -16461,11 +16773,16 @@ fun ReviewScreen(
     val coroutineScope = rememberCoroutineScope()
     var showDebugMenu by remember { mutableStateOf(false) }
     val batchLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+        ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         if (uris.isNotEmpty()) {
             viewModel.processBatch(uris)
         }
+    }
+    val statementLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { viewModel.processStatement(it) }
     }
     LaunchedEffect(errorMessage) {
         errorMessage?.let {
@@ -16504,13 +16821,17 @@ fun ReviewScreen(
                                 text = { Text("Mass Insert (Batch)") },
                                 onClick = {
                                     showDebugMenu = false
-                                    batchLauncher.launch(
-                                        androidx.activity.result.PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
+                                    batchLauncher.launch(arrayOf("image/*", "application/pdf"))
                                 },
                                 leadingIcon = { Icon(Icons.Rounded.Layers, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Import Bank Statement") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    statementLauncher.launch(arrayOf("image/*", "application/pdf"))
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.ReceiptLong, null) }
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -17002,6 +17323,7 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.domain.model.OperationResult
 // ...
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17036,11 +17358,15 @@ class ReviewViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     fun approveReview(reviewId: Long) {
         viewModelScope.launch {
-            try {
-                repository.approveReview(reviewId)
-            } catch (e: Exception) {
-                _errorMessage.value = "Failed to approve: ${e.message}"
-            }
+            val result = repository.approveReview(reviewId)
+            handleResult(result, "Failed to approve")
+        }
+    }
+    private fun handleResult(result: OperationResult<Long>, prefix: String) {
+        when (result) {
+            is OperationResult.Success -> { /* Handled by UI observing DB change */ }
+            is OperationResult.Duplicate -> _errorMessage.value = "Duplicate transaction detected"
+            is OperationResult.Error -> _errorMessage.value = "$prefix: ${result.message}"
         }
     }
     fun rejectReview(reviewId: Long) {
@@ -17055,16 +17381,13 @@ class ReviewViewModel @Inject constructor(
         finalCategoryId: Long?
     ) {
         viewModelScope.launch {
-            try {
-                repository.approveReview(
-                    reviewId = reviewId,
-                    finalAmount = finalAmount,
-                    finalMerchant = finalMerchant,
-                    finalCategoryId = finalCategoryId
-                )
-            } catch (e: Exception) {
-                _errorMessage.value = "Failed to approve edits: ${e.message}"
-            }
+            val result = repository.approveReview(
+                reviewId = reviewId,
+                finalAmount = finalAmount,
+                finalMerchant = finalMerchant,
+                finalCategoryId = finalCategoryId
+            )
+            handleResult(result, "Failed to approve edits")
         }
     }
     fun clearError() {
@@ -17229,6 +17552,7 @@ fun TransactionsScreen(
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
     var expenseToRecurring by remember { mutableStateOf<Expense?>(null) }
+    var expenseToRename by remember { mutableStateOf<Expense?>(null) }
     Scaffold(
         topBar = {
             Column {
@@ -17295,7 +17619,8 @@ fun TransactionsScreen(
                         transaction = item,
                         onDelete = { expenseToDelete = item.expense },
                         onEditCategory = { expenseToCategorize = item.expense },
-                        onMarkRecurring = { expenseToRecurring = item.expense }
+                        onMarkRecurring = { expenseToRecurring = item.expense },
+                        onRename = { expenseToRename = item.expense }
                     )
                 }
             }
@@ -17345,7 +17670,59 @@ fun TransactionsScreen(
                 }
             )
         }
+        // Rename Merchant Dialog
+        if (expenseToRename != null) {
+            RenameMerchantDialog(
+                currentName = expenseToRename?.merchant ?: "",
+                onDismiss = { expenseToRename = null },
+                onConfirm = { newName ->
+                    expenseToRename?.let { viewModel.updateMerchant(it, newName) }
+                    expenseToRename = null
+                }
+            )
+        }
     }
+}
+@Composable
+fun RenameMerchantDialog(
+    currentName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var name by remember { mutableStateOf(currentName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename Merchant") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Assigning a brand name helps the app learn. Future transactions from this source will be auto-corrected.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Brand Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(name) },
+                enabled = name.isNotBlank() && name != currentName
+            ) {
+                Text("Update")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 @Composable
 fun CategoryPickerDialog(
@@ -17393,7 +17770,8 @@ fun TransactionItem(
     transaction: ExpenseWithCategory,
     onDelete: () -> Unit,
     onEditCategory: () -> Unit,
-    onMarkRecurring: () -> Unit
+    onMarkRecurring: () -> Unit,
+    onRename: () -> Unit
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -17435,7 +17813,9 @@ fun TransactionItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         maxLines = 1,
-                        modifier = Modifier.weight(1f, fill = false)
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clickable { onRename() }
                     )
                     if (expense.isManualEntry) {
                         Spacer(modifier = Modifier.width(4.dp))
@@ -17637,6 +18017,11 @@ class TransactionsViewModel @Inject constructor(
     fun updateCategory(expense: Expense, categoryId: Long) {
         viewModelScope.launch {
             repository.updateExpenseCategory(expense, categoryId)
+        }
+    }
+    fun updateMerchant(expense: Expense, newMerchant: String) {
+        viewModelScope.launch {
+            repository.updateExpenseMerchant(expense, newMerchant)
         }
     }
     fun markAsRecurring(expense: Expense, frequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency) {

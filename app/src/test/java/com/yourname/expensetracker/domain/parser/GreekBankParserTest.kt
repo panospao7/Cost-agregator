@@ -8,10 +8,18 @@ import org.junit.Test
 
 class GreekBankParserTest {
     private lateinit var parser: GreekBankParser
+    private lateinit var currencyNormalizer: com.yourname.expensetracker.domain.util.CurrencyNormalizer
+    private lateinit var merchantCleaner: com.yourname.expensetracker.domain.util.MerchantCleaner
 
     @Before
     fun setup() {
-        parser = GreekBankParser()
+        currencyNormalizer = io.mockk.mockk {
+            io.mockk.every { normalize(any()) } answers { firstArg() ?: "EUR" }
+        }
+        merchantCleaner = io.mockk.mockk {
+            io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }
+        }
+        parser = GreekBankParser(currencyNormalizer, merchantCleaner)
     }
 
     @Test
