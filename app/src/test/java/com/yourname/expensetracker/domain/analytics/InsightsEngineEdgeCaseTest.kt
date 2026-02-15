@@ -1,0 +1,114 @@
+package com.yourname.expensetracker.domain.analytics
+
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import io.mockk.*
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import java.util.Calendar
+
+class InsightsEngineEdgeCaseTest {
+    
+    private val expenseDao = mockk<ExpenseDao>(relaxed = true)
+    private lateinit var engine: InsightsEngine
+
+    @Before
+    fun setup() {
+        engine = InsightsEngine(expenseDao)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { expenseDao.getCountForPeriod(any(), any()) } returns 0
+        coEvery { expenseDao.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
+        coEvery { expenseDao.getAllMerchantStats() } returns emptyList()
+        coEvery { expenseDao.getMerchantStats() } returns emptyList()
+        coEvery { expenseDao.getRecurringCandidates() } returns emptyList()
+        coEvery { expenseDao.getDayOfWeekPattern(any(), any(), any()) } returns emptyList()
+        coEvery { expenseDao.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
+        coEvery { expenseDao.getLargestExpenseForPeriod(any(), any()) } returns null
+    }
+
+    @Test
+    fun `empty expenses list returns valid snapshot with zeros`() = runBlocking {
+        val categories = listOf(
+            Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")
+        )
+        
+        val snapshot = engine.generateInsights(categories, emptyList())
+        
+        assertNotNull("Snapshot should not be null", snapshot)
+        assertEquals(0.0, snapshot.monthlyComparison.currentTotal, 0.01)
+        assertEquals(0, snapshot.monthlyComparison.currentCount)
+        assertTrue("Category insights should be empty", snapshot.categoryInsights.isEmpty())
+        assertTrue("Top merchants should be empty", snapshot.topMerchants.isEmpty())
+    }
+
+    @Test
+    fun `single expense does not crash engine`() = runBlocking {
+        val categories = listOf(Category(id = 1L, name = "Food", icon = "food", color = "#FFF"))
+        val expenses = listOf(
+            makeExpense(merchant = "Test", amount = 10.0, daysAgo = 5)
+        )
+        
+        val snapshot = engine.generateInsights(categories, expenses)
+        
+        assertNotNull("Should handle single expense", snapshot)
+    }
+
+    @Test
+    fun `leap year february calculations are correct`() {
+        val cal = Calendar.getInstance()
+        cal.set(2024, Calendar.FEBRUARY, 29)
+        val period = engine.getMonthPeriod(cal.timeInMillis)
+        
+        assertEquals(2024, period.year)
+        assertEquals(Calendar.FEBRUARY, period.month)
+        
+        // Month period spans exactly one month
+        val periodCal = Calendar.getInstance()
+        periodCal.timeInMillis = period.startMs
+        assertEquals(2024, periodCal.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, periodCal.get(Calendar.MONTH))
+        assertEquals(1, periodCal.get(Calendar.DAY_OF_MONTH))
+
+        periodCal.timeInMillis = period.endMs
+        assertEquals(2024, periodCal.get(Calendar.YEAR))
+        assertEquals(Calendar.MARCH, periodCal.get(Calendar.MONTH))
+        assertEquals(1, periodCal.get(Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
+    fun `negative amounts are handled in buildDailyTotals`() = runBlocking {
+        val expenses = listOf(
+            makeExpense(merchant = "Refund", amount = -50.0, daysAgo = 0),
+            makeExpense(merchant = "Purchase", amount = 100.0, daysAgo = 0)
+        )
+        
+        val totals = engine.buildDailyTotals(expenses, 1)
+        
+        val totalSpent = totals.values.sum()
+        assertEquals(50.0, totalSpent, 0.01)
+    }
+
+    @Test
+    fun `very large amounts do not overflow`() = runBlocking {
+        val largeAmount = Double.MAX_VALUE / 10
+        val expenses = listOf(
+            makeExpense(merchant = "BigPurchase", amount = largeAmount, daysAgo = 1)
+        )
+        
+        val totals = engine.buildDailyTotals(expenses, 7)
+        assertNotNull("Large amounts should not cause crash", totals)
+    }
+
+    private fun makeExpense(merchant: String, amount: Double, daysAgo: Int) = Expense(
+        id = 0,
+        amount = amount,
+        currency = "EUR",
+        merchant = merchant,
+        transactionType = TransactionType.PURCHASE,
+        date = System.currentTimeMillis() - daysAgo * 86_400_000L
+    )
+}

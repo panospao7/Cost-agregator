@@ -242,10 +242,16 @@ class NotificationRepository @Inject constructor(
                         amount = parsed.amount,
                         merchant = correctedMerchant,
                         date = notification.timestamp,
-                        windowMs = 60000 
+                        windowMs = 300000 
                     )
+                    
                     if (isDuplicate) {
                         dao.markRelevance(rawId, false)
+                        sourceStatsDao.incrementDuplicate(notification.packageName)
+                        
+                        // Train ML classifier: duplicates are still valid transactions
+                        classifier.train(fullNotificationText, isTransaction = true)
+                        
                         return@withTransaction
                     }
 
@@ -285,6 +291,23 @@ class NotificationRepository @Inject constructor(
                 }
 
                 RoutingDecision.NEEDS_REVIEW -> {
+                    // Check for duplicates before adding to review
+                    val isDuplicate = expenseDao.isDuplicate(
+                        amount = parsed.amount,
+                        merchant = correctedMerchant,
+                        date = notification.timestamp,
+                        windowMs = 300000
+                    )
+                    if (isDuplicate) {
+                        dao.markRelevance(rawId, false)
+                        sourceStatsDao.incrementDuplicate(notification.packageName)
+                        
+                        // Train ML classifier: duplicates are still valid transactions
+                        classifier.train(fullNotificationText, isTransaction = true)
+                        
+                        return@withTransaction
+                    }
+
                     val classification = hybridClassifier.classify(
                         merchantName = correctedMerchant,
                         amount = parsed.amount,
@@ -364,12 +387,12 @@ class NotificationRepository @Inject constructor(
         val transactionDate: Long = review.suggestedDate ?: notification?.timestamp ?: review.createdAt
 
         // Check for duplicates
-        // Fix 1.1: Use consistent 60s window for manual/review approvals
+        // Increased window to 5 minutes to catch delayed bank notifications
         val isDuplicate = expenseDao.isDuplicate(
             amount = amount,
             merchant = merchant,
             date = transactionDate,
-            windowMs = 60000
+            windowMs = 300000
         )
         
         if (!isDuplicate) {
@@ -456,8 +479,17 @@ class NotificationRepository @Inject constructor(
             }
         } else {
              // It's a duplicate, we treat this as "processed" to clear the review
+             sourceStatsDao.incrementDuplicate(review.packageName)
              sourceStatsDao.decrementPending(review.packageName)
              pendingReviewDao.updateStatus(reviewId, "DUPLICATE")
+             
+             // Train classifier: user approved this as an expense (even if duplicate)
+             val fullText = listOfNotNull(
+                 review.notificationTitle,
+                 review.notificationText
+             ).joinToString(" ")
+             classifier.train(fullText, isTransaction = true)
+
              return OperationResult.Duplicate
         }
     }
@@ -527,6 +559,106 @@ class NotificationRepository @Inject constructor(
     suspend fun markAsRelevant(id: Long, isRelevant: Boolean) {
         val notification = dao.getById(id) ?: return
         dao.markRelevance(id, isRelevant)
+
+        val fullNotificationText = listOfNotNull(
+            notification.title,
+            notification.text,
+            notification.bigText
+        ).joinToString(" ")
+
+        if (isRelevant) {
+            // CRITICAL FIX: When user explicitly marks as relevant (Expense ✓),
+            // we must actually CREATE the expense or review item.
+            
+            // 1. Try to parse again
+            val parsed = parserRegistry.parse(
+                title = notification.title,
+                text = notification.text,
+                bigText = notification.bigText,
+                subText = notification.subText,
+                packageName = notification.packageName
+            )
+
+            if (parsed != null) {
+                // We have valid data, so we can create an Expense directly (User Override)
+                // We assume if they clicked "Expense", they validated it looks correct-ish,
+                // or at least we should create it so they can see it.
+                
+                // Normalization
+                val lookupResult = merchantNormalizer.normalize(parsed.merchant)
+                val correctedMerchant = lookupResult.canonical.normalizedName
+                
+                // Categorization
+                val classification = hybridClassifier.classify(
+                    merchantName = correctedMerchant,
+                    amount = parsed.amount,
+                    notificationTitle = notification.title,
+                    notificationText = notification.text,
+                    packageName = notification.packageName
+                )
+                val categoryId = classification.categoryId.takeIf { it > 0 }
+
+                // Check for duplicates before inserting
+                val isDuplicate = expenseDao.isDuplicate(
+                    amount = parsed.amount,
+                    merchant = correctedMerchant,
+                    date = notification.timestamp,
+                    windowMs = 300000
+                )
+
+                if (isDuplicate) {
+                    sourceStatsDao.incrementDuplicate(notification.packageName)
+                    
+                    // Train classifier: user manually marked this as an expense
+                    classifier.train(fullNotificationText, isTransaction = true)
+                } else {
+                    val expense = Expense(
+                        amount = parsed.amount,
+                        currency = parsed.currency,
+                        merchant = correctedMerchant,
+                        transactionType = parsed.type,
+                        date = notification.timestamp,
+                        rawNotificationId = id,
+                        categoryId = categoryId,
+                        paymentMethod = PaymentMethod.CARD,
+                        isManualEntry = false,
+                        notes = "Manually recovered from debug log"
+                    )
+                    
+                    try {
+                        expenseDao.insert(expense)
+                        sourceStatsDao.incrementAccepted(notification.packageName)
+                        // Decrease auto-rejected count since we reversed the decision
+                        // (Optional, but keeps stats cleaner)
+                        
+                        budgetMonitor.checkBudgets()
+                        
+                        // Train classifier
+                        classifier.train(fullNotificationText, isTransaction = true)
+                    } catch (e: Exception) {
+                        android.util.Log.e("NotificationRepo", "Failed to insert recovered expense", e)
+                    }
+                }
+            } else {
+                // Parsing failed, but user says it's an expense.
+                // Create a PendingReview with blank values so they can fill it in.
+                val review = PendingReview(
+                    rawNotificationId = id,
+                    suggestedAmount = 0.0,
+                    suggestedCurrency = "EUR",
+                    suggestedMerchant = "Unknown",
+                    suggestedType = TransactionType.PURCHASE.name,
+                    suggestedCategoryId = null,
+                    confidence = 1.0f, // Manual override = 100% confidence
+                    packageName = notification.packageName,
+                    notificationTitle = notification.title,
+                    notificationText = notification.text ?: notification.bigText,
+                    suggestedDate = notification.timestamp
+                )
+                pendingReviewDao.insert(review)
+                sourceStatsDao.incrementPending(notification.packageName)
+            }
+        }
 
         // Train classifier directly from this manual action
         // Also record a correction for future retraining (LOG-003)

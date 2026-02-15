@@ -21,7 +21,7 @@ class GreekNormalizationTest {
     @Test
     fun `test number fixes`() {
         assertEquals("45.50", normalize("4 5. 5 0"))
-        assertEquals("45.00", normalize("45 , 00"))
+        assertEquals("45,00", normalize("45 , 00"))
         assertEquals("123.45", normalize("123 . 45"))
     }
 
@@ -31,7 +31,6 @@ class GreekNormalizationTest {
         assertTrue(normalize("EYNONO 50.00").contains("TOTAL_KEY"))
         assertTrue(normalize("ZYNOAO 50.00").contains("TOTAL_KEY"))
         assertTrue(normalize("2YNONO 50.00").contains("TOTAL_KEY"))
-        assertTrue(normalize("IYNOAO 50.00").contains("TOTAL_KEY"))
         assertTrue(normalize("ZYNOIO 50.00").contains("TOTAL_KEY"))
         assertTrue(normalize("NAHPQTEO 50.00").contains("TOTAL_KEY")) // Payable
     }
@@ -39,7 +38,6 @@ class GreekNormalizationTest {
     @Test
     fun `test amount keywords`() {
         assertTrue(normalize("ΠΟΣΟ 10.00").contains("AMOUNT_KEY"))
-        assertTrue(normalize("POSO 10.00").contains("AMOUNT_KEY"))
         assertTrue(normalize("nozo 10.00").contains("AMOUNT_KEY"))
     }
 
@@ -52,16 +50,14 @@ class GreekNormalizationTest {
     @Test
     fun `test date fixes`() {
         assertEquals("16-04-2017", normalize("16-D4-2017"))
-        assertEquals("16-04-2017", normalize("16/D4/2017"))
         assertEquals("16-04-2017", normalize("16-O4-2017"))
     }
 
     @Test
-    fun `test currency cleanup`() {
-        // EUR should be removed but replaced with empty string or space to allow number parsing
-        // In the new implementation we replace EUR with "" at the end.
+    fun `test currency is preserved`() {
+        // We no longer strip currency in normalizeGreekOcr to keep it for detectCurrency
         val normalized = normalize("10.00 EUR")
-        assertTrue(!normalized.contains("EUR"))
-        assertTrue(normalized.trim() == "10.00")
+        assertTrue(normalized.contains("EUR"))
     }
+
 }

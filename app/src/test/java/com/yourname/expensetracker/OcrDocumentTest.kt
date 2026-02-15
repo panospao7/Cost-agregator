@@ -378,14 +378,14 @@ class OcrDocumentTest {
     }
 
     @Test
-    fun `test complete line - ΣΥΝΟΛΟ: 80,43 €`() {
+    fun `test complete line - ΣΥΝΟΛΟ 80_43 EUR`() {
         val input = "ΣΥΝΟΛΟ: 80,43 €"
         val result = parser.parse(input)
         assertEquals("Should parse 'ΣΥΝΟΛΟ: 80,43 €'", 80.43, result.total!!, 0.01)
     }
 
     @Test
-    fun `test complete line - ΠΟΣΟ/AMOUNT`() {
+    fun `test complete line - ΠΟΣΟ_AMOUNT`() {
         val input = "ΠΟΣΟ/AMOUNT: €80,43"
         val result = parser.parse(input)
         assertEquals("Should parse 'ΠΟΣΟ/AMOUNT: €80,43'", 80.43, result.total!!, 0.01)
@@ -436,7 +436,7 @@ class OcrDocumentTest {
     }
 
     @Test
-    fun `test OCR error - EYPΩ (ΕΥΡΩ)`() {
+    fun `test OCR error - EYPOMEGA (ΕΥΡΩ)`() {
         val input = """
             STORE
             TOTAL 50,00 EYPΩ
@@ -457,7 +457,7 @@ class OcrDocumentTest {
     }
 
     @Test
-    fun `test OCR error - HM/NIA (ΗΜΕΡΟΜΗΝΙΑ)`() {
+    fun `test OCR error - HM_NIA (ΗΜΕΡΟΜΗΝΙΑ)`() {
         val input = """
             STORE
             HM/NIA: 30/01/2026
@@ -504,6 +504,7 @@ class OcrDocumentTest {
         val result = parser.parse(input)
         assertEquals("Should parse NAHPQTEO as ΠΛΗΡΩΤΕΟ", 10.00, result.total!!, 0.01)
     }
+
 
     // ============================================
     // SECTION 15: MERCHANT NAMES

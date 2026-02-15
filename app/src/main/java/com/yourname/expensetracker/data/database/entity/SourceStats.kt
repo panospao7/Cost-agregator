@@ -11,12 +11,16 @@ data class SourceStats(
     val rejectedByUser: Long = 0,
     val autoRejected: Long = 0,
     val pendingReview: Long = 0,
+    val duplicates: Long = 0,
     val lastSeen: Long = System.currentTimeMillis()
 ) {
     val trustScore: Float
-        get() = if (totalNotifications > 0)
-            acceptedAsExpense.toFloat() / totalNotifications
-        else 0f
+        get() {
+            val valid = acceptedAsExpense + duplicates
+            return if (totalNotifications > 0)
+                valid.toFloat() / totalNotifications
+            else 0f
+        }
 
     val isLikelySpam: Boolean
         get() = totalNotifications > 10 && trustScore < 0.05f

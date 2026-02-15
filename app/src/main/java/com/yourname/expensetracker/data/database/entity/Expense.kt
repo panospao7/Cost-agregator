@@ -27,7 +27,8 @@ import androidx.room.PrimaryKey
         Index(value = ["transactionType", "categoryId", "date"]), // Covers (categoryId, date) if filtered by type
         Index(value = ["categoryId", "date"]),      // For category breakdown and FK constraint
         Index(value = ["amount", "merchant", "date"]), // High specificity for duplicate check
-        Index(value = ["merchant", "date"]) // Necessary for merchant-specific time searches
+        Index(value = ["merchant", "date"]), // Necessary for merchant-specific time searches
+        Index(value = ["transactionType", "merchant", "date"]) // Restored by Migration 19->20
     ]
 )
 data class Expense(

@@ -146,6 +146,46 @@ class RecurringExpenseEngineTest {
         assertEquals(1.0f, pattern.confidence, 0.0f) // Manual = 1.0 confidence
     }
 
+    @Test
+    fun `exactly 3 occurrences minimum threshold`() = runTest {
+        val expenses = listOf(
+            createExpense("Test", 10.0, "2026-01-01"),
+            createExpense("Test", 10.0, "2026-02-01"),
+            createExpense("Test", 10.0, "2026-03-01")
+        )
+        coEvery { expenseDao.getExpensesSince(any()) } returns expenses
+        
+        val patterns = engine.getPatterns()
+        assertTrue("Should detect with 3 occurrences", patterns.isNotEmpty())
+    }
+
+    @Test
+    fun `exactly 2 occurrences should not detect`() = runTest {
+        val expenses = listOf(
+            createExpense("Test", 10.0, "2026-01-01"),
+            createExpense("Test", 10.0, "2026-02-01")
+        )
+        coEvery { expenseDao.getExpensesSince(any()) } returns expenses
+        
+        val patterns = engine.getPatterns()
+        assertTrue("Should NOT detect with 2 occurrences", patterns.isEmpty())
+    }
+
+    @Test
+    fun `merchant case variations grouped together`() = runTest {
+        val expenses = listOf(
+            createExpense("Netflix", 10.0, "2026-01-01"),
+            createExpense("NETFLIX", 10.0, "2026-02-01"),
+            createExpense("netflix", 10.0, "2026-03-01")
+        )
+        coEvery { expenseDao.getExpensesSince(any()) } returns expenses
+        
+        val patterns = engine.getPatterns()
+        // If this fails, it means normalization is missing in RecurringExpenseEngine
+        assertEquals("Should group case variations into 1 pattern", 1, patterns.size)
+    }
+
+
     private fun createExpense(merchant: String, amount: Double, dateStr: String): Expense {
         // Simple parser for test dates
         val parts = dateStr.split("-")

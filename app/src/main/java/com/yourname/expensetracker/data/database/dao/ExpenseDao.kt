@@ -54,9 +54,24 @@ interface ExpenseDao {
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses 
-            WHERE (ABS(amount - :amount) < 0.01 OR ABS(amount - :amount) / amount < 0.001)
-            AND merchant = :merchant 
+            WHERE transactionType = 'PURCHASE'
+            AND ABS(amount - :amount) < 0.01
             AND ABS(date - :date) <= :windowMs
+            AND (
+                -- Exact match
+                merchant = :merchant 
+                OR 
+                -- Case-insensitive match
+                UPPER(merchant) = UPPER(:merchant)
+                OR
+                -- Normalized match (remove spaces)
+                UPPER(REPLACE(merchant, ' ', '')) = UPPER(REPLACE(:merchant, ' ', ''))
+                OR
+                -- Substring match
+                merchant LIKE '%' || :merchant || '%'
+                OR
+                :merchant LIKE '%' || merchant || '%'
+            )
         )
     """)
     suspend fun isDuplicate(amount: Double, merchant: String, date: Long, windowMs: Long = 300000): Boolean

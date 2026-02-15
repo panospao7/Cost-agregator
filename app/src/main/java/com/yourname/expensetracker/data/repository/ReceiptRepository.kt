@@ -410,17 +410,16 @@ class ReceiptRepository @Inject constructor(
     /**
      * Concatenates all raw OCR text from the database for debugging/parsing refinement
      */
+    /**
+     * Concatenates all raw OCR text from the database for debugging/parsing refinement
+     */
     suspend fun exportParserDebugData(): String {
         val receipts = scannedReceiptDao.getAll()
         val sb = StringBuilder()
         sb.append("=== EXPORTED PARSER DEBUG DATA (${receipts.size} RECEIPTS) ===\n\n")
         receipts.forEachIndexed { index, receipt ->
             sb.append("--- RECEIPT #${index + 1} (ID: ${receipt.id}) ---\n")
-            sb.append("MERCHANT: ${receipt.parsedMerchant ?: "Unknown"}\n")
-            sb.append("TOTAL: ${receipt.parsedTotal ?: "Not Found"}\n")
-            sb.append("DATE: ${receipt.parsedDate ?: "Not Found"}\n")
-            sb.append("RAW OCR TEXT:\n")
-            sb.append(receipt.rawOcrText)
+            sb.append(formatReceiptDebug(receipt))
             sb.append("\n\n")
         }
         return sb.toString()
@@ -431,10 +430,13 @@ class ReceiptRepository @Inject constructor(
      */
     suspend fun debugReceipt(receiptId: Long): String {
         val receipt = scannedReceiptDao.getById(receiptId) ?: return "Not found"
-        
+        return formatReceiptDebug(receipt)
+    }
+
+    private fun formatReceiptDebug(receipt: ScannedReceipt): String {
         return """
             ═════════════════════════════════════════
-            RECEIPT DEBUG REPORT
+            RECEIPT DEBUG REPORT (ID: ${receipt.id})
             ═════════════════════════════════════════
             
             IMAGE PATH: ${receipt.imagePath}

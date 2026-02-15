@@ -57,6 +57,13 @@ interface SourceStatsDao {
 
     @Query("""
         UPDATE source_stats 
+        SET duplicates = duplicates + 1 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementDuplicate(packageName: String)
+
+    @Query("""
+        UPDATE source_stats 
         SET pendingReview = MAX(0, pendingReview - 1) 
         WHERE packageName = :packageName
     """)
