@@ -1,0 +1,133 @@
+package com.yourname.expensetracker.domain.analytics
+
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import io.mockk.coEvery
+import io.mockk.mockk
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.*
+import org.junit.Test
+import java.util.Calendar
+
+class InsightsEngineEdgeCaseTest {
+
+    private val expenseDao = mockk<ExpenseDao>(relaxed = true)
+    private val engine = InsightsEngine(expenseDao)
+
+    @Test
+    fun `empty expenses list returns valid snapshot with zero values`() = runBlocking {
+        // Setup mocks to return empty/zero
+        val now = System.currentTimeMillis()
+        val currentMonth = engine.getMonthPeriod(now)
+        val previousMonth = engine.getMonthPeriod(now, -1)
+        val sixMonthsAgo = engine.getMonthPeriod(now, -6).startMs
+        
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { expenseDao.getCountForPeriod(any(), any()) } returns 0
+        coEvery { expenseDao.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
+        coEvery { expenseDao.getAllMerchantStats() } returns emptyList()
+        coEvery { expenseDao.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
+        coEvery { expenseDao.getRecurringCandidates() } returns emptyList()
+        // getDayOfWeekPattern returns list of DayOfWeekTotal(day, total, count, avg)
+        coEvery { expenseDao.getDayOfWeekPattern(any(), any(), any()) } returns emptyList()
+        coEvery { expenseDao.getLargestExpenseForPeriod(any(), any()) } returns null
+        
+        val result = engine.generateInsights(
+            categories = emptyList(),
+            allExpenses = emptyList()
+        )
+        
+        assertNotNull(result)
+        assertEquals(0.0, result.spendingPace.currentMonthSpent, 0.01)
+        assertEquals(0.0, result.spendingPace.projectedTotal, 0.01)
+        assertTrue(result.categoryInsights.isEmpty())
+        assertTrue(result.topMerchants.isEmpty())
+        assertEquals(0, result.totalMonthsOfData)
+    }
+
+    @Test
+    fun `leap year february calculations are correct`() = runBlocking {
+        // Mock a date in Feb 29, 2024 (Leap Year)
+        val cal = Calendar.getInstance()
+        cal.set(2024, Calendar.FEBRUARY, 29, 12, 0, 0)
+        val leapDayMs = cal.timeInMillis
+        
+        // We can't easily injection "now" into generateInsights without refactoring or mocking System.
+        // However, we can test the helper `getMonthPeriod` if it's public.
+        // It is public!
+        
+        val period = engine.getMonthPeriod(leapDayMs)
+        
+        // Assert start is Feb 1st
+        val startCal = Calendar.getInstance()
+        startCal.timeInMillis = period.startMs
+        assertEquals(2024, startCal.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, startCal.get(Calendar.MONTH))
+        assertEquals(1, startCal.get(Calendar.DAY_OF_MONTH))
+        
+        // Assert end is March 1st (exclusive) or Feb 29th 23:59:59?
+        // getMonthPeriod implementation:
+        // cal.set(DAY=1) -> start
+        // cal.add(MONTH, 1) -> end
+        // So end should be March 1st 00:00:00
+        
+        val endCal = Calendar.getInstance()
+        endCal.timeInMillis = period.endMs
+        assertEquals(2024, endCal.get(Calendar.YEAR))
+        assertEquals(Calendar.MARCH, endCal.get(Calendar.MONTH))
+        assertEquals(1, endCal.get(Calendar.DAY_OF_MONTH))
+        
+        // Verify days difference is 29
+        val days = (period.endMs - period.startMs) / (24 * 60 * 60 * 1000)
+        assertEquals(29, days)
+    }
+    
+    @Test
+    fun `negative amounts are included in totals`() = runBlocking {
+        // If we have a refund (negative expense), it should reduce the total.
+        // Logic in engine: sum of allExpenses
+        
+        val refundExpense = Expense(
+            id = 1, amount = -50.0, merchant = "Refund", 
+            date = System.currentTimeMillis(), 
+            categoryId = null, 
+            transactionType = TransactionType.PURCHASE // Still purchase type but negative? Or INCOME?
+            // Usually refund is negative purchase
+        )
+        
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns -50.0
+        
+        // We need to pass this expense to generateInsights
+        // generateInsights calculates avgTxSize from allExpenses filter type=PURCHASE.
+        
+        val categories = emptyList<Category>()
+        
+        // We need to mock specific DAO calls that generateInsights makes
+        // engine.generateInsights(...) calls internal async builders
+        
+        // Let's test specific logic - Avg Transaction Size
+        // val avgTxSize = ... currentMonthPurchases.map { it.amount }.average()
+        
+        // We need to ensure the date is within "currentMonth"
+        val now = System.currentTimeMillis()
+        val currentPeriod = engine.getMonthPeriod(now)
+        
+        val activeRefund = refundExpense.copy(date = currentPeriod.startMs + 1000)
+        
+        // Mock dependent calls to avoid NPE
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns -50.0
+        coEvery { expenseDao.getCountForPeriod(any(), any()) } returns 1
+        coEvery { expenseDao.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
+        coEvery { expenseDao.getAllMerchantStats() } returns emptyList()
+        coEvery { expenseDao.getRecurringCandidates() } returns emptyList()
+        coEvery { expenseDao.getDayOfWeekPattern(any(), any(), any()) } returns emptyList()
+        coEvery { expenseDao.getLargestExpenseForPeriod(any(), any()) } returns activeRefund
+        
+        val result = engine.generateInsights(categories, listOf(activeRefund))
+        
+        assertEquals(-50.0, result.averageTransactionSize, 0.01)
+        // This confirms negative amounts are averaged correctly
+    }
+}

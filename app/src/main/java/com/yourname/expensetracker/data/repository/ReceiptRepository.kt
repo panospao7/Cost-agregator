@@ -290,7 +290,8 @@ class ReceiptRepository @Inject constructor(
     data class BatchResult(
         val successCount: Int,
         val failureCount: Int,
-        val errors: List<String>
+        val errors: List<String>,
+        val debugData: com.yourname.expensetracker.ui.screens.debug.DebugData? = null
     )
 
     /**
@@ -338,6 +339,9 @@ class ReceiptRepository @Inject constructor(
      * Process an image URI as a bank statement: extracting multiple transactions
      */
     suspend fun processStatement(imageUri: Uri): BatchResult {
+        val startTime = System.currentTimeMillis()
+        val parsingLogs = mutableListOf<String>()
+        
         // 1. Run OCR
         val ocrResult: OcrResult = ocrService.processUri(imageUri)
 
@@ -345,7 +349,15 @@ class ReceiptRepository @Inject constructor(
         val parsedTransactions = statementParser.parse(ocrResult.blocks)
         
         if (parsedTransactions.isEmpty()) {
-            return BatchResult(0, 1, listOf("No transactions found in screenshot"))
+            parsingLogs.add("No transactions found in bank statement")
+            val debugData = com.yourname.expensetracker.ui.screens.debug.DebugData(
+                rawText = ocrResult.fullText,
+                parsedTransactions = emptyList(),
+                parsingLogs = parsingLogs,
+                processingTimeMs = System.currentTimeMillis() - startTime,
+                parserUsed = "BankStatementParser"
+            )
+            return BatchResult(0, 1, listOf("No transactions found in screenshot"), debugData)
         }
 
         // 3. Save common scanned receipt record
@@ -394,11 +406,35 @@ class ReceiptRepository @Inject constructor(
                 pendingReviewDao.insert(review)
                 successCount++
             } catch (e: Exception) {
-                errors.add("Failed to save transaction ${tx.merchant}: ${e.message}")
+                val errorMsg = "Failed to save transaction ${tx.merchant}: ${e.message}"
+                errors.add(errorMsg)
+                parsingLogs.add(errorMsg)
             }
         }
+        
+        // Add low confidence warnings to logs
+        parsedTransactions.filter { it.confidence < 0.7f }.forEach { tx ->
+            parsingLogs.add("Low confidence (${(tx.confidence * 100).toInt()}%) for ${tx.merchant}")
+        }
+        
+        // Detect issues automatically
+        val issues = com.yourname.expensetracker.ui.screens.debug.DebugIssueDetector.detectIssues(
+            rawText = ocrResult.fullText,
+            transactions = parsedTransactions,
+            processingTimeMs = System.currentTimeMillis() - startTime
+        )
+        
+        // Create debug data
+        val debugData = com.yourname.expensetracker.ui.screens.debug.DebugData(
+            rawText = ocrResult.fullText,
+            parsedTransactions = parsedTransactions,
+            parsingLogs = parsingLogs,
+            processingTimeMs = System.currentTimeMillis() - startTime,
+            parserUsed = "BankStatementParser (${parsedTransactions.size} transactions)",
+            issues = issues
+        )
 
-        return BatchResult(successCount, parsedTransactions.size - successCount, errors)
+        return BatchResult(successCount, parsedTransactions.size - successCount, errors, debugData)
     }
 
     suspend fun clearAllScannedReceipts() {

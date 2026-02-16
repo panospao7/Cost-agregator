@@ -21,22 +21,33 @@ class RecurringExpenseEngine @Inject constructor(
      * Returns a list of patterns sorted by confidence (Manual = 1.0).
      */
     suspend fun getPatterns(): List<RecurringPattern> {
+        // Limit to last 12 months for performance - INS-009
+        val twelveMonthsAgo = System.currentTimeMillis() - (365L * 24 * 60 * 60 * 1000)
+        val allExpenses = expenseDao.getExpensesSince(twelveMonthsAgo)
+        return getPatterns(allExpenses)
+    }
+
+    /**
+     * Overload for when we already have the list of expenses (e.g. from Analytics).
+     */
+    suspend fun getPatterns(allExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<RecurringPattern> {
         // 1. Fetch Manual Overrides
         val manualExpenses = recurringExpenseDao.getAll()
         val manualMap = manualExpenses.associateBy { it.merchant.lowercase() }
-
-        // 2. Fetch all expenses for detection (Limit to last 12 months for performance - INS-009)
-        val twelveMonthsAgo = System.currentTimeMillis() - (365L * 24 * 60 * 60 * 1000)
-        val allExpenses = expenseDao.getExpensesSince(twelveMonthsAgo)
         
+
         // Group by normalized merchant name
-        val grouped = allExpenses.groupBy { it.merchant }
+        val grouped = allExpenses.groupBy { it.merchant.lowercase().trim() }
 
         val detectedPatterns = mutableListOf<RecurringPattern>()
 
-        for ((merchant, expenses) in grouped) {
+        for ((normalizedMerchant, expenses) in grouped) {
+            // Use the most frequent original merchant name or the first one
+            val actualMerchant = expenses.groupBy { it.merchant }
+                .maxByOrNull { it.value.size }?.key ?: normalizedMerchant
+
             // If we already have a manual rule for this merchant, skip detection
-            if (manualMap.containsKey(merchant.lowercase())) continue
+            if (manualMap.containsKey(normalizedMerchant)) continue
 
             // Requirement: At least 3 occurrences to form a pattern
             if (expenses.size < 3) continue 
@@ -78,7 +89,7 @@ class RecurringExpenseEngine @Inject constructor(
 
                 detectedPatterns.add(
                     RecurringPattern(
-                        merchantName = merchant,
+                        merchantName = actualMerchant,
                         averageAmount = avgAmount,
                         currency = sorted.first().currency,
                         frequency = frequency,

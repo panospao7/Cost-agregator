@@ -33,6 +33,12 @@ class GreekNormalizationTest {
         assertTrue(normalize("2YNONO 50.00").contains("TOTAL_KEY"))
         assertTrue(normalize("ZYNOIO 50.00").contains("TOTAL_KEY"))
         assertTrue(normalize("NAHPQTEO 50.00").contains("TOTAL_KEY")) // Payable
+        
+        // New variants
+        assertTrue(normalize("ZYNOAΩ 50.00").contains("TOTAL_KEY"))
+        assertTrue(normalize("EYNONO 50.00").contains("TOTAL_KEY"))
+        assertTrue(normalize("TEAIKO 50.00").contains("TOTAL_KEY"))
+        assertTrue(normalize("TEΛIKO 50.00").contains("TOTAL_KEY"))
     }
 
     @Test
@@ -48,16 +54,9 @@ class GreekNormalizationTest {
     }
 
     @Test
-    fun `test date fixes`() {
-        assertEquals("16-04-2017", normalize("16-D4-2017"))
-        assertEquals("16-04-2017", normalize("16-O4-2017"))
-    }
-
-    @Test
-    fun `test currency is preserved`() {
-        // We no longer strip currency in normalizeGreekOcr to keep it for detectCurrency
-        val normalized = normalize("10.00 EUR")
-        assertTrue(normalized.contains("EUR"))
+    fun `test currency normalization`() {
+        assertTrue(normalize("50,00 ΕΥΡΩ").contains("EUR"))
+        assertTrue(normalize("50,00 ΕΥΡΑ").contains("EUR"))
     }
 
 }

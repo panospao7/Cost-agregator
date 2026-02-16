@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -57,6 +58,7 @@ fun ReceiptScanScreen(
     val categories by viewModel.categories.collectAsState()
     val context = LocalContext.current
     val scrollState = rememberScrollState()
+    var showDebugViewer by remember { mutableStateOf(false) }
 
     // Camera launcher
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -89,6 +91,14 @@ fun ReceiptScanScreen(
             onDismiss()
         }
     }
+    
+    // Debug viewer dialog
+    if (showDebugViewer && state.debugData != null) {
+        com.yourname.expensetracker.ui.screens.debug.DebugViewerScreen(
+            debugData = state.debugData!!,
+            onClose = { showDebugViewer = false }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -110,6 +120,17 @@ fun ReceiptScanScreen(
                         onDismiss()
                     }) {
                         Icon(Icons.Default.Close, "Close")
+                    }
+                },
+                actions = {
+                    // Debug button (only show in review/error steps)
+                    if ((state.step == ScanStep.REVIEW || state.step == ScanStep.ERROR) && state.debugData != null) {
+                        IconButton(onClick = { showDebugViewer = true }) {
+                            Icon(
+                                imageVector = Icons.Default.BugReport,
+                                contentDescription = "Debug Info"
+                            )
+                        }
                     }
                 }
             )

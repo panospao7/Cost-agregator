@@ -19,6 +19,7 @@ class GreekBankParser @Inject constructor(
 
     override val supportedPackages = setOf(
         "gr.nbg.mobilebanking",
+        "mbanking.NBG",
         "gr.alpha.mobile",
         "com.eurobank.mobile",
         "com.winbank.mobile"
@@ -26,8 +27,9 @@ class GreekBankParser @Inject constructor(
 
     private val PURCHASE_PATTERNS = listOf(
         // "Αγορά 12,50 EUR στο MERCHANT" or "Πληρωμή €6.30 σε..."
+        // Also handles: "Πληρώσατε €7,50 από την κάρτα *1554 σε BOX FOOD APP"
         Pattern.compile(
-            """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:EUR|€|USD|GBP)?\s*(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
+            """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:EUR|€|USD|GBP)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         ),
         // "€12.50 at MERCHANT" or "12,50€ MERCHANT"

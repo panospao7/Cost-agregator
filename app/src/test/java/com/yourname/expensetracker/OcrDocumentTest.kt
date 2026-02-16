@@ -82,6 +82,24 @@ class OcrDocumentTest {
         assertNotNull("Should parse amount from ΜΕΤΡΗΤΑ line", result.total)
     }
 
+    @Test
+    fun `test Greek amount keyword - ΠΛΗΡΩΤΕΟ variants`() {
+        val input = """
+            NAHPΩTEO: 45,50 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals(45.50, result.total!!, 0.01)
+    }
+
+    @Test
+    fun `test Greek total keyword - ΣΥΝΟΛΙΚΗ ΑΞΙΑ variant`() {
+        val input = """
+            YNUAIKH AEIA: 50,00 EYRL
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals(50.00, result.total!!, 0.01)
+    }
+
     // ============================================
     // SECTION 4: COMPOUND KEYWORDS
     // ============================================
@@ -198,14 +216,91 @@ class OcrDocumentTest {
 
     @Test
     fun `test severely mangled number`() {
+        val input = "TOTAL 4 5 . 5 0 EUR"
+        val result = parser.parse(input)
+        assertEquals("Should fix '4 5 . 5 0' to 45.50", 45.50, result.total!!, 0.01)
+    }
+
+    // ============================================
+    // NEW: TAX VS TOTAL CONFUSION (Patch 3.1)
+    // ============================================
+
+    @Test
+    fun `test extraction before percentage sign - Receipt 3 failure case`() {
+        val input = """
+            SONICK EU E.E
+            ΣΥΝΟΛΟ
+            20,13 24,00%
+            E0,13
+        """.trimIndent()
+        val result = parser.parse(input)
+        // Should ignore 'E0,13' and extract '20,13' from the line with percentage
+        assertEquals("Should extract amount before %", 20.13, result.total!!, 0.01)
+    }
+
+    @Test
+    fun `test skip tax-only lines - Receipt 1 failure case`() {
+        val input = """
+            TRREPN
+            ΦΠΑ 24%: 9.80 €
+            ΦΠΑ 13%: 4.20 €
+            ΣΥΝΟΛΟ: 44.20 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // Should skip the ΦΠΑ lines and pick the ΣΥΝΟΛΟ amount
+        assertEquals("Should skip tax lines and pick total", 44.20, result.total!!, 0.01)
+    }
+
+    // ============================================
+    // NEW: RECEIPT NUMBER INTERFERENCE (Patch 3.3)
+    // ============================================
+
+    @Test
+    fun `test skip receipt serial number - ZEIPA`() {
+        val input = """
+            MARKET
+            ZEIPA: Y204
+            AP: 1926788
+            TOTAL: 50.00
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should skip serial and pick total", 50.00, result.total!!, 0.01)
+    }
+
+    @Test
+    fun `test skip receipt number - APIOMOE`() {
+        val input = """
+            STORE
+            ΑΡΙΘΜΟΣ ΑΠΌΔΕΙΞΗΣ: 123456
+            ΣΥΝΟΛΟ: 15.20
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should skip ΑΡΙΘΜΟΣ and pick total", 15.20, result.total!!, 0.01)
+    }
+
+    // ============================================
+    // NEW: DATE VALIDATION (Patch 3.4)
+    // ============================================
+
+    @Test
+    fun `test dynamic year rejection`() {
+        val input = """
+            TOTAL: 50.00
+            DATE: 31-1-2058
+        """.trimIndent()
+        val result = parser.parse(input)
+        // 2058 should be rejected as it's too far in the future
+        assertNull("Should reject year 2058", result.date)
+    }
+
+    @Test
+    fun `test severely mangled number 2`() {
         val input = """
             STORE
             TOTAL 1.2 5 0, 5 0 €
         """.trimIndent()
         val result = parser.parse(input)
-        // This is an edge case - may or may not work depending on implementation
-        // At minimum should not crash
-        assertNotNull("Should handle mangled number gracefully", result)
+        assertEquals(1250.50, result.total!!, 0.01)
     }
 
     // ============================================

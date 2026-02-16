@@ -568,7 +568,7 @@ fun MlStatsSection(
                             modifier = Modifier.weight(1f)
                         )
                         Text(
-                            text = "${stats.acceptedAsExpense}/${stats.totalNotifications}",
+                            text = "${stats.acceptedAsExpense}/${stats.totalNotifications} (D:${stats.duplicates})",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Spacer(modifier = Modifier.width(8.dp))

@@ -89,6 +89,9 @@ dependencies {
     // ML Kit Text Recognition
     implementation("com.google.mlkit:text-recognition:16.0.1")
 
+    // PDF Processing - Direct text extraction for bank statements
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
     // Coil for image loading in Compose
     implementation("io.coil-kt:coil-compose:2.5.0")
 

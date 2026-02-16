@@ -120,15 +120,6 @@ This file contains the complete source code from the `src` directory.
 115. [main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#mainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
 116. [main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#mainjavacomyournameexpensetrackeruithemethemekt)
 117. [main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#mainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
-118. [main\res\drawable\ic_launcher_background.xml](#mainresdrawableic_launcher_backgroundxml)
-119. [main\res\drawable\ic_launcher_foreground.xml](#mainresdrawableic_launcher_foregroundxml)
-120. [main\res\mipmap-anydpi-v26\ic_launcher.xml](#mainresmipmap-anydpi-v26ic_launcherxml)
-121. [main\res\mipmap-anydpi-v26\ic_launcher_round.xml](#mainresmipmap-anydpi-v26ic_launcher_roundxml)
-122. [main\res\mipmap\ic_launcher.xml](#mainresmipmapic_launcherxml)
-123. [main\res\mipmap\ic_launcher_round.xml](#mainresmipmapic_launcher_roundxml)
-124. [main\res\values\strings.xml](#mainresvaluesstringsxml)
-125. [main\res\values\themes.xml](#mainresvaluesthemesxml)
-126. [main\res\xml\file_paths.xml](#mainresxmlfile_pathsxml)
 
 ---
 
@@ -256,7 +247,7 @@ import androidx.room.*
         MerchantCanonical::class,
         MerchantAlias::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -600,6 +591,12 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // INS-008: Standalone date index for efficient range queries and ordering
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses (date)")
+            }
+        }
+        val MIGRATION_18_19 = object : androidx.room.migration.Migration(18, 19) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Add duplicates column to source_stats
+                database.execSQL("ALTER TABLE source_stats ADD COLUMN duplicates INTEGER NOT NULL DEFAULT 0")
             }
         }
     }
@@ -1397,6 +1394,12 @@ interface SourceStatsDao {
     suspend fun incrementPending(packageName: String)
     @Query("""
         UPDATE source_stats 
+        SET duplicates = duplicates + 1 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementDuplicate(packageName: String)
+    @Query("""
+        UPDATE source_stats 
         SET pendingReview = MAX(0, pendingReview - 1) 
         WHERE packageName = :packageName
     """)
@@ -1988,12 +1991,16 @@ data class SourceStats(
     val rejectedByUser: Long = 0,
     val autoRejected: Long = 0,
     val pendingReview: Long = 0,
+    val duplicates: Long = 0,
     val lastSeen: Long = System.currentTimeMillis()
 ) {
     val trustScore: Float
-        get() = if (totalNotifications > 0)
-            acceptedAsExpense.toFloat() / totalNotifications
-        else 0f
+        get() {
+            val relevant = totalNotifications - duplicates
+            return if (relevant > 0)
+                acceptedAsExpense.toFloat() / relevant
+            else 0f
+        }
     val isLikelySpam: Boolean
         get() = totalNotifications > 10 && trustScore < 0.05f
 }
@@ -4074,6 +4081,7 @@ class NotificationRepository @Inject constructor(
                     )
                     if (isDuplicate) {
                         dao.markRelevance(rawId, false)
+                        sourceStatsDao.incrementDuplicate(notification.packageName)
                         return@withTransaction
                     }
                     val classification = hybridClassifier.classify(
@@ -4258,6 +4266,7 @@ class NotificationRepository @Inject constructor(
             }
         } else {
              // It's a duplicate, we treat this as "processed" to clear the review
+             sourceStatsDao.incrementDuplicate(review.packageName)
              sourceStatsDao.decrementPending(review.packageName)
              pendingReviewDao.updateStatus(reviewId, "DUPLICATE")
              return OperationResult.Duplicate
@@ -4317,6 +4326,83 @@ class NotificationRepository @Inject constructor(
     suspend fun markAsRelevant(id: Long, isRelevant: Boolean) {
         val notification = dao.getById(id) ?: return
         dao.markRelevance(id, isRelevant)
+        if (isRelevant) {
+            // CRITICAL FIX: When user explicitly marks as relevant (Expense ✓),
+            // we must actually CREATE the expense or review item.
+            // 1. Try to parse again
+            val parsed = parserRegistry.parse(
+                title = notification.title,
+                text = notification.text,
+                bigText = notification.bigText,
+                subText = notification.subText,
+                packageName = notification.packageName
+            )
+            if (parsed != null) {
+                // We have valid data, so we can create an Expense directly (User Override)
+                // We assume if they clicked "Expense", they validated it looks correct-ish,
+                // or at least we should create it so they can see it.
+                // Normalization
+                val lookupResult = merchantNormalizer.normalize(parsed.merchant)
+                val correctedMerchant = lookupResult.canonical.normalizedName
+                // Categorization
+                val classification = hybridClassifier.classify(
+                    merchantName = correctedMerchant,
+                    amount = parsed.amount,
+                    notificationTitle = notification.title,
+                    notificationText = notification.text,
+                    packageName = notification.packageName
+                )
+                val categoryId = classification.categoryId.takeIf { it > 0 }
+                // Check for duplicates before inserting
+                val isDuplicate = expenseDao.isDuplicate(
+                    amount = parsed.amount,
+                    merchant = correctedMerchant,
+                    date = notification.timestamp,
+                    windowMs = 60000
+                )
+                if (!isDuplicate) {
+                    val expense = Expense(
+                        amount = parsed.amount,
+                        currency = parsed.currency,
+                        merchant = correctedMerchant,
+                        transactionType = parsed.type,
+                        date = notification.timestamp,
+                        rawNotificationId = id,
+                        categoryId = categoryId,
+                        paymentMethod = PaymentMethod.CARD,
+                        isManualEntry = false,
+                        notes = "Manually recovered from debug log"
+                    )
+                    try {
+                        expenseDao.insert(expense)
+                        sourceStatsDao.incrementAccepted(notification.packageName)
+                        // Decrease auto-rejected count since we reversed the decision
+                        // (Optional, but keeps stats cleaner)
+                        budgetMonitor.checkBudgets()
+                    } catch (e: Exception) {
+                        android.util.Log.e("NotificationRepo", "Failed to insert recovered expense", e)
+                    }
+                }
+            } else {
+                // Parsing failed, but user says it's an expense.
+                // Create a PendingReview with blank values so they can fill it in.
+                val review = PendingReview(
+                    rawNotificationId = id,
+                    suggestedAmount = 0.0,
+                    suggestedCurrency = "EUR",
+                    suggestedMerchant = "Unknown",
+                    suggestedType = TransactionType.PURCHASE.name,
+                    suggestedCategoryId = null,
+                    confidence = 1.0f, // Manual override = 100% confidence
+                    packageName = notification.packageName,
+                    notificationTitle = notification.title,
+                    notificationText = notification.text ?: notification.bigText,
+                    suggestedDate = notification.timestamp
+                )
+                pendingReviewDao.insert(review)
+                sourceStatsDao.incrementPending(notification.packageName)
+            }
+        }
         // Train classifier directly from this manual action
         // Also record a correction for future retraining (LOG-003)
         // We record correction AND retrain immediately to ensure consistency
@@ -4464,6 +4550,7 @@ class PlannedExpenseRepository @Inject constructor(
 ```kotlin
 package com.yourname.expensetracker.data.repository
 import android.net.Uri
+import java.util.Date
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -4515,9 +4602,22 @@ class ReceiptRepository @Inject constructor(
         imageUri: Uri,
         autoCreateReview: Boolean = false
     ): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
+        // 1. Run OCR (Separate Try-Catch to distinguish OCR failure vs Parse failure)
+        val ocrResult = try {
+            ocrService.processUri(imageUri)
+        } catch (e: Exception) {
+            android.util.Log.e("ReceiptRepository", "OCR Failed for $imageUri", e)
+            // Fallback: Try to save the image using manual record logic
+            return saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
+                val failedReceipt = receipt.copy(
+                    rawOcrText = "Scan Failed: ${e.message}", 
+                    confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK
+                )
+                scannedReceiptDao.update(failedReceipt)
+                Pair(failedReceipt, parsed)
+            }
+        }
         try {
-            // 1. Run OCR
-            val ocrResult: OcrResult = ocrService.processUri(imageUri)
             // 2. Parse the OCR text
             val parsed = receiptParser.parse(ocrResult.fullText)
             // 3. Normalize merchant if found
@@ -4561,17 +4661,38 @@ class ReceiptRepository @Inject constructor(
             }
             return Pair(receipt.copy(id = receiptId), parsed)
         } catch (e: Exception) {
-            // Log error and save a "failed" record so we don't lose the image/Scan attempt
-            android.util.Log.e("ReceiptRepository", "Failed to process receipt", e)
-            // Fallback: Try to save the image using manual record logic
-            return saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
-                val failedReceipt = receipt.copy(
-                    rawOcrText = "Scan Failed: ${e.message}", 
-                    confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK
+            // Parsing Logic Failed, but we HAVE the OCR text!
+            // Save it so user can manually edit without losing the text.
+            android.util.Log.e("ReceiptRepository", "Parsing Failed for $imageUri", e)
+            val failedReceipt = ScannedReceipt(
+                imagePath = ocrResult.savedImagePath,
+                rawOcrText = ocrResult.fullText, // PRESERVED!
+                parsedTotal = null,
+                parsedMerchant = null,
+                parsedDate = null, 
+                parsedItems = null,
+                parsedTaxAmount = null, // Explicitly null for failed parse
+                currency = "EUR",
+                confidence = 0f
+            )
+            val receiptId = scannedReceiptDao.insert(failedReceipt)
+            if (autoCreateReview) {
+                 val review = PendingReview(
+                    rawNotificationId = null,
+                    scannedReceiptId = receiptId,
+                    suggestedAmount = 0.0,
+                    suggestedCurrency = "EUR",
+                    suggestedMerchant = "Parsing Failed",
+                    suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
+                    suggestedCategoryId = null, // No category for failed parse
+                    confidence = 0f,
+                    packageName = "receipt.scan.error",
+                    notificationTitle = "Parsing Failed",
+                    notificationText = "OCR Text preserved. Manual entry required."
                 )
-                scannedReceiptDao.update(failedReceipt) // Update the record created by saveManualReceiptRecord
-                Pair(failedReceipt, parsed)
+                pendingReviewDao.insert(review)
             }
+            return Pair(failedReceipt.copy(id = receiptId), ReceiptParser.ParsedReceipt(null, null, null, null, System.currentTimeMillis(), "EUR", emptyList(), 0f))
         }
     }
     suspend fun saveManualReceiptRecord(imageUri: android.net.Uri): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
@@ -4696,13 +4817,18 @@ class ReceiptRepository @Inject constructor(
      * Process multiple receipts in parallel with a concurrency limit to prevent OOM.
      */
     suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult = coroutineScope {
+        // Deduplicate URIs to avoid processing the same file twice
+        val uniqueUris = uris.distinctBy { it.toString() }
+        if (uniqueUris.size < uris.size) {
+            android.util.Log.d("ReceiptRepository", "Removed ${uris.size - uniqueUris.size} duplicate URIs")
+        }
         val semaphore = Semaphore(3) // Limit to 3 concurrent OCR tasks
-        val total = uris.size
+        val total = uniqueUris.size
         var successes = 0
         var failures = 0
         val errors = mutableListOf<String>()
         val mutex = Mutex()
-        val jobs = uris.map { uri ->
+        val jobs = uniqueUris.map { uri ->
             async {
                 try {
                     semaphore.withPermit {
@@ -4805,6 +4931,32 @@ class ReceiptRepository @Inject constructor(
         }
         return sb.toString()
     }
+    /**
+     * Debug function to get detailed info about a scanned receipt
+     */
+    suspend fun debugReceipt(receiptId: Long): String {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return "Not found"
+        return """
+            ═════════════════════════════════════════
+            RECEIPT DEBUG REPORT
+            ═════════════════════════════════════════
+            IMAGE PATH: ${receipt.imagePath}
+            RAW OCR TEXT:
+            ┌─────────────────────────────────────┐
+            ${receipt.rawOcrText}
+            └─────────────────────────────────────┘
+            PARSED VALUES:
+            • Merchant:  ${receipt.parsedMerchant ?: "NULL"}
+            • Total:     ${receipt.parsedTotal ?: "NULL"}
+            • Date:      ${receipt.parsedDate?.let { Date(it) } ?: "NULL"}
+            • Tax:       ${receipt.parsedTaxAmount ?: "NULL"}
+            • Currency:  ${receipt.currency}
+            • Confidence: ${receipt.confidence}
+            LINE ITEMS:
+            ${receipt.parsedItems ?: "None"}
+            ═════════════════════════════════════════
+        """.trimIndent()
+    }
 }
 
 ```
@@ -4852,7 +5004,8 @@ object AppModule {
             AppDatabase.MIGRATION_14_15,
             AppDatabase.MIGRATION_15_16,
             AppDatabase.MIGRATION_16_17,
-            AppDatabase.MIGRATION_17_18
+            AppDatabase.MIGRATION_17_18,
+            AppDatabase.MIGRATION_18_19
         )
             .addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -8339,14 +8492,16 @@ class GreekBankParser @Inject constructor(
 ) : AppNotificationParser {
     override val supportedPackages = setOf(
         "gr.nbg.mobilebanking",
+        "mbanking.NBG",
         "gr.alpha.mobile",
         "com.eurobank.mobile",
         "com.winbank.mobile"
     )
     private val PURCHASE_PATTERNS = listOf(
         // "Αγορά 12,50 EUR στο MERCHANT" or "Πληρωμή €6.30 σε..."
+        // Also handles: "Πληρώσατε €7,50 από την κάρτα *1554 σε BOX FOOD APP"
         Pattern.compile(
-            """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:EUR|€|USD|GBP)?\s*(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
+            """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:EUR|€|USD|GBP)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         ),
         // "€12.50 at MERCHANT" or "12,50€ MERCHANT"
@@ -8670,7 +8825,7 @@ class BankStatementParser @Inject constructor(
         // 2. Look for amount patterns (DUP-005)
         val amountMatcher = com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX.matcher(cleanRow)
         if (!amountMatcher.find()) return null
-        // Fix (BUG-009): Robust European & US decimal parsing (Updated groups for DUP-005)
+        // Fix (BUG-009): Robust European & US decimal parsing
         val rawAmount = amountMatcher.group(2)?.replace(" ", "") ?: return null
         val lastSep = rawAmount.findLastAnyOf(listOf(".", ","))
         val amountStr = if (lastSep != null) {
@@ -8682,18 +8837,35 @@ class BankStatementParser @Inject constructor(
             rawAmount
         }
         val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
-        // Fix (BUG-010): Use more specific currency check (Updated groups for DUP-005)
+        // Fix (BUG-010): Use more specific currency check
         var currency = "EUR" // Default currency
         val currencyGroup = amountMatcher.group(1) ?: amountMatcher.group(3)
         if (currencyGroup != null && currencyGroup.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
             currency = currencyNormalizer.normalize(currencyGroup)
         }
-        // 3. Extract logic for merchant
+        // 3. Detect Transaction Type (ISSUE-008)
+        val upperRow = cleanRow.uppercase()
+        val isPurchase = upperRow.contains("ΑΓΟΡΑ") || upperRow.contains("PURCHASE") || 
+                         upperRow.contains("ΧΡΕΩΣΗ") || upperRow.contains("DEBIT") ||
+                         upperRow.contains("PAYMENT") || upperRow.contains("CARD")
+        val isDeposit = upperRow.contains("ΚΑΤΑΘΕΣΗ") || upperRow.contains("DEPOSIT") ||
+                        upperRow.contains("ΠΙΣΤΩΣΗ") || upperRow.contains("CREDIT") ||
+                        upperRow.contains("REFUND") || upperRow.contains("MISTHODOSIA")
+        val type = when {
+            isDeposit -> TransactionType.DEPOSIT
+            isPurchase -> TransactionType.PURCHASE
+            amountStr.contains("-") -> TransactionType.PURCHASE
+            else -> TransactionType.PURCHASE // Default to Purchase if ambiguous (Expense Tracker context) 
+        }
+        // 4. Extract logic for merchant (ISSUE-010)
         // Usually merchant is the text that is NOT the amount and NOT a date/time
         val dateValue = extractDate(cleanRow)
         var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
             .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Date (for cleaning)
             .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "") // Time
+            // Remove common bank prefixes/suffixes
+            .replace(Regex("""(?i)^(AGORA|ΑΓΟΡΑ|PURCHASE|PAYMENT)\s*[:\-]?\s*"""), "")
+            .replace(Regex("""(?i)\s*(STO|ΣΤΟ|AT)\s*$"""), "")
             .replace(Regex("""\s{2,}"""), " ") // Double spaces
             .trim()
         // Basic validation: must have some letters to be a merchant
@@ -8704,7 +8876,7 @@ class BankStatementParser @Inject constructor(
             amount = absAmount,
             currency = currency,
             merchant = merchantCleaner.clean(merchant),
-            type = if (amountStr.contains("-")) TransactionType.PURCHASE else TransactionType.DEPOSIT,
+            type = type,
             confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK,
             date = dateValue
         )
@@ -8776,6 +8948,7 @@ data class TextBlock(
 class ReceiptOcrService @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
+    // Reverting to DEFAULT_OPTIONS as Builder might not be available in current dependency version
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     /**
      * Dispatcher that automatically routes URIs to the correct processor based on MIME type.
@@ -8801,19 +8974,29 @@ class ReceiptOcrService @Inject constructor(
             // 3. Run ML Kit OCR
             val inputImage = InputImage.fromBitmap(bitmap, 0)
             val visionText = recognizeText(inputImage)
-            // 4. Extract blocks
-            val blocks = visionText.textBlocks.map { block ->
-                TextBlock(
-                    text = block.text,
-                    confidence = block.lines.firstOrNull()?.confidence,
-                    left = block.boundingBox?.left ?: 0,
-                    top = block.boundingBox?.top ?: 0,
-                    right = block.boundingBox?.right ?: 0,
-                    bottom = block.boundingBox?.bottom ?: 0
-                )
+            // 4. Extract blocks with confidence filtering
+            val blocks = visionText.textBlocks.mapNotNull { block ->
+                val avgConfidence = block.lines.mapNotNull { it.confidence }.average().toFloat()
+                // If confidence is available and very low (< 0.2), skip it.
+                // Note: ML Kit often returns null confidence for Latin/Default models, so we default to 1.0 if null
+                val safeConfidence = if (block.lines.firstOrNull()?.confidence != null) avgConfidence else 1.0f
+                if (safeConfidence < 0.2f && block.text.length < 3) {
+                    // Skip very low confidence noise (usually single characters)
+                    null
+                } else {
+                    TextBlock(
+                        text = block.text,
+                        confidence = safeConfidence,
+                        // lines argument removed as it's not in TextBlock definition
+                        left = block.boundingBox?.left ?: 0,
+                        top = block.boundingBox?.top ?: 0,
+                        right = block.boundingBox?.right ?: 0,
+                        bottom = block.boundingBox?.bottom ?: 0
+                    )
+                }
             }
             return OcrResult(
-                fullText = visionText.text,
+                fullText = blocks.joinToString("\n\n") { it.text },
                 blocks = blocks,
                 savedImagePath = savedPath
             )
@@ -9067,12 +9250,12 @@ class ReceiptParser @Inject constructor() {
     private val totalPatterns = listOf(
         // Greek patterns with fuzzy space and comma handling
         Pattern.compile(
-            """(?:ΣΥΝΟΛΟ|ΤΕΛΙΚΟ|ΠΛΗΡΩΤΕΟ|ΠΟΣΟ|ΑΞΙΑ|ΓΕΝΙΚΟ\s*ΣΥΝΟΛΟ|ΛΟΓΑΡΙΑΣΜΟ[ΣΖ]|TOTAL|AMOUNT)\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
+            """(?:ΣΥΝΟΛΟ|ΤΕΛΙΚΟ|ΠΛΗΡΩΤΕΟ|ΠΟΣΟ|ΑΞΙΑ|VALUE|ΓΕΝΙΚΟ\s*ΣΥΝΟΛΟ|ΛΟΓΑΡΙΑΣΜΟ[ΣΖ]|TOTAL|AMOUNT|PAYMENT|ΠΛΗΡΩΜΗ)\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         ),
         // Amount with currency symbol at end
         Pattern.compile(
-            """(?:TOTAL|ΣΥΝΟΛΟ|ΠΟΣΟ)\s*[:\s]*(\d+[\s.,]\s*\d{2})\s*(?:€|EUR)""",
+            """(?:TOTAL|ΣΥΝΟΛΟ|ΠΟΣΟ|AMOUNT|ΑΞΙΑ|VALUE|PAYMENT|ΠΛΗΡΩΜΗ)\s*[:\s]*(\d+[\s.,]\s*\d{2})\s*(?:€|EUR)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         ),
         // Standalone large amount at the very bottom (common for Lidl/Sklavenitis)
@@ -9156,54 +9339,123 @@ class ReceiptParser @Inject constructor() {
     }
     private fun normalizeGreekOcr(text: String): String {
         var normalized = text.uppercase()
-        // --- 1. Fix Numbers broken by spaces ---
-        // "4 5. 5 0" -> "45.50"
+        // Fix numbers FIRST
+        normalized = normalized.replace(Regex("""\s*([.,])\s*"""), "$1")
         normalized = normalized.replace(Regex("""(?<=\d)\s+(?=\d)"""), "")
-        // "45 , 00" -> "45.00"
-        normalized = normalized.replace(Regex("""(\d+)\s*[.,]\s*(\d{2})\b"""), "$1.$2")
-        // --- 2. Greek keywords (Targeted) ---
-        normalized = normalized.replace(Regex("""\b[ΣE2ZXYS][YVUI]N[O0]?[AΛV][O0Ω]\b"""), "TOTAL_KEY")
-        normalized = normalized.replace(Regex("""\b[NΠ][OA]S[OA]\b"""), "TOTAL_KEY")
-        normalized = normalized.replace(Regex("""\b[NΠ][AΛ][HN][PR][ΩOQ]TE[OA]\b"""), "TOTAL_KEY")
-        // --- 3. Date Fixes ---
+        // Compound keywords
+        normalized = normalized.replace(Regex("""ΣΥΝΟΛΙΚΗ\s+ΑΞΙΑ"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""ΚΑΘΑΡΗ\s+ΑΞΙΑ"""), "SUBTOTAL_KEY")
+        normalized = normalized.replace(Regex("""ΓΕΝΙΚΟ\s+ΣΥΝΟΛΟ"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""ΣΥΝΟΛΙΚΗ\s+ΑΞΙΑ"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""ΜΕΡΙΚΟ\s+ΣΥΝΟΛΟ"""), "SUBTOTAL_KEY")
+        // Single keywords - CORRECT GREEK
+        normalized = normalized.replace(Regex("""\bΣΥΝΟΛΟ\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\bΤΕΛΙΚΟ\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\bΠΛΗΡΩΤΕΟ\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\bΠΟΣΟ\b"""), "AMOUNT_KEY")
+        normalized = normalized.replace(Regex("""\bΜΕΤΡΗΤΑ\b"""), "CASH_KEY")
+        normalized = normalized.replace(Regex("""\bΕΥΡΩ\b"""), "EUR")
+        normalized = normalized.replace(Regex("""\bΦ.?Π.?Α.?\b"""), "VAT_KEY") // Flexible dots
+        normalized = normalized.replace(Regex("""\bΗΜΕΡΟΜΗΝΙΑ\b"""), "DATE_KEY")
+        normalized = normalized.replace(Regex("""\bΡΕΣΤΑ\b"""), "CHANGE_KEY")
+        normalized = normalized.replace(Regex("""\bΑΞΙΑ\b"""), "VALUE_KEY")
+        // NEW: Card receipt keywords
+        normalized = normalized.replace(Regex("""\bΑΓΟΡΑ-SALE\b"""), "CARD_PURCHASE")
+        normalized = normalized.replace(Regex("""\bΑΝΕΠΑΦΗ/CONTACTLESS\b"""), "CONTACTLESS_KEY")
+        // OCR artifacts - TOTAL variants
+        normalized = normalized.replace(Regex("""\b[EZI23][YVUI]N[O0I]?[AΛVL]?[O0ΩI]?\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\bZYNOAO\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\bZYNOIO\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\bIYNOAO\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\b2YNOAO\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\b2YNONO\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\b2YN\.?\s*AEIA\b"""), "SUBTOTAL_KEY")
+        normalized = normalized.replace(Regex("""\bIYN\.?\s*[O0]?N[AΛV]?O[NT]?\b"""), "TOTAL_KEY")
+        // OCR artifacts - AMOUNT
+        normalized = normalized.replace(Regex("""\b[NΠn][O0][SZsz][O0]?\b"""), "AMOUNT_KEY")
+        normalized = normalized.replace(Regex("""\bnozo\b"""), "AMOUNT_KEY")
+        // OCR artifacts - PAYABLE
+        normalized = normalized.replace(Regex("""\b[NΠ][AΛ][ΗHN][PR][ΩOQ]TE[OA]?\b"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""\bNAHPQTEO\b"""), "TOTAL_KEY")
+        // OCR artifacts - CASH
+        normalized = normalized.replace(Regex("""\bM[E3]TP[HΉ]TA\b"""), "CASH_KEY")
+        normalized = normalized.replace(Regex("""\bMETPHTA\b"""), "CASH_KEY")
+        // OCR artifacts - EUR
+        normalized = normalized.replace(Regex("""\b[E3]YP[ΩO9]\b"""), "EUR")
+        normalized = normalized.replace(Regex("""\bEVP9\b"""), "EUR")
+        normalized = normalized.replace(Regex("""\bEYPQ\b"""), "EUR")
+        normalized = normalized.replace(Regex("""\bEYPΩ\b"""), "EUR")
+        // OCR artifacts - DATE
+        normalized = normalized.replace(Regex("""\bHM[/\.]?[ΗH]N?IA\b"""), "DATE_KEY")
+        // OCR artifacts - VAT
+        normalized = normalized.replace(Regex("""\b[FΦ]II?A\.?\b"""), "VAT_KEY")
+        // Date fixes
         normalized = normalized.replace(Regex("""(\d{1,2})[-/][DO0](\d+)[-/](\d{4})"""), "$1-$2-$3")
-        normalized = normalized.replace("HM/NIA", "DATE_KEY")
-        normalized = normalized.replace("ΗΜΕΡΟΜΗΝΙΑ", "DATE_KEY")
-        // --- 4. Currency Noise ---
+        // Clean up currencies at end
         return normalized
-            .replace("EVP9", "").replace("EVP", "")
-            .replace("EUR", "").replace("€", "")
+            .replace("EUR", "")
+            .replace("€", "")
     }
     // --- MERCHANT EXTRACTION ---
     private fun extractMerchant(lines: List<String>): String? {
-        // Skip common non-merchant headers
-        val invalidHeaders = listOf(
-            "APODEIXI", "AIOAEIEH", "ANOD", "NOMIMH", "ENARXI", "START", 
-            "EAPA", "ADDRESS", "THL", "TEL", "AFM", "AOM"
+        // Expanded invalid merchant patterns
+        val invalidMerchants = listOf(
+            // Keywords that should never be merchants
+            "APODEIXI", "AIOAEIEH", "ANOD", "NOMIMH", "ENARXI", "START",
+            "EAPA", "ADDRESS", "THA", "TEL", "AFM", "AOM", "A.M.",
+            "EYNONO", "ZYNOAO", "SYNOAO", "TOTAL_KEY", "CASH_KEY",
+            // Card processors
+            "CARDLINK", "WORLDLINE", "VISA", "MASTERCARD", "MAESTRO",
+            // Serial/reference patterns
+            "ZEIPA", "SERIAL",
+            // Garbage
+            "WWW.", "HTTP", ".GR", ".COM"
         )
-        // Find anchors: Address, Tax ID, Phone
-        val headerMarkers = listOf("ΑΦΜ", "AOM", "ΤΗΛ", "THA", "STR.", "ΟΔΟΣ", "TK", "Τ.Κ", "VAT", "TEL")
+        // Header markers (indicate we're past the merchant name)
+        val headerMarkers = listOf(
+            "ΑΦΜ", "A.Φ.Μ.", "Α.Φ.Μ", "@.M.", "A.M.", "AΦM",
+            "Α.Ο.Υ.", "ΑΟΥ", "A.0.Y.", "Δ.Ο.Υ.", "ΔΟΥ",
+            "ΤΗΛ", "THA", "THΛ", "ΤΗΛ:", "THA:",
+            "ΟΔΟΣ", "ΣΤΡ.", "STR.", "ADDRESS",
+            "Τ.Κ.", "TK", "Τ.Κ", "T.K.",
+            "Α.Μ.Μ.", "ΑΜΜ", "ΑΜΜ.",
+            "ΗΜΕΡΟΜΗΝΙΑ", "HM/NIA", "DATE_KEY",
+            // NEW: Card receipt markers
+            "ΑΓΟΡΑ", "AGORA", "SALE", "PURCHASE"
+        )
+        // Find markers and extract merchant above them
         for ((index, line) in lines.withIndex()) {
-            if (index > 8) break // Merchant is usually in top 8 lines
-            // Check if this line is an anchor
-            if (headerMarkers.any { line.contains(it) }) {
-                // If we found an anchor, the merchant is likely ABOVE it.
-                // Scan upwards for the first valid line.
-                for (j in index - 1 downTo 0) {
-                    val candidate = lines[j]
-                    if (isValidMerchantLine(candidate, invalidHeaders)) {
-                        return cleanMerchantName(candidate)
+            if (index > 10) break
+            for (marker in headerMarkers) {
+                if (line.contains(marker, ignoreCase = true)) {
+                    // Scan upwards for valid merchant
+                    for (j in index - 1 downTo 0) {
+                        val candidate = lines[j]
+                        if (isValidMerchantLine(candidate, invalidMerchants)) {
+                            val cleaned = cleanMerchantName(candidate)
+                            // Additional check: don't return card processor names
+                            if (!isCardProcessor(cleaned)) {
+                                return cleaned
+                            }
+                        }
                     }
                 }
             }
         }
-        // Fallback: Just return the first valid line if no anchors found
+        // Fallback
         for (line in lines.take(5)) {
-            if (isValidMerchantLine(line, invalidHeaders)) {
-                return cleanMerchantName(line)
+            if (isValidMerchantLine(line, invalidMerchants)) {
+                val cleaned = cleanMerchantName(line)
+                if (!isCardProcessor(cleaned)) {
+                    return cleaned
+                }
             }
         }
         return null
+    }
+    private fun isCardProcessor(name: String): Boolean {
+        val processors = listOf("CARDLINK", "WORLDLINE", "VIVA", "PIRAEUS", "EUROBANK", "ALPHA BANK")
+        return processors.any { name.contains(it, ignoreCase = true) }
     }
     private fun isValidMerchantLine(line: String, invalidHeaders: List<String>): Boolean {
         if (line.length < 3) return false
@@ -9215,83 +9467,103 @@ class ReceiptParser @Inject constructor() {
         return raw.replace(Regex("[^a-zA-Zα-ωΑ-Ω0-9\\s&.-]"), "").trim()
     }
     private fun extractTotal(lines: List<String>): Double? {
-        // Regex: Matches 12.50, 12,50, 1.250,00
-        // Strictly avoids numbers followed by % (VAT rates)
         val amountRegex = Regex("""(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})(?!\s?%)""")
-        // --- STRATEGY 1: Explicit "TOTAL" Keyword (Highest Confidence) ---
-        // Scan backwards (bottom-up) for the word "TOTAL_KEY"
+        // NEW: Lines that should be COMPLETELY skipped (receipt numbers, IDs, etc.)
+        val nonTotalIndicators = listOf(
+            "APIOMOE", "APIOMOX", "ZEIPA", "SERIAL", "AA/Y",
+            "AP.r.E.MH", "APIEMOE", "ANEAATH", "APIEMOX",
+            "AOM", "AFM", "A.F.M.", "THA", "THA:"
+        )
+        // Strategy 1: Look for TOTAL_KEY
         val totalLineIndex = lines.indexOfLast { it.contains("TOTAL_KEY") }
         if (totalLineIndex != -1) {
-            // Check the exact line
-            val amountInLine = extractAmountFromLine(lines[totalLineIndex], amountRegex)
-            if (amountInLine != null) return amountInLine
-            // Check the NEXT line (common in POS receipts: Label then Value)
-            if (totalLineIndex + 1 < lines.size) {
-                val amountNext = extractAmountFromLine(lines[totalLineIndex + 1], amountRegex)
-                if (amountNext != null) return amountNext
+            // Check this line and next 3 lines (amount may be split)
+            for (offset in 0..3) {
+                if (totalLineIndex + offset < lines.size) {
+                    val lineToCheck = lines[totalLineIndex + offset]
+                    // Skip if it looks like a receipt number line
+                    if (nonTotalIndicators.any { lineToCheck.contains(it, ignoreCase = true) }) continue
+                    val amount = extractAmountFromLine(lineToCheck, amountRegex)
+                    if (amount != null && amount > 0.01) return amount
+                }
             }
         }
-        // --- STRATEGY 2: Fallback (Smart Max) ---
-        // If no keyword found, find the LARGEST plausible number.
+        // Strategy 2: Fallback - Find largest VALID amount
         var maxAmount = 0.0
-        // Removed bottom 70% restriction to catch totals at top (rare but possible) or middle
-        val searchStart = 0
-        for (i in searchStart until lines.size) {
+        for (i in lines.indices) {
             val line = lines[i]
-            // FILTER: Ignore lines that definitely aren't the total
-            if (line.contains("%")) continue // Ignore VAT lines (13,00%)
-            if (line.contains("METPHTA") || line.contains("CASH")) continue // Ignore Cash Given (Receipt #18)
-            if (line.contains("RESTA") || line.contains("ΡΕΣΤΑ")) continue // Ignore Change
-            if (line.contains("KARTA") || line.contains("CARD")) continue // Ignore "Card" references unless parsed carefully
-            // Extract numbers from this line
+            // NEW: Skip lines with non-total indicators
+            if (nonTotalIndicators.any { line.contains(it, ignoreCase = true) }) continue
+            // Skip long number lines (barcodes/IDs)
+            if (line.replace(Regex("[^0-9]"), "").length > 9) continue
+            // Skip VAT percentage lines
+            if (line.contains("%")) continue
+            // Skip cash/change lines (but not if they also have TOTAL)
+            val isCashOnly = (line.contains("CASH_KEY") || line.contains("METPHTA") ||
+                    line.contains("METPHTA") || line.contains("CHANGE_KEY")) &&
+                    !line.contains("TOTAL_KEY")
+            if (isCashOnly) continue
+            // Skip card reference lines
+            if (line.contains("5356") || line.contains("****") || line.contains("ENTER BONUS")) continue
             val matches = amountRegex.findAll(line)
             for (match in matches) {
                 val rawVal = match.groupValues[1]
                 val amount = parseAmount(rawVal)
-                // SANITY CHECKS:
-                // 1. Amount must be < 5000 (Avoids phone numbers/Tax IDs misread as price)
-                // 2. Amount must not look like a Year (e.g., 2024, 2025)
-                // 3. Amount must not look like Time (e.g., 14.24 in Receipt #6)
-                if (isValidAmount(amount, line)) {
-                    if (amount > maxAmount) {
-                        maxAmount = amount
-                    }
+                if (isValidAmount(amount, line) && amount > maxAmount) {
+                    maxAmount = amount
                 }
             }
         }
         return if (maxAmount > 0.0) maxAmount else null
     }
     private fun isValidAmount(amount: Double, line: String): Boolean {
-        if (amount > 5000) return false
-        if (amount == 0.0) return false
-        // Year check: 2015-2035 usually represents date, not price
-        if (amount >= 2015 && amount <= 2035 && amount % 1 == 0.0) return false
-        // Time check: If line contains "ORA" or matches HH:MM pattern logic
-        if (line.contains("QPA") || line.contains("ORA")) return false
+        // Reject zero or near-zero
+        if (amount < 0.01) return false
+        // Reject unreasonably large amounts
+        if (amount > 5000.0) return false
+        // Reject year-like numbers (allow decimal years only if not whole)
+        if (amount >= 2015.0 && amount <= 2035.0 && amount % 1.0 == 0.0) return false
+        // NEW: Reject if line looks like a receipt number line
+        val receiptNumberPatterns = listOf(
+            Regex("""APIOMOE|APIOMOX""", RegexOption.IGNORE_CASE),
+            Regex("""ZEIPA"""),
+            Regex("""AP\.?r\.?E\.?MH"""),
+        )
+        if (receiptNumberPatterns.any { it.containsMatchIn(line) }) return false
         return true
     }
     private fun parseAmount(rawAmount: String): Double {
-        // Safe parsing: 
-        // 1. Identify last separator (. or ,)
-        // 2. Everything before is thousands separator -> remove
-        // 3. Last separator is decimal -> replace with .
         if (rawAmount.isBlank()) return 0.0
-        val lastComma = rawAmount.lastIndexOf(',')
-        val lastDot = rawAmount.lastIndexOf('.')
-        val lastSeparatorIndex = kotlin.math.max(lastComma, lastDot)
-        var clean = rawAmount
-        if (lastSeparatorIndex != -1) {
-            // Check if it's really a decimal separator (followed by 1 or 2 digits usually)
-            // But strict "last wins" is safer for mixed formats like 1.250,50
-            // Remove all OTHER separators
-            val prefix = rawAmount.substring(0, lastSeparatorIndex).replace(Regex("[.,]"), "")
-            val suffix = rawAmount.substring(lastSeparatorIndex + 1)
-            clean = "$prefix.$suffix"
+        var cleaned = rawAmount
+        // NEW: Handle E-prefixed amounts (E0,13 -> try to extract 0.13)
+        if (cleaned.startsWith("E") || cleaned.startsWith("e")) {
+            val rest = cleaned.substring(1)
+            // Use simple check if rest looks like number start
+            if (rest.isNotEmpty() && rest[0].isDigit()) {
+                 cleaned = rest
+            }
         }
-        return clean.toDoubleOrNull() ?: 0.0
+        // Remove all spaces
+        cleaned = cleaned.replace(" ", "")
+        // Find last separator
+        val lastComma = cleaned.lastIndexOf(',')
+        val lastDot = cleaned.lastIndexOf('.')
+        val lastSepIndex = kotlin.math.max(lastComma, lastDot)
+        return if (lastSepIndex >= 0) {
+            val integerPart = cleaned.substring(0, lastSepIndex).replace(".", "").replace(",", "")
+            val decimalPart = cleaned.substring(lastSepIndex + 1)
+            "$integerPart.$decimalPart".toDoubleOrNull() ?: 0.0
+        } else {
+            cleaned.toDoubleOrNull() ?: 0.0
+        }
     }
     private fun extractAmountFromLine(line: String, regex: Regex): Double? {
-        // If line has multiple numbers, we generally want the LAST one (Net... VAT... Total)
+        // NEW: First check if line contains percentage - if so, extract differently
+        if (line.contains("%")) {
+            val afterPercent = line.substringAfter("%", "")
+            val matches = regex.findAll(afterPercent)
+            return matches.lastOrNull()?.groupValues?.get(1)?.let { parseAmount(it) }
+        }
         val matches = regex.findAll(line)
         return matches.lastOrNull()?.groupValues?.get(1)?.let { parseAmount(it) }
     }
@@ -9342,7 +9614,7 @@ class ReceiptParser @Inject constructor() {
         val items = mutableListOf<LineItem>()
         // Skip lines that look like totals/subtotals
         val skipLinePattern = Regex(
-            """(?i)(TOTAL|ΣΥΝΟΛΟ|VAT|ΦΠΑ|CHANGE|ΡΕΣΤΑ|CASH|CARD|VISA|MASTER|SUBTOTAL|ΥΠΟΣΥΝΟΛΟ|ΜΕΤΡΗΤΑ|ΚΑΡΤΑ|ΠΛΗΡΩΜΗ|PAYMENT|DISCOUNT|ΕΚΠΤΩΣΗ)"""
+            """(?i)(TOTAL|ΣΥΝΟΛΟ|VAT|ΦΠΑ|CHANGE|ΡΕΣΤΑ|CASH|CARD|VISA|MASTER|SUBTOTAL|ΥΠΟΣΥΝΟΛΟ|ΜΕΤΡΗΤΑ|ΚΑΡΤΑ|ΠΛΗΡΩΜΗ|PAYMENT|DISCOUNT|ΕΚΠΤΩΣΗ|AMOUNT|ΠΟΣΟ|ΤΕΛΙΚΟ|ΠΛΗΡΩΤΕΟ|ΑΞΙΑ|VALUE)"""
         )
         // Pattern 1: "description   amount"
         val matcher1 = lineItemPatterns[0].matcher(text)
@@ -14228,7 +14500,7 @@ fun MlStatsSection(
                             modifier = Modifier.weight(1f)
                         )
                         Text(
-                            text = "${stats.acceptedAsExpense}/${stats.totalNotifications}",
+                            text = "${stats.acceptedAsExpense}/${stats.totalNotifications} (D:${stats.duplicates})",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -16772,6 +17044,7 @@ fun ReviewScreen(
     val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
     var showDebugMenu by remember { mutableStateOf(false) }
+    var debugInfoDialogText by remember { mutableStateOf<String?>(null) }
     val batchLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
@@ -16956,7 +17229,19 @@ fun ReviewScreen(
                                 item = item,
                                 onApprove = { viewModel.approveReview(item.review.id) },
                                 onReject = { viewModel.rejectReview(item.review.id) },
-                                onEdit = { editingReview = item.review }
+                                onEdit = { editingReview = item.review },
+                                onDebug = {
+                                    item.receipt?.let { receipt ->
+                                        coroutineScope.launch {
+                                            debugInfoDialogText = "Loading..."
+                                            debugInfoDialogText = viewModel.getReceiptDebugInfo(receipt.id)
+                                        }
+                                    } ?: run {
+                                        coroutineScope.launch {
+                                            snackbarHostState.showSnackbar("No automated receipt info available")
+                                        }
+                                    }
+                                }
                             )
                         }
                     )
@@ -16976,6 +17261,42 @@ fun ReviewScreen(
                         finalCategoryId = categoryId
                     )
                     editingReview = null
+                }
+            )
+        }
+        debugInfoDialogText?.let { info ->
+            AlertDialog(
+                onDismissRequest = { debugInfoDialogText = null },
+                title = { Text("Receipt Debug Info") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .verticalScroll(rememberScrollState())
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = info,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(info))
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar("Copied to clipboard")
+                            }
+                        }
+                    ) {
+                        Text("Copy")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { debugInfoDialogText = null }) {
+                        Text("Close")
+                    }
                 }
             )
         }
@@ -17021,7 +17342,8 @@ fun ReviewCard(
     item: PendingReviewWithReceipt,
     onApprove: () -> Unit,
     onReject: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    onDebug: () -> Unit
 ) {
     val review = item.review
     val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, HH:mm", Locale.getDefault()) }
@@ -17124,7 +17446,8 @@ fun ReviewCard(
                     .border(1.dp, SemanticColors.GlassBorder.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
                     .clickable { 
                         haptic(HapticType.Standard)
-                        showTrustSignal = !showTrustSignal 
+                        onDebug() // Tap the evidence area to show debug info instead of expanding
+                        // showTrustSignal = !showTrustSignal 
                     }
                     .padding(12.dp)
             ) {
@@ -17134,14 +17457,14 @@ fun ReviewCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "RAW SOURCE EVIDENCE",
+                        "RAW SOURCE EVIDENCE (TAP FOR DEBUG)",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = SemanticColors.TextSecondary,
                         letterSpacing = 1.sp
                     )
                     Icon(
-                        if (showTrustSignal) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                        Icons.Rounded.BugReport, // Changed icon
                         null,
                         tint = SemanticColors.TextMuted,
                         modifier = Modifier.size(20.dp)
@@ -17455,6 +17778,9 @@ class ReviewViewModel @Inject constructor(
     }
     suspend fun getDebugExportData(): String {
         return receiptRepository.exportParserDebugData()
+    }
+    suspend fun getReceiptDebugInfo(receiptId: Long): String {
+        return receiptRepository.debugReceipt(receiptId)
     }
     fun clearScannedData() {
         viewModelScope.launch {
@@ -18287,163 +18613,6 @@ fun rememberHapticFeedback(): (HapticType) -> Unit {
 enum class HapticType {
     Standard, Success, Error, Heavy
 }
-
-```
-
----
-
-## main\res\drawable\ic_launcher_background.xml <a name="mainresdrawableic_launcher_backgroundxml"></a>
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#008577"
-        android:pathData="M0,0h108v108h-108z" />
-</vector>
-
-```
-
----
-
-## main\res\drawable\ic_launcher_foreground.xml <a name="mainresdrawableic_launcher_foregroundxml"></a>
-```xml
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M79,35h-9.92C68.42,32.49,67.6,30.33,66.6,28.62L74.02,21.2c0.78-0.78,0.78-2.05,0-2.83L69.2,13.55c-0.78-0.78-2.05-0.78-2.83,0L58.95,20.97c-1.71-1-3.87-1.82-6.38-2.48V8.42c0-1.1-0.9-2-2-2h-6.83c-1.1,0-2,0.9-2,2v10.07c-2.51,0.66-4.67,1.48-6.38,2.48L27.63,13.55c-0.78-0.78-2.05-0.78-2.83,0L19.98,18.37c-0.78,0.78-0.78,2.05,0,2.83l7.42,7.42c-1,1.71-1.82,3.87-2.48,6.38H14.85c-1.1,0-2,0.9-2,2v6.83c0,1.1,0.9,2,2,2h10.07c0.66,2.51,1.48,4.67,2.48,6.38L19.98,60.85c-0.78,0.78-0.78,2.05,0,2.83l4.82,4.82c0.78,0.78,2.05,0.78,2.83,0l7.42-7.42c1.71,1,3.87,1.82,6.38,2.48v10.07c0,1.1,0.9,2,2,2h6.83c1.1,0,2-0.9,2-2V73.15c2.51-0.66,4.67-1.48,6.38-2.48l7.42,7.42c0.78,0.78,2.05,0.78,2.83,0l4.82-4.82c0.78-0.78,0.78-2.05,0-2.83l-7.42-7.42c1-1.71,1.82-3.87,2.48-6.38h10.07c1.1,0,2-0.9,2-2V48.17c0-1.1-0.9-2-2-2H79z M54,52.17c-4.42,0-8-3.58-8-8s3.58-8,8-8s8,3.58,8,8S58.42,52.17,54,52.17z" />
-</vector>
-
-```
-
----
-
-## main\res\mipmap-anydpi-v26\ic_launcher.xml <a name="mainresmipmap-anydpi-v26ic_launcherxml"></a>
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-</adaptive-icon>
-
-```
-
----
-
-## main\res\mipmap-anydpi-v26\ic_launcher_round.xml <a name="mainresmipmap-anydpi-v26ic_launcher_roundxml"></a>
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-</adaptive-icon>
-
-```
-
----
-
-## main\res\mipmap\ic_launcher.xml <a name="mainresmipmapic_launcherxml"></a>
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-</adaptive-icon>
-
-```
-
----
-
-## main\res\mipmap\ic_launcher_round.xml <a name="mainresmipmapic_launcher_roundxml"></a>
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-</adaptive-icon>
-
-```
-
----
-
-## main\res\values\strings.xml <a name="mainresvaluesstringsxml"></a>
-```xml
-<resources>
-    <string name="app_name">ExpenseTracker</string>
-    <!-- Add Expense -->
-    <string name="add_expense_title">Add Expense</string>
-    <string name="close_content_description">Close</string>
-    <string name="save_button">Save</string>
-    <string name="merchant_label">Merchant / Place</string>
-    <string name="merchant_placeholder">e.g. Sklavenitis, Starbucks...</string>
-    <string name="amount_label">Amount (€)</string>
-    <string name="amount_placeholder">0.00</string>
-    <string name="payment_method_label">Payment Method</string>
-    <string name="payment_method_card">💳 Card</string>
-    <string name="payment_method_cash">💵 Cash</string>
-    <string name="payment_method_transfer">🏦 Transfer</string>
-    <string name="category_label">Category</string>
-    <string name="date_label">Date</string>
-    <string name="transaction_type_prefix">Transaction Type: %1$s</string>
-    <string name="toggle_content_description">Toggle</string>
-    <string name="notes_label">Notes</string>
-    <string name="notes_placeholder">Optional notes</string>
-    <string name="repeat_transaction_label">Repeat Transaction?</string>
-    <string name="frequency_label">Frequency</string>
-    <string name="error_duplicate_transaction">⚠️ A similar transaction already exists</string>
-    <string name="avg_amount_format">~€%.2f</string>
-    <string name="visits_suffix_format">%d visits</string>
-    <string name="ok_button">OK</string>
-    <string name="cancel_button">Cancel</string>
-    <!-- Error Messages -->
-    <string name="error_merchant_required">Merchant name is required</string>
-    <string name="error_invalid_amount">Enter a valid amount</string>
-    <string name="error_amount_too_large">Amount is too large</string>
-    <string name="error_unknown">Unknown error</string>
-    <string name="recurring_note_default">Created from manual entry</string>
-    <!-- Transactions Screen -->
-    <string name="select_frequency_title">Select Frequency</string>
-    <string name="transactions_title">Transactions</string>
-    <string name="no_transactions_title">No transactions found</string>
-    <string name="no_transactions_subtitle">Parsed expenses in this period will appear here</string>
-    <string name="delete_transaction_title">Delete Transaction</string>
-    <string name="delete_transaction_confirmation">Are you sure you want to delete this transaction from %1$s?</string>
-    <string name="delete_button">Delete</string>
-    <string name="select_category_title">Select Category</string>
-    <string name="uncategorized_label">Uncategorized</string>
-    <string name="mark_recurring_content_description">Mark as Recurring</string>
-</resources>
-
-```
-
----
-
-## main\res\values\themes.xml <a name="mainresvaluesthemesxml"></a>
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="Theme.ExpenseTracker" parent="Theme.Material3.DayNight.NoActionBar">
-    </style>
-</resources>
-
-```
-
----
-
-## main\res\xml\file_paths.xml <a name="mainresxmlfile_pathsxml"></a>
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<paths>
-    <cache-path name="receipt_images" path="receipt_images/" />
-    <files-path name="receipts" path="receipts/" />
-</paths>
 
 ```
 

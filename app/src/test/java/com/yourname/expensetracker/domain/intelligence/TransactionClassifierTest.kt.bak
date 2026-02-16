@@ -1,0 +1,141 @@
+package com.yourname.expensetracker.domain.intelligence
+
+import android.content.Context
+import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+import com.yourname.expensetracker.data.database.entity.UserCorrection
+import io.mockk.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
+
+class TransactionClassifierTest {
+
+    @get:Rule
+    val tempFolder = TemporaryFolder()
+
+    private val context = mockk<Context>(relaxed = true)
+    private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
+    private lateinit var classifier: TransactionClassifier
+
+    @Before
+    fun setup() {
+        every { context.filesDir } returns tempFolder.root
+        coEvery { userCorrectionDao.getCount() } returns 0
+        coEvery { userCorrectionDao.getAll() } returns emptyList()
+        
+        classifier = TransactionClassifier(context, userCorrectionDao)
+    }
+
+    @Test
+    fun `predict returns 0_5 when not enough samples`() = runBlocking {
+        classifier.initialize()
+        val prob = classifier.predict("Some transaction text")
+        assertEquals(0.5f, prob, 0.0f)
+    }
+
+    @Test
+    fun `training updates model stats`() = runBlocking {
+        classifier.initialize()
+        
+        // Train 20 positive samples and 20 negative samples to pass threshold
+        repeat(20) {
+            classifier.train("positive transaction $it", true)
+            classifier.train("negative junk $it", false)
+        }
+        
+        val stats = classifier.stats.first()
+        assertTrue(stats.isReady)
+        assertEquals(20, stats.totalPositive)
+        assertEquals(20, stats.totalNegative)
+        
+        // Prediction should now distinguish
+        val posProb = classifier.predict("positive transaction")
+        val negProb = classifier.predict("negative junk")
+        
+        assertTrue("Positive sample should have high probability", posProb > 0.6f)
+        assertTrue("Negative sample should have low probability", negProb < 0.4f)
+    }
+
+    @Test
+    fun `concurrent training is thread safe`() = runBlocking {
+        classifier.initialize()
+        
+        val jobs = (1..100).map { i ->
+            launch(Dispatchers.Default) {
+                classifier.train("sample $i", i % 2 == 0)
+            }
+        }
+        
+        jobs.joinAll()
+        
+        val stats = classifier.stats.first()
+        assertEquals(100, stats.totalPositive + stats.totalNegative)
+    }
+
+    @Test
+    fun `persistence saves and loads model`() = runBlocking {
+        // 1. Train and save
+        classifier.initialize()
+        classifier.train("save me", true)
+        
+        // Wait for async save (debounce 2s in implementation)
+        delay(2500)
+        
+        // Verify file exists
+        val modelFile = File(tempFolder.root, "naive_bayes_model.json")
+        assertTrue(modelFile.exists())
+        
+        // 2. Create new instance and load
+        val newClassifier = TransactionClassifier(context, userCorrectionDao)
+        newClassifier.initialize()
+        
+        val stats = newClassifier.stats.first()
+        assertEquals("Should load 1 positive sample", 1, stats.totalPositive)
+    }
+
+    @Test
+    fun `retrainFromCorrections balances correctly`() = runBlocking {
+        // Setup unbalanced corrections: 25 positive, 100 negative
+        val corrections = mutableListOf<UserCorrection>()
+        repeat(25) {
+            corrections.add(UserCorrection(
+                id = it.toLong(), originalMerchant = "Pos $it", notificationText = "Pos $it", 
+                wasApproved = true, wasRejected = false, timestamp = 0
+            ))
+        }
+        repeat(100) {
+            corrections.add(UserCorrection(
+                id = 100 + it.toLong(), originalMerchant = "Neg $it", notificationText = "Neg $it", 
+                wasApproved = false, wasRejected = true, timestamp = 0
+            ))
+        }
+        
+        coEvery { userCorrectionDao.getAll() } returns corrections
+        coEvery { userCorrectionDao.getCount() } returns corrections.size
+        
+        // Initialize should trigger retrain logic if enough samples
+        // But initialize only calls retrain if count > lastTrainingCount.
+        // Let's call retrainFromCorrections directly? It's public.
+        
+        classifier.retrainFromCorrections()
+        
+        // Wait for async retrain
+        delay(2500)
+        
+        val stats = classifier.stats.first()
+        
+        // Logic caps negatives to 3x positives.
+        // 25 positives -> max 75 negatives.
+        // Total expected: 25 + 75 = 100.
+        // Actually slightly less due to random sampling of negatives if implemented that way, 
+        // but implementation says: take(maxNegatives).
+        
+        assertEquals(25, stats.totalPositive)
+        assertEquals(75, stats.totalNegative)
+    }
+}

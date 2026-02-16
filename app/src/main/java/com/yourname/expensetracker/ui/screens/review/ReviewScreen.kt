@@ -42,6 +42,7 @@ import coil.compose.AsyncImage
 import java.io.File
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
+import com.yourname.expensetracker.ui.screens.debug.DebugViewerScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,6 +66,8 @@ fun ReviewScreen(
     val coroutineScope = rememberCoroutineScope()
     var showDebugMenu by remember { mutableStateOf(false) }
     var debugInfoDialogText by remember { mutableStateOf<String?>(null) }
+    var showDebugViewer by remember { mutableStateOf(false) }
+    val debugData by viewModel.debugData.collectAsState()
 
     val batchLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -106,6 +109,13 @@ fun ReviewScreen(
                     titleContentColor = SemanticColors.TextPrimary
                 ),
                 actions = {
+                    // Debug viewer button (show when debug data is available)
+                    if (debugData != null) {
+                        IconButton(onClick = { showDebugViewer = true }) {
+                            Icon(Icons.Rounded.BugReport, "View Debug Data")
+                        }
+                    }
+                    
                     Box {
                         IconButton(onClick = { showDebugMenu = !showDebugMenu }) {
                             Icon(Icons.Rounded.MoreVert, "Debug Options")
@@ -144,6 +154,18 @@ fun ReviewScreen(
                                 leadingIcon = { Icon(Icons.Rounded.ContentCopy, null) }
                             )
                             HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Clear Debug Data") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    viewModel.clearDebugData()
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                                colors = MenuDefaults.itemColors(
+                                    textColor = MaterialTheme.colorScheme.error,
+                                    leadingIconColor = MaterialTheme.colorScheme.error
+                                )
+                            )
                             DropdownMenuItem(
                                 text = { Text("Clear Scanned Data") },
                                 onClick = {
@@ -364,6 +386,16 @@ fun ReviewScreen(
                         )
                     }
                 }
+            }
+        }
+        
+        // Debug Viewer Dialog
+        if (showDebugViewer) {
+            debugData?.let { data ->
+                DebugViewerScreen(
+                    debugData = data,
+                    onClose = { showDebugViewer = false }
+                )
             }
         }
     }

@@ -20,8 +20,7 @@ data class ForecastComponents(
     val recurringExpenses: List<RecurringPattern>,
     val plannedExpenses: List<PlannedExpense> = emptyList(), // Manual intentions
     val goalReserves: Double = 0.0, // Money locked in goals
-    val projectedCategorySpending: Map<Long, Double>, // Category ID to amount
-    
+
     // Timeline Data
     val pastSpendingPoints: List<Double>, // Cumulative daily spend up to today
     val projectedSpendingPoints: List<Double>, // Projected cumulative daily spend for rest of month

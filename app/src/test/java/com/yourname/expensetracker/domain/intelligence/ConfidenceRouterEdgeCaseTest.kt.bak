@@ -1,0 +1,178 @@
+package com.yourname.expensetracker.domain.intelligence
+
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import io.mockk.*
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import kotlin.math.abs
+
+class ConfidenceRouterEdgeCaseTest {
+    
+    private lateinit var router: ConfidenceRouter
+    private val sourceStatsDao = mockk<com.yourname.expensetracker.data.database.dao.SourceStatsDao>(relaxed = true)
+    private val userCorrectionDao = mockk<com.yourname.expensetracker.data.database.dao.UserCorrectionDao>(relaxed = true)
+    private val classifier = mockk<TransactionClassifier>(relaxed = true)
+
+    @Before
+    fun setup() {
+        router = ConfidenceRouter(sourceStatsDao, userCorrectionDao, classifier)
+        coEvery { sourceStatsDao.getByPackage(any()) } returns null
+        coEvery { userCorrectionDao.getMerchantTotalCorrections(any()) } returns 0
+        coEvery { userCorrectionDao.getTotalCorrections(any()) } returns 0
+        coEvery { userCorrectionDao.hasPreviousApprovals(any(), any()) } returns false
+        coEvery { classifier.getStats() } returns ClassifierStats(0, 0, 0, false)
+        coEvery { classifier.predict(any()) } returns 0.5f
+    }
+
+    private fun makeParsed(confidence: Float, merchant: String = "TestMerchant") =
+        ParsedTransaction(10.0, "EUR", merchant, TransactionType.PURCHASE, confidence)
+
+    // =========================================================================
+    // THRESHOLD BOUNDARY TESTS - CRITICAL
+    // =========================================================================
+
+    @Test
+    fun `exact threshold boundary - auto accept at exactly 0_85`() = runBlocking {
+        // Confidence = 0.85 should AUTO_ACCEPT (threshold is >= 0.85)
+        val result = router.route(makeParsed(0.85f), "com.test")
+        assertEquals(RoutingDecision.AUTO_ACCEPT, result.decision)
+    }
+
+    @Test
+    fun `just below auto accept threshold - needs review`() = runBlocking {
+        // Confidence = 0.8499 should NEEDS_REVIEW (below 0.85)
+        val result = router.route(makeParsed(0.8499f), "com.test")
+        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
+    }
+
+    @Test
+    fun `exact threshold boundary - review at exactly 0_50`() = runBlocking {
+        // Confidence = 0.50 should NEEDS_REVIEW (threshold is >= 0.50)
+        val result = router.route(makeParsed(0.50f), "com.test")
+        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
+    }
+
+    @Test
+    fun `just below review threshold - auto reject`() = runBlocking {
+        // Confidence = 0.499 should AUTO_REJECT (below 0.50)
+        val result = router.route(makeParsed(0.499f), "com.test")
+        assertEquals(RoutingDecision.AUTO_REJECT, result.decision)
+    }
+
+    // =========================================================================
+    // INVALID INPUT TESTS - CRITICAL
+    // =========================================================================
+
+    @Test
+    fun `invalid confidence NaN is handled gracefully`() = runBlocking {
+        // NaN should be treated as low confidence
+        val result = router.route(makeParsed(Float.NaN), "com.test")
+        assertTrue("NaN should result in AUTO_REJECT or NEEDS_REVIEW",
+            result.decision == RoutingDecision.AUTO_REJECT || 
+            result.decision == RoutingDecision.NEEDS_REVIEW
+        )
+    }
+
+    @Test
+    fun `invalid confidence positive infinity is clamped to 1_0`() = runBlocking {
+        val result = router.route(makeParsed(Float.POSITIVE_INFINITY), "com.test")
+        assertTrue("Infinity should be clamped", result.adjustedConfidence <= 1.0f)
+        assertEquals(RoutingDecision.AUTO_ACCEPT, result.decision)
+    }
+
+    @Test
+    fun `invalid confidence negative infinity is clamped to 0_0`() = runBlocking {
+        val result = router.route(makeParsed(Float.NEGATIVE_INFINITY), "com.test")
+        assertTrue("Negative infinity should be clamped", result.adjustedConfidence >= 0.0f)
+        assertEquals(RoutingDecision.AUTO_REJECT, result.decision)
+    }
+
+    @Test
+    fun `confidence above 1_0 is clamped`() = runBlocking {
+        val result = router.route(makeParsed(1.5f), "com.test")
+        assertTrue("Confidence above 1.0 should be clamped", result.adjustedConfidence <= 1.0f)
+    }
+
+    @Test
+    fun `confidence below 0_0 is clamped`() = runBlocking {
+        val result = router.route(makeParsed(-0.5f), "com.test")
+        assertTrue("Confidence below 0.0 should be clamped", result.adjustedConfidence >= 0.0f)
+    }
+
+    // =========================================================================
+    // NULL/EMPTY INPUT TESTS
+    // =========================================================================
+
+    @Test
+    fun `null merchant name applies penalty`() = runBlocking {
+        val result = router.route(makeParsed(0.90f, ""), "com.test")
+        assertTrue("Empty merchant should reduce confidence", 
+            result.adjustedConfidence < 0.90f
+        )
+    }
+
+    @Test
+    fun `whitespace only merchant applies penalty`() = runBlocking {
+        val result = router.route(makeParsed(0.90f, "   "), "com.test")
+        assertTrue("Whitespace-only merchant should reduce confidence",
+            result.adjustedConfidence < 0.90f
+        )
+    }
+
+    @Test
+    fun `null package name does not crash`() = runBlocking {
+        val result = router.route(makeParsed(0.90f), "unknown") // Using unknown as package since logic might strict check nulls, and we can't pass null to non-null param if signature demands string.
+        // But route signature likely takes String.
+        // Assuming route(parsed: ParsedTransaction, packageName: String)
+        assertNotNull("Null package should not crash", result)
+    }
+
+    // =========================================================================
+    // DIVISION BY ZERO PROTECTION
+    // =========================================================================
+
+    @Test
+    fun `sourceStats with zero totalNotifications does not crash`() = runBlocking {
+        coEvery { sourceStatsDao.getByPackage("com.test") } returns
+            com.yourname.expensetracker.data.database.entity.SourceStats(
+                packageName = "com.test",
+                totalNotifications = 0,
+                acceptedAsExpense = 0,
+                trustScore = 0.5f // Adding required fields
+            )
+        
+        val result = router.route(makeParsed(0.90f), "com.test")
+        assertNotNull("Zero notifications should not cause division by zero", result)
+    }
+
+    @Test
+    fun `high merchant rejection rate does not cause division issues`() = runBlocking {
+        coEvery { userCorrectionDao.getMerchantTotalCorrections("TestMerchant") } returns 0
+        coEvery { userCorrectionDao.getMerchantRejectionCount("TestMerchant") } returns 10
+        
+        // Should not throw division by zero
+        val result = router.route(makeParsed(0.90f), "com.test")
+        assertNotNull(result)
+    }
+
+    // =========================================================================
+    // OVERFLOW PROTECTION
+    // =========================================================================
+
+    @Test
+    fun `overflow in correction counts is handled`() = runBlocking {
+        coEvery { userCorrectionDao.getMerchantTotalCorrections("TestMerchant") } returns 
+            Integer.MAX_VALUE
+        coEvery { userCorrectionDao.getMerchantRejectionCount("TestMerchant") } returns 
+            Integer.MAX_VALUE
+        
+        val result = router.route(makeParsed(0.90f), "com.test")
+        assertTrue("Overflow should not cause invalid confidence",
+            !result.adjustedConfidence.isNaN() && 
+            !result.adjustedConfidence.isInfinite()
+        )
+    }
+}

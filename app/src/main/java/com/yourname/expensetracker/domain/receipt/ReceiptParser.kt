@@ -32,27 +32,22 @@ class ReceiptParser @Inject constructor() {
 
     // Total amount patterns (Greek + English receipts)
     private val totalPatterns = listOf(
-        // Greek patterns with fuzzy space and comma handling
+        // Look for our normalized keys (High confidence)
         Pattern.compile(
-            """(?:ΣΥΝΟΛΟ|ΤΕΛΙΚΟ|ΠΛΗΡΩΤΕΟ|ΠΟΣΟ|ΑΞΙΑ|VALUE|ΓΕΝΙΚΟ\s*ΣΥΝΟΛΟ|ΛΟΓΑΡΙΑΣΜΟ[ΣΖ]|TOTAL|AMOUNT|PAYMENT|ΠΛΗΡΩΜΗ)\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
+            """(?:TOTAL_KEY|AMOUNT_KEY|PAYMENT_KEY|CASH_KEY|ΤΕΛΙΚΟ|ΠΛΗΡΩΤΕΟ|ΣΥΝΟΛΟ|ΣYNONO|TOTAL|AMOUNT|CASH|METPHTA|ΜΕΤΡΗΤΑ)\s*[:\s]*(\d+[.,]\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         ),
-        // Amount with currency symbol at end
+        // Fallback for raw totals or noise in between
         Pattern.compile(
-            """(?:TOTAL|ΣΥΝΟΛΟ|ΠΟΣΟ|AMOUNT|ΑΞΙΑ|VALUE|PAYMENT|ΠΛΗΡΩΜΗ)\s*[:\s]*(\d+[\s.,]\s*\d{2})\s*(?:€|EUR)""",
+            """(?:TOTAL_KEY|TOTAL|ΣΥΝΟΛΟ|AMOUNT_KEY|ΠΟΣΟ|AMOUNT|ΣYNONO|ΤΕΛΙΚΟ|ΠΛΗΡΩΤΕΟ|CASH_KEY|CASH|ΜΕΤΡΗΤΑ|METPHTA).*?(\d+[.,]\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
-        ),
-        // Standalone large amount at the very bottom (common for Lidl/Sklavenitis)
-        Pattern.compile(
-            """(?:€|EUR)\s*(\d+[\s.,]\s*\d{2})\s*$""",
-            Pattern.MULTILINE
         )
     )
 
     // Tax patterns
     private val taxPatterns = listOf(
         Pattern.compile(
-            """(?:Φ\.?Π\.?Α\.?|VAT|TAX|TVA)\s*[\d%]*\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
+            """(?:VAT_KEY|VAT|TAX|Φ\.?Π\.?Α\.?)[^(\d+[.,]\d{2})]*(\d+[.,]\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     )
@@ -72,7 +67,17 @@ class ReceiptParser @Inject constructor() {
         ),
         // "Quantity x Description   Sum"
         Pattern.compile(
-            """^(\d+)\s*x\s*(.{3,40}?)\s{2,}(\d+[\s.,]\s*\d{2})\s*€?\s*$""",
+            """^(\d+)\s*[xX*]\s*(.{3,40}?)\s{2,}(\d+[\s.,]\s*\d{2})\s*€?\s*$""",
+            Pattern.MULTILINE
+        ),
+        // "Description @ UnitPrice   Sum"
+        Pattern.compile(
+            """^(.{3,40}?)\s*@\s*(\d+[\s.,]\d{2})\s{2,}(\d+[\s.,]\d{2})\s*$""",
+            Pattern.MULTILINE
+        ),
+        // "Qty x Desc @ UnitPrice   Sum"
+        Pattern.compile(
+            """^(\d+)\s*[xX*]\s*(.{3,40}?)\s*@\s*(\d+[\s.,]\d{2})\s{2,}(\d+[\s.,]\d{2})\s*$""",
             Pattern.MULTILINE
         )
     )
@@ -80,7 +85,7 @@ class ReceiptParser @Inject constructor() {
     // Subtotal patterns (to distinguish from total)
     private val subtotalPatterns = listOf(
         Pattern.compile(
-            """(?:SUBTOTAL|SUB\s*TOTAL|ΥΠΟΣΥΝΟΛΟ|ΥΠΟ\s*ΣΥΝΟΛΟ|ΜΕΡΙΚΟ|ΚΑΘΑΡΗ\s*ΑΞΙΑ)\s*[:\s]*€?\s*(\d+[\s.,]\s*\d{2})""",
+            """(?:SUBTOTAL_KEY|SUBTOTAL|ΥΠΟΣΥΝΟΛΟ|ΚΑΘΑΡΗ\s*ΑΞΙΑ)\s*[:\s]*(\d+[.,]\d{2})""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     )
@@ -108,10 +113,10 @@ class ReceiptParser @Inject constructor() {
         val total = extractTotal(lines)
 
         // 5. Extract subtotal (using original text as fallback or new logic if needed)
-        val subtotal = extractSubtotal(cleanedText)
+        val subtotal = extractSubtotal(cleanedText) ?: extractSubtotal(rawText)
 
         // 6. Extract tax
-        val tax = extractTax(cleanedText)
+        val tax = extractTax(cleanedText) ?: extractTax(rawText)
 
         // 7. Extract line items
         val lineItems = extractLineItems(cleanedText)
@@ -141,213 +146,184 @@ class ReceiptParser @Inject constructor() {
     private fun normalizeGreekOcr(text: String): String {
         var normalized = text.uppercase()
 
-        // ============================================
-        // PHASE 1: FIX BROKEN NUMBERS
-        // ============================================
+        // Fix numbers FIRST - Remove spaces in numbers like "4 5 . 5 0"
+        normalized = normalized.replace(Regex("""(?<=\d)\s+(?=[.,\d])"""), "")
+        normalized = normalized.replace(Regex("""(?=[.,\d])\s+(?=\d)"""), "")
 
-        // Remove spaces within numbers: "4 5. 5 0" -> "45.50"
-        // CRITICAL FIX: Use [ \t\u00A0] instead of \s to avoid merging numbers across newlines (e.g. "PUMP 1\n45.00" -> "145.00")
-        normalized = normalized.replace(Regex("""(?<=\d)[ \t\u00A0]+(?=\d)"""), "")
-
-        // Standardize decimal separator: "45,00" -> "45.00"
-        normalized = normalized.replace(Regex("""(\d+)\s*[.,]\s*(\d{2})\b"""), "$1.$2")
-
-        // ============================================
-        // PHASE 2: COMPOUND KEYWORDS FIRST (Multi-word)
-        // ============================================
-
-        // These must come BEFORE single-word patterns to avoid partial matches
-
-        // ΣΥΝΟΛΙΚΗ ΑΞΙΑ (Total Value)
-        normalized = normalized.replace(Regex("""ΣΥΝΟΛΙΚΗ\s+ΑΞΙΑ"""), "TOTAL_KEY")
-        normalized = normalized.replace(Regex("""[EZI23]YN[O0]IKH\s+A[E3]IA"""), "TOTAL_KEY")
-
-        // ΚΑΘΑΡΗ ΑΞΙΑ (Net Value / Subtotal)
-        normalized = normalized.replace(Regex("""ΚΑΘΑΡΗ\s+ΑΞΙΑ"""), "SUBTOTAL_KEY")
-        normalized = normalized.replace(Regex("""KA[ΘA]APH\s+A[E3]IA"""), "SUBTOTAL_KEY")
-
-        // ΓΕΝΙΚΟ ΣΥΝΟΛΟ (Grand Total)
-        normalized = normalized.replace(Regex("""ΓΕΝΙΚΟ\s+ΣΥΝΟΛΟ"""), "TOTAL_KEY")
-
-        // ΜΕΡΙΚΟ ΣΥΝΟΛΟ (Partial Total)
-        normalized = normalized.replace(Regex("""ΜΕΡΙΚΟ\s+ΣΥΝΟΛΟ"""), "SUBTOTAL_KEY")
-
-        // ΤΙΜΗ ΜΟΝΑΔΟΣ (Unit Price) - should NOT be picked as total
-        normalized = normalized.replace(Regex("""ΤΙΜΗ\s+ΜΟΝΑΔΟΣ"""), "UNIT_PRICE_KEY")
-
-        // ============================================
-        // PHASE 3: CORRECT GREEK SINGLE KEYWORDS
-        // ============================================
-
-        // ΣΥΝΟΛΟ (Total)
-        normalized = normalized.replace(Regex("""\bΣΥΝΟΛΟ\b"""), "TOTAL_KEY")
-
-        // ΤΕΛΙΚΟ (Final)
-        normalized = normalized.replace(Regex("""\bΤΕΛΙΚΟ\b"""), "TOTAL_KEY")
-
-        // ΠΛΗΡΩΤΕΟ (Payable)
-        normalized = normalized.replace(Regex("""\bΠΛΗΡΩΤΕΟ\b"""), "TOTAL_KEY")
-
-        // ΠΟΣΟ (Amount)
-        normalized = normalized.replace(Regex("""\bΠΟΣΟ\b"""), "AMOUNT_KEY")
-
-        // ΑΞΙΑ (Value) - standalone
-        normalized = normalized.replace(Regex("""\bΑΞΙΑ\b"""), "VALUE_KEY")
-
-        // ΜΕΤΡΗΤΑ (Cash)
-        normalized = normalized.replace(Regex("""\bΜΕΤΡΗΤΑ\b"""), "CASH_KEY")
-
-        // ΚΑΡΤΑ (Card)
-        normalized = normalized.replace(Regex("""\bΚΑΡΤΑ\b"""), "CARD_KEY")
-
-        // ΕΥΡΩ (Euro)
-        normalized = normalized.replace(Regex("""\bΕΥΡΩ\b"""), "EUR")
-
-        // ΦΠΑ / Φ.Π.Α. (VAT)
-        normalized = normalized.replace(Regex("""\bΦ\.?Π\.?Α\.?\b"""), "VAT_KEY")
-
-        // ΗΜΕΡΟΜΗΝΙΑ (Date)
-        normalized = normalized.replace(Regex("""\bΗΜΕΡΟΜΗΝΙΑ\b"""), "DATE_KEY")
-
-        // ΩΡΑ (Time)
-        normalized = normalized.replace(Regex("""\bΩΡΑ\b"""), "TIME_KEY")
-
-        // ΕΚΠΤΩΣΗ (Discount)
-        normalized = normalized.replace(Regex("""\bΕΚΠΤΩΣΗ\b"""), "DISCOUNT_KEY")
-
-        // ΡΕΣΤΑ (Change)
-        normalized = normalized.replace(Regex("""\bΡΕΣΤΑ\b"""), "CHANGE_KEY")
-
-        // ============================================
-        // PHASE 4: OCR ARTIFACT PATTERNS
-        // These handle common OCR misreadings
-        // ============================================
-
-        // --- TOTAL (ΣΥΝΟΛΟ) OCR Variants ---
-        // E→Σ, Z→Σ, 2→Σ, I→Σ, Y→Υ, N→Ν, O→Ο/0, Λ→A/Λ
-
-        // Pattern: [E-Z-I-2-3][Y-V-U-I]N[O-0]?[Λ-A-L-V]?[O-0]?
-        normalized = normalized.replace(
-            Regex("""\b[EZI23][YVUI]N[O0I]?[AΛVL]?[O0ΩI]?\b"""),
-            "TOTAL_KEY"
-        )
-
-        // Extra coverage for tricky variants
-        normalized = normalized.replace(Regex("""\bZYNOAO\b"""), "TOTAL_KEY")
-        normalized = normalized.replace(Regex("""\bZYNOIO\b"""), "TOTAL_KEY")
-        normalized = normalized.replace(Regex("""\bIYNOAO\b"""), "TOTAL_KEY")
-        normalized = normalized.replace(Regex("""\bIYN\.?\s*[O0]?N[AΛV]?O[NT]?\b"""), "TOTAL_KEY")
-
-
-        // --- AMOUNT (ΠΟΣΟ) OCR Variants ---
-        // Π→N, n, O→O/0, Σ→s/z
-        normalized = normalized.replace(Regex("""\b[NΠn][O0][SZsz][O0]?\b"""), "AMOUNT_KEY")
-        normalized = normalized.replace(Regex("""\bnozo\b"""), "AMOUNT_KEY")
-
-        // --- PAYABLE (ΠΛΗΡΩΤΕΟ) OCR Variants ---
-        normalized = normalized.replace(
-            Regex("""\b[NΠ][AΛ][ΗHN][PR][ΩOQ]TE[OA]?\b"""),
-            "TOTAL_KEY"
-        )
-        normalized = normalized.replace(Regex("""\bNAHPQTEO\b"""), "TOTAL_KEY")
-
-        // --- CASH (ΜΕΤΡΗΤΑ) OCR Variants ---
-        normalized = normalized.replace(Regex("""\bM[E3]TP[HΉ]TA\b"""), "CASH_KEY")
-
-        // --- EURO (ΕΥΡΩ) OCR Variants ---
-        normalized = normalized.replace(Regex("""\b[E3]YP[ΩO9]\b"""), "EUR")
-
-        // --- DATE (ΗΜΕΡΟΜΗΝΙΑ) OCR Variants ---
-        normalized = normalized.replace(Regex("""\bHM[/\.]?[ΗH]N?IA\b"""), "DATE_KEY")
-
-        // --- VAT (ΦΠΑ) OCR Variants ---
-        normalized = normalized.replace(Regex("""\b[FΦ]II?A\.?\b"""), "VAT_KEY")
-
-        // --- CONTACTLESS (ΑΝΕΠΑΦΗ) OCR Variants ---
-        normalized = normalized.replace(Regex("""\bANE[ΠN]A[ΦFQ]H\b"""), "CONTACTLESS_KEY")
-        normalized = normalized.replace(Regex("""\bANEIIAQH\b"""), "CONTACTLESS_KEY")
-
-        // ============================================
-        // PHASE 5: DATE FIXES
-        // ============================================
-
-        // "16-D4-2017" -> "16-04-2017" (O read as D)
-        normalized = normalized.replace(Regex("""(\d{1,2})[-/][DO0](\d+)[-/](\d{4})"""), "$1-$2-$3")
-
-        // ============================================
-        // PHASE 6: CURRENCY CLEANUP
-        // ============================================
-
-        // Note: We keep EUR for currency detection, but remove symbols for number parsing
-        // This is done later in extractTotal()
+        // Normalize Greek characters to English counterparts for easier matching
+        // Use more robust matching for Greek words without \b if possible
         
+        // Compound keywords - MUST be before single ones
+        normalized = normalized.replace(Regex("""ΣΥΝΟΛΙΚΗ\s+ΑΞΙΑ"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""ΚΑΘΑΡΗ\s+ΑΞΙΑ"""), "SUBTOTAL_KEY")
+        normalized = normalized.replace(Regex("""ΓΕΝΙΚΟ\s+ΣΥΝΟΛΟ"""), "TOTAL_KEY")
+        normalized = normalized.replace(Regex("""ΜΕΡΙΚΟ\s+ΣΥΝΟΛΟ"""), "SUBTOTAL_KEY")
+        normalized = normalized.replace(Regex("""ΤΕΛΙΚΗ\s+ΑΞΙΑ"""), "TOTAL_KEY")
+
+        // Single keywords (Using more flexible boundaries for Greek/Latin mix)
+        val boundary = """(?:^|[\s:;.,/-])"""
+        val endBoundary = """(?:$|[\s:;.,/-])"""
+        
+        // Total keywords - ΣΥΝΟΛΟ and variations
+        normalized = normalized.replace(Regex(boundary + "ΣΥΝΟΛΟ" + endBoundary), " TOTAL_KEY ")
+        normalized = normalized.replace(Regex(boundary + "ΤΕΛΙΚΟ" + endBoundary), " TOTAL_KEY ")
+        normalized = normalized.replace(Regex(boundary + "ΠΛΗΡΩΤΕΟ" + endBoundary), " TOTAL_KEY ")
+        
+        // Common OCR errors for ΣΥΝΟΛΟ - Unified boundary check
+        val synoloVariations = listOf(
+            "[EZI23][YVUI]N[O0I]?[AΛVLN][O0ΩI]?", // Flexible pattern for ΣΥΝΟΛΟ
+            "ZYNOAO", "ZYNOAΩ", "2YNONO", "2YNOAO", 
+            "EYNOAO", "EYNONO", "SYNOAO", "ZYNOIO"
+        )
+        for (variant in synoloVariations) {
+            normalized = normalized.replace(Regex(boundary + variant + endBoundary), " TOTAL_KEY ")
+        }
+        
+        // ΤΕΛΙΚΟ variations
+        val telikoVariations = listOf("TEAIKO", "TEΛIKO", "TΕΛΙΚΟ")
+        for (variant in telikoVariations) {
+            normalized = normalized.replace(Regex(boundary + variant + endBoundary), " TOTAL_KEY ")
+        }
+        
+        // ΠΛΗΡΩΤΕΟ variations
+        val pliroteoVariations = listOf("NAHPΩTEO", "NAHPQTEO", "ΠΛHPΩTEO")
+        for (variant in pliroteoVariations) {
+            normalized = normalized.replace(Regex(boundary + variant + endBoundary), " TOTAL_KEY ")
+        }
+        
+        // Amount keywords
+        normalized = normalized.replace(Regex(boundary + "ΠΟΣΟ" + endBoundary), " AMOUNT_KEY ")
+        normalized = normalized.replace(Regex(boundary + "[NΠn][O0][SZsz][O0]" + endBoundary), " AMOUNT_KEY ")
+
+        // Cash keywords
+        normalized = normalized.replace(Regex(boundary + "ΜΕΤΡΗΤΑ" + endBoundary), " CASH_KEY ")
+        normalized = normalized.replace(Regex(boundary + "METPHTA" + endBoundary), " CASH_KEY ")
+
+        // VAT/Tax keywords - ΦΠΑ and OCR corruptions
+        normalized = normalized.replace(Regex(boundary + "Φ\\.?Π\\.?Α\\.?" + endBoundary), " VAT_KEY ")
+        normalized = normalized.replace(Regex(boundary + "0\\.?n\\.?A\\.?" + endBoundary), " VAT_KEY ")
+        normalized = normalized.replace(Regex(boundary + "0\\.?Π\\.?Α" + endBoundary), " VAT_KEY ")
+        normalized = normalized.replace(Regex(boundary + "O\\.?n\\.?A" + endBoundary), " VAT_KEY ")
+
+        // Date keywords
+        normalized = normalized.replace(Regex(boundary + "ΗΜΕΡΟΜΗΝΙΑ" + endBoundary), " DATE_KEY ")
+        normalized = normalized.replace(Regex(boundary + "HM/NIA" + endBoundary), " DATE_KEY ")
+        normalized = normalized.replace(Regex(boundary + "HMEPOMHNIA" + endBoundary), " DATE_KEY ")
+
+        // Value keyword
+        normalized = normalized.replace(Regex(boundary + "ΑΞΙΑ" + endBoundary), " VALUE_KEY ")
+
+        // Currency keywords - ΕΥΡΩ and variations
+        normalized = normalized.replace(Regex(boundary + "ΕΥΡΩ" + endBoundary), " EUR ")
+        normalized = normalized.replace(Regex(boundary + "ΕΥΡΑ" + endBoundary), " EUR ")
+        normalized = normalized.replace(Regex(boundary + "[E3]YP[ΩO9]" + endBoundary), " EUR ")
+
+        // Date OCR fixes: 16-D4 -> 16-04
+        normalized = normalized.replace(Regex("""(\d{1,2})[-/][DO0](\d{1,2})[-/](\d{2,4})"""), "$1-0$2-$3")
+        // Fix double zero if above resulted in 16-004
+        normalized = normalized.replace("-00", "-0")
+
         return normalized
-            .replace("EUR", "") // Removed at end to avoid interfering with keywords
-            .replace("€", "")
     }
+
 
     // --- MERCHANT EXTRACTION ---
     private fun extractMerchant(lines: List<String>): String? {
-        // Expanded list of header markers that indicate we're past the merchant name
-        val headerMarkers = listOf(
-            // Tax IDs
-            "ΑΦΜ", "A.Φ.Μ.", "Α.Φ.Μ", "@.M.", "A.M.", "AΦM",
-            // Business types
-            "Α.Ο.Υ.", "ΑΟΥ", "A.0.Y.", "Δ.Ο.Υ.", "ΔΟΥ",
-            // Phone
-            "ΤΗΛ", "THA", "THΛ", "ΤΗΛ:", "THA:", "PHONE_KEY",
-            // Address
-            "ΟΔΟΣ", "ΣΤΡ.", "STR.", "ADDRESS",
-            // Postal code
-            "Τ.Κ.", "TK", "Τ.Κ", "T.K.",
-            // Registration
-            "Α.Μ.Μ.", "ΑΜΜ", "ΑΜΜ.",
-            // Date/Time
-            "ΗΜΕΡΟΜΗΝΙΑ", "HM/NIA", "DATE_KEY",
-            // Store indicators
-            "ΥΠΟΚΑΤΑΣΤΗΜΑ", "KATASTHMA", "ΚΑΤΑΣΤΗΜΑ",
-            // Receipt info
-            "ΑΠΟΔΕΙΞΗ", "AΠΟΔΕΙΞΗ", "ΛΙΑΝΙΚΗ", "ΛΙΑΝΙΚΗΣ"
-        )
-
-        // Lines that should be skipped as they're not merchant names
-        val invalidHeaders = listOf(
+        // Expanded invalid merchant patterns
+        val invalidMerchants = listOf(
+            // Keywords that should never be merchants
             "APODEIXI", "AIOAEIEH", "ANOD", "NOMIMH", "ENARXI", "START",
-            "EAPA", "ADDRESS", "THA", "TEL", "AFM", "AOM", "A.M.", "TAX_ID_KEY",
-            "YPOTRTEIO", "KATASTHMA"
+            "EAPA", "ADDRESS", "THA", "TEL", "AFM", "AOM", "A.M.", "ΑΦΜ",
+            "EYNONO", "ZYNOAO", "SYNOAO", "TOTAL_KEY", "CASH_KEY", "AMOUNT_KEY",
+            // Card processors - CRITICAL
+            "CARDLINK", "WORLDLINE", "VISA", "MASTERCARD", "MAESTRO",
+            "AMERICAN EXPRESS", "AMEX", "DINERS", "DISCOVER",
+            // Banks
+            "PIRAEUS", "EUROBANK", "ALPHA BANK", "NBG", "NATIONAL BANK",
+            "LYNK", "BANK OF CYPRUS", "HELLENIC BANK", "REVOLUT",
+            "VIVA", "SUMUP", "MYPOS", "STRIPE",
+            // Transaction types
+            "AGORA", "SALE", "PURCHASE", "CONTACTLESS", "TERMINAL",
+            "TRANSACTION", "ΠΑΡΑΛΑΒΗ", "ΑΓΟΡΑ",
+            // Serial/reference patterns
+            "ZEIPA", "SERIAL", "ΑΡΙΘΜΟΣ", "APIOMOE", "APIOMOX",
+            // URLs and garbage
+            "WWW.", "HTTP", ".GR", ".COM", "HTTPS://",
+            // Payment related
+            "KAPTA", "KAPTEE", "CARD", "ΚΑΡΤΑ", "METPHTA", "ΜΕΤΡΗΤΑ"
         )
 
-        // Scan for markers and extract merchant above them
+        // Header markers (indicate we're past the merchant name)
+        val headerMarkers = listOf(
+            "ΑΦΜ", "A.Φ.Μ.", "Α.Φ.Μ", "@.M.", "A.M.", "AΦM",
+            "Α.Ο.Υ.", "ΑΟΥ", "A.0.Y.", "Δ.Ο.Υ.", "ΔΟΥ",
+            "ΤΗΛ", "THA", "THΛ", "ΤΗΛ:", "THA:",
+            "ΟΔΟΣ", "ΣΤΡ.", "STR.", "ADDRESS",
+            "Τ.Κ.", "TK", "Τ.Κ", "T.K.",
+            "Α.Μ.Μ.", "ΑΜΜ", "ΑΜΜ.",
+            "ΗΜΕΡΟΜΗΝΙΑ", "HM/NIA", "DATE_KEY",
+            // Card receipt markers
+            "ΑΓΟΡΑ", "AGORA", "AGORA-SALE", "SALE", "PURCHASE", 
+            "CONTACTLESS", "TERMINAL", "TRANSACTION", "ENTER BONUS",
+            // Card reference patterns
+            "****", "5356", "MARK:", "UID:", "AUTH:"
+        )
+
+        // Find markers and extract merchant above them
         for ((index, line) in lines.withIndex()) {
-            if (index > 10) break  // Merchant usually in first 10 lines
-            
-            // Check if this line is an anchor
+            if (index > 10) break
+
             for (marker in headerMarkers) {
                 if (line.contains(marker, ignoreCase = true)) {
-                    // Found marker - scan upwards for valid merchant
+                    // Scan upwards for valid merchant
                     for (j in index - 1 downTo 0) {
                         val candidate = lines[j]
-                        if (isValidMerchantLine(candidate, invalidHeaders)) {
-                            return cleanMerchantName(candidate)
+                        if (isValidMerchantLine(candidate, invalidMerchants)) {
+                            val cleaned = cleanMerchantName(candidate)
+                            // Additional check: don't return card processor names
+                            if (!isCardProcessor(cleaned)) {
+                                return cleaned
+                            }
                         }
                     }
                 }
             }
         }
-        
-        // Fallback: First valid line
+
+        // Fallback
         for (line in lines.take(5)) {
-            if (isValidMerchantLine(line, invalidHeaders)) {
-                return cleanMerchantName(line)
+            if (isValidMerchantLine(line, invalidMerchants)) {
+                val cleaned = cleanMerchantName(line)
+                if (!isCardProcessor(cleaned)) {
+                    return cleaned
+                }
             }
         }
+
         return null
+    }
+
+    private fun isCardProcessor(name: String): Boolean {
+        val processors = listOf(
+            "CARDLINK", "WORLDLINE", "VIVA", "PIRAEUS", "EUROBANK", "ALPHA BANK",
+            "LYNK", "BANK OF CYPRUS", "HELLENIC BANK", "NBG", "REVOLUT", "STRIPE",
+            "SUMUP", "MYPOS", "CIBC", "TD BANK", "AMEX", "AMERICAN EXPRESS", "DINERS"
+        )
+        return processors.any { name.contains(it, ignoreCase = true) }
     }
 
     private fun isValidMerchantLine(line: String, invalidHeaders: List<String>): Boolean {
         if (line.length < 3) return false
         if (line.all { !it.isLetter() }) return false // Must have letters
         if (invalidHeaders.any { line.contains(it) }) return false
+        
+        // Skip if line is mostly numbers
+        val digitCount = line.count { it.isDigit() }
+        if (digitCount > line.length / 2) return false
+        
+        // Skip lines that are dates or times
+        if (line.matches(Regex(""".*(\\d{2}[/-]\\d{2}[/-]\\d{4}|\\d{2}:\\d{2}:\\d{2}|A\\.?Φ\\.?Μ\\.?).*$"""))) return false
+        
         return true
     }
 
@@ -356,127 +332,245 @@ class ReceiptParser @Inject constructor() {
     }
 
     private fun extractTotal(lines: List<String>): Double? {
-        // Regex: Matches 12.50, 12,50, 1.250,00
-        // Strictly avoids numbers followed by % (VAT rates)
-        val amountRegex = Regex("""(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})(?!\s?%)""")
+        val amountRegex = Regex("""(\d{1,10}(?:[.,\s]\d{3})*[.,]\d{2})(?!\s?%)""")
 
-        // --- STRATEGY 1: Explicit "TOTAL" Keyword (Highest Confidence) ---
-        // Scan backwards (bottom-up) for the word "TOTAL_KEY"
+        // Lines that should be COMPLETELY skipped (receipt numbers, IDs, etc.)
+        val nonTotalIndicators = listOf(
+            "APIOMOE", "APIOMOX", "ZEIPA", "SERIAL", "AA/Y",
+            "AP.r.E.MH", "APIEMOE", "ANEAATH", "APIEMOX",
+            "AOM", "AFM", "A.F.M.", "THA", "THA:", "DATE_KEY", "HM/NIA",
+            // Card receipt markers
+            "5356", "****", "ENTER BONUS", "MARK:", "UID:", "AUTH:",
+            // Change/Resta patterns
+            "CHANGE_KEY", "ΡΕΣΤΑ", "RESTA", "ΑΛΛΑΓΗ",
+            // Time markers (Greek QPA = TIME)
+            "QPA:", "OPA:", "ΩΡΑ:"
+        )
+
+        // Priority-based extraction: track best candidate
+        // Priority: TOTAL_KEY > AMOUNT_KEY > CASH_KEY > standalone amounts
+        var bestTotal: Double? = null
+        var bestPriority: Int = -1 // 3=TOTAL_KEY, 2=AMOUNT_KEY, 1=CASH_KEY, 0=standalone
+
+        // Strategy 1: Look for TOTAL_KEY (highest priority)
         val totalLineIndex = lines.indexOfLast { it.contains("TOTAL_KEY") }
-        
         if (totalLineIndex != -1) {
-            // Check the exact line
-            val amountInLine = extractAmountFromLine(lines[totalLineIndex], amountRegex)
-            if (amountInLine != null) return amountInLine
-
-            // Check the NEXT line (common in POS receipts: Label then Value)
-            if (totalLineIndex + 1 < lines.size) {
-                val amountNext = extractAmountFromLine(lines[totalLineIndex + 1], amountRegex)
-                if (amountNext != null) return amountNext
+            // Check this line and next 3 lines (amount may be split)
+            for (offset in 0..3) {
+                if (totalLineIndex + offset < lines.size) {
+                    val lineToCheck = lines[totalLineIndex + offset]
+                    val amount = extractAmountFromLine(lineToCheck, amountRegex)
+                    if (amount != null && amount > 0.01) {
+                        bestTotal = amount
+                        bestPriority = 3
+                        break
+                    }
+                }
             }
         }
-
-        // --- STRATEGY 2: Fallback (Smart Max) ---
-        // If no keyword found, find the LARGEST plausible number.
-        var maxAmount = 0.0
         
-        // Removed bottom 70% restriction to catch totals at top (rare but possible) or middle
-        val searchStart = 0
-        
-        for (i in searchStart until lines.size) {
-            val line = lines[i]
+        // If we found TOTAL_KEY amount, return it immediately
+        if (bestTotal != null && bestPriority == 3) return bestTotal
 
-            // FILTER: Ignore lines that definitely aren't the total
-            if (line.contains("%") || line.contains("VAT_KEY")) continue // Ignore VAT lines
-            if (line.contains("METPHTA") || line.contains("CASH") || line.contains("CASH_KEY")) continue // Ignore Cash Given
-            if (line.contains("RESTA") || line.contains("ΡΕΣΤΑ") || line.contains("CHANGE_KEY")) continue // Ignore Change
-            if (line.contains("KARTA") || line.contains("CARD") || line.contains("CARD_KEY")) continue // Ignore "Card" references
-            if (line.contains("UNIT_PRICE_KEY")) continue // Ignore Unit Prices
-
-            // Extract numbers from this line
-            val matches = amountRegex.findAll(line)
-            for (match in matches) {
-                val rawVal = match.groupValues[1]
-                val amount = parseAmount(rawVal)
-
-                // SANITY CHECKS:
-                // 1. Amount must be < 5000 (Avoids phone numbers/Tax IDs misread as price)
-                // 2. Amount must not look like a Year (e.g., 2024, 2025)
-                // 3. Amount must not look like Time (e.g., 14.24 in Receipt #6)
-                if (isValidAmount(amount, line)) {
-                    if (amount > maxAmount) {
-                        maxAmount = amount
+        // Strategy 2: Look for AMOUNT_KEY (medium priority)
+        val amountLineIndex = lines.indexOfLast { it.contains("AMOUNT_KEY") && !it.contains("TOTAL_KEY") }
+        if (amountLineIndex != -1) {
+            for (offset in 0..2) {
+                if (amountLineIndex + offset < lines.size) {
+                    val lineToCheck = lines[amountLineIndex + offset]
+                    val amount = extractAmountFromLine(lineToCheck, amountRegex)
+                    if (amount != null && amount > 0.01 && (bestPriority < 2)) {
+                        bestTotal = amount
+                        bestPriority = 2
+                        break
                     }
                 }
             }
         }
 
-        return if (maxAmount > 0.0) maxAmount else null
+        // Strategy 3: Look for CASH_KEY (lower priority - only if nothing better found)
+        val cashLineIndex = lines.indexOfLast { it.contains("CASH_KEY") && !it.contains("TOTAL_KEY") && !it.contains("CHANGE_KEY") }
+        if (cashLineIndex != -1 && bestPriority < 2) {
+            for (offset in 0..2) {
+                if (cashLineIndex + offset < lines.size) {
+                    val lineToCheck = lines[cashLineIndex + offset]
+                    val amount = extractAmountFromLine(lineToCheck, amountRegex)
+                    if (amount != null && amount > 0.01 && (bestPriority < 1)) {
+                        bestTotal = amount
+                        bestPriority = 1
+                        break
+                    }
+                }
+            }
+        }
+
+        // If we found any keyword-based amount, return it
+        if (bestTotal != null && bestPriority > 0) return bestTotal
+
+        // Strategy 3.5: Look for card receipt format "POSO/AMOUNT:" or "€XX,XX" alone
+        for (i in lines.indices) {
+            val line = lines[i]
+            
+            // Card receipt pattern: "POSO/AMOUNT:" or standalone euro amount
+            if (line.contains("POSO") || line.matches(Regex("""^€?\s*\d+[.,]\d{2}\s*€?\s*$"""))) {
+                val amount = extractAmountFromLine(line, amountRegex)
+                if (amount != null && isValidAmount(amount, line) && bestPriority < 2) {
+                    bestTotal = amount
+                    bestPriority = 2
+                }
+            }
+        }
+
+        if (bestTotal != null) return bestTotal
+
+        // Strategy 4: Fallback - Find largest VALID standalone amount
+        var maxAmount = 0.0
+        
+        // More flexible regex for fallback that includes currency symbols
+        val fallbackRegex = Regex("""€?\s*(\d{1,10}(?:[.,\s]\d{3})*[.,]\d{2})\s*€?""")
+        
+        // Time pattern to skip
+        val timePattern = Regex("""\b\d{1,2}:\d{2}(:\d{2})?\b""")
+        
+        // Change/Resta pattern
+        val changePattern = Regex("""(CHANGE|ΡΕΣΤΑ|RESTA|ΑΛΛΑΓΗ)""")
+
+        for (i in lines.indices) {
+            val line = lines[i]
+
+            // Skip lines with non-total indicators or tax-only lines
+            if (nonTotalIndicators.any { line.contains(it, ignoreCase = true) }) continue
+            if (isTaxOnlyLine(line)) continue
+            if (timePattern.containsMatchIn(line)) continue
+            if (changePattern.containsMatchIn(line)) continue
+            
+            // Skip long number lines (barcodes/IDs)
+            if (line.replace(Regex("[^0-9]"), "").length > 9) continue
+
+            // Skip VAT percentage lines
+            if (line.contains("%") && !line.contains("TOTAL")) continue
+
+            // Skip card reference lines
+            if (line.contains("5356") || line.contains("****") || line.contains("ENTER BONUS")) continue
+
+            // Try both the primary regex and fallback regex
+            val matches = amountRegex.findAll(line).toList() + fallbackRegex.findAll(line).toList()
+            for (match in matches) {
+                val rawVal = match.groupValues[1]
+                val amount = parseAmount(rawVal)
+
+                if (isValidAmount(amount, line) && amount > maxAmount) {
+                    maxAmount = amount
+                }
+            }
+        }
+
+        // Use fallback if we found something and no better option exists
+        if (maxAmount > 0.0 && bestPriority < 1) return maxAmount
+        
+        // Return best found (might be null)
+        return bestTotal ?: if (maxAmount > 0.0) maxAmount else null
     }
 
     private fun isValidAmount(amount: Double, line: String): Boolean {
-        // Basic bounds
-        if (amount <= 0.0) return false
-        if (amount > 5000.0) return false  // Reasonable receipt max
-        
-        // Year check - but allow decimal amounts in year range
-        // e.g., 2020.50 is a valid amount, 2020 is likely a year
-        if (amount >= 2015.0 && amount <= 2035.0) {
-            // If it's a whole number, it's probably a year
-            if (amount % 1.0 == 0.0) return false
-            // If it has decimals, it might be a valid price like €2020.50
-        }
-        
-        // Time check
-        if (line.contains("ΩΡΑ") || line.contains("ORA") || line.contains("QPA")) {
-            return false
-        }
-        
-        // Unit price check (e.g., "1,574 €/ΛΤ")
-        if (line.contains("/") || line.contains("€/") || line.contains("EUR/") || line.contains("UNIT_PRICE_KEY")) {
-            return false
-        }
-        
-        // Percentage check (VAT rates)
-        if (line.contains("%")) {
-            return false
-        }
-        
+        // Reject zero or near-zero
+        if (amount < 0.01) return false
+
+        // Reject unreasonably large amounts
+        if (amount > 5000.0) return false
+
+        // Reject year-like numbers (allow decimal years only if not whole)
+        if (amount >= 2015.0 && amount <= 2035.0 && amount % 1.0 == 0.0) return false
+
+        // NEW: Reject if line looks like a receipt number line
+        val receiptNumberPatterns = listOf(
+            Regex("""APIOMOE|APIOMOX|ΑΡΙΘΜΟΣ""", RegexOption.IGNORE_CASE),
+            Regex("""ZEIPA|ΣΕΙΡΑ"""),
+            Regex("""AP\.?r\.?E\.?MH"""),
+            Regex("""ΑΠΟΔΕΙΞΗ|ΠΑΡΑΣΤΑΤΙΚΟ""", RegexOption.IGNORE_CASE)
+        )
+        if (receiptNumberPatterns.any { it.containsMatchIn(line) }) return false
+
         return true
     }
 
     private fun parseAmount(rawAmount: String): Double {
-        // Safe parsing: 
-        // 1. Identify last separator (. or ,)
-        // 2. Everything before is thousands separator -> remove
-        // 3. Last separator is decimal -> replace with .
-        
         if (rawAmount.isBlank()) return 0.0
-        
-        val lastComma = rawAmount.lastIndexOf(',')
-        val lastDot = rawAmount.lastIndexOf('.')
-        val lastSeparatorIndex = kotlin.math.max(lastComma, lastDot)
-        
-        var clean = rawAmount
-        
-        if (lastSeparatorIndex != -1) {
-            // Check if it's really a decimal separator (followed by 1 or 2 digits usually)
-            // But strict "last wins" is safer for mixed formats like 1.250,50
+
+        var cleaned = rawAmount
+
+        // NEW: Handle E-prefixed amounts (E0,13 -> try to extract 0.13)
+        if (cleaned.startsWith("E") || cleaned.startsWith("e")) {
+            val rest = cleaned.substring(1)
+            // Use simple check if rest looks like number start
+            if (rest.isNotEmpty() && rest[0].isDigit()) {
+                 cleaned = rest
+            }
+        }
+
+        // Remove all spaces
+        cleaned = cleaned.replace(" ", "")
+
+        // Find last separator
+        val lastComma = cleaned.lastIndexOf(',')
+        val lastDot = cleaned.lastIndexOf('.')
+        val lastSepIndex = kotlin.math.max(lastComma, lastDot)
+
+        return if (lastSepIndex >= 0) {
+            val integerPart = cleaned.substring(0, lastSepIndex).replace(".", "").replace(",", "")
+            val decimalPart = cleaned.substring(lastSepIndex + 1)
+            "$integerPart.$decimalPart".toDoubleOrNull() ?: 0.0
+        } else {
+            cleaned.toDoubleOrNull() ?: 0.0
+        }
+    }
+
+    private fun extractAmountFromLine(line: String, regex: Regex): Double? {
+        // NEW: First check if line contains percentage - if so, extract differently
+        if (line.contains("%")) {
+            // Try before % first (for "20,13 24,00%")
+            val beforePercent = line.substringBefore("%", "")
+            val matchesBefore = regex.findAll(beforePercent).toList()
+            if (matchesBefore.isNotEmpty()) {
+                // Return the FIRST amount before the percentage sign
+                return parseAmount(matchesBefore.first().groupValues[1])
+            }
             
-            // Remove all OTHER separators
-            val prefix = rawAmount.substring(0, lastSeparatorIndex).replace(Regex("[.,]"), "")
-            val suffix = rawAmount.substring(lastSeparatorIndex + 1)
-            
-            clean = "$prefix.$suffix"
+            // Fallback to after % (for "ΦΠΑ 24%: 4,14")
+            val afterPercent = line.substringAfter("%", "")
+            val matchesAfter = regex.findAll(afterPercent).toList()
+            if (matchesAfter.isNotEmpty()) {
+                // Return the LAST amount after the percentage sign
+                return parseAmount(matchesAfter.last().groupValues[1])
+            }
+        }
+
+        // NEW: Skip lines that look like time: "14:24" or "QPA: 14.24"
+        if (line.matches(Regex(""".*\b\d{1,2}:\d{2}\b.*"""))) {
+            // Check if the amount is actually a time
+            val timeMatch = Regex("""\b(\d{1,2}):(\d{2})\b""").find(line)
+            if (timeMatch != null) {
+                val hour = timeMatch.groupValues[1].toIntOrNull()
+                val minute = timeMatch.groupValues[2].toIntOrNull()
+                if (hour != null && minute != null && hour in 0..23 && minute in 0..59) {
+                    // This is likely a time, skip it
+                    return null
+                }
+            }
         }
         
-        return clean.toDoubleOrNull() ?: 0.0
-    }
-    
-    private fun extractAmountFromLine(line: String, regex: Regex): Double? {
-        // If line has multiple numbers, we generally want the LAST one (Net... VAT... Total)
-        val matches = regex.findAll(line)
+        // NEW: Handle E-prefixed numbers (E0,13 -> extract 0,13)
+        val cleanedLine = line.replace(Regex("""\bE(\d)"""), "$1")
+
+        val matches = regex.findAll(cleanedLine)
         return matches.lastOrNull()?.groupValues?.get(1)?.let { parseAmount(it) }
+    }
+
+    private fun isTaxOnlyLine(line: String): Boolean {
+        // Lines like "ΦΠΑ 24%: 4,14" or "VAT 20% 1.00"
+        val taxKeywords = listOf("ΦΠΑ", "VAT", "TAX", "VAT_KEY")
+        val hasTaxKeyword = taxKeywords.any { line.contains(it, ignoreCase = true) }
+        return hasTaxKeyword && line.contains("%")
     }
 
     private fun extractSubtotal(text: String): Double? {
@@ -490,10 +584,24 @@ class ReceiptParser @Inject constructor() {
     }
 
     private fun extractTax(text: String): Double? {
+        // Multiple tax patterns to handle Greek ΦΠΑ OCR variations
+        val taxPatterns = listOf(
+            // Normalized VAT_KEY pattern
+            Regex("""VAT_KEY\s*[:\s]*(\d+[.,]\d{2})"""),
+            // Greek with percentage: "ΦΠΑ 24%: 4,14"
+            Regex("""(?:Φ\.?Π\.?Α\.?|VAT|TAX)\s*\d*[.,]?\d*%?\s*:?\s*(\d+[.,]\d{2})"""),
+            // OCR corrupted: "0.n.A 24,00%" or "O.n.A"
+            Regex("""0\.?n\.?A\.?\s*\d*[.,]?\d*%?\s*(\d+[.,]\d{2})"""),
+            Regex("""O\.?n\.?A\s*\d*[.,]?\d*%?\s*(\d+[.,]\d{2})"""),
+            Regex("""0\.?Π\.?Α\s*\d*[.,]?\d*%?\s*(\d+[.,]\d{2})"""),
+            // Line with tax percentage: "4,14 24%"
+            Regex("""(\d+[.,]\d{2})\s*\d{1,3}[.,]?\d{0,2}%""")
+        )
+
         for (pattern in taxPatterns) {
-            val matcher = pattern.matcher(text)
-            if (matcher.find()) {
-                return matcher.group(1)?.replace(",", ".")?.toDoubleOrNull()
+            val match = pattern.find(text)
+            if (match != null) {
+                return match.groupValues[1].replace(",", ".").toDoubleOrNull()
             }
         }
         return null
@@ -503,8 +611,8 @@ class ReceiptParser @Inject constructor() {
     private fun extractDate(text: String): Long? {
         // Regex handles: dd/MM/yyyy, dd-MM-yyyy, dd.MM.yyyy
         val datePatterns = listOf(
-            Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(20\d{2})"""),
-            Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(\d{2})""")
+            Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(20\d{2})\b"""),
+            Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(\d{2})\b""")
         )
 
         val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
@@ -515,10 +623,10 @@ class ReceiptParser @Inject constructor() {
                 val (d, m, y) = match.destructured
                 val year = if (y.length == 2) "20$y" else y
                 
-                // SANITY CHECK: Year must be reasonable (e.g., 2015-2035)
-                // Fixes Receipt #8 where OCR read 2058
+                // SANITY CHECK: Year must be reasonable (Dynamic range)
                 val yearInt = year.toIntOrNull() ?: 0
-                if (yearInt in 2015..2035) { 
+                val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                if (yearInt in (currentYear - 10)..(currentYear + 1)) { 
                     try {
                         return sdf.parse("$d/$m/$year")?.time
                     } catch (e: Exception) { }
@@ -578,11 +686,18 @@ class ReceiptParser @Inject constructor() {
 
     private fun detectCurrency(text: String): String {
         return when {
-            text.contains("€") || text.contains("EUR", ignoreCase = true) ||
-                    text.contains("ΕΥΡΩ", ignoreCase = true) -> "EUR"
+            text.contains("€") || 
+            text.contains("EUR", ignoreCase = true) ||
+            text.contains("ΕΥΡΩ", ignoreCase = true) ||
+            text.contains("ΕΥΡ", ignoreCase = true) -> "EUR"
+            
             text.contains("$") || text.contains("USD", ignoreCase = true) -> "USD"
-            text.contains("£") || text.contains("GBP", ignoreCase = true) -> "GBP"
-            else -> "EUR"
+            
+            // Be more strict with GBP to avoid OYP/OYR corruption
+            text.contains("£") || 
+            (text.contains("GBP", ignoreCase = true) && !text.contains("OYP") && !text.contains("OYR")) -> "GBP"
+            
+            else -> "EUR" // Default for Greek receipts
         }
     }
 
@@ -594,17 +709,43 @@ class ReceiptParser @Inject constructor() {
         tax: Double?
     ): Float {
         var score = 0f
-        if (merchant != null) score += 0.15f
-        if (total != null) score += 0.40f  // Most important
-        if (date != null) score += 0.15f
-        if (items.isNotEmpty()) score += 0.15f
-        if (tax != null) score += 0.05f
+        
+        // Merchant (15%)
+        if (merchant != null && merchant.length >= 3) {
+            score += 0.15f
+            // Bonus for recognizable business patterns (uppercase names)
+            if (merchant.matches(Regex(".*[A-Z]{3,}.*"))) score += 0.05f
+        }
+        
+        // Total (40%) - Most important
+        if (total != null && total > 0) {
+            score += 0.40f
+            // Bonus if total is reasonable
+            if (total in 0.5..2000.0) score += 0.05f
+        }
+        
+        // Date (15%)
+        if (date != null) {
+            score += 0.15f
+            // Bonus if date is recent
+            val daysDiff = (System.currentTimeMillis() - date) / (1000 * 60 * 60 * 24)
+            if (daysDiff in 0..365) score += 0.05f
+        }
+        
+        // Line items (15%)
+        if (items.isNotEmpty()) {
+            score += 0.10f
+            if (items.size >= 2) score += 0.05f
+        }
+        
+        // Tax (5%)
+        if (tax != null && tax > 0) score += 0.05f
 
-        // Bonus: items sum matches total (cross-validation)
+        // Cross-validation bonus (10%)
         if (total != null && items.isNotEmpty()) {
             val itemsSum = items.sumOf { it.totalPrice }
             val diff = kotlin.math.abs(total - itemsSum)
-            if (diff < total * 0.05) { // Within 5%
+            if (diff < total * 0.10) { // Within 10%
                 score += 0.10f
             }
         }

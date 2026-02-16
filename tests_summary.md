@@ -5,24 +5,29 @@ This file contains all unit tests and instrumentation tests from the codebase.
 ## Table of Contents
 1. [androidTest\java\com\yourname\expensetracker\data\database\dao\ExpenseDaoTest.kt](#androidtestjavacomyournameexpensetrackerdatadatabasedaoexpensedaotestkt)
 2. [androidTest\java\com\yourname\expensetracker\data\database\dao\PendingReviewDaoTest.kt](#androidtestjavacomyournameexpensetrackerdatadatabasedaopendingreviewdaotestkt)
-3. [test\java\com\yourname\expensetracker\OcrParserTest.kt](#testjavacomyournameexpensetrackerocrparsertestkt)
-4. [test\java\com\yourname\expensetracker\data\database\converter\ConvertersTest.kt](#testjavacomyournameexpensetrackerdatadatabaseconverterconverterstestkt)
-5. [test\java\com\yourname\expensetracker\data\database\entity\SourceStatsTest.kt](#testjavacomyournameexpensetrackerdatadatabaseentitysourcestatstestkt)
-6. [test\java\com\yourname\expensetracker\domain\analytics\InsightsEngineTest.kt](#testjavacomyournameexpensetrackerdomainanalyticsinsightsenginetestkt)
-7. [test\java\com\yourname\expensetracker\domain\categorization\CategorizationEngineTest.kt](#testjavacomyournameexpensetrackerdomaincategorizationcategorizationenginetestkt)
-8. [test\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouterTest.kt](#testjavacomyournameexpensetrackerdomainintelligenceconfidenceroutertestkt)
-9. [test\java\com\yourname\expensetracker\domain\intelligence\ml\HybridExpenseClassifierTest.kt](#testjavacomyournameexpensetrackerdomainintelligencemlhybridexpenseclassifiertestkt)
-10. [test\java\com\yourname\expensetracker\domain\intelligence\ml\MerchantNormalizerTest.kt](#testjavacomyournameexpensetrackerdomainintelligencemlmerchantnormalizertestkt)
-11. [test\java\com\yourname\expensetracker\domain\logic\SynthesisEngineTest.kt](#testjavacomyournameexpensetrackerdomainlogicsynthesisenginetestkt)
-12. [test\java\com\yourname\expensetracker\domain\parser\AppParserRegistryRoutingTest.kt](#testjavacomyournameexpensetrackerdomainparserappparserregistryroutingtestkt)
-13. [test\java\com\yourname\expensetracker\domain\parser\AppParserRegistryTest.kt](#testjavacomyournameexpensetrackerdomainparserappparserregistrytestkt)
-14. [test\java\com\yourname\expensetracker\domain\parser\GenericTransactionParserTest.kt](#testjavacomyournameexpensetrackerdomainparsergenerictransactionparsertestkt)
-15. [test\java\com\yourname\expensetracker\domain\parser\GoogleWalletParserTest.kt](#testjavacomyournameexpensetrackerdomainparsergooglewalletparsertestkt)
-16. [test\java\com\yourname\expensetracker\domain\parser\GreekBankParserTest.kt](#testjavacomyournameexpensetrackerdomainparsergreekbankparsertestkt)
-17. [test\java\com\yourname\expensetracker\domain\parser\RevolutParserTest.kt](#testjavacomyournameexpensetrackerdomainparserrevolutparsertestkt)
-18. [test\java\com\yourname\expensetracker\domain\parser\SmsParserTest.kt](#testjavacomyournameexpensetrackerdomainparsersmsparsertestkt)
-19. [test\java\com\yourname\expensetracker\domain\receipt\BankStatementParserTest.kt](#testjavacomyournameexpensetrackerdomainreceiptbankstatementparsertestkt)
-20. [test\kotlin\com\yourname\expensetracker\domain\logic\RecurringExpenseEngineTest.kt](#testkotlincomyournameexpensetrackerdomainlogicrecurringexpenseenginetestkt)
+3. [test\java\com\yourname\expensetracker\InsightsLogicTest.kt](#testjavacomyournameexpensetrackerinsightslogictestkt)
+4. [test\java\com\yourname\expensetracker\OcrDocumentTest.kt](#testjavacomyournameexpensetrackerocrdocumenttestkt)
+5. [test\java\com\yourname\expensetracker\OcrParserTest.kt](#testjavacomyournameexpensetrackerocrparsertestkt)
+6. [test\java\com\yourname\expensetracker\RegexVerificationTest.kt](#testjavacomyournameexpensetrackerregexverificationtestkt)
+7. [test\java\com\yourname\expensetracker\data\database\converter\ConvertersTest.kt](#testjavacomyournameexpensetrackerdatadatabaseconverterconverterstestkt)
+8. [test\java\com\yourname\expensetracker\data\database\entity\SourceStatsTest.kt](#testjavacomyournameexpensetrackerdatadatabaseentitysourcestatstestkt)
+9. [test\java\com\yourname\expensetracker\domain\analytics\InsightsEngineTest.kt](#testjavacomyournameexpensetrackerdomainanalyticsinsightsenginetestkt)
+10. [test\java\com\yourname\expensetracker\domain\categorization\CategorizationEngineTest.kt](#testjavacomyournameexpensetrackerdomaincategorizationcategorizationenginetestkt)
+11. [test\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouterTest.kt](#testjavacomyournameexpensetrackerdomainintelligenceconfidenceroutertestkt)
+12. [test\java\com\yourname\expensetracker\domain\intelligence\ml\HybridExpenseClassifierTest.kt](#testjavacomyournameexpensetrackerdomainintelligencemlhybridexpenseclassifiertestkt)
+13. [test\java\com\yourname\expensetracker\domain\intelligence\ml\MerchantNormalizerTest.kt](#testjavacomyournameexpensetrackerdomainintelligencemlmerchantnormalizertestkt)
+14. [test\java\com\yourname\expensetracker\domain\logic\SynthesisEngineTest.kt](#testjavacomyournameexpensetrackerdomainlogicsynthesisenginetestkt)
+15. [test\java\com\yourname\expensetracker\domain\parser\AppParserRegistryRoutingTest.kt](#testjavacomyournameexpensetrackerdomainparserappparserregistryroutingtestkt)
+16. [test\java\com\yourname\expensetracker\domain\parser\AppParserRegistryTest.kt](#testjavacomyournameexpensetrackerdomainparserappparserregistrytestkt)
+17. [test\java\com\yourname\expensetracker\domain\parser\GenericTransactionParserTest.kt](#testjavacomyournameexpensetrackerdomainparsergenerictransactionparsertestkt)
+18. [test\java\com\yourname\expensetracker\domain\parser\GoogleWalletParserTest.kt](#testjavacomyournameexpensetrackerdomainparsergooglewalletparsertestkt)
+19. [test\java\com\yourname\expensetracker\domain\parser\GreekBankParserTest.kt](#testjavacomyournameexpensetrackerdomainparsergreekbankparsertestkt)
+20. [test\java\com\yourname\expensetracker\domain\parser\RevolutParserTest.kt](#testjavacomyournameexpensetrackerdomainparserrevolutparsertestkt)
+21. [test\java\com\yourname\expensetracker\domain\parser\SmsParserTest.kt](#testjavacomyournameexpensetrackerdomainparsersmsparsertestkt)
+22. [test\java\com\yourname\expensetracker\domain\receipt\BankStatementParserTest.kt](#testjavacomyournameexpensetrackerdomainreceiptbankstatementparsertestkt)
+23. [test\java\com\yourname\expensetracker\domain\receipt\GreekNormalizationTest.kt](#testjavacomyournameexpensetrackerdomainreceiptgreeknormalizationtestkt)
+24. [test\kotlin\com\yourname\expensetracker\domain\logic\RecurringExpenseEngineTest.kt](#testkotlincomyournameexpensetrackerdomainlogicrecurringexpenseenginetestkt)
+25. [test\resources\OCR_TEST_DOCUMENT.txt](#testresourcesocr_test_documenttxt)
 
 ---
 
@@ -296,6 +301,719 @@ class PendingReviewDaoTest {
 
 ---
 
+## test\java\com\yourname\expensetracker\InsightsLogicTest.kt <a name="testjavacomyournameexpensetrackerinsightslogictestkt"></a>
+```kotlin
+package com.yourname.expensetracker
+import org.junit.Test
+import org.junit.Assert.*
+import kotlin.math.roundToInt
+class InsightsLogicTest {
+    @Test
+    fun testRecurringIntervalLogic() {
+        // Test Case 1: Weekly (7 days) with variance
+        val weeklyIntervals = listOf(7.0, 7.1, 6.9, 7.0)
+        var avg = weeklyIntervals.average()
+        var rounded = kotlin.math.round(avg).toInt()
+        assertTrue("Weekly should be detected", rounded in 5..10)
+        // Test Case 2: Bi-weekly (14 days)
+        val biWeeklyIntervals = listOf(14.0, 13.8, 14.1)
+        avg = biWeeklyIntervals.average()
+        rounded = kotlin.math.round(avg).toInt()
+        assertTrue("Bi-weekly should be detected", rounded in 12..18)
+        // Test Case 3: Monthly (30 days)
+        val monthlyIntervals = listOf(30.0, 31.0, 29.0)
+        avg = monthlyIntervals.average()
+        rounded = kotlin.math.round(avg).toInt()
+        assertTrue("Monthly should be detected", rounded in 25..35)
+        // Test Case 4: Quarterly (90 days) - NEW
+        val quarterlyIntervals = listOf(90.0, 91.0, 89.0)
+        avg = quarterlyIntervals.average()
+        rounded = kotlin.math.round(avg).toInt()
+        assertTrue("Quarterly should be detected", rounded in 85..95)
+        // Test Case 5: 11.9 days -> Should round to 12
+        val edgeCase = listOf(11.9)
+        avg = edgeCase.average()
+        rounded = kotlin.math.round(avg).toInt()
+        assertEquals(12, rounded)
+        assertTrue("11.9 days (rounded to 12) should fall in bi-weekly range", rounded in 12..18)
+        // Old logic (truncate) fail demonstration
+        val truncated = avg.toInt()
+        assertEquals(11, truncated)
+        assertFalse("Old logic would see 11 and miss the range", truncated in 12..16)
+    }
+}
+
+```
+
+---
+
+## test\java\com\yourname\expensetracker\OcrDocumentTest.kt <a name="testjavacomyournameexpensetrackerocrdocumenttestkt"></a>
+```kotlin
+package com.yourname.expensetracker
+import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import java.util.Calendar
+/**
+ * Comprehensive OCR Test Document Parser Test
+ * 
+ * This test file reads the OCR_TEST_DOCUMENT.txt and validates
+ * all patterns against the ReceiptParser implementation.
+ * 
+ * Usage:
+ * 1. Place OCR_TEST_DOCUMENT.txt in src/test/resources/
+ * 2. Run this test class
+ * 3. Check output for pass/fail results on each section
+ */
+class OcrDocumentTest {
+    private lateinit var parser: ReceiptParser
+    @Before
+    fun setup() {
+        parser = ReceiptParser()
+    }
+    // ============================================
+    // SECTION 3: COMMON RECEIPT KEYWORDS
+    // ============================================
+    @Test
+    fun `test Greek TOTAL keyword - ΣΥΝΟΛΟ`() {
+        val input = """
+            MARKET STORE
+            ΑΦΜ: 123456789
+            ΣΥΝΟΛΟ € 50,00
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should extract total from ΣΥΝΟΛΟ", 50.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test Greek FINAL keyword - ΤΕΛΙΚΟ`() {
+        val input = """
+            CAFE
+            ΤΕΛΙΚΟ 12,50 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should extract total from ΤΕΛΙΚΟ", 12.50, result.total!!, 0.01)
+    }
+    @Test
+    fun `test Greek PAYABLE keyword - ΠΛΗΡΩΤΕΟ`() {
+        val input = """
+            SUPERMARKET
+            ΠΛΗΡΩΤΕΟ 35,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should extract total from ΠΛΗΡΩΤΕΟ", 35.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test Greek AMOUNT keyword - ΠΟΣΟ`() {
+        val input = """
+            SHOP
+            ΠΟΣΟ: €80,43
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should extract total from ΠΟΣΟ", 80.43, result.total!!, 0.01)
+    }
+    @Test
+    fun `test Greek CASH keyword - ΜΕΤΡΗΤΑ`() {
+        val input = """
+            STORE
+            ΜΕΤΡΗΤΑ € 25,74
+        """.trimIndent()
+        val result = parser.parse(input)
+        // ΜΕΤΡΗΤΑ is cash given, not total - but should still parse amount
+        assertNotNull("Should parse amount from ΜΕΤΡΗΤΑ line", result.total)
+    }
+    // ============================================
+    // SECTION 4: COMPOUND KEYWORDS
+    // ============================================
+    @Test
+    fun `test compound keyword - ΣΥΝΟΛΙΚΗ ΑΞΙΑ`() {
+        val input = """
+            STORE
+            ΣΥΝΟΛΙΚΗ ΑΞΙΑ: 20,01 ΕΥΡΩ
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should extract total from ΣΥΝΟΛΙΚΗ ΑΞΙΑ", 20.01, result.total!!, 0.01)
+        assertEquals("Should detect EUR currency", "EUR", result.currency)
+    }
+    @Test
+    fun `test compound keyword - ΚΑΘΑΡΗ ΑΞΙΑ`() {
+        val input = """
+            STORE
+            ΚΑΘΑΡΗ ΑΞΙΑ: 17,25 ΕΥΡΩ
+        """.trimIndent()
+        val result = parser.parse(input)
+        // ΚΑΘΑΡΗ ΑΞΙΑ is net value (subtotal), should be extracted
+        assertNotNull("Should parse ΚΑΘΑΡΗ ΑΞΙΑ", result.subtotal)
+    }
+    @Test
+    fun `test compound keyword - ΓΕΝΙΚΟ ΣΥΝΟΛΟ`() {
+        val input = """
+            SUPERMARKET
+            ΓΕΝΙΚΟ ΣΥΝΟΛΟ: 100,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should extract total from ΓΕΝΙΚΟ ΣΥΝΟΛΟ", 100.00, result.total!!, 0.01)
+    }
+    // ============================================
+    // SECTION 5 & 6: NUMBER FORMATS
+    // ============================================
+    @Test
+    fun `test European decimal format - comma separator`() {
+        val input = """
+            STORE
+            TOTAL 45,50 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse European decimal format", 45.50, result.total!!, 0.01)
+    }
+    @Test
+    fun `test European format with thousands separator`() {
+        val input = """
+            TECH STORE
+            TOTAL 1.250,50 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse 1.250,50 as 1250.50", 1250.50, result.total!!, 0.01)
+    }
+    @Test
+    fun `test US decimal format - dot separator`() {
+        val input = """
+            DINER
+            TOTAL 12.50
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse US decimal format", 12.50, result.total!!, 0.01)
+    }
+    @Test
+    fun `test US format with thousands separator`() {
+        val input = """
+            CAR DEALER
+            TOTAL 1,250.00
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse 1,250.00 as 1250.00", 1250.00, result.total!!, 0.01)
+    }
+    // ============================================
+    // SECTION 7: NUMBERS WITH SPACING ISSUES
+    // ============================================
+    @Test
+    fun `test number with space after comma`() {
+        val input = """
+            STORE
+            TOTAL 45, 50 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should fix '45, 50' to 45.50", 45.50, result.total!!, 0.01)
+    }
+    @Test
+    fun `test number with space before dot`() {
+        val input = """
+            STORE
+            TOTAL 12 .50 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should fix '12 .50' to 12.50", 12.50, result.total!!, 0.01)
+    }
+    @Test
+    fun `test number with space as thousands separator`() {
+        val input = """
+            STORE
+            TOTAL 1 250,50 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should fix '1 250,50' to 1250.50", 1250.50, result.total!!, 0.01)
+    }
+    @Test
+    fun `test severely mangled number`() {
+        val input = """
+            STORE
+            TOTAL 1.2 5 0, 5 0 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // This is an edge case - may or may not work depending on implementation
+        // At minimum should not crash
+        assertNotNull("Should handle mangled number gracefully", result)
+    }
+    // ============================================
+    // SECTION 8: CURRENCY WITH SYMBOLS
+    // ============================================
+    @Test
+    fun `test currency before amount - €50,00`() {
+        val input = """
+            STORE
+            TOTAL €50,00
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse €50,00", 50.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test currency after amount - 50,00 €`() {
+        val input = """
+            STORE
+            TOTAL 50,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse 50,00 €", 50.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test EUR text format`() {
+        val input = """
+            STORE
+            TOTAL EUR 100,00
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse EUR 100,00", 100.00, result.total!!, 0.01)
+        assertEquals("Should detect EUR currency", "EUR", result.currency)
+    }
+    // ============================================
+    // SECTION 9: DATE FORMATS
+    // ============================================
+    @Test
+    fun `test European date format - DD-MM-YYYY`() {
+        val input = """
+            STORE
+            DATE: 30/01/2026
+            TOTAL 10,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertNotNull("Should parse date", result.date)
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = result.date!!
+        assertEquals("Day should be 30", 30, cal.get(Calendar.DAY_OF_MONTH))
+        assertEquals("Month should be January (0-indexed)", 0, cal.get(Calendar.MONTH))
+        assertEquals("Year should be 2026", 2026, cal.get(Calendar.YEAR))
+    }
+    @Test
+    fun `test date with dashes`() {
+        val input = """
+            STORE
+            DATE: 30-01-2026
+            TOTAL 10,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertNotNull("Should parse date with dashes", result.date)
+    }
+    @Test
+    fun `test date with dots`() {
+        val input = """
+            STORE
+            DATE: 30.01.2026
+            TOTAL 10,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertNotNull("Should parse date with dots", result.date)
+    }
+    @Test
+    fun `test date with spacing issues`() {
+        val input = """
+            STORE
+            DATE: 30 / 01 / 2026
+            TOTAL 10,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // May or may not work - test for graceful handling
+        assertNotNull("Should handle date with spaces", result)
+    }
+    @Test
+    fun `test short year format - DD-MM-YY`() {
+        val input = """
+            STORE
+            DATE: 30/01/26
+            TOTAL 10,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertNotNull("Should parse short year", result.date)
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = result.date!!
+        assertEquals("Year should expand to 2026", 2026, cal.get(Calendar.YEAR))
+    }
+    // ============================================
+    // SECTION 11: VAT/TAX PERCENTAGES
+    // ============================================
+    @Test
+    fun `test VAT extraction with Greek label`() {
+        val input = """
+            STORE
+            SUBTOTAL 100,00 €
+            ΦΠΑ 24,00%: 24,00 €
+            TOTAL 124,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should extract VAT", 24.00, result.tax!!, 0.01)
+    }
+    @Test
+    fun `test VAT with dots in label`() {
+        val input = """
+            STORE
+            Φ.Π.Α. 24,00%: 9,68 €
+            TOTAL 50,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertNotNull("Should parse Φ.Π.Α.", result.tax)
+    }
+    @Test
+    fun `test VAT percentage not confused with total`() {
+        val input = """
+            STORE
+            ΦΠΑ 24,00%
+            TOTAL 50,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // 24,00% should NOT be picked as total
+        assertNotEquals("VAT percentage should not be total", 24.00, result.total)
+    }
+    // ============================================
+    // SECTION 12: UNIT PRICES (Should NOT be totals)
+    // ============================================
+    @Test
+    fun `test unit price not picked as total`() {
+        val input = """
+            GAS STATION
+            FUEL 1,574 €/ΛΤ
+            TOTAL 45,50 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // Should NOT pick 1.574 as total
+        assertEquals("Should pick actual total, not unit price", 45.50, result.total!!, 0.01)
+    }
+    // ============================================
+    // SECTION 14: COMPLETE RECEIPT LINES (Critical!)
+    // ============================================
+    @Test
+    fun `test complete line - ΣΥΝΟΛΟ € 50,00`() {
+        val input = "ΣΥΝΟΛΟ € 50,00"
+        val result = parser.parse(input)
+        assertEquals("Should parse 'ΣΥΝΟΛΟ € 50,00'", 50.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test complete line - ΣΥΝΟΛΟ: 80,43 €`() {
+        val input = "ΣΥΝΟΛΟ: 80,43 €"
+        val result = parser.parse(input)
+        assertEquals("Should parse 'ΣΥΝΟΛΟ: 80,43 €'", 80.43, result.total!!, 0.01)
+    }
+    @Test
+    fun `test complete line - ΠΟΣΟ/AMOUNT`() {
+        val input = "ΠΟΣΟ/AMOUNT: €80,43"
+        val result = parser.parse(input)
+        assertEquals("Should parse 'ΠΟΣΟ/AMOUNT: €80,43'", 80.43, result.total!!, 0.01)
+    }
+    // ============================================
+    // SECTION 22: SIMULATED OCR ERRORS (Critical!)
+    // ============================================
+    @Test
+    fun `test OCR error - EYNONO (ΣΥΝΟΛΟ)`() {
+        val input = """
+            MARKET
+            EYNONO € 5,00
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse EYNONO as ΣΥΝΟΛΟ", 5.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test OCR error - ZYNOAO (ΣΥΝΟΛΟ)`() {
+        val input = """
+            STORE
+            ZYNOAO: 182,00€
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse ZYNOAO as ΣΥΝΟΛΟ", 182.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test OCR error - 2YNONO (ΣΥΝΟΛΟ)`() {
+        val input = """
+            BAKERY
+            2YNONO 0,90 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse 2YNONO as ΣΥΝΟΛΟ", 0.90, result.total!!, 0.01)
+    }
+    @Test
+    fun `test OCR error - METPHTA (ΜΕΤΡΗΤΑ)`() {
+        val input = """
+            CAFE
+            METPHTA 25,74 ΕΥΡΩ
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertNotNull("Should parse METPHTA line", result.total)
+    }
+    @Test
+    fun `test OCR error - EYPΩ (ΕΥΡΩ)`() {
+        val input = """
+            STORE
+            TOTAL 50,00 EYPΩ
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse EYPΩ as EUR", 50.00, result.total!!, 0.01)
+        assertEquals("Currency should be EUR", "EUR", result.currency)
+    }
+    @Test
+    fun `test OCR error - EYP9 (ΕΥΡΩ)`() {
+        val input = """
+            STORE
+            TOTAL 50,00 EYP9
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse EYP9 as EUR", 50.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test OCR error - HM/NIA (ΗΜΕΡΟΜΗΝΙΑ)`() {
+        val input = """
+            STORE
+            HM/NIA: 30/01/2026
+            TOTAL 10,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertNotNull("Should parse HM/NIA as date", result.date)
+    }
+    // ============================================
+    // SECTION 23: ACTUAL OCR OUTPUT FROM RECEIPTS
+    // ============================================
+    @Test
+    fun `test actual OCR - IYN noZOTHTA`() {
+        val input = """
+            STORE
+            IYN. noZOTHTA
+            50,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // This is a severe OCR error - may not fully parse
+        // But should not crash
+        assertNotNull("Should handle severe OCR error gracefully", result)
+    }
+    @Test
+    fun `test actual OCR - ZYNOAO IONTAN`() {
+        val input = """
+            STORE
+            ZYNOAO IONTAN
+            182,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse ZYNOAO IONTAN", 182.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test actual OCR - NAHPQTEO (ΠΛΗΡΩΤΕΟ)`() {
+        val input = """
+            STORE
+            NAHPQTEO 10,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse NAHPQTEO as ΠΛΗΡΩΤΕΟ", 10.00, result.total!!, 0.01)
+    }
+    // ============================================
+    // SECTION 15: MERCHANT NAMES
+    // ============================================
+    @Test
+    fun `test Greek merchant name - ΣΚΛΑΒΕΝΙΤΗΣ`() {
+        val input = """
+            ΣΚΛΑΒΕΝΙΤΗΣ
+            ΑΦΜ: 094206641
+            TOTAL 50,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should extract merchant ΣΚΛΑΒΕΝΙΤΗΣ", "ΣΚΛΑΒΕΝΙΤΗΣ", result.merchantName)
+    }
+    @Test
+    fun `test Greek merchant name - ΛΙΔΛ`() {
+        val input = """
+            ΛΙΔΛ
+            ΑΘΗΝΑ
+            TOTAL 35,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertTrue("Should extract merchant ΛΙΔΛ", 
+            result.merchantName?.contains("ΛΙΔΛ") == true || 
+            result.merchantName?.contains("LIDL") == true
+        )
+    }
+    @Test
+    fun `test merchant with Greeklish - DIAMANTIS MAZOUTHIS`() {
+        val input = """
+            ΔΙΑΜΑΝΤΗΣ ΜΑΖΟΥΘΗΣ Α.Ε.
+            ΘΕΣΣΑΛΟΝΙΚΗ
+            TOTAL 100,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertNotNull("Should extract merchant name", result.merchantName)
+    }
+    // ============================================
+    // SECTION 18: LINE ITEMS
+    // ============================================
+    @Test
+    fun `test line items extraction`() {
+        val input = """
+            CAFE
+            ΚΑΦΕΣ           3,90 €
+            ΦΑΓΗΤΟ          16,50 €
+            ΣΑΛΑΤΕΣ         13,20 €
+            ΣΥΝΟΛΟ 33,60 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertTrue("Should extract line items", result.lineItems.isNotEmpty())
+        assertEquals("Total should match", 33.60, result.total!!, 0.01)
+    }
+    @Test
+    fun `test line item with quantity`() {
+        val input = """
+            STORE
+            2 x ΚΡΑΣΙ ΧΥΜΑ   7,60 €
+            TOTAL 7,60 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertTrue("Should extract line items", result.lineItems.isNotEmpty())
+    }
+    // ============================================
+    // SECTION 19: CARD RECEIPT PATTERNS
+    // ============================================
+    @Test
+    fun `test card receipt pattern`() {
+        val input = """
+            cardlink
+            ΑΓΟΡΑ-SALE
+            5356 71** **** 6523
+            ANEIIAQH/CONTACTLESS
+            NOsO/AMOUNT: €35,00
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse card receipt total", 35.00, result.total!!, 0.01)
+    }
+    @Test
+    fun `test bilingual thank you`() {
+        val input = """
+            STORE
+            TOTAL 50,00 €
+            EYXAPISTOYME - THANK YOU
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse total before thank you", 50.00, result.total!!, 0.01)
+    }
+    // ============================================
+    // SECTION 20: MIXED GREEK-ENGLISH
+    // ============================================
+    @Test
+    fun `test bilingual total`() {
+        val input = "TOTAL / ΣΥΝΟΛΟ: €45.50"
+        val result = parser.parse(input)
+        assertEquals("Should parse bilingual total", 45.50, result.total!!, 0.01)
+    }
+    @Test
+    fun `test bilingual cash`() {
+        val input = "CASH / ΜΕΤΡΗΤΑ: €50.00"
+        val result = parser.parse(input)
+        assertNotNull("Should parse bilingual cash", result.total)
+    }
+    @Test
+    fun `test bilingual VAT`() {
+        val input = """
+            STORE
+            SUBTOTAL: €40.00
+            VAT / ΦΠΑ: €2.76
+            TOTAL: €42.76
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertEquals("Should parse total", 42.76, result.total!!, 0.01)
+        assertEquals("Should parse VAT", 2.76, result.tax!!, 0.01)
+    }
+    // ============================================
+    // SECTION 21: EDGE CASES
+    // ============================================
+    @Test
+    fun `test year-like amount not confused with year`() {
+        val input = """
+            STORE
+            TOTAL 2020,50 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // 2020.50 should be valid (has decimal)
+        assertEquals("Should allow year-like amount with decimal", 2020.50, result.total!!, 0.01)
+    }
+    @Test
+    fun `test whole year not picked as amount`() {
+        val input = """
+            STORE
+            DATE: 30/01/2026
+            TOTAL 50,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // 2026 should NOT be the total
+        assertNotEquals("Year should not be total", 2026.0, result.total)
+    }
+    @Test
+    fun `test phone number not picked as amount`() {
+        val input = """
+            STORE
+            TEL: 2310 476821
+            TOTAL 50,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // Phone number should not be picked as amount
+        assertTrue("Total should be reasonable", result.total!! < 1000)
+    }
+    @Test
+    fun `test tax ID not picked as amount`() {
+        val input = """
+            STORE
+            ΑΦΜ: 094206641
+            TOTAL 50,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        // Tax ID (094206641) should not be picked as amount
+        assertTrue("Total should be reasonable", result.total!! < 1000)
+    }
+    // ============================================
+    // CONFIDENCE SCORE TESTS
+    // ============================================
+    @Test
+    fun `test confidence score with good data`() {
+        val input = """
+            ΣΚΛΑΒΕΝΙΤΗΣ
+            ΑΦΜ: 094206641
+            ΗΜΕΡΟΜΗΝΙΑ: 30/01/2026
+            ΚΑΦΕΣ           3,90 €
+            ΦΑΓΗΤΟ          16,50 €
+            ΣΥΝΟΛΟ 20,40 €
+            ΦΠΑ 24%: 4,89 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertTrue("Confidence should be high with good data", result.confidence >= 0.7f)
+    }
+    @Test
+    fun `test confidence score with minimal data`() {
+        val input = "50,00 €"
+        val result = parser.parse(input)
+        assertTrue("Confidence should be lower with minimal data", result.confidence < 0.7f)
+    }
+    // ============================================
+    // DATE OCR FIXES
+    // ============================================
+    @Test
+    fun `test date OCR fix - D instead of 0`() {
+        val input = """
+            STORE
+            DATE: 16-D4-2017
+            TOTAL 10,00 €
+        """.trimIndent()
+        val result = parser.parse(input)
+        assertNotNull("Should fix D→0 in date", result.date)
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = result.date!!
+        assertEquals("Month should be April", 3, cal.get(Calendar.MONTH))
+    }
+    // ============================================
+    // HELPER: Print Test Summary
+    // ============================================
+    @Test
+    fun `print parser version info`() {
+        println("=" .repeat(60))
+        println("OCR Document Test Suite")
+        println("Testing ReceiptParser with OCR_TEST_DOCUMENT patterns")
+        println("=" .repeat(60))
+    }
+}
+
+```
+
+---
+
 ## test\java\com\yourname\expensetracker\OcrParserTest.kt <a name="testjavacomyournameexpensetrackerocrparsertestkt"></a>
 ```kotlin
 package com.yourname.expensetracker
@@ -480,6 +1198,34 @@ class OcrParserTest {
         assertEquals(2017, cal.get(Calendar.YEAR))
         assertEquals(3, cal.get(Calendar.MONTH)) // April = 3
         assertEquals(16, cal.get(Calendar.DAY_OF_MONTH))
+    }
+}
+
+```
+
+---
+
+## test\java\com\yourname\expensetracker\RegexVerificationTest.kt <a name="testjavacomyournameexpensetrackerregexverificationtestkt"></a>
+```kotlin
+package com.yourname.expensetracker
+import org.junit.Test
+import org.junit.Assert.*
+class RegexVerificationTest {
+    @Test
+    fun testCurrencyRegex() {
+        val regex = Regex("""(?:€|$|EUR)?\s*(\d{1,6}[\.,]\d{2})\s*(?:€|$|EUR)?""")
+        // Should match
+        assertTrue(regex.containsMatchIn("€20.50"))
+        assertTrue(regex.containsMatchIn("20.50€"))
+        assertTrue(regex.containsMatchIn("20,50"))
+        assertTrue(regex.containsMatchIn("EUR 20.50"))
+        // Should NOT match
+        assertFalse(regex.containsMatchIn("2024")) // Year
+        assertFalse(regex.containsMatchIn("Version 2.0")) // Version
+        // Extraction logic verification
+        val match = regex.find("Total: 20.50€")
+        assertNotNull(match)
+        assertEquals("20.50", match!!.groupValues[1])
     }
 }
 
@@ -2042,6 +2788,69 @@ class BankStatementParserTest {
 
 ---
 
+## test\java\com\yourname\expensetracker\domain\receipt\GreekNormalizationTest.kt <a name="testjavacomyournameexpensetrackerdomainreceiptgreeknormalizationtestkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.receipt
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.lang.reflect.Method
+class GreekNormalizationTest {
+    private val parser = ReceiptParser()
+    private val normalizeMethod: Method = ReceiptParser::class.java.getDeclaredMethod("normalizeGreekOcr", String::class.java)
+    init {
+        normalizeMethod.isAccessible = true
+    }
+    private fun normalize(text: String): String {
+        return normalizeMethod.invoke(parser, text) as String
+    }
+    @Test
+    fun `test number fixes`() {
+        assertEquals("45.50", normalize("4 5. 5 0"))
+        assertEquals("45.00", normalize("45 , 00"))
+        assertEquals("123.45", normalize("123 . 45"))
+    }
+    @Test
+    fun `test total keywords variants`() {
+        // E -> Σ, etc.
+        assertTrue(normalize("EYNONO 50.00").contains("TOTAL_KEY"))
+        assertTrue(normalize("ZYNOAO 50.00").contains("TOTAL_KEY"))
+        assertTrue(normalize("2YNONO 50.00").contains("TOTAL_KEY"))
+        assertTrue(normalize("IYNOAO 50.00").contains("TOTAL_KEY"))
+        assertTrue(normalize("ZYNOIO 50.00").contains("TOTAL_KEY"))
+        assertTrue(normalize("NAHPQTEO 50.00").contains("TOTAL_KEY")) // Payable
+    }
+    @Test
+    fun `test amount keywords`() {
+        assertTrue(normalize("ΠΟΣΟ 10.00").contains("AMOUNT_KEY"))
+        assertTrue(normalize("POSO 10.00").contains("AMOUNT_KEY"))
+        assertTrue(normalize("nozo 10.00").contains("AMOUNT_KEY"))
+    }
+    @Test
+    fun `test compound keywords`() {
+        assertTrue(normalize("ΣΥΝΟΛΙΚΗ ΑΞΙΑ 100").contains("TOTAL_KEY"))
+        assertTrue(normalize("ΚΑΘΑΡΗ ΑΞΙΑ 80").contains("SUBTOTAL_KEY"))
+    }
+    @Test
+    fun `test date fixes`() {
+        assertEquals("16-04-2017", normalize("16-D4-2017"))
+        assertEquals("16-04-2017", normalize("16/D4/2017"))
+        assertEquals("16-04-2017", normalize("16-O4-2017"))
+    }
+    @Test
+    fun `test currency cleanup`() {
+        // EUR should be removed but replaced with empty string or space to allow number parsing
+        // In the new implementation we replace EUR with "" at the end.
+        val normalized = normalize("10.00 EUR")
+        assertTrue(!normalized.contains("EUR"))
+        assertTrue(normalized.trim() == "10.00")
+    }
+}
+
+```
+
+---
+
 ## test\kotlin\com\yourname\expensetracker\domain\logic\RecurringExpenseEngineTest.kt <a name="testkotlincomyournameexpensetrackerdomainlogicrecurringexpenseenginetestkt"></a>
 ```kotlin
 package com.yourname.expensetracker.domain.logic
@@ -2179,6 +2988,317 @@ class RecurringExpenseEngineTest {
         )
     }
 }
+
+```
+
+---
+
+## test\resources\OCR_TEST_DOCUMENT.txt <a name="testresourcesocr_test_documenttxt"></a>
+```
+═══════════════════════════════════════════════════════════════════════════════
+                    GREEK RECEIPT OCR TEST DOCUMENT
+                    Document for ML-Kit OCR Testing
+═══════════════════════════════════════════════════════════════════════════════
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1: GREEK ALPHABET (UPPERCASE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Α Β Γ Δ Ε Ζ Η Θ Ι Κ Λ Μ Ν Ξ Ο Π Ρ Σ Τ Υ Φ Χ Ψ Ω
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2: GREEK ALPHABET (LOWERCASE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+α β γ δ ε ζ η θ ι κ λ μ ν ξ ο π ρ σ τ υ φ χ ψ ω
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 3: COMMON RECEIPT KEYWORDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ΣΥΝΟΛΟ      (Total)
+ΤΕΛΙΚΟ      (Final)
+ΠΛΗΡΩΤΕΟ    (Payable)
+ΠΟΣΟ        (Amount)
+ΑΞΙΑ        (Value)
+ΜΕΤΡΗΤΑ     (Cash)
+ΚΑΡΤΑ       (Card)
+ΕΥΡΩ        (Euro)
+ΦΠΑ         (VAT)
+ΑΦΜ         (Tax ID)
+ΗΜΕΡΟΜΗΝΙΑ  (Date)
+ΩΡΑ         (Time)
+ΠΟΣΟΤΗΤΑ    (Quantity)
+ΤΙΜΗ        (Price)
+ΜΟΝΑΔΟΣ     (Unit)
+ΕΚΠΤΩΣΗ     (Discount)
+ΠΡΟΙΟΝ      (Product)
+ΠΕΛΑΤΗΣ     (Customer)
+ΑΠΟΔΕΙΞΗ    (Receipt)
+ΛΙΑΝΙΚΗΣ    (Retail)
+ΠΩΛΗΣΗΣ     (Sales)
+ΕΤΑΙΡΕΙΑ    (Company)
+ΔΙΕΥΘΥΝΣΗ   (Address)
+ΤΗΛΕΦΩΝΟ    (Phone)
+Τ.Κ.        (Postal Code)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 4: COMPOUND KEYWORDS (Common on receipts)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ΣΥΝΟΛΙΚΗ ΑΞΙΑ     (Total Value)
+ΚΑΘΑΡΗ ΑΞΙΑ       (Net Value)
+ΜΕΡΙΚΟ ΣΥΝΟΛΟ     (Partial Total)
+ΓΕΝΙΚΟ ΣΥΝΟΛΟ     (Grand Total)
+ΤΙΜΗ ΜΟΝΑΔΟΣ      (Unit Price)
+ΦΟΡΟΣ ΠΡΟΣΘΕΤΗΣ ΑΞΙΑΣ  (VAT - Full)
+ΑΡΙΘΜΟΣ ΑΠΟΔΕΙΞΗΣ (Receipt Number)
+ΗΜΕΡΟΜΗΝΙΑ ΕΚΔΟΣΗΣ (Issue Date)
+ΤΡΟΠΟΣ ΠΛΗΡΩΜΗΣ   (Payment Method)
+ΡΙΝΑ ΠΛΗΡΩΜΗΣ     (Payment Code)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 5: NUMBERS - EUROPEAN FORMAT (comma as decimal)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Simple decimals:
+12,50
+45,50
+100,00
+7,80
+4,70
+182,00
+113,80
+44,20
+50,00
+25,74
+Large numbers with thousand separator:
+1.250,50
+2.500,00
+12.345,67
+1.234.567,89
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 6: NUMBERS - US/ENGLISH FORMAT (dot as decimal)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Simple decimals:
+12.50
+45.50
+100.00
+7.80
+4.70
+182.00
+113.80
+44.20
+50.00
+25.74
+Large numbers with thousand separator:
+1,250.50
+2,500.00
+12,345.67
+1,234,567.89
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 7: NUMBERS WITH SPACING ISSUES (OCR artifacts)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+45, 50
+12 .50
+1 250,50
+100, 00
+7, 8 0
+1.2 5 0, 5 0
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 8: CURRENCY WITH SYMBOLS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+€50,00
+€ 45,50
+50,00 €
+45.50€
+EUR 100,00
+100.00 EUR
+€1.250,50
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 9: DATE FORMATS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+European formats:
+30/01/2026
+01/10/2015
+29/11/2016
+16/04/2017
+18/06/2019
+14/03/2020
+07/10/2024
+Short year:
+30/01/26
+01/10/15
+29/11/16
+With dashes:
+30-01-2026
+01-10-2015
+29-11-2016
+With dots:
+30.01.2026
+01.10.2015
+29.11.2016
+With spacing issues:
+30 / 01 / 2026
+01- 10- 2015
+29 /11/ 16
+ISO format:
+2026-01-30
+2015-10-01
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 10: TIME FORMATS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+13:47:38
+09:20:54
+14:58:20
+11:57:52
+08:38
+12:27
+With Greek label:
+ΩΡΑ: 13:47:38
+ΗΜΕΡΟΜΗΝΙΑ: 30/01/2026 ΩΡΑ: 13:47
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 11: VAT/TAX PERCENTAGES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+24,00%
+24.00%
+24%
+13,00%
+13.00%
+13%
+6,00%
+6.00%
+6%
+16,00%
+16.00%
+16%
+With Greek labels:
+ΦΠΑ 24,00%
+ΦΠΑ: 9,68 €
+VAT 24%
+Φ.Π.Α. 24,00%
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 12: UNIT PRICES (Should NOT be picked as totals)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1,574 €/ΛΤ
+1.574 EUR/LT
+1,947 €/ΛΙΤΡΟ
+2,50 €/ΚΙΛΟ
+0,80 €/ΤΕΜ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 13: QUANTITIES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+25,680 ΛΙΤΡΑ
+12,710 ΛΤ
+2 x
+3 τεμ.
+1,5 κιλά
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 14: COMPLETE RECEIPT LINES (Real patterns from your receipts)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ΣΥΝΟΛΟ € 50,00
+ΣΥΝΟΛΟ: 80,43 €
+ΜΕΤΡΗΤΑ € 80,43
+ΜΕΤΡΗΤΑ: 25,74 ΕΥΡΩ
+ΠΟΣΟ/AMOUNT: €80,43
+nozo/AMOUNT: €35,00
+ZYNOAO: 182,00€
+EYNONO € 5,00
+ΣΥΝΟΛΙΚΗ ΑΞΙΑ: 20,01 ΕΥΡΩ
+ΚΑΘΑΡΗ ΑΞΙΑ: 17,25 ΕΥΡΩ
+ΦΠΑ 24,00%: 2,76 ΕΥΡΩ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 15: MERCHANT NAMES (Greek)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ΔΙΑΜΑΝΤΗΣ ΜΑΖΟΥΘΗΣ Α.Ε.
+Ο ΕΡΜΗΣ
+ΤΟ ΧΑΝΙ
+ΚΑΤΙΕΝ
+ΣΚΛΑΒΕΝΙΤΗΣ
+ΛΙΔΛ
+ΜΑΣΟΥΤΗΣ
+ΑΒ ΒΑΣΙΛΟΠΟΥΛΟΣ
+CARREFOUR
+ΣΟΥΠΕΡ ΜΑΡΚΕΤ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 16: ADDRESSES (Greek)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ΤΑΤΟΪΟΥ 96
+ΘΕΣΣΑΛΟΝΙΚΗ
+ΑΘΗΝΑ
+Τ.Κ. 13672
+Τ.Κ.: 57001
+ΟΔΟΣ: ΕΡΜΟΥ 25
+ΗΜΕΡΟΜΗΝΙΑ: 30/01/2026
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 17: TAX IDS AND CODES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Α.Φ.Μ.: 094206641
+ΑΦΜ: 094063140
+Α.Μ.Μ.: 46209/04/B/ΔΟ/278(02)
+ΑΡΙΘΜΟΣ ΑΠΟΔΕΙΞΗΣ: 0047469010000
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 18: LINE ITEMS (Typical receipt items)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ΚΑΦΕΣ           3,90 €
+ΦΑΓΗΤΟ          16,50 €
+ΣΑΛΑΤΕΣ         13,20 €
+ΑΝΑΨΥΚΤΙΚΑ      1,50 €
+2 x ΚΡΑΣΙ ΧΥΜΑ   7,60 €
+ΚΑΥΣΙΜΟ        40,32 €
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 19: CARD RECEIPT PATTERNS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+cardlink
+ΑΓΟΡΑ-SALE
+5356 71** **** 6523
+ANEIIAQH/CONTACTLESS
+ACQ: WORLDLINE TID: 77221310
+EYXAPIETOYME - THANK YOU
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 20: MIXED GREEK-ENGLISH (Common in modern receipts)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TOTAL / ΣΥΝΟΛΟ: €45.50
+CASH / ΜΕΤΡΗΤΑ: €50.00
+CARD / ΚΑΡΤΑ: €35.00
+VAT / ΦΠΑ: €2.76
+DISCOUNT / ΕΚΠΤΩΣΗ: €5.00
+SUBTOTAL: €40.00
+THANK YOU / ΕΥΧΑΡΙΣΤΟΥΜΕ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 21: EDGE CASES - POTENTIAL CONFUSIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Year-like amounts:
+2024
+2025
+2026
+Phone numbers (should not be parsed as amounts):
+2310 476821
+210 2806060
++30 2310 220946
+Tax IDs (should not be parsed as amounts):
+094206641
+094063140
+99757685
+Barcodes:
+1230000510318
+8901234567890
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 22: SIMULATED OCR ERRORS (What we expect to see)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EYNONO
+ZYNOAO
+2YNONO
+METPHTA
+EYPΩ
+EYP9
+HM/NIA
+TPAIEZI
+nozo
+AMOUNT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 23: ACTUAL OCR OUTPUT FROM YOUR RECEIPTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IYN. noZOTHTA
+ZYNOAO IONTAN
+ZYNOIO
+NAHPQTEO
+METPHTA
+AEIA onA
+AEIA EEOAQN
+═══════════════════════════════════════════════════════════════════════════════
+                         END OF TEST DOCUMENT
+═══════════════════════════════════════════════════════════════════════════════
 
 ```
 

@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.model.OperationResult
+import com.yourname.expensetracker.ui.screens.debug.DebugData
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -48,7 +50,10 @@ data class ReceiptScanState(
     val ocrConfidence: Float = 0f,
     val errorMessage: String? = null,
     val isSaving: Boolean = false,
-    val saveResult: SaveReceiptResult? = null
+    val saveResult: SaveReceiptResult? = null,
+    
+    // Debug data
+    val debugData: DebugData? = null
 )
 
 sealed class SaveReceiptResult {
@@ -107,9 +112,36 @@ class ReceiptScanViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
+            val startTime = System.currentTimeMillis()
+            val parsingLogs = mutableListOf<String>()
+            
             try {
                 // Manual scans do NOT auto-create review items (User confirms in this UI)
                 val (receipt, parsed) = receiptRepository.processReceipt(uri, autoCreateReview = false)
+                
+                val processingTime = System.currentTimeMillis() - startTime
+                
+                // Create debug data
+                val debugData = DebugData(
+                    rawText = receipt.rawOcrText,
+                    parsedTransactions = listOfNotNull(
+                        parsed.total?.let { total ->
+                            ParsedTransaction(
+                                amount = total,
+                                currency = "EUR",
+                                merchant = parsed.merchantName ?: "Unknown",
+                                type = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+                                confidence = parsed.confidence,
+                                date = parsed.date
+                            )
+                        }
+                    ),
+                    parsingLogs = if (parsed.confidence < 0.7f) {
+                        listOf("Low confidence parsing (${(parsed.confidence * 100).toInt()}%)")
+                    } else emptyList(),
+                    processingTimeMs = processingTime,
+                    parserUsed = "ReceiptParser"
+                )
 
                 _state.update {
                     it.copy(
@@ -124,26 +156,50 @@ class ReceiptScanViewModel @Inject constructor(
                         } ?: "",
                         editDate = parsed.date ?: System.currentTimeMillis(),
                         ocrConfidence = parsed.confidence,
-                        selectedCategoryId = null // Will be auto-detected on save
+                        selectedCategoryId = null, // Will be auto-detected on save
+                        debugData = debugData
                     )
                 }
             } catch (e: Exception) {
+                parsingLogs.add("OCR Error: ${e.message}")
+                
                 try {
                     val (receipt, parsed) = receiptRepository.saveManualReceiptRecord(uri)
+                    
+                    val debugData = DebugData(
+                        rawText = "",
+                        parsedTransactions = emptyList(),
+                        parsingLogs = parsingLogs,
+                        processingTimeMs = System.currentTimeMillis() - startTime,
+                        parserUsed = "Manual (OCR Failed)"
+                    )
+                    
                     _state.update {
                         it.copy(
                             step = ScanStep.REVIEW,
                             imageUri = uri,
                             parsedReceipt = parsed,
                             receiptId = receipt.id,
-                            errorMessage = "OCR Failed: ${e.message}. You can enter details manually."
+                            errorMessage = "OCR Failed: ${e.message}. You can enter details manually.",
+                            debugData = debugData
                         )
                     }
                 } catch (fallbackError: Exception) {
+                    parsingLogs.add("Fallback Error: ${fallbackError.message}")
+                    
+                    val debugData = DebugData(
+                        rawText = "",
+                        parsedTransactions = emptyList(),
+                        parsingLogs = parsingLogs,
+                        processingTimeMs = System.currentTimeMillis() - startTime,
+                        parserUsed = "Failed"
+                    )
+                    
                     _state.update {
                         it.copy(
                             step = ScanStep.ERROR,
-                            errorMessage = "Total failure: ${fallbackError.message}"
+                            errorMessage = "Total failure: ${fallbackError.message}",
+                            debugData = debugData
                         )
                     }
                 }

@@ -34,7 +34,8 @@ data class AnalyticsState(
 class AnalyticsViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
-    private val insightsEngine: InsightsEngine
+    private val insightsEngine: InsightsEngine,
+    private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AnalyticsState())
@@ -140,8 +141,37 @@ class AnalyticsViewModel @Inject constructor(
         val insights = insightsEngine.getLegacyInsights(insightsSnapshot)
 
         // Recurring (use the list from snapshot but mapped to legacy if needed, or just legacy detection)
-        // Using duplicate detection logic for now to stay compatible with UI model
-        val recurring = insightsEngine.detectRecurring(purchases)
+        // Refactor: Use RecurringExpenseEngine directly to ensure consistent detection (LOG-020)
+        // We filter purchases for relevance but the engine can handle the full list too. 
+        // Note: The engine normally looks at 12 months. 'allExpenses' here might be limited by 'period' if we passed filtered list?
+        // Actually generateInsights receives 'allExpenses' (usually full list or large subset).
+        // Let's assume 'allExpenses' passed to computeAnalytics is sufficient.
+        val patterns = recurringExpenseEngine.getPatterns(allExpenses)
+        
+        val recurring = patterns.map { pattern ->
+             RecurringCandidate(
+                 merchant = pattern.merchantName,
+                 amount = pattern.averageAmount,
+                 intervalDays = pattern.periodVarianceDays, // Mapping variance or calculating interval? 
+                 // RecurringPattern stores frequency enum, not raw days. We need to map back for UI if it expects days.
+                 // Actually RecurringCandidate.intervalDays seems to act as "average interval".
+                 // Let's approximate from Frequency.
+                 occurrences = 0, // RecurringPattern doesn't expose raw count easily in this model unless we add it. 
+                 // For now, let's keep it 0 or map frequency.days
+                 nextExpectedDate = pattern.nextExpectedDate,
+                 confidence = pattern.confidence
+             )
+        }.toMutableList()
+        
+        // Fix: RecurringCandidate needs 'occurrences' and 'intervalDays'. 
+        // The new engine abstracts this. If the UI relies on it, we might need to expose it in RecurringPattern or calculate it.
+        // For now, let's map frequency days.
+        patterns.forEachIndexed { index, p ->
+            recurring[index] = recurring[index].copy(
+                intervalDays = p.frequency.days,
+                occurrences = 3 // Minimum required by engine, placeholder
+            )
+        }
 
         _state.update {
             it.copy(

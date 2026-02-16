@@ -164,6 +164,13 @@ class NotificationRepository @Inject constructor(
         return categorizationEngine.categorize(merchant)
     }
 
+    // === Analytics Helpers ===
+
+    suspend fun getExpenseCountForPeriod(startMs: Long, endMs: Long): Int =
+        expenseDao.getCountForPeriod(startMs, endMs)
+
+    // === Core Processing Pipeline ===
+
     // === Core Processing Pipeline ===
     suspend fun processAndSave(notification: RawNotification) {
         // 1. Initial existence check (fast, non-transactional)

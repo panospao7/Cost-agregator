@@ -12,8 +12,8 @@ def extract_codebase(src_path, output_file):
         out.write("## Table of Contents\n")
         file_list = []
         for root, dirs, files in os.walk(src_path):
-            # Exclude tests and build artifacts
-            excluded_dirs = {"test", "androidTest", "build", ".gradle", ".idea"}
+            # Exclude tests, build artifacts, and resources (layouts/drawables)
+            excluded_dirs = {"test", "androidTest", "build", ".gradle", ".idea", "res", "generated"}
             if any(part in root.split(os.sep) for part in excluded_dirs):
                 continue
                 

@@ -16,6 +16,24 @@ class BankStatementParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
     private val merchantCleaner: MerchantCleaner
 ) {
+    companion object {
+        // Greek National Bank transaction line pattern
+        // Format: DD/MM/YYYYHH:MM:SS Valeur Branch Merchant Χ/Π Amount Balance
+        private val GREEK_NBG_TRANSACTION = Regex(
+            """(\d{2}/\d{2}/\d{4})(\d{2}:\d{2}:\d{2})\s+""" +  // DateTime (concatenated)
+            """(\d{2}/\d{2}/\d{4})\s+""" +                      // Valeur Date
+            """(\d{3}\s+\d{3})\s+""" +                          // Branch Code
+            """(.+?)\s+""" +                                     // Merchant (non-greedy)
+            """([ΧΠ])\s+""" +                                   // Type indicator (Χ=Debit, Π=Credit)
+            """(-?[\d.,]+)\s+""" +                             // Amount
+            """([\d.,]+)"""                                     // Balance
+        )
+        
+        // Header patterns for Greek National Bank
+        private val ACCOUNT_NUMBER_PATTERN = Regex("""Κίνηση Λογαριασμού\s+(\d+)""")
+        private val IBAN_PATTERN = Regex("""ΙΒΑΝ\s*Λογαριασμού[:\s]+(GR\d+)""")
+        private val BALANCE_PATTERN = Regex("""Λογιστικό\s*Υπόλοιπο[:\s]+([\d.,]+)€""")
+    }
 
     /**
      * Parse a list of text blocks (with spatial data) into multiple transactions.
@@ -27,7 +45,18 @@ class BankStatementParser @Inject constructor(
         // 1. Group blocks into rows based on vertical proximity
         val rows = groupBlocksIntoRows(blocks)
 
-        // 2. Process each row to extract transactions
+        // 2. Try Greek NBG specific parsing first
+        val greekNbgTransactions = rows.mapNotNull { rowText ->
+            tryParseGreekNbgTransaction(rowText)
+        }
+        
+        // If we got good results from Greek NBG parser, use those
+        if (greekNbgTransactions.isNotEmpty()) {
+            android.util.Log.d("BankStatementParser", "Parsed ${greekNbgTransactions.size} Greek NBG transactions")
+            return greekNbgTransactions
+        }
+
+        // 3. Otherwise fall back to generic parsing
         return rows.mapNotNull { rowText ->
             extractTransactionFromRow(rowText)
         }
@@ -74,6 +103,146 @@ class BankStatementParser @Inject constructor(
         // If they overlap by more than 50% of the smaller block's height, they are likely same row
         return overlapHeight.toDouble() / minHeight > 0.5
     }
+    
+    /**
+     * Try to parse a Greek National Bank transaction line.
+     * Format: 12/02/2026 15:22:23 11/02/2026 705 040 MASOUTIS Χ -4,00 1.602,57
+     * 
+     * Table columns:
+     * - Ημερομηνία/Ώρα: 12/02/2026 15:22:23 (timestamp)
+     * - Κατάστημα: 705 (store code - ignore)
+     * - Σύν: 040 (transaction code - ignore)
+     * - Περιγραφή: MASOUTIS (merchant name)
+     * - Χ/Π: Χ (transaction type)
+     * - Ποσό: -4,00 (amount)
+     * - Λογιστικό Υπόλοιπο: 1.602,57 (balance - ignore)
+     */
+    private fun tryParseGreekNbgTransaction(rowText: String): ParsedTransaction? {
+        val cleanRow = rowText.replace('\u00A0', ' ').trim()
+        
+        // Skip header rows and non-transaction rows
+        if (cleanRow.contains("Ημερομηνία") || cleanRow.contains("Κατάστημα") || 
+            cleanRow.contains("Περιγραφή") || cleanRow.isBlank()) {
+            return null
+        }
+        
+        try {
+            // Split by whitespace
+            val parts = cleanRow.split(Regex("\\s+"))
+            if (parts.size < 6) return null
+            
+            // Find the Χ or Π indicator (this is our anchor point)
+            val typeIndex = parts.indexOfFirst { it == "Χ" || it == "Π" }
+            if (typeIndex < 0) return null
+            
+            // Extract transaction type
+            val type = when (parts[typeIndex]) {
+                "Χ" -> TransactionType.PURCHASE  // ΧΡΕΩΣΗ (debit)
+                "Π" -> TransactionType.DEPOSIT   // ΠΙΣΤΩΣΗ (credit/transfer)
+                else -> TransactionType.PURCHASE
+            }
+            
+            // Extract amount (next part after Χ/Π)
+            if (typeIndex + 1 >= parts.size) return null
+            val amountStr = parts[typeIndex + 1]
+            val amount = parseEuropeanNumber(amountStr)
+            if (amount == null || amount == 0.0) return null
+            
+            // Extract timestamp (first two parts: date + time)
+            if (parts.size < 2) return null
+            val dateStr = parts[0]  // DD/MM/YYYY
+            val timeStr = parts[1]  // HH:MM:SS
+            val timestamp = parseGreekBankDateTime(dateStr, timeStr)
+            
+            // Extract merchant name
+            // Everything between the timestamp/codes and the Χ/Π indicator
+            // Skip: date (0), time (1), valeur date (2), store code (3), transaction code (4)
+            // Start from index 5 (or first non-numeric after index 2) until typeIndex
+            val merchantStartIndex = parts.drop(2).indexOfFirst { part ->
+                // Find first part that's not a pure number (not 705, 040, etc.)
+                !part.matches(Regex("\\d+")) && !part.matches(Regex("\\d{2}/\\d{2}/\\d{4}"))
+            } + 2
+            
+            if (merchantStartIndex < 2 || merchantStartIndex >= typeIndex) {
+                android.util.Log.w("BankStatementParser", "Could not find merchant in: $cleanRow")
+                return null
+            }
+            
+            // Join all parts between merchant start and type indicator
+            val merchantParts = parts.subList(merchantStartIndex, typeIndex)
+            val merchant = merchantParts.joinToString(" ").trim()
+            
+            if (merchant.isBlank()) {
+                android.util.Log.w("BankStatementParser", "Empty merchant in: $cleanRow")
+                return null
+            }
+            
+            // Clean merchant name
+            val cleanedMerchant = merchantCleaner.clean(merchant)
+            
+            android.util.Log.d("BankStatementParser", "Parsed NBG: $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
+            
+            return ParsedTransaction(
+                amount = kotlin.math.abs(amount),
+                currency = "EUR",
+                merchant = cleanedMerchant,
+                type = type,
+                confidence = 0.90f, // High confidence for structured format
+                date = timestamp
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("BankStatementParser", "Failed to parse NBG transaction: ${e.message} | Row: $cleanRow")
+            return null
+        }
+    }
+    
+    /**
+     * Parse Greek bank date and time: DD/MM/YYYY HH:MM:SS
+     */
+    private fun parseGreekBankDateTime(dateStr: String, timeStr: String): Long? {
+        return try {
+            val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US)
+            sdf.isLenient = false
+            sdf.parse("$dateStr $timeStr")?.time
+        } catch (e: Exception) {
+            // Fallback: try just the date
+            parseGreekBankDate(dateStr)
+        }
+    }
+    
+    /**
+     * Parse European number format: 1.602,57 -> 1602.57
+     */
+    private fun parseEuropeanNumber(numStr: String): Double? {
+        return try {
+            // Remove spaces, convert European format to US format
+            val cleaned = numStr.trim().replace(" ", "")
+            
+            // Check if it's European format (comma as decimal separator)
+            if (cleaned.contains(",")) {
+                // European: 1.602,57 -> remove dots, replace comma with dot
+                cleaned.replace(".", "").replace(",", ".").toDoubleOrNull()
+            } else {
+                // US format or integer
+                cleaned.toDoubleOrNull()
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+    
+    /**
+     * Parse Greek bank date format: DD/MM/YYYY
+     */
+    private fun parseGreekBankDate(dateStr: String): Long? {
+        return try {
+            val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
+            sdf.isLenient = false
+            sdf.parse(dateStr)?.time
+        } catch (e: Exception) {
+            null
+        }
+    }
 
     private fun extractTransactionFromRow(rowText: String): ParsedTransaction? {
         // 1. Clean noise
@@ -113,8 +282,9 @@ class BankStatementParser @Inject constructor(
                          upperRow.contains("PAYMENT") || upperRow.contains("CARD")
         
         val isDeposit = upperRow.contains("ΚΑΤΑΘΕΣΗ") || upperRow.contains("DEPOSIT") ||
-                        upperRow.contains("ΠΙΣΤΩΣΗ") || upperRow.contains("CREDIT") ||
-                        upperRow.contains("REFUND") || upperRow.contains("MISTHODOSIA")
+                        upperRow.contains("ΠΙΣΤΩΣΗ") || upperRow.contains("ΠΙΣΤΩΣH") || upperRow.contains("CREDIT") ||
+                        upperRow.contains("REFUND") || upperRow.contains("MISTHODOSIA") ||
+                        upperRow.contains("SALARY") || upperRow.contains("WAGES") || upperRow.contains("ΜΙΣΘΟΔΟΣΙΑ")
 
         val type = when {
             isDeposit -> TransactionType.DEPOSIT

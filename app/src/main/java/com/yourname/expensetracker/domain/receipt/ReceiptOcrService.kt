@@ -11,6 +11,9 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
@@ -40,6 +43,11 @@ data class TextBlock(
 class ReceiptOcrService @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
+    init {
+        // Initialize PDFBox for Android
+        PDFBoxResourceLoader.init(context)
+    }
+    
     // Reverting to DEFAULT_OPTIONS as Builder might not be available in current dependency version
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
@@ -106,9 +114,138 @@ class ReceiptOcrService @Inject constructor(
     }
 
     /**
-     * Process a PDF URI by rendering pages to bitmaps and running OCR on each.
+     * Process a PDF URI with intelligent routing:
+     * 1. Try direct text extraction (fast for digital PDFs)
+     * 2. Fall back to bitmap rendering + OCR (for scanned PDFs)
      */
     suspend fun processPdf(pdfUri: Uri): OcrResult {
+        // First, try direct text extraction
+        val extractedText = extractPdfText(pdfUri)
+        
+        // If we got substantial text (>100 chars), use it
+        if (extractedText.length > 100) {
+            android.util.Log.d("ReceiptOcrService", "Using direct PDF text extraction (${extractedText.length} chars)")
+            return processPdfWithTextExtraction(pdfUri, extractedText)
+        }
+        
+        // Otherwise, fall back to OCR
+        android.util.Log.d("ReceiptOcrService", "PDF has minimal text, falling back to OCR")
+        return processPdfWithOcr(pdfUri)
+    }
+    
+    /**
+     * Extract text directly from PDF using PDFBox (fast for digital PDFs).
+     */
+    private suspend fun extractPdfText(pdfUri: Uri): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val tempFile = File(context.cacheDir, "temp_pdf_extract_${System.nanoTime()}.pdf")
+        var document: PDDocument? = null
+        
+        try {
+            // Copy PDF to temp file
+            context.contentResolver.openInputStream(pdfUri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return@withContext ""
+            
+            // Load PDF and extract text
+            document = PDDocument.load(tempFile)
+            val stripper = PDFTextStripper()
+            
+            // Limit to first 5 pages for performance
+            val pageLimit = minOf(document.numberOfPages, 5)
+            stripper.startPage = 1
+            stripper.endPage = pageLimit
+            
+            val text = stripper.getText(document)
+            android.util.Log.d("ReceiptOcrService", "Extracted ${text.length} chars from $pageLimit pages")
+            
+            return@withContext text
+        } catch (e: Exception) {
+            android.util.Log.w("ReceiptOcrService", "PDF text extraction failed: ${e.message}")
+            return@withContext ""
+        } finally {
+            try { document?.close() } catch (_: Exception) {}
+            if (tempFile.exists()) tempFile.delete()
+        }
+    }
+    
+    /**
+     * Process PDF using direct text extraction (for digital PDFs).
+     */
+    private suspend fun processPdfWithTextExtraction(pdfUri: Uri, extractedText: String): OcrResult {
+        // Save first page as thumbnail for UI
+        val thumbnailPath = renderPdfFirstPageThumbnail(pdfUri)
+        
+        // Create text blocks from extracted text (simple line-based approach)
+        val blocks = extractedText.lines()
+            .filter { it.isNotBlank() }
+            .mapIndexed { index, line ->
+                TextBlock(
+                    text = line.trim(),
+                    confidence = 1.0f, // Direct extraction has perfect confidence
+                    left = 0,
+                    top = index * 20, // Approximate line height
+                    right = 1000,
+                    bottom = (index + 1) * 20
+                )
+            }
+        
+        return OcrResult(
+            fullText = extractedText,
+            blocks = blocks,
+            savedImagePath = thumbnailPath
+        )
+    }
+    
+    /**
+     * Render first page of PDF as thumbnail for UI preview.
+     */
+    private suspend fun renderPdfFirstPageThumbnail(pdfUri: Uri): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val tempFile = File(context.cacheDir, "temp_pdf_thumb_${System.nanoTime()}.pdf")
+        var renderer: PdfRenderer? = null
+        var pfd: ParcelFileDescriptor? = null
+        
+        try {
+            // Copy PDF to temp file
+            context.contentResolver.openInputStream(pdfUri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return@withContext ""
+            
+            pfd = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            renderer = PdfRenderer(pfd)
+            
+            val page = renderer.openPage(0)
+            val scale = 1024f / page.width
+            val bitmap = Bitmap.createBitmap(
+                1024,
+                (page.height * scale).toInt(),
+                Bitmap.Config.ARGB_8888
+            )
+            
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.close()
+            
+            val savedPath = saveReceiptImage(bitmap)
+            bitmap.recycle()
+            
+            return@withContext savedPath
+        } catch (e: Exception) {
+            android.util.Log.w("ReceiptOcrService", "Thumbnail rendering failed: ${e.message}")
+            return@withContext ""
+        } finally {
+            try { renderer?.close() } catch (_: Exception) {}
+            try { pfd?.close() } catch (_: Exception) {}
+            if (tempFile.exists()) tempFile.delete()
+        }
+    }
+    
+    /**
+     * Process PDF by rendering pages to bitmaps and running OCR (for scanned PDFs).
+     */
+    private suspend fun processPdfWithOcr(pdfUri: Uri): OcrResult {
         val tempFile = File(context.cacheDir, "temp_pdf_${System.nanoTime()}.pdf")
         var renderer: PdfRenderer? = null
         var pfd: ParcelFileDescriptor? = null

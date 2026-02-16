@@ -24,7 +24,8 @@ import javax.inject.Inject
 class ReviewViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
-    private val receiptRepository: com.yourname.expensetracker.data.repository.ReceiptRepository
+    private val receiptRepository: com.yourname.expensetracker.data.repository.ReceiptRepository,
+    private val debugDataStorage: com.yourname.expensetracker.ui.screens.debug.DebugDataStorage
 ) : ViewModel() {
     
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -35,6 +36,16 @@ class ReviewViewModel @Inject constructor(
 
     private val _isBatchProcessing = MutableStateFlow(false)
     val isBatchProcessing = _isBatchProcessing.asStateFlow()
+    
+    private val _debugData = MutableStateFlow<com.yourname.expensetracker.ui.screens.debug.DebugData?>(null)
+    val debugData = _debugData.asStateFlow()
+
+    init {
+        // Load saved debug data on startup
+        viewModelScope.launch {
+            _debugData.value = debugDataStorage.load()
+        }
+    }
 
     private var batchJob: Job? = null
 
@@ -147,6 +158,12 @@ class ReviewViewModel @Inject constructor(
                 
                 val result = receiptRepository.processStatement(uri)
                 
+                // Store debug data and persist to file
+                result.debugData?.let { data ->
+                    _debugData.value = data
+                    debugDataStorage.save(data)
+                }
+                
                 if (result.failureCount > 0) {
                     _errorMessage.value = "Failed to parse screenshot: ${result.errors.firstOrNull()}"
                 } else {
@@ -174,5 +191,11 @@ class ReviewViewModel @Inject constructor(
             receiptRepository.clearAllScannedReceipts()
             _errorMessage.value = "All scanned debug data cleared."
         }
+    }
+    
+    fun clearDebugData() {
+        _debugData.value = null
+        debugDataStorage.clear()
+        _errorMessage.value = "Debug data cleared."
     }
 }

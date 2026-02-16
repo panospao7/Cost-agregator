@@ -17,7 +17,7 @@ class MainViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
 ) : ViewModel() {
 
-    private val _navigationRequest = kotlinx.coroutines.flow.MutableSharedFlow<Int>()
+    private val _navigationRequest = kotlinx.coroutines.flow.MutableSharedFlow<Int>(replay = 1)
     val navigationRequest = _navigationRequest.asSharedFlow()
 
     val pendingReviewCount: StateFlow<Int> = repository

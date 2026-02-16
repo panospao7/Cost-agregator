@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -76,7 +77,7 @@ fun HeroBentoCard(
     }
 
     BentoCard(
-        modifier = modifier,
+        modifier = modifier.background(heroGradient, RoundedCornerShape(28.dp)),
         containerColor = Color.Transparent, // Overridden by custom modifier or nested content if needed
         cornerRadius = 28.dp,
         contentPadding = PaddingValues(24.dp),

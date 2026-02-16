@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -105,10 +106,10 @@ fun MainScreen() {
 
     val haptic = rememberHapticFeedback()
 
-    var showAddExpense by remember { mutableStateOf(false) }
-    var showScanReceipt by remember { mutableStateOf(false) }
-    var showRecurringExpenses by remember { mutableStateOf(false) }
-    var isFabExpanded by remember { mutableStateOf(false) }
+    var showAddExpense by rememberSaveable { mutableStateOf(false) }
+    var showScanReceipt by rememberSaveable { mutableStateOf(false) }
+    var showRecurringExpenses by rememberSaveable { mutableStateOf(false) }
+    var isFabExpanded by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -210,10 +211,14 @@ fun MainScreen() {
                 
                 LaunchedEffect(Unit) {
                     val text = clipboardManager.getText()?.text ?: ""
-                    val regex = Regex("""(\d+[\.,]\d{2})""")
+                    // Match currency symbols or numbers with context to avoid matching years
+                    val regex = Regex("""(?:€|$|EUR)?\s*(\d{1,6}[\.,]\d{2})\s*(?:€|$|EUR)?""")
                     val match = regex.find(text)
                     if (match != null) {
-                        initialAmount = match.value
+                        val value = match.groupValues[1].replace(",", ".").toDoubleOrNull()
+                        if (value != null && value in 0.01..100000.0) {
+                            initialAmount = match.groupValues[1]
+                        }
                     }
                 }
 
@@ -261,10 +266,15 @@ fun SmartFAB(
             if (clipboardManager.hasPrimaryClip()) {
                 val item = clipboardManager.primaryClip?.getItemAt(0)
                 val text = item?.text?.toString() ?: ""
-                val regex = Regex("""(\d+[\.,]\d{2})""")
+                val regex = Regex("""(?:€|$|EUR)?\s*(\d{1,6}[\.,]\d{2})\s*(?:€|$|EUR)?""")
                 val match = regex.find(text)
                 if (match != null) {
-                    clipboardAmount = match.value
+                    val value = match.groupValues[1].replace(",", ".").toDoubleOrNull()
+                    if (value != null && value in 0.01..100000.0) {
+                        clipboardAmount = match.groupValues[1]
+                    } else {
+                        clipboardAmount = null
+                    }
                 } else {
                     clipboardAmount = null
                 }

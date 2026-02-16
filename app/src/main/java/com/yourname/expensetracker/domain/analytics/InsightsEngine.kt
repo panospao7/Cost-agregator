@@ -254,7 +254,11 @@ class InsightsEngine @Inject constructor(
         val monthlyAverages = calculateCategoryMonthlyAverages(allExpenses, current)
 
         currentTotals.mapNotNull { ct ->
-            val category = categoryMap[ct.categoryId] ?: return@mapNotNull null
+            val category = categoryMap[ct.categoryId]
+            if (category == null) {
+                android.util.Log.w("InsightsEngine", "Category ${ct.categoryId} not found for expense integration")
+                return@mapNotNull null
+            }
             val prev = previousMap[ct.categoryId]
             val avgData = monthlyAverages[ct.categoryId]
 
@@ -369,8 +373,15 @@ class InsightsEngine @Inject constructor(
         val avgMonthly = calculateAverageMonthlySpend(allExpenses, currentMonth)
 
         // Project: if we've spent X in D days, we'll spend X * (totalDays/D) by month end
-        val projectedTotal = if (dayOfMonth > 0)
-            currentSpent * daysInMonth.toDouble() / dayOfMonth else currentSpent
+        // Project: if we've spent X in D days, we'll spend X * (totalDays/D) by month end
+        val projectedTotal = if (dayOfMonth >= 4) {
+            currentSpent * daysInMonth.toDouble() / dayOfMonth
+        } else if (dayOfMonth > 0) {
+            // Conservative estimate for first 3 days to avoid massive multipliers
+            currentSpent * (daysInMonth.toDouble() / 10.0).coerceAtLeast(1.0)
+        } else {
+            currentSpent
+        }
 
         // Pace percentage: how much of the baseline have we consumed
         val baseline = avgMonthly ?: if (previousCount > 0) previousTotal else null
@@ -437,8 +448,15 @@ class InsightsEngine @Inject constructor(
             val historicalStats = statsMap[merchantStat.merchant] ?: return@mapNotNull null
             if (historicalStats.txCount < 3) return@mapNotNull null
 
-            // If the max amount this month is > 3x the historical average
-            if (merchantStat.maxAmount > historicalStats.avgAmount * 3.0) {
+            // Dynamic threshold based on sample size
+            val multiplier = when {
+                historicalStats.txCount < 5 -> 5.0
+                historicalStats.txCount < 10 -> 4.0
+                else -> 3.0
+            }
+
+            // If the max amount this month is > X times the historical average
+            if (merchantStat.maxAmount > historicalStats.avgAmount * multiplier) {
                 async {
                     expenseDao.getLargestExpenseForMerchant(
                         merchantStat.merchant, currentMonth.startMs, currentMonth.endMs
@@ -533,52 +551,8 @@ class InsightsEngine @Inject constructor(
     // We already have findRecurringExpenses internally.
     
     // Legacy helper for detections from list - RE-ADDED FOR UI COMPATIBILITY
-    fun detectRecurring(expenses: List<Expense>): List<RecurringCandidate> {
-         val dayMs = 86_400_000L
-         val results = mutableListOf<RecurringCandidate>()
-         val byMerchant = expenses
-            .filter { it.transactionType == TransactionType.PURCHASE }
-            .groupBy { it.merchant.uppercase() }
-
-         for ((merchant, exps) in byMerchant) {
-             if (exps.size < 2) continue
-             val sorted = exps.sortedBy { it.date }
-
-             // Check if amounts are similar (within 15%)
-             val amounts = sorted.map { it.amount }
-             val avgAmount = amounts.average()
-             val allSimilar = amounts.all { it > 0 && Math.abs(it - avgAmount) / avgAmount < 0.15 }
-
-             if (allSimilar && sorted.size >= 2) {
-                 val intervals = sorted.zipWithNext().map { (a, b) ->
-                     ((b.date - a.date) / dayMs).toInt()
-                 }
-                 val avgInterval = intervals.average().toInt()
-
-                 val isRecurring = avgInterval in 5..9 ||
-                         avgInterval in 12..16 ||
-                         avgInterval in 25..35 ||
-                         avgInterval in 350..380
-
-                 if (isRecurring) {
-                     val lastDate = sorted.last().date
-                     val nextExpected = lastDate + avgInterval * dayMs
-
-                     results.add(
-                         RecurringCandidate(
-                             merchant = exps.first().merchant,
-                             amount = avgAmount,
-                             intervalDays = avgInterval,
-                             occurrences = sorted.size,
-                             nextExpectedDate = nextExpected,
-                             confidence = if (allSimilar && sorted.size > 3) 0.92f else 0.75f
-                         )
-                     )
-                 }
-             }
-         }
-         return results.sortedByDescending { it.occurrences }
-    }
+    // Legacy helper for detections from list - REMOVED (Use RecurringExpenseEngine)
+    // fun detectRecurring(expenses: List<Expense>): List<RecurringCandidate> { ... }
     
 
 

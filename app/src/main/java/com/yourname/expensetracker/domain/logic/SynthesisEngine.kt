@@ -22,12 +22,14 @@ class SynthesisEngine @Inject constructor() {
         spendingPace: SpendingPace
     ): FinancialForecast {
         val now = System.currentTimeMillis()
+        
+        // Fix: Use single Calendar instance to avoid inconsistent dates if crossing midnight
         val calendar = Calendar.getInstance()
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
         val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(1)
 
-        val endOfMonthCal = Calendar.getInstance().apply {
+        val endOfMonthCal = (calendar.clone() as Calendar).apply {
             set(Calendar.DAY_OF_MONTH, daysInMonth)
             set(Calendar.HOUR_OF_DAY, 23)
             set(Calendar.MINUTE, 59)
@@ -36,12 +38,13 @@ class SynthesisEngine @Inject constructor() {
         }
         val endOfMonth = endOfMonthCal.timeInMillis
 
-        val startOfToday = Calendar.getInstance().apply {
+        val startOfTodayCal = (calendar.clone() as Calendar).apply {
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
+        }
+        val startOfToday = startOfTodayCal.timeInMillis
 
         // 1. Calculate Committed (Highly likely/Automated/Must happen)
         val committedUpcomingBills = recurringPatterns.filter { 
@@ -55,8 +58,9 @@ class SynthesisEngine @Inject constructor() {
         val totalCommitted = committedUpcomingBills + committedPlanned
 
         // 2. Calculate Likely (Probable behavior)
+        // Fix: Confidence Interval Gap (0.89-0.90 was missing)
         val likelyUpcomingBills = recurringPatterns.filter { 
-            it.confidence in 0.70f..0.89f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth
+            it.confidence >= 0.70f && it.confidence < 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth
         }.sumOf { it.averageAmount }
         
         val likelyPlanned = plannedExpenses.filter {
@@ -97,7 +101,9 @@ class SynthesisEngine @Inject constructor() {
                          val msRemaining = targetDate - now
                          val daysRemainingInGoal = (msRemaining / (24 * 60 * 60 * 1000.0)).coerceAtLeast(1.0)
                          val targetMonthsRemaining = (daysRemainingInGoal / daysInMonth.toDouble()).coerceAtLeast(1.0)
-                         remaining / targetMonthsRemaining
+                         val remainingMonthly = remaining / targetMonthsRemaining
+                         // For this month specifically
+                         remainingMonthly
                      }
                  }
             }
@@ -138,15 +144,21 @@ class SynthesisEngine @Inject constructor() {
             budgetLimit
         )
 
+        // Dynamic Confidence Calculation based on data quality
+        var forecastConfidence = 0.85
+        // Reduce confidence if no budget or no baseline
+        if (budgetLimit <= 0) forecastConfidence -= 0.15
+        if (spendingPace.averageMonthlyTotal == null) forecastConfidence -= 0.10
+        if (recurringPatterns.isEmpty()) forecastConfidence -= 0.05
+        
         return FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,
             generatedAt = Instant.now(),
-            confidence = 0.85, 
+            confidence = forecastConfidence.coerceIn(0.1, 0.95), 
             components = ForecastComponents(
                 recurringExpenses = recurringPatterns,
                 plannedExpenses = plannedExpenses,
                 goalReserves = goalReserves,
-                projectedCategorySpending = emptyMap(),
                 pastSpendingPoints = pastSumDaily,
                 projectedSpendingPoints = projectedPoints,
                 totalCommitted = totalCommitted,
@@ -170,6 +182,12 @@ class SynthesisEngine @Inject constructor() {
         
         // Ratio of discretionary to total budget
         val bufferRatio = if (limit > 0) discretionary / limit else 0.0
+
+        // If no budget is set, we can't really say it's CRITICAL based on ratio.
+        // We should check if they are simply overspending their "pace"
+        if (limit <= 0) {
+            return if (overPace) RiskLevel.MEDIUM else RiskLevel.LOW
+        }
 
         return when {
             // Priority 1: Critical Budget Issues or Severe Overspending with no buffer

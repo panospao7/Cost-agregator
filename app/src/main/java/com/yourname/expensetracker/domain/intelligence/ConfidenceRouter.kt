@@ -152,7 +152,7 @@ class ConfidenceRouter @Inject constructor(
         }
 
         // 6. Penalty for Unknown merchant
-        if (parsed.merchant.equals("Unknown", ignoreCase = true)) {
+        if (parsed.merchant.isBlank() || parsed.merchant.equals("Unknown", ignoreCase = true)) {
             adjustedConfidence *= UNKNOWN_MERCHANT_PENALTY
             reasons.add("Unknown merchant")
         }
