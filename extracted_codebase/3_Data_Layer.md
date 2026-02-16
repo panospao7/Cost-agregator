@@ -37,14 +37,15 @@
 34. [app\src\main\java\com\yourname\expensetracker\data\database\model\ExpenseWithCategory_Extensions.kt](#appsrcmainjavacomyournameexpensetrackerdatadatabasemodelexpensewithcategory_extensionskt)
 35. [app\src\main\java\com\yourname\expensetracker\data\database\model\PendingReviewWithReceipt.kt](#appsrcmainjavacomyournameexpensetrackerdatadatabasemodelpendingreviewwithreceiptkt)
 36. [app\src\main\java\com\yourname\expensetracker\data\provider\MerchantCategoryProvider.kt](#appsrcmainjavacomyournameexpensetrackerdataprovidermerchantcategoryproviderkt)
-37. [app\src\main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
-38. [app\src\main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
-39. [app\src\main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt)
-40. [app\src\main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt)
-41. [app\src\main\java\com\yourname\expensetracker\data\repository\MerchantCategoryRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorymerchantcategoryrepositorykt)
-42. [app\src\main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
-43. [app\src\main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt)
-44. [app\src\main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
+37. [app\src\main\java\com\yourname\expensetracker\data\repository\AnalyticsRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryanalyticsrepositorykt)
+38. [app\src\main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt)
+39. [app\src\main\java\com\yourname\expensetracker\data\repository\CategoryRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorycategoryrepositorykt)
+40. [app\src\main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt)
+41. [app\src\main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt)
+42. [app\src\main\java\com\yourname\expensetracker\data\repository\MerchantCategoryRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorymerchantcategoryrepositorykt)
+43. [app\src\main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
+44. [app\src\main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt)
+45. [app\src\main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
 
 ---
 
@@ -858,22 +859,32 @@ interface ExpenseDao {
 
     // Merchant averages (merchants with 2+ transactions)
     @Query("""
-        SELECT merchant, AVG(amount) as avgAmount, 
-               MIN(amount) as minAmount, MAX(amount) as maxAmount,
-               COUNT(*) as txCount, SUM(amount) as totalAmount
+        SELECT merchant as merchantName, 
+               SUM(amount) as totalAmount,
+               COUNT(*) as transactionCount,
+               AVG(amount) as averageAmount,
+               MIN(amount) as minAmount,
+               MAX(amount) as maxAmount,
+               MIN(date) as firstDate, 
+               MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
         GROUP BY merchant
-        HAVING txCount >= 2
+        HAVING transactionCount >= 2
         ORDER BY totalAmount DESC
     """)
     suspend fun getMerchantStats(): List<MerchantStats>
 
     // All merchant stats (including single-transaction merchants)
     @Query("""
-        SELECT merchant, AVG(amount) as avgAmount, 
-               MIN(amount) as minAmount, MAX(amount) as maxAmount,
-               COUNT(*) as txCount, SUM(amount) as totalAmount
+        SELECT merchant as merchantName, 
+               SUM(amount) as totalAmount,
+               COUNT(*) as transactionCount,
+               AVG(amount) as averageAmount,
+               MIN(amount) as minAmount,
+               MAX(amount) as maxAmount,
+               MIN(date) as firstDate, 
+               MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
         GROUP BY merchant
@@ -883,9 +894,14 @@ interface ExpenseDao {
 
     // Top merchants by total spending for a period
     @Query("""
-        SELECT merchant, AVG(amount) as avgAmount, 
-               MIN(amount) as minAmount, MAX(amount) as maxAmount,
-               COUNT(*) as txCount, SUM(amount) as totalAmount
+        SELECT merchant as merchantName, 
+               SUM(amount) as totalAmount,
+               COUNT(*) as transactionCount,
+               AVG(amount) as averageAmount,
+               MIN(amount) as minAmount,
+               MAX(amount) as maxAmount,
+               MIN(date) as firstDate, 
+               MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
@@ -929,18 +945,20 @@ interface ExpenseDao {
 
     // Recurring candidates: merchants that appear in multiple distinct months
     @Query("""
-        SELECT merchant, 
-               AVG(amount) as avgAmount, 
-               MIN(amount) as minAmount, 
+        SELECT merchant as merchantName, 
+               SUM(amount) as totalAmount,
+               COUNT(*) as transactionCount,
+               AVG(amount) as averageAmount,
+               MIN(amount) as minAmount,
                MAX(amount) as maxAmount,
-               COUNT(*) as txCount, 
-               SUM(amount) as totalAmount
+               MIN(date) as firstDate, 
+               MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
         GROUP BY merchant
-        HAVING txCount >= 2 
-        AND (maxAmount - minAmount) < (avgAmount * 0.15)
-        ORDER BY txCount DESC
+        HAVING transactionCount >= 2 
+        AND (maxAmount - minAmount) < (averageAmount * 0.15)
+        ORDER BY transactionCount DESC
     """)
     suspend fun getRecurringCandidates(): List<MerchantStats>
 
@@ -980,12 +998,14 @@ data class CategoryTotal(
 )
 
 data class MerchantStats(
-    val merchant: String,
-    val avgAmount: Double,
+    val merchantName: String,
+    val totalAmount: Double,
+    val transactionCount: Int,
+    val averageAmount: Double,
     val minAmount: Double,
     val maxAmount: Double,
-    val txCount: Int,
-    val totalAmount: Double
+    val firstDate: Long,
+    val lastDate: Long
 )
 
 data class DailyTotal(
@@ -2356,7 +2376,8 @@ object MerchantCategoryProvider {
         Category(name = "Kids", icon = "🧸", color = "#FFEB3B", isDefault = true), // New from list
         Category(name = "Gifts", icon = "🎁", color = "#F44336", isDefault = true), // New from list
         Category(name = "Banking", icon = "🏦", color = "#37474F", isDefault = true), // Fees etc
-        Category(name = "Legal & Gov", icon = "⚖️", color = "#9E9E9E", isDefault = true)
+        Category(name = "Legal & Gov", icon = "⚖️", color = "#9E9E9E", isDefault = true),
+        Category(name = "Uncategorized", icon = "❓", color = "#BDBDBD", isDefault = true)
     )
 
     // Map of Merchant Name (or keyword) -> Category Name
@@ -3576,6 +3597,136 @@ object MerchantCategoryProvider {
 
 ---
 
+## app\src\main\java\com\yourname\expensetracker\data\repository\AnalyticsRepository.kt <a name="appsrcmainjavacomyournameexpensetrackerdatarepositoryanalyticsrepositorykt"></a>
+```kotlin
+package com.yourname.expensetracker.data.repository
+
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import javax.inject.Inject
+import javax.inject.Singleton
+import com.yourname.expensetracker.data.database.entity.Category
+
+data class SpendingSummary(
+    val totalSpent: Double,
+    val previousTotalSpent: Double?,
+    val changePercent: Float?,
+    val dailyHistory: List<Float>,
+    val previousDailyHistory: List<Float>,
+    val transactionCount: Int
+)
+
+@Singleton
+class AnalyticsRepository @Inject constructor(
+    private val expenseDao: ExpenseDao,
+    private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository
+) {
+
+    /**
+     * getSpendingSummary - Returns a comprehensive summary of spending for the given period.
+     * Includes current total, previous period total, percent change, and daily trend.
+     */
+    fun getSpendingSummary(start: Long, end: Long): Flow<SpendingSummary> {
+        val periodLength = end - start
+        val previousStart = start - periodLength
+        val previousEnd = start
+
+        return combine(
+            expenseDao.getExpensesBetweenFlow(start, end),
+            expenseDao.getExpensesBetweenFlow(previousStart, previousEnd)
+        ) { currentExpenses, previousExpenses ->
+
+            val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+            val previousPurchases = previousExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+
+            val totalSpent = currentPurchases.sumOf { it.amount }
+            val previousTotal = previousPurchases.sumOf { it.amount }
+
+            val changePercent = if (previousTotal > 0) {
+                ((totalSpent - previousTotal) / previousTotal * 100).toFloat()
+            } else null
+
+            // Generate Daily History (Trend)
+            // Determine number of days to plot
+            val days = ((end - start) / 86400000L).toInt().coerceAtLeast(1)
+            val dailyHistory = DoubleArray(days)
+
+            val startOfDay = TimePeriodUtils.getStartOfDay(start)
+
+            currentPurchases.forEach { expense ->
+                val dayIndex = ((expense.date - startOfDay) / 86400000L).toInt()
+                if (dayIndex in 0 until days) {
+                    dailyHistory[dayIndex] += expense.amount
+                }
+            }
+
+            // Previous History
+            val prevDays = ((previousEnd - previousStart) / 86400000L).toInt().coerceAtLeast(1)
+            val previousDailyHistory = DoubleArray(prevDays)
+            val prevStartOfDay = TimePeriodUtils.getStartOfDay(previousStart)
+
+            previousPurchases.forEach { expense ->
+                val dayIndex = ((expense.date - prevStartOfDay) / 86400000L).toInt()
+                if (dayIndex in 0 until prevDays) {
+                    previousDailyHistory[dayIndex] += expense.amount
+                }
+            }
+
+            // Convert to cumulative or just daily? 
+            // SpendingTrendChart usually expects cumulative for "pace" or daily for "bars". 
+            // Existing HomeViewModel uses cumulative. Existing AnalyticsViewModel uses daily totals.
+            // Let's return Daily Totals here, UI can accumulate if needed.
+
+            SpendingSummary(
+                totalSpent = totalSpent,
+                previousTotalSpent = if (previousTotal > 0) previousTotal else null,
+                changePercent = changePercent,
+                dailyHistory = dailyHistory.map { it.toFloat() },
+                previousDailyHistory = previousDailyHistory.map { it.toFloat() },
+                transactionCount = currentPurchases.size
+            )
+        }
+    }
+
+    /**
+     * getCategoryBreakdown - Returns a list of categories sorted by spending amount.
+     */
+    fun getCategoryBreakdown(start: Long, end: Long): Flow<List<CategoryBreakdown>> {
+        return combine(
+             expenseDao.getExpensesBetweenFlow(start, end),
+             categoryRepository.allCategories
+        ) { expenses, categories ->
+            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+            val totalSpent = purchases.sumOf { it.amount }
+            val categoryMap = categories.associateBy { it.id }
+
+            purchases.groupBy { it.categoryId }
+                .mapNotNull { (catId, exps) ->
+                    val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
+                    val catTotal = exps.sumOf { it.amount }
+
+                    CategoryBreakdown(
+                        category = cat,
+                        total = catTotal,
+                        count = exps.size,
+                        percentage = if (totalSpent > 0) (catTotal / totalSpent * 100).toFloat() else 0f
+                    )
+                }
+                .sortedByDescending { it.total }
+        }
+    }
+}
+
+```
+
+---
+
 ## app\src\main\java\com\yourname\expensetracker\data\repository\BudgetRepository.kt <a name="appsrcmainjavacomyournameexpensetrackerdatarepositorybudgetrepositorykt"></a>
 ```kotlin
 package com.yourname.expensetracker.data.repository
@@ -3845,6 +3996,16 @@ class CategoryRepository @Inject constructor(
                     // We need a bulk insert for speed
                     merchantCategoryDao.insertAll(merchantEntities)
                 }
+            } else {
+                // BUG-012 Fix: Ensure "Uncategorized" exists even for existing users
+                val categories = categoryDao.getAllFlow().first()
+                if (categories.none { it.name.equals("Uncategorized", ignoreCase = true) }) {
+                    val uncategorized = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
+                        .find { it.name == "Uncategorized" }
+                    if (uncategorized != null) {
+                        categoryDao.insert(uncategorized)
+                    }
+                }
             }
         } catch (e: Exception) {
             android.util.Log.e("CategoryRepository", "Failed to seed default categories", e)
@@ -4011,7 +4172,8 @@ class FinancialWeatherRepository @Inject constructor(
     private val plannedExpenseDao: PlannedExpenseDao,
     private val savingsGoalDao: SavingsGoalDao,
     private val synthesisEngine: SynthesisEngine,
-    private val narrativeGenerator: NarrativeGenerator
+    private val narrativeGenerator: NarrativeGenerator,
+    private val analyticsRepository: AnalyticsRepository
 ) {
     private val calendar = Calendar.getInstance()
 
@@ -4057,37 +4219,23 @@ class FinancialWeatherRepository @Inject constructor(
         }
 
         // 1. Calculate Past Daily Cumulative Spend
+        // 1. Calculate Past Daily Cumulative Spend
         val now = System.currentTimeMillis()
-        val (monthStart, currentDay) = synchronized(calendar) {
-            calendar.timeInMillis = now
-            val currentDayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-
-            calendar.set(Calendar.HOUR_OF_DAY, 0)
-            calendar.set(Calendar.MINUTE, 0)
-            calendar.set(Calendar.SECOND, 0)
-            calendar.set(Calendar.MILLISECOND, 0)
-            calendar.set(Calendar.DAY_OF_MONTH, 1)
-            val start = calendar.timeInMillis
-             // Keep instance for simple read or reuse
-            start to currentDayOfMonth
-        }
+        val monthStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
+        val currentDay = ((now - monthStart) / 86400000L).toInt()
 
         val purchases = expenses.filter { 
-            it.transactionType == TransactionType.PURCHASE 
+            it.transactionType == TransactionType.PURCHASE && it.date >= monthStart
         }
 
-        // 1. Calculate Past Daily Cumulative Spend - Optimized single pass
-        val calInstance = Calendar.getInstance()
         val amountByDay = DoubleArray(currentDay + 1)
+        val startOfDay = monthStart 
 
-        for (expense in purchases) {
-            if (expense.date >= monthStart) {
-                calInstance.timeInMillis = expense.date
-                val day = calInstance.get(Calendar.DAY_OF_MONTH)
-                if (day <= currentDay) {
-                    amountByDay[day] += expense.amount
-                }
-            }
+        purchases.forEach { expense ->
+             val dayIndex = ((expense.date - startOfDay) / 86400000L).toInt()
+             if (dayIndex in 0..currentDay) {
+                 amountByDay[dayIndex] += expense.amount
+             }
         }
 
         var runningTotal = 0.0
@@ -4156,13 +4304,9 @@ class FinancialWeatherRepository @Inject constructor(
         recurring: List<RecurringPattern>,
         planned: List<PlannedExpense>
     ): List<UpcomingItem> {
-        val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val startOfToday = cal.timeInMillis
-        val horizon = startOfToday + (31 * 86_400_000L) // Show next 31 days in the list
+        val now = System.currentTimeMillis()
+        val startOfToday = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
+        val horizon = startOfToday + (31 * 86_400_000L) // Show next 31 days
 
         val items = mutableListOf<com.yourname.expensetracker.domain.model.UpcomingItem>()
 

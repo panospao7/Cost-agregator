@@ -60,7 +60,8 @@ class FinancialWeatherRepository @Inject constructor(
     private val plannedExpenseDao: PlannedExpenseDao,
     private val savingsGoalDao: SavingsGoalDao,
     private val synthesisEngine: SynthesisEngine,
-    private val narrativeGenerator: NarrativeGenerator
+    private val narrativeGenerator: NarrativeGenerator,
+    private val analyticsRepository: AnalyticsRepository
 ) {
     private val calendar = Calendar.getInstance()
 
@@ -106,37 +107,23 @@ class FinancialWeatherRepository @Inject constructor(
         }
         
         // 1. Calculate Past Daily Cumulative Spend
+        // 1. Calculate Past Daily Cumulative Spend
         val now = System.currentTimeMillis()
-        val (monthStart, currentDay) = synchronized(calendar) {
-            calendar.timeInMillis = now
-            val currentDayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-            
-            calendar.set(Calendar.HOUR_OF_DAY, 0)
-            calendar.set(Calendar.MINUTE, 0)
-            calendar.set(Calendar.SECOND, 0)
-            calendar.set(Calendar.MILLISECOND, 0)
-            calendar.set(Calendar.DAY_OF_MONTH, 1)
-            val start = calendar.timeInMillis
-             // Keep instance for simple read or reuse
-            start to currentDayOfMonth
-        }
-        
+        val monthStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
+        val currentDay = ((now - monthStart) / 86400000L).toInt()
+
         val purchases = expenses.filter { 
-            it.transactionType == TransactionType.PURCHASE 
+            it.transactionType == TransactionType.PURCHASE && it.date >= monthStart
         }
         
-        // 1. Calculate Past Daily Cumulative Spend - Optimized single pass
-        val calInstance = Calendar.getInstance()
         val amountByDay = DoubleArray(currentDay + 1)
+        val startOfDay = monthStart 
         
-        for (expense in purchases) {
-            if (expense.date >= monthStart) {
-                calInstance.timeInMillis = expense.date
-                val day = calInstance.get(Calendar.DAY_OF_MONTH)
-                if (day <= currentDay) {
-                    amountByDay[day] += expense.amount
-                }
-            }
+        purchases.forEach { expense ->
+             val dayIndex = ((expense.date - startOfDay) / 86400000L).toInt()
+             if (dayIndex in 0..currentDay) {
+                 amountByDay[dayIndex] += expense.amount
+             }
         }
         
         var runningTotal = 0.0
@@ -205,13 +192,9 @@ class FinancialWeatherRepository @Inject constructor(
         recurring: List<RecurringPattern>,
         planned: List<PlannedExpense>
     ): List<UpcomingItem> {
-        val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val startOfToday = cal.timeInMillis
-        val horizon = startOfToday + (31 * 86_400_000L) // Show next 31 days in the list
+        val now = System.currentTimeMillis()
+        val startOfToday = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
+        val horizon = startOfToday + (31 * 86_400_000L) // Show next 31 days
         
         val items = mutableListOf<com.yourname.expensetracker.domain.model.UpcomingItem>()
         

@@ -102,7 +102,8 @@ class HomeViewModel @Inject constructor(
     private val dashboardRepository: DashboardRepository,
     private val insightsEngine: InsightsEngine,
     private val financialWeatherRepository: FinancialWeatherRepository,
-    private val plannedExpenseRepository: PlannedExpenseRepository
+    private val plannedExpenseRepository: PlannedExpenseRepository,
+    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository
 ) : ViewModel() {
 
     private val isEditMode = MutableStateFlow(false)
@@ -139,95 +140,54 @@ class HomeViewModel @Inject constructor(
     }
     .debounce(300)
 
-    // Optimized: Process heavy data separately and cache the result
-    private val processedDataFlow = dataFlow.map { data ->
+    // Optimized: Process heavy data via AnalyticsRepository
+    private val processedDataFlow = combine(
+        dataFlow,
+        analyticsRepository.getSpendingSummary(
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(System.currentTimeMillis()),
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(System.currentTimeMillis())
+        ),
+        analyticsRepository.getCategoryBreakdown(
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(System.currentTimeMillis()),
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(System.currentTimeMillis())
+        )
+    ) { data, summary, categoryBreakdown ->
         val (expenses, categories, budgetStatuses, pendingCount, weather) = data
-
+        
         val now = System.currentTimeMillis()
-        val cal = Calendar.getInstance()
+        val todayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
+        val weekStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
 
-        // Time boundaries
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val todayStart = cal.timeInMillis
+        // Calculate "Today" and "Week" locally for now (can be moved to Repo later if heavy)
+        // Since we already have the full list `expenses` in memory from `dataFlow` (which might be overkill but existing arch),
+        // we can just filter for these small windows.
+        // ideally `dataFlow` shouldn't fetch ALL expenses if we have repo. setting that aside for now.
+        
+        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
+        val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
 
-        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
-        val daysToMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
-        val weekStart = cal.timeInMillis - (daysToMonday * 86400000L)
+        val totalSpent = summary.totalSpent
+        val monthSpent = totalSpent // Summary IS month
+        val txCount = summary.transactionCount
+        val previousMonthTotal = summary.previousTotalSpent ?: 0.0
 
-        cal.set(Calendar.DAY_OF_MONTH, 1)
-        val monthStart = cal.timeInMillis
-
-        // Single-pass aggregation
-        var totalSpent = 0.0
-        var monthSpent = 0.0
-        var weekSpent = 0.0
-        var todaySpent = 0.0
-        var previousMonthTotal = 0.0
-        val categoryTotalsMap = mutableMapOf<Long, Double>()
-        val purchases = ArrayList<Expense>(expenses.size)
-
-        val previousMonthStart = insightsEngine.getMonthPeriod(now, -1).startMs
-        val previousMonthEnd = monthStart
-
-        for (expense in expenses) {
-            if (expense.transactionType != TransactionType.PURCHASE) continue
-            
-            val amount = expense.amount
-            val date = expense.date
-            
-            purchases.add(expense)
-            totalSpent += amount
-            
-            if (date >= monthStart) {
-                monthSpent += amount
-            } else if (date >= previousMonthStart && date < previousMonthEnd) {
-                previousMonthTotal += amount
-            }
-
-            if (date >= weekStart) {
-                weekSpent += amount
-                if (date >= todayStart) {
-                    todaySpent += amount
-                }
-            }
-            
-            expense.categoryId?.let { catId ->
-                categoryTotalsMap[catId] = (categoryTotalsMap[catId] ?: 0.0) + amount
-            }
-        }
-
-        val categoryMap = categories.associateBy { it.id }
-        val txCount = purchases.size
-
-        // Days remaining in month
-        val daysInMonth = Calendar.getInstance().getActualMaximum(Calendar.DAY_OF_MONTH)
-        val dayOfMonth = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
+        val daysInMonth = java.util.Calendar.getInstance().getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        val dayOfMonth = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH)
         val daysRemaining = daysInMonth - dayOfMonth
 
         // Overall budget (if set)
         val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
         val safeToSpend = weather.discretionaryBudget 
 
-        // Finalize Category totals
-        val categoryTotals = categoryTotalsMap.entries
-            .mapNotNull { (catId, catTotal) ->
-                val cat = catId.let { categoryMap[it] } ?: return@mapNotNull null
-                CategorySpending(
-                    category = cat,
-                    total = catTotal,
-                    percentage = if (totalSpent > 0) (catTotal / totalSpent * 100).toFloat() else 0f
-                )
-            }
-            .sortedByDescending { it.total }
-        
+        // Category Totals from Repo
+        val categoryTotals = categoryBreakdown.map { 
+             CategorySpending(it.category, it.total, it.percentage) 
+        }
+
         val baseline = overallBudget?.budget?.amount ?: if (previousMonthTotal > 0) previousMonthTotal else null
         
         // Handle Day 1 Noise (LOG-005 Fix)
-        // If it's the first day, we use the average of (baseline / daysInMonth) and current monthSpent 
-        // to avoid extreme swings if a user makes a big purchase on Day 1.
         val dayOfMonthCoerced = dayOfMonth.coerceAtLeast(1)
         val projectedTotal = if (dayOfMonth == 1) {
             // Weighted average on day 1: 70% baseline, 30% current spend extrapolated
@@ -260,47 +220,15 @@ class HomeViewModel @Inject constructor(
             }
         )
 
-        // Cumulative Spend Trend Data - Optimized single pass
-        val calInstance = Calendar.getInstance()
-        val previousMonthDays = calInstance.apply { 
-            timeInMillis = previousMonthStart 
-        }.getActualMaximum(Calendar.DAY_OF_MONTH)
-        
-        val currentAmountByDay = DoubleArray(dayOfMonth + 1)
-        val previousAmountByDay = DoubleArray(previousMonthDays + 1)
-
-        for (expense in purchases) {
-            if (expense.date >= monthStart) {
-                calInstance.timeInMillis = expense.date
-                val day = calInstance.get(Calendar.DAY_OF_MONTH)
-                if (day <= dayOfMonth) currentAmountByDay[day] += expense.amount
-            } else if (expense.date >= previousMonthStart && expense.date < monthStart) {
-                calInstance.timeInMillis = expense.date
-                val day = calInstance.get(Calendar.DAY_OF_MONTH)
-                if (day <= previousMonthDays) previousAmountByDay[day] += expense.amount
-            }
-        }
-
-        var runningTotalCur = 0.0
-        val currentMonthDaily = (1..dayOfMonth).map { day ->
-            runningTotalCur += currentAmountByDay[day]
-            runningTotalCur.toFloat()
-        }
-
-        var runningTotalPrev = 0.0
-        val previousMonthDaily = (1..previousMonthDays).map { day ->
-            runningTotalPrev += previousAmountByDay[day]
-            runningTotalPrev.toFloat()
-        }
-        
+        // Trend
         val trend = DashboardWidget.SpendingTrend(
-            currentMonthData = currentMonthDaily,
-            previousMonthData = previousMonthDaily
+            currentMonthData = summary.dailyHistory,
+            previousMonthData = summary.previousDailyHistory
         )
 
         // Natural language insight
         val insightText = buildNaturalLanguageInsight(
-            monthSpent, previousMonthTotal, todaySpent, purchases.size
+            monthSpent, previousMonthTotal, todaySpent, summary.transactionCount
         )
 
         // Budget summary

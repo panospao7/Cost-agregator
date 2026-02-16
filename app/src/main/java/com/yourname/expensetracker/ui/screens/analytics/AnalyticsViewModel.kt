@@ -35,7 +35,8 @@ class AnalyticsViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
     private val insightsEngine: InsightsEngine,
-    private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+    private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine,
+    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AnalyticsState())
@@ -84,31 +85,19 @@ class AnalyticsViewModel @Inject constructor(
         val currentExpenses = purchases.filter { it.date in currentStart..currentEnd }
         val previousExpenses = purchases.filter { it.date in previousStart..previousEnd }
 
-        val currentTotal = currentExpenses.sumOf { it.amount }
-        val previousTotal = previousExpenses.sumOf { it.amount }
+        // Use Repository for Totals and Trends
+        // We collect ONE item from the flow since we are in a triggered block
+        val summary = analyticsRepository.getSpendingSummary(currentStart, currentEnd).first()
+        val catBreakdown = analyticsRepository.getCategoryBreakdown(currentStart, currentEnd).first()
 
-        val changePercent = if (previousTotal > 0) {
-            ((currentTotal - previousTotal) / previousTotal * 100).toFloat()
-        } else null
+        val currentTotal = summary.totalSpent
+        val previousTotal = summary.previousTotalSpent ?: 0.0
+        val changePercent = summary.changePercent
 
         // Category breakdown
-        val categoryBreakdown = currentExpenses
-            .groupBy { it.categoryId }
-            .mapNotNull { (catId, exps) ->
-                val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
-                val totalAmount = exps.sumOf { it.amount }
-                CategoryBreakdown(
-                    category = cat,
-                    total = totalAmount,
-                    count = exps.size,
-                    percentage = if (currentTotal > 0)
-                        (totalAmount / currentTotal * 100).toFloat()
-                    else 0f
-                )
-            }
-            .sortedByDescending { it.total }
+        val categoryBreakdown = catBreakdown // Repo returns Domain model directly
 
-        // Merchant breakdown
+        // Merchant breakdown (Still manual for now, or move to Repo later)
         val merchantBreakdown = currentExpenses
             .groupBy { it.merchant.uppercase() }
             .map { (_, exps) ->
@@ -124,6 +113,18 @@ class AnalyticsViewModel @Inject constructor(
             .sortedByDescending { it.totalSpent }
 
         // Daily totals for chart
+        // Repo returns daily history as list of floats (daily totals)
+        // InsightsEngine.buildDailyTotals previously returned Map<String, Double>
+        // We need to check what the UI expects.
+        // AnalyticsViewModel State: val dailyTotals: Map<String, Double>
+        // We need to map Repo's list back to a Map if the UI depends on it. 
+        // Or refactor UI. Let's look at `dailyTotals` usage in `AnalyticsScreen` later.
+        // For now, let's keep using `insightsEngine` for `dailyTotals` to avoid breaking specific UI graph formatting 
+        // OR map the repo data. 
+        // Actually, `insightsEngine.buildDailyTotals` probably formats dates as keys. 
+        // The repo returns just values. 
+        // Let's stick to `insightsEngine.buildDailyTotals` for `dailyTotals` UNTIL we update the UI to accept a list.
+        // But we SHOULD upgrade `getPeriodRange` to use Utils.
         val chartDays = when (period) {
             TimePeriod.TODAY -> 1
             TimePeriod.WEEK -> 7
@@ -191,40 +192,26 @@ class AnalyticsViewModel @Inject constructor(
     }
 
     private fun getPeriodRange(period: TimePeriod, now: Long): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = now
-
         return when (period) {
             TimePeriod.TODAY -> {
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
+                val start = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
+                Pair(start, now)
             }
-            TimePeriod.WEEK -> {
-                cal.add(Calendar.DAY_OF_YEAR, -7)
-                Pair(cal.timeInMillis, now)
-            }
-            TimePeriod.MONTH -> {
-                cal.set(Calendar.DAY_OF_MONTH, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
-            }
+            TimePeriod.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(7)
+            TimePeriod.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(0) // Current month
             TimePeriod.YEAR -> {
-                cal.set(Calendar.DAY_OF_YEAR, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
+                 // Start of year logic wasn't in Utils yet, let's keep local or add to Utils.
+                 // Utils had getMonthRange.
+                 val cal = Calendar.getInstance()
+                 cal.timeInMillis = now
+                 cal.set(Calendar.DAY_OF_YEAR, 1)
+                 cal.set(Calendar.HOUR_OF_DAY, 0)
+                 cal.set(Calendar.MINUTE, 0)
+                 cal.set(Calendar.SECOND, 0)
+                 cal.set(Calendar.MILLISECOND, 0)
+                 Pair(cal.timeInMillis, now)
             }
-            TimePeriod.ALL -> {
-                Pair(0L, now)
-            }
+            TimePeriod.ALL -> Pair(0L, now)
         }
     }
 }

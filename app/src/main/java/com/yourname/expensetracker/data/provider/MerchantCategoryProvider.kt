@@ -27,7 +27,8 @@ object MerchantCategoryProvider {
         Category(name = "Kids", icon = "🧸", color = "#FFEB3B", isDefault = true), // New from list
         Category(name = "Gifts", icon = "🎁", color = "#F44336", isDefault = true), // New from list
         Category(name = "Banking", icon = "🏦", color = "#37474F", isDefault = true), // Fees etc
-        Category(name = "Legal & Gov", icon = "⚖️", color = "#9E9E9E", isDefault = true)
+        Category(name = "Legal & Gov", icon = "⚖️", color = "#9E9E9E", isDefault = true),
+        Category(name = "Uncategorized", icon = "❓", color = "#BDBDBD", isDefault = true)
     )
 
     // Map of Merchant Name (or keyword) -> Category Name

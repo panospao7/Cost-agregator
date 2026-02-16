@@ -78,6 +78,7 @@ data class RecurringExpense(
     val merchant: String,
     val avgAmount: Double,
     val frequency: Int, // transactions total
+    val intervalDays: Int, // approximate days between transactions
     val amountVariation: Double, // max - min
     val isStable: Boolean // low variation
 )

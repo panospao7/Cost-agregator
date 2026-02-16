@@ -69,6 +69,7 @@ class MainActivity : ComponentActivity() {
                 "review" -> mainViewModel.navigateToTab(2)
                 "plan" -> mainViewModel.navigateToTab(3)
                 "add" -> mainViewModel.navigateToTab(0)
+                "analytics" -> mainViewModel.navigateToTab(4)
             }
         }
     }
@@ -199,9 +200,14 @@ fun MainScreen() {
                         onNavigateToReview = { selectedTab = 2 },
                         onNavigateToRecurring = { showRecurringExpenses = true }
                     )
-                    1 -> TransactionsScreen()
+                    1 -> TransactionsScreen(
+                        onNavigateToAnalytics = { selectedTab = 4 }
+                    )
                     2 -> ReviewScreen()
                     3 -> BudgetScreen()
+                    4 -> com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen(
+                        onNavigateBack = { selectedTab = 1 }
+                    )
                 }
             }
 

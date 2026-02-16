@@ -14,11 +14,13 @@ import java.util.Calendar
 class InsightsEngineEdgeCaseTest {
     
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
+    private val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
     private lateinit var engine: InsightsEngine
 
     @Before
     fun setup() {
-        engine = InsightsEngine(expenseDao)
+        coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
+        engine = InsightsEngine(expenseDao, recurringEngine)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCountForPeriod(any(), any()) } returns 0
         coEvery { expenseDao.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()

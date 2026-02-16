@@ -11,28 +11,30 @@
 8. [app\src\main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
 9. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
 10. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
-11. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
-12. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
-13. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
-14. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
-15. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
-16. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
-17. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugDataStorage.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugdatastoragekt)
-18. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugIssueDetector.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugissuedetectorkt)
-19. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
-20. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
-21. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewerScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewerscreenkt)
-22. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
-23. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
-24. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
-25. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
-26. [app\src\main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
-27. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
-28. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
-29. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
-30. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
-31. [app\src\main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#appsrcmainjavacomyournameexpensetrackeruithemethemekt)
-32. [app\src\main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#appsrcmainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
+11. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsscreenkt)
+12. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsviewmodelkt)
+13. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
+14. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
+15. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
+16. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
+17. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
+18. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
+19. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugDataStorage.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugdatastoragekt)
+20. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugIssueDetector.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugissuedetectorkt)
+21. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
+22. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
+23. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewerScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewerscreenkt)
+24. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
+25. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
+26. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
+27. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
+28. [app\src\main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
+29. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
+30. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
+31. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
+32. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
+33. [app\src\main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#appsrcmainjavacomyournameexpensetrackeruithemethemekt)
+34. [app\src\main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#appsrcmainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
 
 ---
 
@@ -109,6 +111,7 @@ class MainActivity : ComponentActivity() {
                 "review" -> mainViewModel.navigateToTab(2)
                 "plan" -> mainViewModel.navigateToTab(3)
                 "add" -> mainViewModel.navigateToTab(0)
+                "analytics" -> mainViewModel.navigateToTab(4)
             }
         }
     }
@@ -239,9 +242,14 @@ fun MainScreen() {
                         onNavigateToReview = { selectedTab = 2 },
                         onNavigateToRecurring = { showRecurringExpenses = true }
                     )
-                    1 -> TransactionsScreen()
+                    1 -> TransactionsScreen(
+                        onNavigateToAnalytics = { selectedTab = 4 }
+                    )
                     2 -> ReviewScreen()
                     3 -> BudgetScreen()
+                    4 -> com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen(
+                        onNavigateBack = { selectedTab = 1 }
+                    )
                 }
             }
 
@@ -2455,6 +2463,629 @@ class AddExpenseViewModel @Inject constructor(
 
 ---
 
+## app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsScreen.kt <a name="appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsscreenkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.screens.analytics
+
+import androidx.compose.animation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.patrykandpatrick.vico.compose.chart.Chart
+import com.patrykandpatrick.vico.compose.chart.line.lineChart
+import com.patrykandpatrick.vico.core.entry.FloatEntry
+import com.patrykandpatrick.vico.core.entry.entryModelOf
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.analytics.*
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.ui.components.*
+import com.yourname.expensetracker.ui.theme.SemanticColors
+import java.util.Locale
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AdvancedAnalyticsScreen(
+    onNavigateBack: () -> Unit,
+    viewModel: AdvancedAnalyticsViewModel = hiltViewModel()
+) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    androidx.activity.compose.BackHandler {
+        onNavigateBack()
+    }
+
+    Scaffold(
+        topBar = {
+            Column {
+                TopAppBar(
+                    title = { 
+                        Column {
+                            Text("Advanced Analytics", fontWeight = FontWeight.Bold)
+                            Text(
+                                text = when(uiState.selectedPeriod) {
+                                    AnalyticsPeriod.WEEK -> "Weekly Analysis"
+                                    AnalyticsPeriod.MONTH -> "Monthly Deep Dive"
+                                    AnalyticsPeriod.QUARTER -> "Quarterly Review"
+                                    AnalyticsPeriod.YEAR -> "Yearly Overview"
+                                    AnalyticsPeriod.CUSTOM -> "Custom Range"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(Icons.Rounded.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        scrolledContainerColor = MaterialTheme.colorScheme.background
+                    )
+                )
+                // Linear loader that doesn't push content down
+                if (uiState.isLoading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = SemanticColors.PrimaryIndigo,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                }
+            }
+        }
+    ) { padding ->
+        // Helper for refresh state
+        val pullRefreshState = rememberPullToRefreshState()
+
+        PullToRefreshBox(
+            isRefreshing = uiState.isRefreshing,
+            onRefresh = { viewModel.refresh() },
+            state = pullRefreshState,
+            modifier = Modifier.padding(padding)
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    // Error banner as first item so it scrolls
+                    if (uiState.error != null) {
+                        item(key = "error_banner") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(SemanticColors.DangerRed.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Text(uiState.error ?: "", color = SemanticColors.DangerRed, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+
+                    // 1. Period Selector
+                    item(key = "period_selector") { 
+                        PeriodSelector(
+                            selected = uiState.selectedPeriod, 
+                            onSelect = { viewModel.setPeriod(it) }
+                        ) 
+                    }
+
+                    // 2. Statistical Highlights (Bento Grid)
+                    uiState.statisticalInsights?.let { stats ->
+                        item(key = "stats_highlights") { StatisticalHighlights(stats) }
+                    }
+
+                    // 3. Category Deep Dive
+                    if (uiState.categoryAnalytics.isNotEmpty()) {
+                        item(key = "header_category") { AnalyticsSectionHeader("Category Breakdown", "Budget vs Actual & Trends") }
+                        items(
+                            items = uiState.categoryAnalytics,
+                            key = { it.category.id },
+                            contentType = { "CategoryItem" }
+                        ) { item ->
+                            EnhancedCategoryItem(item)
+                        }
+                    }
+
+                    // 4. Spending Patterns
+                    uiState.spendingPatterns?.let { patterns ->
+                        item(key = "header_patterns") { AnalyticsSectionHeader("Spending Habits", "When & how you spend") }
+                        item(key = "card_patterns") { SpendingPatternsCard(patterns) }
+                    }
+
+                    // 5. Merchant Intelligence
+                    if (uiState.merchantAnalytics.isNotEmpty()) {
+                        item(key = "header_merchant") { AnalyticsSectionHeader("Merchant Intelligence", "Top places & loyalty stats") }
+                        items(
+                            items = uiState.merchantAnalytics,
+                            key = { it.merchant },
+                            contentType = { "MerchantItem" }
+                        ) { item ->
+                            EnhancedMerchantItem(item)
+                        }
+                    }
+
+                    item(key = "spacer_bottom") { Spacer(modifier = Modifier.height(32.dp)) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PeriodSelector(selected: AnalyticsPeriod, onSelect: (AnalyticsPeriod) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        AnalyticsPeriod.values().forEach { period ->
+            if (period != AnalyticsPeriod.CUSTOM) { // Skip custom for now as UI complexity is higher
+                val isSelected = selected == period
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSelect(period) }
+                        .background(if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent)
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = period.name.lowercase().titleCase(),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StatisticalHighlights(stats: StatisticalInsights) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Daily Average Card
+            BentoCard(modifier = Modifier.weight(1f)) {
+                Text("DAILY AVERAGE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
+                Spacer(modifier = Modifier.height(8.dp))
+                AmountText(stats.averageDailySpend, style = MaterialTheme.typography.headlineMedium)
+            }
+
+            // Largest Transaction Card
+            BentoCard(modifier = Modifier.weight(1f)) {
+                Text("LARGEST SPEND", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
+                Spacer(modifier = Modifier.height(8.dp))
+                stats.largestTransaction?.let { 
+                    AmountText(it.amount, style = MaterialTheme.typography.headlineMedium)
+                    Text(it.merchant, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+
+        // Volatility / Consistency
+        BentoCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("SPENDING CONSISTENCY", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = when {
+                            stats.volatilityIndex < 30 -> "Very Consistent"
+                            stats.volatilityIndex < 60 -> "Normal Variable"
+                            else -> "Highly Volatile"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                CircularProgressIndicator(
+                    progress = { stats.volatilityIndex / 100f },
+                    modifier = Modifier.size(48.dp),
+                    color = if (stats.volatilityIndex < 30) SemanticColors.SuccessGreen else SemanticColors.WarningOrange,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun EnhancedCategoryItem(item: EnhancedCategoryAnalytics) {
+    val categoryColor = remember(item.category.color) {
+        try { Color(android.graphics.Color.parseColor(item.category.color)) } 
+        catch (e: Exception) { Color.Gray }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(categoryColor.copy(alpha = 0.15f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(item.category.icon, fontSize = 20.sp)
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(item.category.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text("${item.transactionCount} transactions", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    AmountText(item.totalSpent, style = MaterialTheme.typography.titleMedium)
+                    item.changePercent?.let { change ->
+                        Text(
+                            text = "${if (change > 0) "+" else ""}${String.format("%.1f", change)}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (change > 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                        )
+                    }
+                }
+            }
+
+            // Budget bar if exists
+            item.budgetAmount?.let { budget ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    LinearProgressIndicator(
+                        progress = { (item.totalSpent / budget).toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                        color = when(item.budgetStatus) {
+                            BudgetHealthStatus.EXCEEDED -> SemanticColors.DangerRed
+                            BudgetHealthStatus.CRITICAL -> SemanticColors.WarningOrange
+                            else -> categoryColor
+                        },
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "${item.budgetUtilizationPercent?.toInt()}% of budget",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Sparkline (Mini chart)
+            if (item.sparklineData.size > 1) {
+                Spacer(modifier = Modifier.height(12.dp))
+                val chartModel = remember(item.category.id, item.sparklineData) {
+                    entryModelOf(item.sparklineData.mapIndexed { index, value -> FloatEntry(index.toFloat(), value.toFloat()) })
+                }
+                Chart(
+                    chart = lineChart(),
+                    model = chartModel,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun EnhancedMerchantItem(item: EnhancedMerchantAnalytics) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(item.merchant.take(1).uppercase(), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(item.merchant, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        "${item.visitFrequency} visitor • ${item.consistencyRating} spend", 
+                        style = MaterialTheme.typography.labelSmall, 
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    AmountText(item.totalSpent, style = MaterialTheme.typography.titleMedium)
+                    item.priceChangePercent?.let { change ->
+                        Text(
+                            text = "Prices: ${if (change > 0) "+" else ""}${String.format("%.1f", change)}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (change > 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                StatMicro("Avg Visit", item.averagePerVisit)
+                StatMicro("Loyalty", "${item.loyaltyScore.toInt()}/100")
+                item.predictedNextVisitDate?.let { 
+                    val daysUntil = ((it - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)).toInt()
+                    StatMicro("Next Expected", if (daysUntil <= 0) "Soon" else "$daysUntil days")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SpendingPatternsCard(analysis: SpendingPatternAnalysis) {
+    BentoCard {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Info, contentDescription = null, tint = SemanticColors.PrimaryIndigo, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "You spend ${String.format("%.1fx", analysis.weekendVsWeekday.weekendToWeekdayRatio)} more on weekends",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Day of Week Bar Chart (Simplified)
+            Row(
+                modifier = Modifier.fillMaxWidth().height(100.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                val maxSpend = analysis.dayOfWeekStats.values.maxOfOrNull { it.totalSpent } ?: 1.0
+
+                (0..6).forEach { dayIndex ->
+                    val stat = analysis.dayOfWeekStats[dayIndex]
+                    val heightRatio = ((stat?.totalSpent ?: 0.0) / maxSpend).toFloat().coerceAtLeast(0.1f)
+
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            modifier = Modifier
+                                .width(24.dp)
+                                .weight(1f, fill = false)
+                                .fillMaxHeight(heightRatio)
+                                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                .background(
+                                    if (dayIndex == analysis.mostActiveDayIndex) SemanticColors.PrimaryIndigo 
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            stat?.dayName?.take(1) ?: "",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+            }
+
+            // Detected Patterns List
+            if (analysis.detectedPatterns.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider(color = MaterialTheme.colorScheme.surfaceVariant)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                analysis.detectedPatterns.forEach { pattern ->
+                    Row(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
+                            modifier = Modifier.size(6.dp)
+                        ) {}
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                pattern.type.name.replace("_", " ").lowercase().titleCase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                pattern.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StatMicro(label: String, value: Any) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (value is Double) {
+            AmountText(value, style = MaterialTheme.typography.labelMedium)
+        } else {
+            Text(value.toString(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+fun AnalyticsSectionHeader(title: String, subtitle: String? = null) {
+    Column(modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        subtitle?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+// ... (other code)
+
+// Extension for capitalizing string
+fun String.titleCase() = this.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsViewModel.kt <a name="appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsviewmodelkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.screens.analytics
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.analytics.*
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import javax.inject.Inject
+
+@HiltViewModel
+class AdvancedAnalyticsViewModel @Inject constructor(
+    private val analyticsEngine: AdvancedAnalyticsEngine
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(AnalyticsUiState())
+    val uiState: StateFlow<AnalyticsUiState> = _uiState.asStateFlow()
+
+    init {
+        // Initial load
+        loadData(AnalyticsPeriod.MONTH)
+    }
+
+    fun setPeriod(period: AnalyticsPeriod) {
+        if (_uiState.value.selectedPeriod == period) return
+        loadData(period)
+    }
+
+    fun refresh() {
+        loadData(uiState.value.selectedPeriod, isRefresh = true)
+    }
+
+    private fun loadData(period: AnalyticsPeriod, isRefresh: Boolean = false) {
+        viewModelScope.launch {
+            // 1. Start loading, keep old data
+            _uiState.update { 
+                it.copy(
+                    isLoading = !isRefresh, 
+                    isRefreshing = isRefresh,
+                    selectedPeriod = period, 
+                    error = null
+                ) 
+            }
+
+            try {
+                // 2. Resolve PeriodRange (fast)
+                val range = analyticsEngine.getPeriodRange(period)
+
+                // 3. Fetch all analytics in parallel (Async)
+                // We use async to avoid sequential blocking
+                val categoryDeffered = async { analyticsEngine.getCategoryAnalytics(range) }
+                val merchantDeffered = async { analyticsEngine.getMerchantAnalytics(range, limit = 20) }
+                val patternsDeffered = async { analyticsEngine.getSpendingPatterns(range) }
+                val statsDeffered = async { analyticsEngine.getStatisticalInsights(range) }
+
+                val categoryData = categoryDeffered.await()
+                val merchantData = merchantDeffered.await()
+                val patternsData = patternsDeffered.await()
+                val statsData = statsDeffered.await()
+
+                // 4. Update state with new data
+                _uiState.update { 
+                    it.copy(
+                        isLoading = false,
+                        isRefreshing = false,
+                        categoryAnalytics = categoryData,
+                        merchantAnalytics = merchantData,
+                        spendingPatterns = patternsData,
+                        statisticalInsights = statsData
+                    )
+                }
+
+            } catch (e: Exception) {
+                _uiState.update { 
+                    it.copy(
+                        isLoading = false, 
+                        isRefreshing = false,
+                        error = "Failed to load data: ${e.message}"
+                    ) 
+                }
+            }
+        }
+    }
+
+    fun clearError() {
+        _uiState.update { it.copy(error = null) }
+    }
+}
+
+data class AnalyticsUiState(
+    val selectedPeriod: AnalyticsPeriod = AnalyticsPeriod.MONTH,
+    val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
+    val error: String? = null,
+    val categoryAnalytics: List<EnhancedCategoryAnalytics> = emptyList(),
+    val merchantAnalytics: List<EnhancedMerchantAnalytics> = emptyList(),
+    val spendingPatterns: SpendingPatternAnalysis? = null,
+    val statisticalInsights: StatisticalInsights? = null
+)
+```
+
+---
+
 ## app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt <a name="appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt"></a>
 ```kotlin
 package com.yourname.expensetracker.ui.screens.analytics
@@ -2898,7 +3529,8 @@ class AnalyticsViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
     private val insightsEngine: InsightsEngine,
-    private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+    private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine,
+    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AnalyticsState())
@@ -2947,31 +3579,19 @@ class AnalyticsViewModel @Inject constructor(
         val currentExpenses = purchases.filter { it.date in currentStart..currentEnd }
         val previousExpenses = purchases.filter { it.date in previousStart..previousEnd }
 
-        val currentTotal = currentExpenses.sumOf { it.amount }
-        val previousTotal = previousExpenses.sumOf { it.amount }
+        // Use Repository for Totals and Trends
+        // We collect ONE item from the flow since we are in a triggered block
+        val summary = analyticsRepository.getSpendingSummary(currentStart, currentEnd).first()
+        val catBreakdown = analyticsRepository.getCategoryBreakdown(currentStart, currentEnd).first()
 
-        val changePercent = if (previousTotal > 0) {
-            ((currentTotal - previousTotal) / previousTotal * 100).toFloat()
-        } else null
+        val currentTotal = summary.totalSpent
+        val previousTotal = summary.previousTotalSpent ?: 0.0
+        val changePercent = summary.changePercent
 
         // Category breakdown
-        val categoryBreakdown = currentExpenses
-            .groupBy { it.categoryId }
-            .mapNotNull { (catId, exps) ->
-                val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
-                val totalAmount = exps.sumOf { it.amount }
-                CategoryBreakdown(
-                    category = cat,
-                    total = totalAmount,
-                    count = exps.size,
-                    percentage = if (currentTotal > 0)
-                        (totalAmount / currentTotal * 100).toFloat()
-                    else 0f
-                )
-            }
-            .sortedByDescending { it.total }
+        val categoryBreakdown = catBreakdown // Repo returns Domain model directly
 
-        // Merchant breakdown
+        // Merchant breakdown (Still manual for now, or move to Repo later)
         val merchantBreakdown = currentExpenses
             .groupBy { it.merchant.uppercase() }
             .map { (_, exps) ->
@@ -2987,6 +3607,18 @@ class AnalyticsViewModel @Inject constructor(
             .sortedByDescending { it.totalSpent }
 
         // Daily totals for chart
+        // Repo returns daily history as list of floats (daily totals)
+        // InsightsEngine.buildDailyTotals previously returned Map<String, Double>
+        // We need to check what the UI expects.
+        // AnalyticsViewModel State: val dailyTotals: Map<String, Double>
+        // We need to map Repo's list back to a Map if the UI depends on it. 
+        // Or refactor UI. Let's look at `dailyTotals` usage in `AnalyticsScreen` later.
+        // For now, let's keep using `insightsEngine` for `dailyTotals` to avoid breaking specific UI graph formatting 
+        // OR map the repo data. 
+        // Actually, `insightsEngine.buildDailyTotals` probably formats dates as keys. 
+        // The repo returns just values. 
+        // Let's stick to `insightsEngine.buildDailyTotals` for `dailyTotals` UNTIL we update the UI to accept a list.
+        // But we SHOULD upgrade `getPeriodRange` to use Utils.
         val chartDays = when (period) {
             TimePeriod.TODAY -> 1
             TimePeriod.WEEK -> 7
@@ -3054,40 +3686,26 @@ class AnalyticsViewModel @Inject constructor(
     }
 
     private fun getPeriodRange(period: TimePeriod, now: Long): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = now
-
         return when (period) {
             TimePeriod.TODAY -> {
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
+                val start = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
+                Pair(start, now)
             }
-            TimePeriod.WEEK -> {
-                cal.add(Calendar.DAY_OF_YEAR, -7)
-                Pair(cal.timeInMillis, now)
-            }
-            TimePeriod.MONTH -> {
-                cal.set(Calendar.DAY_OF_MONTH, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
-            }
+            TimePeriod.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(7)
+            TimePeriod.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(0) // Current month
             TimePeriod.YEAR -> {
-                cal.set(Calendar.DAY_OF_YEAR, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
+                 // Start of year logic wasn't in Utils yet, let's keep local or add to Utils.
+                 // Utils had getMonthRange.
+                 val cal = Calendar.getInstance()
+                 cal.timeInMillis = now
+                 cal.set(Calendar.DAY_OF_YEAR, 1)
+                 cal.set(Calendar.HOUR_OF_DAY, 0)
+                 cal.set(Calendar.MINUTE, 0)
+                 cal.set(Calendar.SECOND, 0)
+                 cal.set(Calendar.MILLISECOND, 0)
+                 Pair(cal.timeInMillis, now)
             }
-            TimePeriod.ALL -> {
-                Pair(0L, now)
-            }
+            TimePeriod.ALL -> Pair(0L, now)
         }
     }
 }
@@ -6513,7 +7131,8 @@ class HomeViewModel @Inject constructor(
     private val dashboardRepository: DashboardRepository,
     private val insightsEngine: InsightsEngine,
     private val financialWeatherRepository: FinancialWeatherRepository,
-    private val plannedExpenseRepository: PlannedExpenseRepository
+    private val plannedExpenseRepository: PlannedExpenseRepository,
+    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository
 ) : ViewModel() {
 
     private val isEditMode = MutableStateFlow(false)
@@ -6550,95 +7169,54 @@ class HomeViewModel @Inject constructor(
     }
     .debounce(300)
 
-    // Optimized: Process heavy data separately and cache the result
-    private val processedDataFlow = dataFlow.map { data ->
+    // Optimized: Process heavy data via AnalyticsRepository
+    private val processedDataFlow = combine(
+        dataFlow,
+        analyticsRepository.getSpendingSummary(
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(System.currentTimeMillis()),
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(System.currentTimeMillis())
+        ),
+        analyticsRepository.getCategoryBreakdown(
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(System.currentTimeMillis()),
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(System.currentTimeMillis())
+        )
+    ) { data, summary, categoryBreakdown ->
         val (expenses, categories, budgetStatuses, pendingCount, weather) = data
 
         val now = System.currentTimeMillis()
-        val cal = Calendar.getInstance()
+        val todayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
+        val weekStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
 
-        // Time boundaries
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val todayStart = cal.timeInMillis
+        // Calculate "Today" and "Week" locally for now (can be moved to Repo later if heavy)
+        // Since we already have the full list `expenses` in memory from `dataFlow` (which might be overkill but existing arch),
+        // we can just filter for these small windows.
+        // ideally `dataFlow` shouldn't fetch ALL expenses if we have repo. setting that aside for now.
 
-        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
-        val daysToMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
-        val weekStart = cal.timeInMillis - (daysToMonday * 86400000L)
+        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
+        val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
 
-        cal.set(Calendar.DAY_OF_MONTH, 1)
-        val monthStart = cal.timeInMillis
+        val totalSpent = summary.totalSpent
+        val monthSpent = totalSpent // Summary IS month
+        val txCount = summary.transactionCount
+        val previousMonthTotal = summary.previousTotalSpent ?: 0.0
 
-        // Single-pass aggregation
-        var totalSpent = 0.0
-        var monthSpent = 0.0
-        var weekSpent = 0.0
-        var todaySpent = 0.0
-        var previousMonthTotal = 0.0
-        val categoryTotalsMap = mutableMapOf<Long, Double>()
-        val purchases = ArrayList<Expense>(expenses.size)
-
-        val previousMonthStart = insightsEngine.getMonthPeriod(now, -1).startMs
-        val previousMonthEnd = monthStart
-
-        for (expense in expenses) {
-            if (expense.transactionType != TransactionType.PURCHASE) continue
-
-            val amount = expense.amount
-            val date = expense.date
-
-            purchases.add(expense)
-            totalSpent += amount
-
-            if (date >= monthStart) {
-                monthSpent += amount
-            } else if (date >= previousMonthStart && date < previousMonthEnd) {
-                previousMonthTotal += amount
-            }
-
-            if (date >= weekStart) {
-                weekSpent += amount
-                if (date >= todayStart) {
-                    todaySpent += amount
-                }
-            }
-
-            expense.categoryId?.let { catId ->
-                categoryTotalsMap[catId] = (categoryTotalsMap[catId] ?: 0.0) + amount
-            }
-        }
-
-        val categoryMap = categories.associateBy { it.id }
-        val txCount = purchases.size
-
-        // Days remaining in month
-        val daysInMonth = Calendar.getInstance().getActualMaximum(Calendar.DAY_OF_MONTH)
-        val dayOfMonth = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
+        val daysInMonth = java.util.Calendar.getInstance().getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        val dayOfMonth = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH)
         val daysRemaining = daysInMonth - dayOfMonth
 
         // Overall budget (if set)
         val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
         val safeToSpend = weather.discretionaryBudget 
 
-        // Finalize Category totals
-        val categoryTotals = categoryTotalsMap.entries
-            .mapNotNull { (catId, catTotal) ->
-                val cat = catId.let { categoryMap[it] } ?: return@mapNotNull null
-                CategorySpending(
-                    category = cat,
-                    total = catTotal,
-                    percentage = if (totalSpent > 0) (catTotal / totalSpent * 100).toFloat() else 0f
-                )
-            }
-            .sortedByDescending { it.total }
+        // Category Totals from Repo
+        val categoryTotals = categoryBreakdown.map { 
+             CategorySpending(it.category, it.total, it.percentage) 
+        }
 
         val baseline = overallBudget?.budget?.amount ?: if (previousMonthTotal > 0) previousMonthTotal else null
 
         // Handle Day 1 Noise (LOG-005 Fix)
-        // If it's the first day, we use the average of (baseline / daysInMonth) and current monthSpent 
-        // to avoid extreme swings if a user makes a big purchase on Day 1.
         val dayOfMonthCoerced = dayOfMonth.coerceAtLeast(1)
         val projectedTotal = if (dayOfMonth == 1) {
             // Weighted average on day 1: 70% baseline, 30% current spend extrapolated
@@ -6671,47 +7249,15 @@ class HomeViewModel @Inject constructor(
             }
         )
 
-        // Cumulative Spend Trend Data - Optimized single pass
-        val calInstance = Calendar.getInstance()
-        val previousMonthDays = calInstance.apply { 
-            timeInMillis = previousMonthStart 
-        }.getActualMaximum(Calendar.DAY_OF_MONTH)
-
-        val currentAmountByDay = DoubleArray(dayOfMonth + 1)
-        val previousAmountByDay = DoubleArray(previousMonthDays + 1)
-
-        for (expense in purchases) {
-            if (expense.date >= monthStart) {
-                calInstance.timeInMillis = expense.date
-                val day = calInstance.get(Calendar.DAY_OF_MONTH)
-                if (day <= dayOfMonth) currentAmountByDay[day] += expense.amount
-            } else if (expense.date >= previousMonthStart && expense.date < monthStart) {
-                calInstance.timeInMillis = expense.date
-                val day = calInstance.get(Calendar.DAY_OF_MONTH)
-                if (day <= previousMonthDays) previousAmountByDay[day] += expense.amount
-            }
-        }
-
-        var runningTotalCur = 0.0
-        val currentMonthDaily = (1..dayOfMonth).map { day ->
-            runningTotalCur += currentAmountByDay[day]
-            runningTotalCur.toFloat()
-        }
-
-        var runningTotalPrev = 0.0
-        val previousMonthDaily = (1..previousMonthDays).map { day ->
-            runningTotalPrev += previousAmountByDay[day]
-            runningTotalPrev.toFloat()
-        }
-
+        // Trend
         val trend = DashboardWidget.SpendingTrend(
-            currentMonthData = currentMonthDaily,
-            previousMonthData = previousMonthDaily
+            currentMonthData = summary.dailyHistory,
+            previousMonthData = summary.previousDailyHistory
         )
 
         // Natural language insight
         val insightText = buildNaturalLanguageInsight(
-            monthSpent, previousMonthTotal, todaySpent, purchases.size
+            monthSpent, previousMonthTotal, todaySpent, summary.transactionCount
         )
 
         // Budget summary
@@ -9230,7 +9776,8 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun TransactionsScreen(
-    viewModel: TransactionsViewModel = hiltViewModel()
+    viewModel: TransactionsViewModel = hiltViewModel(),
+    onNavigateToAnalytics: () -> Unit = {}
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val groupedTransactions by viewModel.groupedTransactions.collectAsState()
@@ -9351,6 +9898,9 @@ fun TransactionsScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = onNavigateToAnalytics) {
+                            Icon(Icons.Rounded.BarChart, contentDescription = "Advanced Analytics")
+                        }
                         if (!showSearch) {
                             IconButton(onClick = { showSearch = true }) {
                                 Icon(Icons.Rounded.Search, contentDescription = "Search")
@@ -10171,7 +10721,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
-import java.util.Calendar
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -10474,81 +11023,34 @@ class TransactionsViewModel @Inject constructor(
     }
 
     /**
-     * Optimized time range calculation using pre-computed values.
-     * Avoids creating Calendar instances on every call.
+     * Optimized time range calculation using TimePeriodUtils.
      */
     private fun getTimeRangeForTab(tab: TransactionTab): Pair<Long, Long> {
         val now = System.currentTimeMillis()
 
         return when (tab) {
             TransactionTab.TODAY -> {
-                // Use cached calculation for start of day
-                val startOfDay = getStartOfDay(now)
+                val startOfDay = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
                 Pair(startOfDay, now)
             }
             TransactionTab.WEEK -> {
-                val cal = Calendar.getInstance()
-                cal.timeInMillis = now
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val day = cal.get(Calendar.DAY_OF_WEEK)
-                // Calculate days to Monday (or 6 if Sunday)
-                val diff = if (day == Calendar.SUNDAY) 6 else day - Calendar.MONDAY
-                cal.add(Calendar.DAY_OF_YEAR, -diff)
-                Pair(cal.timeInMillis, now)
+                val startOfWeek = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
+                Pair(startOfWeek, now)
             }
             TransactionTab.MONTH -> {
-                val cal = Calendar.getInstance()
-                cal.timeInMillis = now
-                cal.set(Calendar.DAY_OF_MONTH, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
+                val startOfMonth = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
+                Pair(startOfMonth, now)
             }
             TransactionTab.QUARTER -> {
-                val cal = Calendar.getInstance()
-                cal.timeInMillis = now
-                cal.set(Calendar.DAY_OF_MONTH, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val month = cal.get(Calendar.MONTH)
-                // Calculate start of quarter (0, 3, 6, 9)
-                val quarterStartMonth = (month / 3) * 3
-                cal.set(Calendar.MONTH, quarterStartMonth)
-                Pair(cal.timeInMillis, now)
+                val startOfQuarter = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfQuarter(now)
+                Pair(startOfQuarter, now)
             }
             TransactionTab.YEAR -> {
-                val cal = Calendar.getInstance()
-                cal.timeInMillis = now
-                cal.set(Calendar.DAY_OF_YEAR, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
+                val startOfYear = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfYear(now)
+                Pair(startOfYear, now)
             }
             TransactionTab.ALL -> Pair(0L, now)
         }
-    }
-
-    /**
-     * Optimized start-of-day calculation.
-     * Uses bitwise operations for faster computation.
-     */
-    private fun getStartOfDay(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
     }
 
     /**

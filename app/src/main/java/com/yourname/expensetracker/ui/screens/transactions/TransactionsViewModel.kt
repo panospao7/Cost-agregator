@@ -14,7 +14,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
-import java.util.Calendar
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -317,81 +316,34 @@ class TransactionsViewModel @Inject constructor(
     }
 
     /**
-     * Optimized time range calculation using pre-computed values.
-     * Avoids creating Calendar instances on every call.
+     * Optimized time range calculation using TimePeriodUtils.
      */
     private fun getTimeRangeForTab(tab: TransactionTab): Pair<Long, Long> {
         val now = System.currentTimeMillis()
         
         return when (tab) {
             TransactionTab.TODAY -> {
-                // Use cached calculation for start of day
-                val startOfDay = getStartOfDay(now)
+                val startOfDay = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
                 Pair(startOfDay, now)
             }
             TransactionTab.WEEK -> {
-                val cal = Calendar.getInstance()
-                cal.timeInMillis = now
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val day = cal.get(Calendar.DAY_OF_WEEK)
-                // Calculate days to Monday (or 6 if Sunday)
-                val diff = if (day == Calendar.SUNDAY) 6 else day - Calendar.MONDAY
-                cal.add(Calendar.DAY_OF_YEAR, -diff)
-                Pair(cal.timeInMillis, now)
+                val startOfWeek = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
+                Pair(startOfWeek, now)
             }
             TransactionTab.MONTH -> {
-                val cal = Calendar.getInstance()
-                cal.timeInMillis = now
-                cal.set(Calendar.DAY_OF_MONTH, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
+                val startOfMonth = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
+                Pair(startOfMonth, now)
             }
             TransactionTab.QUARTER -> {
-                val cal = Calendar.getInstance()
-                cal.timeInMillis = now
-                cal.set(Calendar.DAY_OF_MONTH, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val month = cal.get(Calendar.MONTH)
-                // Calculate start of quarter (0, 3, 6, 9)
-                val quarterStartMonth = (month / 3) * 3
-                cal.set(Calendar.MONTH, quarterStartMonth)
-                Pair(cal.timeInMillis, now)
+                val startOfQuarter = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfQuarter(now)
+                Pair(startOfQuarter, now)
             }
             TransactionTab.YEAR -> {
-                val cal = Calendar.getInstance()
-                cal.timeInMillis = now
-                cal.set(Calendar.DAY_OF_YEAR, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, now)
+                val startOfYear = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfYear(now)
+                Pair(startOfYear, now)
             }
             TransactionTab.ALL -> Pair(0L, now)
         }
-    }
-
-    /**
-     * Optimized start-of-day calculation.
-     * Uses bitwise operations for faster computation.
-     */
-    private fun getStartOfDay(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
     }
 
     /**

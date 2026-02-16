@@ -48,6 +48,16 @@ class CategoryRepository @Inject constructor(
                     // We need a bulk insert for speed
                     merchantCategoryDao.insertAll(merchantEntities)
                 }
+            } else {
+                // BUG-012 Fix: Ensure "Uncategorized" exists even for existing users
+                val categories = categoryDao.getAllFlow().first()
+                if (categories.none { it.name.equals("Uncategorized", ignoreCase = true) }) {
+                    val uncategorized = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
+                        .find { it.name == "Uncategorized" }
+                    if (uncategorized != null) {
+                        categoryDao.insert(uncategorized)
+                    }
+                }
             }
         } catch (e: Exception) {
             android.util.Log.e("CategoryRepository", "Failed to seed default categories", e)

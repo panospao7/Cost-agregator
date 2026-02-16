@@ -66,7 +66,7 @@ class PendingReviewDaoTest {
 
         val pending = pendingReviewDao.getPending()
         assertEquals(1, pending.size)
-        assertEquals("PENDING", pending[0].status)
+        assertEquals("PENDING", pending[0].review.status)
     }
 
     @Test

@@ -60,7 +60,8 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun TransactionsScreen(
-    viewModel: TransactionsViewModel = hiltViewModel()
+    viewModel: TransactionsViewModel = hiltViewModel(),
+    onNavigateToAnalytics: () -> Unit = {}
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val groupedTransactions by viewModel.groupedTransactions.collectAsState()
@@ -181,6 +182,9 @@ fun TransactionsScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = onNavigateToAnalytics) {
+                            Icon(Icons.Rounded.BarChart, contentDescription = "Advanced Analytics")
+                        }
                         if (!showSearch) {
                             IconButton(onClick = { showSearch = true }) {
                                 Icon(Icons.Rounded.Search, contentDescription = "Search")

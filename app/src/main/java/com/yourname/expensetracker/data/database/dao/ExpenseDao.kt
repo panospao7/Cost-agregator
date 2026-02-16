@@ -184,22 +184,32 @@ interface ExpenseDao {
 
     // Merchant averages (merchants with 2+ transactions)
     @Query("""
-        SELECT merchant, AVG(amount) as avgAmount, 
-               MIN(amount) as minAmount, MAX(amount) as maxAmount,
-               COUNT(*) as txCount, SUM(amount) as totalAmount
+        SELECT merchant as merchantName, 
+               SUM(amount) as totalAmount,
+               COUNT(*) as transactionCount,
+               AVG(amount) as averageAmount,
+               MIN(amount) as minAmount,
+               MAX(amount) as maxAmount,
+               MIN(date) as firstDate, 
+               MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
         GROUP BY merchant
-        HAVING txCount >= 2
+        HAVING transactionCount >= 2
         ORDER BY totalAmount DESC
     """)
     suspend fun getMerchantStats(): List<MerchantStats>
 
     // All merchant stats (including single-transaction merchants)
     @Query("""
-        SELECT merchant, AVG(amount) as avgAmount, 
-               MIN(amount) as minAmount, MAX(amount) as maxAmount,
-               COUNT(*) as txCount, SUM(amount) as totalAmount
+        SELECT merchant as merchantName, 
+               SUM(amount) as totalAmount,
+               COUNT(*) as transactionCount,
+               AVG(amount) as averageAmount,
+               MIN(amount) as minAmount,
+               MAX(amount) as maxAmount,
+               MIN(date) as firstDate, 
+               MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
         GROUP BY merchant
@@ -209,9 +219,14 @@ interface ExpenseDao {
 
     // Top merchants by total spending for a period
     @Query("""
-        SELECT merchant, AVG(amount) as avgAmount, 
-               MIN(amount) as minAmount, MAX(amount) as maxAmount,
-               COUNT(*) as txCount, SUM(amount) as totalAmount
+        SELECT merchant as merchantName, 
+               SUM(amount) as totalAmount,
+               COUNT(*) as transactionCount,
+               AVG(amount) as averageAmount,
+               MIN(amount) as minAmount,
+               MAX(amount) as maxAmount,
+               MIN(date) as firstDate, 
+               MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
@@ -255,18 +270,20 @@ interface ExpenseDao {
 
     // Recurring candidates: merchants that appear in multiple distinct months
     @Query("""
-        SELECT merchant, 
-               AVG(amount) as avgAmount, 
-               MIN(amount) as minAmount, 
+        SELECT merchant as merchantName, 
+               SUM(amount) as totalAmount,
+               COUNT(*) as transactionCount,
+               AVG(amount) as averageAmount,
+               MIN(amount) as minAmount,
                MAX(amount) as maxAmount,
-               COUNT(*) as txCount, 
-               SUM(amount) as totalAmount
+               MIN(date) as firstDate, 
+               MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
         GROUP BY merchant
-        HAVING txCount >= 2 
-        AND (maxAmount - minAmount) < (avgAmount * 0.15)
-        ORDER BY txCount DESC
+        HAVING transactionCount >= 2 
+        AND (maxAmount - minAmount) < (averageAmount * 0.15)
+        ORDER BY transactionCount DESC
     """)
     suspend fun getRecurringCandidates(): List<MerchantStats>
 
@@ -306,12 +323,14 @@ data class CategoryTotal(
 )
 
 data class MerchantStats(
-    val merchant: String,
-    val avgAmount: Double,
+    val merchantName: String,
+    val totalAmount: Double,
+    val transactionCount: Int,
+    val averageAmount: Double,
     val minAmount: Double,
     val maxAmount: Double,
-    val txCount: Int,
-    val totalAmount: Double
+    val firstDate: Long,
+    val lastDate: Long
 )
 
 data class DailyTotal(

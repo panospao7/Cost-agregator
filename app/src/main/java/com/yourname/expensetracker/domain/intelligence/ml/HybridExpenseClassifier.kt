@@ -91,7 +91,7 @@ class HybridExpenseClassifier @Inject constructor(
         }
 
         // 3. Fallback (Improved for BUG-012)
-        val defaultCategory = categories.find { it.name.contains("Groceries", ignoreCase = true) } 
+        val defaultCategory = categories.find { it.name.equals("Uncategorized", ignoreCase = true) }
             ?: categories.find { it.name.contains("Other", ignoreCase = true) }
             ?: categories.firstOrNull()
 

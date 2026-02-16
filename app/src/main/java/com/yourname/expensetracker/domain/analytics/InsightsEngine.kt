@@ -16,7 +16,8 @@ import kotlin.math.sqrt
 
 @Singleton
 class InsightsEngine @Inject constructor(
-    private val expenseDao: ExpenseDao
+    private val expenseDao: ExpenseDao,
+    private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 ) {
 
     companion object {
@@ -39,7 +40,8 @@ class InsightsEngine @Inject constructor(
         val topMerchantsDeferred = async { buildMerchantInsights(allExpenses) }
         val spendingPaceDeferred = async { buildSpendingPace(currentMonth, previousMonth, allExpenses) }
         val anomaliesDeferred = async { findAnomalies(currentMonth, categoryMap) }
-        val recurringExpensesDeferred = async { findRecurringExpenses() }
+        // Use RecurringExpenseEngine directly
+        val recurringExpensesDeferred = async { findRecurringExpenses(allExpenses) }
         
         val threeMonthsAgo = getMonthPeriod(now, -2)
         val dayOfWeekPatternDeferred = async { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs) }
@@ -146,14 +148,16 @@ class InsightsEngine @Inject constructor(
 
         // 4. Recurring
         snapshot.recurringExpenses.take(3).forEach { recurring ->
-             insights.add(
-                SpendingInsight(
-                    InsightType.RECURRING_DETECTED, "🔄",
-                    "Recurring: ${recurring.merchant}",
-                    "€${fmt(recurring.avgAmount)} ~every ${30.0/recurring.frequency} days", // approx
-                    0.5f
-                )
-            )
+                 if (recurring.intervalDays > 0) {
+                     insights.add(
+                        SpendingInsight(
+                            InsightType.RECURRING_DETECTED, "🔄",
+                            "Recurring: ${recurring.merchant}",
+                            "€${fmt(recurring.avgAmount)} ~every ${recurring.intervalDays} days",
+                            0.5f
+                        )
+                    )
+                 }
         }
 
         // 5. Largest Transaction
@@ -174,23 +178,23 @@ class InsightsEngine @Inject constructor(
 
     // === Month Period Helpers ===
 
+    // === Month Period Helpers ===
+    
     fun getMonthPeriod(timeMs: Long, monthOffset: Int = 0): MonthPeriod {
+        // Use TimePeriodUtils for start/end
+        val range = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(timeMs, monthOffset)
+        
         val cal = Calendar.getInstance()
-        cal.timeInMillis = timeMs
-        cal.add(Calendar.MONTH, monthOffset)
-        cal.set(Calendar.DAY_OF_MONTH, 1)
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val startMs = cal.timeInMillis
+        cal.timeInMillis = range.first
         val year = cal.get(Calendar.YEAR)
         val month = cal.get(Calendar.MONTH)
-
-        cal.add(Calendar.MONTH, 1)
-        val endMs = cal.timeInMillis
-
-        return MonthPeriod(year, month, startMs, endMs)
+        
+        return MonthPeriod(year, month, range.first, range.second + 1) // +1 because Utils gives inclusive end, MonthPeriod likely uses exclusive end or similar. 
+        // Logic check: PeriodRange is usually inclusive. ExpenseDao queries are simpler with inclusive/exclusive.
+        // Let's standardise. MonthPeriod seems to store start/end.
+        // Existing implementation: endMs is start of *next* month (exclusive).
+        // TimePeriodUtils.getMonthRange returns (start, end) inclusive (last millisecond).
+        // So endMs = utils.end + 1
     }
 
     private fun getPreviousMonthPeriod(current: MonthPeriod): MonthPeriod {
@@ -328,19 +332,19 @@ class InsightsEngine @Inject constructor(
             .groupBy { it.merchant }
 
         return stats.map { ms ->
-            val amounts = purchasesByMerchant[ms.merchant]?.map { it.amount } ?: emptyList()
+            val amounts = purchasesByMerchant[ms.merchantName]?.map { it.amount } ?: emptyList()
             val stdDev = if (amounts.size >= 3) calculateStdDev(amounts) else null
 
-            val isRecurring = ms.txCount >= 2 &&
-                    (ms.maxAmount - ms.minAmount) < (ms.avgAmount * 0.15)
+            val isRecurring = ms.transactionCount >= 2 &&
+                    (ms.maxAmount - ms.minAmount) < (ms.averageAmount * 0.15)
 
             MerchantInsight(
-                merchant = ms.merchant,
-                avgAmount = ms.avgAmount,
+                merchant = ms.merchantName,
+                avgAmount = ms.averageAmount,
                 minAmount = ms.minAmount,
                 maxAmount = ms.maxAmount,
                 totalSpent = ms.totalAmount,
-                transactionCount = ms.txCount,
+                transactionCount = ms.transactionCount,
                 isLikelyRecurring = isRecurring,
                 stdDeviation = stdDev
             )
@@ -437,7 +441,7 @@ class InsightsEngine @Inject constructor(
         categoryMap: Map<Long, Category>
     ): List<AnomalyTransaction> = coroutineScope {
         val merchantStats = expenseDao.getMerchantStats() // only merchants with 2+ tx
-        val statsMap = merchantStats.associateBy { it.merchant }
+        val statsMap = merchantStats.associateBy { it.merchantName }
 
         // Check top merchants this month for outliers
         val topMerchants = expenseDao.getTopMerchantsForPeriod(
@@ -445,26 +449,26 @@ class InsightsEngine @Inject constructor(
         )
 
         val deferredAnomalies: List<kotlinx.coroutines.Deferred<AnomalyTransaction?>> = topMerchants.mapNotNull { merchantStat ->
-            val historicalStats = statsMap[merchantStat.merchant] ?: return@mapNotNull null
-            if (historicalStats.txCount < 3) return@mapNotNull null
+            val historicalStats = statsMap[merchantStat.merchantName] ?: return@mapNotNull null
+            if (historicalStats.transactionCount < 3) return@mapNotNull null
 
             // Dynamic threshold based on sample size
             val multiplier = when {
-                historicalStats.txCount < 5 -> 5.0
-                historicalStats.txCount < 10 -> 4.0
+                historicalStats.transactionCount < 5 -> 5.0
+                historicalStats.transactionCount < 10 -> 4.0
                 else -> 3.0
             }
 
             // If the max amount this month is > X times the historical average
-            if (merchantStat.maxAmount > historicalStats.avgAmount * multiplier) {
+            if (merchantStat.maxAmount > historicalStats.averageAmount * multiplier) {
                 async {
                     expenseDao.getLargestExpenseForMerchant(
-                        merchantStat.merchant, currentMonth.startMs, currentMonth.endMs
+                        merchantStat.merchantName, currentMonth.startMs, currentMonth.endMs
                     )?.let { expense ->
                         AnomalyTransaction(
                             expense = expense,
-                            merchantAvg = historicalStats.avgAmount,
-                            deviationMultiple = (expense.amount / historicalStats.avgAmount).toFloat(),
+                            merchantAvg = historicalStats.averageAmount,
+                            deviationMultiple = (expense.amount / historicalStats.averageAmount).toFloat(),
                             category = expense.categoryId?.let { categoryMap[it] }
                         )
                     }
@@ -479,16 +483,31 @@ class InsightsEngine @Inject constructor(
 
     // === Recurring Expenses ===
 
-    private suspend fun findRecurringExpenses(): List<RecurringExpense> {
-        val candidates = expenseDao.getRecurringCandidates()
+    // === Recurring Expenses ===
 
-        return candidates.map { ms ->
+    private suspend fun findRecurringExpenses(allExpenses: List<Expense>): List<RecurringExpense> {
+        // Use the centralized engine
+        val patterns = recurringExpenseEngine.getPatterns(allExpenses)
+        
+        // Map to Insights Snapshot model
+        return patterns.map { pattern ->
+            val intervalDays = when (pattern.frequency) {
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.WEEKLY -> 7
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.BIWEEKLY -> 14
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.MONTHLY -> 30
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.QUARTERLY -> 90
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.SEMI_ANNUALLY -> 180
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.ANNUALLY -> 365
+                else -> 0
+            }
+            
             RecurringExpense(
-                merchant = ms.merchant,
-                avgAmount = ms.avgAmount,
-                frequency = ms.txCount,
-                amountVariation = ms.maxAmount - ms.minAmount,
-                isStable = (ms.maxAmount - ms.minAmount) < (ms.avgAmount * 0.05)
+                merchant = pattern.merchantName,
+                avgAmount = pattern.averageAmount,
+                frequency = (30.0 / intervalDays.coerceAtLeast(1)).toInt(), // Estimate monthly occurrences
+                intervalDays = intervalDays,
+                amountVariation = 0.0, // Pattern doesn't expose this raw stat easily, but could add to Pattern if needed.
+                isStable = pattern.amountVariancePercent < 0.1
             )
         }
     }

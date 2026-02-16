@@ -1,46 +1,1221 @@
 # 2 Domain Layer
 
 ## Table of Contents
-1. [app\src\main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#appsrcmainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
-2. [app\src\main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
-3. [app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
-4. [app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
-5. [app\src\main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
-6. [app\src\main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#appsrcmainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
-7. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
-8. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
-9. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseCategoryClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlexpensecategoryclassifierkt)
-10. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlexpenseclassifierkt)
-11. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\FeatureExtractor.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlfeatureextractorkt)
-12. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\HybridExpenseClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlhybridexpenseclassifierkt)
-13. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\MerchantNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlmerchantnormalizerkt)
-14. [app\src\main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
-15. [app\src\main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
-16. [app\src\main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
-17. [app\src\main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
-18. [app\src\main\java\com\yourname\expensetracker\domain\model\OperationResult.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodeloperationresultkt)
-19. [app\src\main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
-20. [app\src\main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
-21. [app\src\main\java\com\yourname\expensetracker\domain\model\Result.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelresultkt)
-22. [app\src\main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
-23. [app\src\main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
-24. [app\src\main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
-25. [app\src\main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
-26. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
-27. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
-28. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
-29. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
-30. [app\src\main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
-31. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
-32. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
-33. [app\src\main\java\com\yourname\expensetracker\domain\util\AppConstants.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilappconstantskt)
-34. [app\src\main\java\com\yourname\expensetracker\domain\util\BKTree.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilbktreekt)
-35. [app\src\main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
-36. [app\src\main\java\com\yourname\expensetracker\domain\util\CommonPatterns.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcommonpatternskt)
-37. [app\src\main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
-38. [app\src\main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
-39. [app\src\main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
-40. [app\src\main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt)
+1. [app\src\main\java\com\yourname\expensetracker\domain\analytics\AdvancedAnalyticsEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainanalyticsadvancedanalyticsenginekt)
+2. [app\src\main\java\com\yourname\expensetracker\domain\analytics\AdvancedAnalyticsModels.kt](#appsrcmainjavacomyournameexpensetrackerdomainanalyticsadvancedanalyticsmodelskt)
+3. [app\src\main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#appsrcmainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
+4. [app\src\main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
+5. [app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
+6. [app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
+7. [app\src\main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
+8. [app\src\main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#appsrcmainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
+9. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
+10. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
+11. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseCategoryClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlexpensecategoryclassifierkt)
+12. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlexpenseclassifierkt)
+13. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\FeatureExtractor.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlfeatureextractorkt)
+14. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\HybridExpenseClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlhybridexpenseclassifierkt)
+15. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\MerchantNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlmerchantnormalizerkt)
+16. [app\src\main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
+17. [app\src\main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
+18. [app\src\main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
+19. [app\src\main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
+20. [app\src\main\java\com\yourname\expensetracker\domain\model\OperationResult.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodeloperationresultkt)
+21. [app\src\main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
+22. [app\src\main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
+23. [app\src\main\java\com\yourname\expensetracker\domain\model\Result.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelresultkt)
+24. [app\src\main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
+25. [app\src\main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
+26. [app\src\main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
+27. [app\src\main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
+28. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
+29. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
+30. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
+31. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
+32. [app\src\main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
+33. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
+34. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
+35. [app\src\main\java\com\yourname\expensetracker\domain\util\AppConstants.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilappconstantskt)
+36. [app\src\main\java\com\yourname\expensetracker\domain\util\BKTree.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilbktreekt)
+37. [app\src\main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
+38. [app\src\main\java\com\yourname\expensetracker\domain\util\CommonPatterns.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcommonpatternskt)
+39. [app\src\main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
+40. [app\src\main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
+41. [app\src\main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
+42. [app\src\main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt)
+43. [app\src\main\java\com\yourname\expensetracker\domain\util\TimePeriodUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutiltimeperiodutilskt)
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\domain\analytics\AdvancedAnalyticsEngine.kt <a name="appsrcmainjavacomyournameexpensetrackerdomainanalyticsadvancedanalyticsenginekt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.analytics
+
+import com.yourname.expensetracker.data.database.dao.BudgetDao
+import timber.log.Timber
+import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlin.math.round
+import kotlin.math.sqrt
+
+/**
+ * Advanced analytics engine for detailed spending analysis.
+ * Provides temporal category breakdowns, merchant intelligence, and statistical insights.
+ */
+@Singleton
+class AdvancedAnalyticsEngine @Inject constructor(
+    private val expenseDao: ExpenseDao,
+    private val categoryDao: CategoryDao,
+    private val budgetDao: BudgetDao
+) {
+    companion object {
+        private const val TAG = "AdvancedAnalytics"
+        private val DAY_NAMES = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+        private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000L
+    }
+
+    // ============================================================
+    // PERIOD CALCULATIONS
+    // ============================================================
+
+    /**
+     * Calculates the period range for the given analytics period type.
+     * @param period The period type to calculate
+     * @param referenceDate Reference timestamp (defaults to now)
+     * @return PeriodRange with start/end timestamps and comparison period
+     */
+    fun getPeriodRange(
+        period: AnalyticsPeriod,
+        referenceDate: Long = System.currentTimeMillis(),
+        computeComparison: Boolean = true
+    ): PeriodRange {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = referenceDate
+
+        val (startMs, endMs, label) = when (period) {
+            AnalyticsPeriod.WEEK -> calculateWeekRange(cal)
+            AnalyticsPeriod.MONTH -> calculateMonthRange(cal)
+            AnalyticsPeriod.QUARTER -> calculateQuarterRange(cal)
+            AnalyticsPeriod.YEAR -> calculateYearRange(cal)
+            AnalyticsPeriod.CUSTOM -> throw IllegalArgumentException(
+                "Custom period requires explicit date range. Use getCustomPeriodRange() instead."
+            )
+        }
+
+        return PeriodRange(
+            period = period,
+            startMs = startMs,
+            endMs = endMs,
+            label = label,
+            comparisonRange = if (computeComparison) getPreviousPeriodRange(period, startMs) else null
+        )
+    }
+
+    private fun calculateWeekRange(cal: Calendar): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfWeek(cal.timeInMillis)
+        val end = start + (7 * MILLIS_PER_DAY)
+
+        val fmt = SimpleDateFormat("MMM d", Locale.getDefault())
+        return Triple(start, end, "${fmt.format(Date(start))} - ${fmt.format(Date(end - 1))}")
+    }
+
+    private fun calculateMonthRange(cal: Calendar): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfMonth(cal.timeInMillis)
+
+        // Month length varies, so we still need calendar for End or use getEndOfMonth + 1
+        val end = TimePeriodUtils.getEndOfMonth(start) + 1
+
+        val fmt = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+        return Triple(start, end, fmt.format(Date(start)))
+    }
+
+    private fun calculateQuarterRange(cal: Calendar): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfQuarter(cal.timeInMillis)
+        val end = TimePeriodUtils.getEndOfQuarter(start) + 1
+
+        // Re-derive quarter num for label
+        val tempCal = Calendar.getInstance()
+        tempCal.timeInMillis = start
+        val quarterNum = (tempCal.get(Calendar.MONTH) / 3) + 1
+        val year = tempCal.get(Calendar.YEAR)
+
+        return Triple(start, end, "Q$quarterNum $year")
+    }
+
+    private fun calculateYearRange(cal: Calendar): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfYear(cal.timeInMillis)
+        val end = TimePeriodUtils.getEndOfYear(start) + 1
+
+        val tempCal = Calendar.getInstance()
+        tempCal.timeInMillis = start
+        val year = tempCal.get(Calendar.YEAR)
+
+        return Triple(start, end, year.toString())
+    }
+
+    private fun getPreviousPeriodRange(period: AnalyticsPeriod, currentStartMs: Long): PeriodRange? {
+        return try {
+            val cal = Calendar.getInstance()
+            cal.timeInMillis = currentStartMs
+
+            when (period) {
+                AnalyticsPeriod.WEEK -> cal.add(Calendar.DAY_OF_MONTH, -7)
+                AnalyticsPeriod.MONTH -> cal.add(Calendar.MONTH, -1)
+                AnalyticsPeriod.QUARTER -> cal.add(Calendar.MONTH, -3)
+                AnalyticsPeriod.YEAR -> cal.add(Calendar.YEAR, -1)
+                AnalyticsPeriod.CUSTOM -> return null
+            }
+
+            getPeriodRange(period, cal.timeInMillis, computeComparison = false)
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "Failed to calculate previous period")
+            null
+        }
+    }
+
+    // ============================================================
+    // CATEGORY ANALYTICS
+    // ============================================================
+
+    /**
+     * Generates enhanced analytics for all categories within the specified period.
+     */
+    suspend fun getCategoryAnalytics(period: PeriodRange): List<EnhancedCategoryAnalytics> = withContext(Dispatchers.Default) {
+        coroutineScope {
+        // Fetch all required data in parallel
+        val currentExpensesDeferred = async { 
+            expenseDao.getExpensesBetween(period.startMs, period.endMs) 
+        }
+        val previousExpensesDeferred = async { 
+            period.comparisonRange?.let { 
+                expenseDao.getExpensesBetween(it.startMs, it.endMs) 
+            } ?: emptyList()
+        }
+        val categoriesDeferred = async { categoryDao.getAll() }
+        val budgetsDeferred = async { budgetDao.getActiveBudgets() }
+
+        val currentExpenses = currentExpensesDeferred.await()
+        val previousExpenses = previousExpensesDeferred.await()
+        val categories = categoriesDeferred.await()
+        val budgets = budgetsDeferred.await()
+
+        // Filter to purchases only
+        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+        val previousPurchases = previousExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+
+        // Build lookup maps
+        val categoryMap = categories.associateBy { it.id }
+        val budgetMap = budgets.associateBy { it.categoryId }
+
+        // Group expenses by category
+        val currentByCategory = currentPurchases.groupBy { it.categoryId }
+        val previousByCategory = previousPurchases.groupBy { it.categoryId }
+
+        // Build sparkline data (daily cumulative by category)
+        val sparklineData = buildSparklineDataByCategory(currentPurchases, period)
+
+        // Build analytics for each category with spending
+        currentByCategory.mapNotNull { (categoryId, expenses) ->
+            val category = categoryMap[categoryId] ?: return@mapNotNull null
+
+            val amounts = expenses.map { it.amount }
+            val sortedAmounts = amounts.sorted()
+            val total = amounts.sum()
+
+            // Previous period comparison
+            val previousTotal = previousByCategory[categoryId]?.sumOf { it.amount }
+            val changePercent = calculateChangePercent(total, previousTotal)
+
+            // Budget context
+            val budget = budgetMap[categoryId]
+            val budgetUtilization = budget?.let { b ->
+                if (b.amount > 0) (total / b.amount * 100).toFloat() else null
+            }
+            val budgetStatus = budget?.let { b -> determineBudgetStatus(total, b.amount) }
+
+            // Percentiles
+            val p25 = getPercentile(sortedAmounts, 0.25)
+            val p75 = getPercentile(sortedAmounts, 0.75)
+
+            // Velocity (spending acceleration within period)
+            val velocity = calculateVelocity(expenses)
+
+            EnhancedCategoryAnalytics(
+                category = category,
+                period = period,
+                totalSpent = total,
+                transactionCount = expenses.size,
+                averagePerTransaction = if (amounts.isNotEmpty()) amounts.average() else 0.0,
+                medianTransaction = getPercentile(sortedAmounts, 0.50),
+                previousPeriodTotal = previousTotal,
+                changePercent = changePercent,
+                trendDirection = determineTrendDirection(changePercent),
+                budgetAmount = budget?.amount,
+                budgetUtilizationPercent = budgetUtilization,
+                budgetRemaining = budget?.let { it.amount - total },
+                budgetStatus = budgetStatus,
+                minTransaction = sortedAmounts.firstOrNull() ?: 0.0,
+                maxTransaction = sortedAmounts.lastOrNull() ?: 0.0,
+                percentile25 = p25,
+                percentile75 = p75,
+                sparklineData = sparklineData[categoryId] ?: emptyList(),
+                velocity = velocity
+            )
+        }.sortedByDescending { it.totalSpent }
+    }
+}
+
+    // ============================================================
+    // MERCHANT ANALYTICS
+    // ============================================================
+
+    /**
+     * Generates enhanced analytics for top merchants within the specified period.
+     * @param limit Maximum number of merchants to return
+     */
+    suspend fun getMerchantAnalytics(
+        period: PeriodRange,
+        limit: Int = 20
+    ): List<EnhancedMerchantAnalytics> = withContext(Dispatchers.Default) {
+        coroutineScope {
+        val currentExpensesDeferred = async { 
+            expenseDao.getExpensesBetween(period.startMs, period.endMs) 
+        }
+
+        // Get historical data for price trends (6 months back)
+        val historicalStart = period.startMs - (180L * MILLIS_PER_DAY)
+        val historicalExpensesDeferred = async { 
+            expenseDao.getExpensesSince(historicalStart) 
+        }
+
+        val currentExpenses = currentExpensesDeferred.await()
+        val historicalExpenses = historicalExpensesDeferred.await()
+
+        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+
+        currentPurchases
+            .groupBy { it.merchant }
+            .map { (merchant, transactions) ->
+                val amounts = transactions.map { it.amount }
+                val sortedAmounts = amounts.sorted()
+                val dates = transactions.map { it.date }.sorted()
+
+                // Historical context for price trends
+                val historicalForMerchant = historicalExpenses
+                    .filter { it.merchant.equals(merchant, ignoreCase = true) }
+                    .sortedBy { it.date }
+
+                // Visit frequency analysis
+                val avgDaysBetween = calculateAverageDaysBetween(dates)
+                val visitFrequency = determineVisitFrequency(transactions.size, period, avgDaysBetween)
+
+                // Price trend analysis
+                val priceTrendData = analyzePriceTrend(historicalForMerchant)
+
+                // Loyalty score
+                val loyaltyScore = calculateLoyaltyScore(amounts, historicalForMerchant.size)
+
+                // Consistency rating
+                val consistencyRating = determineConsistencyRating(amounts, avgDaysBetween)
+
+                // Streak count (consecutive months visited)
+                val streakCount = calculateStreakCount(historicalForMerchant)
+
+                // Spending by day of week
+                val spendingByDay = calculateSpendingByDayOfWeek(transactions)
+
+                // Predicted next visit
+                val predictedNext = predictNextVisit(dates, avgDaysBetween)
+
+                EnhancedMerchantAnalytics(
+                    merchant = merchant,
+                    period = period,
+                    totalSpent = amounts.sum(),
+                    transactionCount = transactions.size,
+                    averagePerVisit = if (amounts.isNotEmpty()) amounts.average() else 0.0,
+                    medianPerVisit = getPercentile(sortedAmounts, 0.50),
+                    visitFrequency = visitFrequency,
+                    averageDaysBetweenVisits = avgDaysBetween,
+                    predictedNextVisitDate = predictedNext,
+                    priceTrend = priceTrendData.trend,
+                    firstPurchaseAmount = priceTrendData.first,
+                    latestPurchaseAmount = priceTrendData.last,
+                    priceChangePercent = priceTrendData.change,
+                    loyaltyScore = loyaltyScore,
+                    consistencyRating = consistencyRating,
+                    consecutiveMonthsVisited = streakCount,
+                    spendingByDayOfWeek = spendingByDay,
+                    recentTransactions = transactions.take(5)
+                )
+            }
+            .sortedByDescending { it.totalSpent }
+            .take(limit)
+    }
+}
+
+    // ============================================================
+    // SPENDING PATTERNS
+    // ============================================================
+
+    /**
+     * Analyzes spending patterns including day-of-week distribution and detected behaviors.
+     */
+    suspend fun getSpendingPatterns(period: PeriodRange): SpendingPatternAnalysis = withContext(Dispatchers.Default) {
+        coroutineScope {
+            val expenses = expenseDao.getExpensesBetween(period.startMs, period.endMs)
+        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+
+        if (purchases.isEmpty()) {
+            return@coroutineScope createEmptyPatternAnalysis(period)
+        }
+
+        val cal = Calendar.getInstance()
+        val totalSpent = purchases.sumOf { it.amount }
+
+        // Use arrays for better performance
+        val dayTotals = DoubleArray(7)
+        val dayCounts = IntArray(7)
+        val timeSlotStats = mutableMapOf<TimeSlot, Double>()
+
+        for (purchase in purchases) {
+            cal.timeInMillis = purchase.date
+            val dayIndex = calendarDayToIndex(cal)
+            val hour = cal.get(Calendar.HOUR_OF_DAY)
+
+            dayTotals[dayIndex] += purchase.amount
+            dayCounts[dayIndex]++
+
+            val slot = hourToTimeSlot(hour)
+            timeSlotStats[slot] = (timeSlotStats[slot] ?: 0.0) + purchase.amount
+        }
+
+        // Build day of week stats map
+        val dayOfWeekStats = (0..6).associateWith { index ->
+            DayOfWeekStats(
+                dayName = DAY_NAMES[index],
+                dayIndex = index,
+                totalSpent = dayTotals[index],
+                transactionCount = dayCounts[index],
+                averagePerDay = if (dayCounts[index] > 0) dayTotals[index] / dayCounts[index] else 0.0,
+                percentageOfWeek = if (totalSpent > 0) (dayTotals[index] / totalSpent * 100).toFloat() else 0f
+            )
+        }
+
+        // Weekend vs Weekday
+        val weekdayTotal = (0..4).sumOf { dayTotals[it] }
+        val weekendTotal = (5..6).sumOf { dayTotals[it] }
+        val weekdayCount = (0..4).sumOf { dayCounts[it] }
+        val weekendCount = (5..6).sumOf { dayCounts[it] }
+
+        val weekendWeekdayComparison = WeekendWeekdayComparison(
+            weekdayTotal = weekdayTotal,
+            weekdayCount = weekdayCount,
+            weekendTotal = weekendTotal,
+            weekendCount = weekendCount,
+            weekdayAveragePerTransaction = if (weekdayCount > 0) weekdayTotal / weekdayCount else 0.0,
+            weekendAveragePerTransaction = if (weekendCount > 0) weekendTotal / weekendCount else 0.0,
+            weekendToWeekdayRatio = if (weekdayTotal > 0) (weekendTotal / weekdayTotal).toFloat() else 0f
+        )
+
+        // Detect patterns
+        val detectedPatterns = detectSpendingPatterns(
+            purchases, dayTotals, timeSlotStats, totalSpent
+        )
+
+        SpendingPatternAnalysis(
+            period = period,
+            dayOfWeekStats = dayOfWeekStats,
+            mostActiveDayIndex = dayTotals.indices.maxByOrNull { dayTotals[it] } ?: 0,
+            leastActiveDayIndex = dayTotals.indices.minByOrNull { dayTotals[it] } ?: 0,
+            weekendVsWeekday = weekendWeekdayComparison,
+            timeOfDayDistribution = timeSlotStats,
+            detectedPatterns = detectedPatterns
+        )
+    }
+}
+
+    private fun createEmptyPatternAnalysis(period: PeriodRange): SpendingPatternAnalysis {
+        return SpendingPatternAnalysis(
+            period = period,
+            dayOfWeekStats = emptyMap(),
+            mostActiveDayIndex = 0,
+            leastActiveDayIndex = 0,
+            weekendVsWeekday = WeekendWeekdayComparison(
+                weekdayTotal = 0.0, weekdayCount = 0,
+                weekendTotal = 0.0, weekendCount = 0,
+                weekdayAveragePerTransaction = 0.0,
+                weekendAveragePerTransaction = 0.0,
+                weekendToWeekdayRatio = 0f
+            ),
+            timeOfDayDistribution = emptyMap(),
+            detectedPatterns = emptyList()
+        )
+    }
+
+    // ============================================================
+    // STATISTICAL INSIGHTS
+    // ============================================================
+
+    /**
+     * Calculates statistical insights for the specified period.
+     */
+    suspend fun getStatisticalInsights(period: PeriodRange): StatisticalInsights = withContext(Dispatchers.Default) {
+        coroutineScope {
+        val expenses = expenseDao.getExpensesBetween(period.startMs, period.endMs)
+        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+
+        if (purchases.isEmpty()) {
+            return@coroutineScope createEmptyStatisticalInsights(period)
+        }
+
+        val amounts = purchases.map { it.amount }
+        val sortedAmounts = amounts.sorted()
+
+        val mean = amounts.average()
+        val variance = if (amounts.size > 1) {
+            amounts.sumOf { (it - mean) * (it - mean) } / amounts.size
+        } else 0.0
+        val stdDev = sqrt(variance)
+        val cv = if (mean > 0) (stdDev / mean).toFloat() else 0f
+
+        // Build histogram
+        // Build histogram (O(n) single pass)
+        // Build histogram (O(n) single pass)
+        val histogram = buildHistogram(amounts, 10)
+
+        // Calculate percentiles
+        val percentiles = TransactionPercentiles(
+            p10 = getPercentile(sortedAmounts, 0.10),
+            p25 = getPercentile(sortedAmounts, 0.25),
+            p50 = getPercentile(sortedAmounts, 0.50),
+            p75 = getPercentile(sortedAmounts, 0.75),
+            p90 = getPercentile(sortedAmounts, 0.90),
+            p95 = getPercentile(sortedAmounts, 0.95),
+            p99 = getPercentile(sortedAmounts, 0.99)
+        )
+
+        // Daily spending analysis
+        val cal = Calendar.getInstance()
+        val dailyTotals = purchases.groupBy { expense ->
+            cal.timeInMillis = expense.date
+            "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.DAY_OF_YEAR)}"
+        }.mapValues { it.value.sumOf { e -> e.amount } }
+
+        val periodDays = ((period.endMs - period.startMs) / MILLIS_PER_DAY).toInt().coerceAtLeast(1)
+
+        StatisticalInsights(
+            period = period,
+            histogramBins = histogram,
+            percentiles = percentiles,
+            volatilityIndex = (cv * 100).coerceIn(0f, 100f),
+            coefficientOfVariation = cv,
+            standardDeviation = stdDev,
+            meanTransaction = mean,
+            medianTransaction = percentiles.p50,
+            modeTransaction = findMode(amounts),
+            largestTransaction = purchases.maxByOrNull { it.amount },
+            smallestTransaction = purchases.minByOrNull { it.amount },
+            averageDailySpend = if (dailyTotals.isNotEmpty()) dailyTotals.values.average() else 0.0,
+            maxDailySpend = dailyTotals.values.maxOrNull() ?: 0.0,
+            daysWithSpending = dailyTotals.size,
+            daysWithoutSpending = (periodDays - dailyTotals.size).coerceAtLeast(0)
+        )
+    }
+}
+
+    private fun createEmptyStatisticalInsights(period: PeriodRange): StatisticalInsights {
+        return StatisticalInsights(
+            period = period,
+            histogramBins = emptyList(),
+            percentiles = TransactionPercentiles(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            volatilityIndex = 0f,
+            coefficientOfVariation = 0f,
+            standardDeviation = 0.0,
+            meanTransaction = 0.0,
+            medianTransaction = 0.0,
+            modeTransaction = null,
+            largestTransaction = null,
+            smallestTransaction = null,
+            averageDailySpend = 0.0,
+            maxDailySpend = 0.0,
+            daysWithSpending = 0,
+            daysWithoutSpending = 0
+        )
+    }
+
+    // ============================================================
+    // PRIVATE HELPER METHODS
+    // ============================================================
+
+    private fun calendarDayToIndex(cal: Calendar): Int {
+        return when (cal.get(Calendar.DAY_OF_WEEK)) {
+            Calendar.MONDAY -> 0
+            Calendar.TUESDAY -> 1
+            Calendar.WEDNESDAY -> 2
+            Calendar.THURSDAY -> 3
+            Calendar.FRIDAY -> 4
+            Calendar.SATURDAY -> 5
+            Calendar.SUNDAY -> 6
+            else -> 0
+        }
+    }
+
+    private fun hourToTimeSlot(hour: Int): TimeSlot {
+        return when (hour) {
+            in 6..9 -> TimeSlot.EARLY_MORNING
+            in 9..12 -> TimeSlot.MORNING
+            in 12..17 -> TimeSlot.AFTERNOON
+            in 17..21 -> TimeSlot.EVENING
+            in 21..24 -> TimeSlot.NIGHT
+            else -> TimeSlot.LATE_NIGHT
+        }
+    }
+
+    private fun calculateChangePercent(current: Double, previous: Double?): Float? {
+        if (previous == null || previous == 0.0) return null
+        val percent = ((current - previous) / previous * 100)
+        return percent.coerceIn(-1000.0, 1000.0).toFloat() // Clamp to avoid infinite/huge values
+    }
+
+    private fun determineTrendDirection(changePercent: Float?): CategoryTrendDirection {
+        if (changePercent == null) return CategoryTrendDirection.STABLE
+        return when {
+            changePercent > 20 -> CategoryTrendDirection.UP_FAST
+            changePercent > 5 -> CategoryTrendDirection.UP
+            changePercent < -20 -> CategoryTrendDirection.DOWN_FAST
+            changePercent < -5 -> CategoryTrendDirection.DOWN
+            else -> CategoryTrendDirection.STABLE
+        }
+    }
+
+    private fun determineBudgetStatus(spent: Double, budget: Double): BudgetHealthStatus {
+        if (budget <= 0) return BudgetHealthStatus.ON_TRACK
+        val ratio = spent / budget
+        return when {
+            ratio >= 1.0 -> BudgetHealthStatus.EXCEEDED
+            ratio >= 0.9 -> BudgetHealthStatus.CRITICAL
+            ratio >= 0.75 -> BudgetHealthStatus.WARNING
+            else -> BudgetHealthStatus.ON_TRACK
+        }
+    }
+
+    private fun getPercentile(sorted: List<Double>, percentile: Double): Double {
+        if (sorted.isEmpty()) return 0.0
+        if (sorted.size == 1) return sorted.first()
+
+        val index = (sorted.size - 1) * percentile
+        val lowerIndex = index.toInt()
+        val upperIndex = (lowerIndex + 1).coerceAtMost(sorted.size - 1)
+
+        if (lowerIndex == upperIndex) return sorted[lowerIndex]
+
+        val fraction = index - lowerIndex
+        return sorted[lowerIndex] + (sorted[upperIndex] - sorted[lowerIndex]) * fraction
+    }
+
+    private fun buildSparklineDataByCategory(
+        purchases: List<Expense>,
+        period: PeriodRange
+    ): Map<Long?, List<Double>> {
+        val periodDuration = period.endMs - period.startMs
+        val periodDays = (periodDuration / MILLIS_PER_DAY).toInt()
+        if (periodDays <= 0) return emptyMap()
+
+        // Determine how many days to actually show
+        // If the period is current, we only show up to today to avoid a long "future" flat line
+        val now = System.currentTimeMillis()
+        val daysPassed = if (now in period.startMs until period.endMs) {
+            ((now - period.startMs) / MILLIS_PER_DAY).toInt() + 1
+        } else {
+            periodDays
+        }
+
+        val cal = Calendar.getInstance()
+        val dailyByCategory = mutableMapOf<Long?, DoubleArray>()
+
+        for (purchase in purchases) {
+            val dayIndex = ((purchase.date - period.startMs) / MILLIS_PER_DAY).toInt()
+
+            if (dayIndex in 0 until periodDays) {
+                val catArray = dailyByCategory.getOrPut(purchase.categoryId) { 
+                    DoubleArray(periodDays) 
+                }
+                catArray[dayIndex] += purchase.amount
+            }
+        }
+
+        // Build cumulative data for sparkline
+        // Build cumulative data for sparkline with safe running total
+        return dailyByCategory.mapValues { (_, daily) ->
+            var running = 0.0
+            val cumulative = ArrayList<Double>(daysPassed)
+            for (i in 0 until daysPassed) {
+                running += daily[i]
+                cumulative.add(running)
+            }
+            cumulative
+        }
+    }
+
+    private fun calculateVelocity(expenses: List<Expense>): Double {
+        if (expenses.size < 2) return 0.0
+
+        val sorted = expenses.sortedBy { it.date }
+        val midPoint = sorted.size / 2
+
+        val firstHalfTotal = sorted.take(midPoint).sumOf { it.amount }
+        val secondHalfTotal = sorted.takeLast(midPoint).sumOf { it.amount }
+
+        return secondHalfTotal - firstHalfTotal
+    }
+
+    private fun calculateAverageDaysBetween(dates: List<Long>): Double? {
+        if (dates.size < 2) return null
+
+        val sorted = dates.sorted()
+        var totalDays = 0L
+
+        for (i in 1 until sorted.size) {
+            val diff = (sorted[i] - sorted[i-1]) / MILLIS_PER_DAY
+            totalDays += diff.coerceAtLeast(0)
+        }
+
+        return totalDays.toDouble() / (sorted.size - 1)
+    }
+
+    private fun determineVisitFrequency(
+        count: Int,
+        period: PeriodRange,
+        avgDaysBetween: Double?
+    ): MerchantVisitFrequency {
+        val periodDays = ((period.endMs - period.startMs) / MILLIS_PER_DAY).toInt()
+
+        return when {
+            periodDays <= 0 -> MerchantVisitFrequency.RARE
+            count >= periodDays * 0.7 -> MerchantVisitFrequency.DAILY
+            avgDaysBetween == null -> MerchantVisitFrequency.RARE
+            avgDaysBetween <= 7 -> MerchantVisitFrequency.WEEKLY
+            avgDaysBetween <= 14 -> MerchantVisitFrequency.BIWEEKLY
+            avgDaysBetween <= 35 -> MerchantVisitFrequency.MONTHLY
+            avgDaysBetween <= 100 -> MerchantVisitFrequency.QUARTERLY
+            else -> MerchantVisitFrequency.RARE
+        }
+    }
+
+    private fun analyzePriceTrend(
+        historicalExpenses: List<Expense>
+    ): PriceTrendResult {
+        if (historicalExpenses.size < 2) {
+            return PriceTrendResult(MerchantPriceTrend.INSUFFICIENT_DATA, null, null, null)
+        }
+
+        val sorted = historicalExpenses.sortedBy { it.date }
+        val first = sorted.first().amount
+        val last = sorted.last().amount
+        val change = if (first > 0) ((last - first) / first * 100).toFloat() else null
+
+        val trend = when {
+            change == null -> MerchantPriceTrend.INSUFFICIENT_DATA
+            change > 10 -> MerchantPriceTrend.INCREASING_FAST
+            change > 3 -> MerchantPriceTrend.INCREASING
+            change < -10 -> MerchantPriceTrend.DECREASING_FAST
+            change < -3 -> MerchantPriceTrend.DECREASING
+            else -> MerchantPriceTrend.STABLE
+        }
+
+        return PriceTrendResult(trend, first, last, change)
+    }
+
+    private data class PriceTrendResult(
+        val trend: MerchantPriceTrend,
+        val first: Double?,
+        val last: Double?,
+        val change: Float?
+    )
+
+    private fun calculateLoyaltyScore(amounts: List<Double>, historicalCount: Int): Float {
+        if (amounts.isEmpty()) return 0f
+
+        // Amount consistency (lower variance = higher score)
+        val avg = amounts.average()
+        val stdDev = if (amounts.size > 1) {
+            sqrt(amounts.sumOf { (it - avg) * (it - avg) } / amounts.size)
+        } else avg
+
+        val cv = if (avg > 0) stdDev / avg else 1.0
+        val safeCv = if (cv.isNaN() || cv.isInfinite()) 1.0 else cv
+        val consistencyScore = (1.0 - safeCv.coerceIn(0.0, 1.0)) * 0.4
+
+        // Longevity (more historical visits = higher score)
+        val longevityScore = (historicalCount / 24.0).coerceIn(0.0, 1.0) * 0.3
+
+        // Frequency (more recent visits = higher score)
+        // Cap at 12 visits (e.g. monthly for a year)
+        val frequencyScore = (amounts.size / 12.0).coerceIn(0.0, 1.0) * 0.3
+
+        return ((consistencyScore + longevityScore + frequencyScore) * 100).toFloat().coerceIn(0f, 100f)
+    }
+
+    private fun determineConsistencyRating(
+        amounts: List<Double>,
+        avgDaysBetween: Double?
+    ): MerchantConsistencyRating {
+        return when {
+            amounts.size < 3 -> MerchantConsistencyRating.NEW_MERCHANT
+            avgDaysBetween == null -> MerchantConsistencyRating.IRREGULAR
+            else -> {
+                val avg = amounts.average()
+                val stdDev = if (amounts.size > 1) {
+                    sqrt(amounts.sumOf { (it - avg) * (it - avg) } / amounts.size)
+                } else 0.0
+                val cv = if (avg > 0) stdDev / avg else 1.0
+
+                when {
+                    cv < 0.1 && avgDaysBetween in 25.0..35.0 -> MerchantConsistencyRating.HIGHLY_CONSISTENT
+                    cv < 0.25 -> MerchantConsistencyRating.CONSISTENT
+                    cv < 0.5 -> MerchantConsistencyRating.VARIABLE
+                    else -> MerchantConsistencyRating.IRREGULAR
+                }
+            }
+        }
+    }
+
+    private fun calculateStreakCount(historicalExpenses: List<Expense>): Int {
+        if (historicalExpenses.isEmpty()) return 0
+
+        val cal = Calendar.getInstance()
+        val months = historicalExpenses.map { expense ->
+            cal.timeInMillis = expense.date
+            "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}"
+        }.distinct().sorted()
+
+        if (months.size < 2) return 1
+
+        var maxStreak = 1
+        var currentStreak = 1
+
+        for (i in 1 until months.size) {
+            val prevParts = months[i-1].split("-").map { it.toInt() }
+            val currParts = months[i].split("-").map { it.toInt() }
+
+            val isConsecutive = (currParts[0] == prevParts[0] && currParts[1] == prevParts[1] + 1) ||
+                               (currParts[0] == prevParts[0] + 1 && currParts[1] == 0 && prevParts[1] == 11)
+
+            if (isConsecutive) {
+                currentStreak++
+                maxStreak = maxOf(maxStreak, currentStreak)
+            } else {
+                currentStreak = 1
+            }
+        }
+
+        return maxStreak
+    }
+
+    private fun calculateSpendingByDayOfWeek(transactions: List<Expense>): Map<Int, Double> {
+        val cal = Calendar.getInstance()
+        val result = mutableMapOf<Int, Double>()
+
+        for (tx in transactions) {
+            cal.timeInMillis = tx.date
+            val dayIndex = calendarDayToIndex(cal)
+            result[dayIndex] = (result[dayIndex] ?: 0.0) + tx.amount
+        }
+
+        return result
+    }
+
+    private fun predictNextVisit(dates: List<Long>, avgDaysBetween: Double?): Long? {
+        if (dates.isEmpty() || avgDaysBetween == null || avgDaysBetween <= 0) return null
+
+        val lastVisit = dates.max()
+        return lastVisit + (avgDaysBetween * MILLIS_PER_DAY).toLong()
+    }
+
+    private fun detectSpendingPatterns(
+        purchases: List<Expense>,
+        dayTotals: DoubleArray,
+        timeSlotStats: Map<TimeSlot, Double>,
+        totalSpent: Double
+    ): List<DetectedPattern> {
+        val patterns = mutableListOf<DetectedPattern>()
+
+        if (totalSpent <= 0 || purchases.isEmpty()) return patterns
+
+        val cal = Calendar.getInstance()
+
+        // Weekend Warrior pattern
+        val weekendTotal = dayTotals[5] + dayTotals[6]
+        if (weekendTotal / totalSpent > 0.5) {
+            val weekendMerchants = purchases.filter { tx ->
+                cal.timeInMillis = tx.date
+                cal.get(Calendar.DAY_OF_WEEK) in listOf(Calendar.SATURDAY, Calendar.SUNDAY)
+            }.map { it.merchant }.distinct()
+
+            patterns.add(DetectedPattern(
+                type = SpendingPatternType.WEEKEND_WARRIOR,
+                description = "Most spending happens on weekends",
+                confidence = (weekendTotal / totalSpent * 100).toFloat(),
+                affectedMerchants = weekendMerchants.take(5)
+            ))
+        }
+
+        // Lunch Browser pattern
+        val lunchSpending = (timeSlotStats[TimeSlot.MORNING] ?: 0.0) + 
+                           (timeSlotStats[TimeSlot.AFTERNOON] ?: 0.0)
+        if (lunchSpending / totalSpent > 0.4) {
+            patterns.add(DetectedPattern(
+                type = SpendingPatternType.LUNCH_BROWSER,
+                description = "Regular daytime spending suggests frequent lunch outings",
+                confidence = (lunchSpending / totalSpent * 100).toFloat(),
+                affectedMerchants = emptyList() // Could filter for restaurant categories if available
+            ))
+        }
+
+        // Impulse Buyer pattern (high transaction variance)
+        val amounts = purchases.map { it.amount }
+        val avg = amounts.average()
+        val stdDev = if (amounts.size > 1) {
+            sqrt(amounts.sumOf { (it - avg) * (it - avg) } / amounts.size)
+        } else 0.0
+        val cv = if (avg > 0) stdDev / avg else 0.0
+
+        if (cv > 1.0 && purchases.size > 10) {
+            patterns.add(DetectedPattern(
+                type = SpendingPatternType.IMPULSE_BUYER,
+                description = "High spending variability detected",
+                confidence = (cv * 50).toFloat().coerceAtMost(100f),
+                affectedMerchants = emptyList()
+            ))
+        }
+
+        return patterns
+    }
+
+    /**
+     * Builds a histogram from a list of values.
+     * O(n) complexity.
+     */
+    private fun buildHistogram(values: List<Double>, binCount: Int = 10): List<HistogramBin> {
+        if (values.isEmpty()) return emptyList()
+
+        val min = values.minOrNull() ?: 0.0
+        val max = values.maxOrNull() ?: 0.0
+        val sum = values.sum()
+
+        if (min == max) {
+            return listOf(HistogramBin(
+                rangeStart = min, 
+                rangeEnd = max, 
+                count = values.size, 
+                total = sum,
+                percentage = 100f
+            ))
+        }
+
+        val range = max - min
+        val binWidth = range / binCount
+
+        // Count frequencies and sums
+        val counts = IntArray(binCount)
+        val totals = DoubleArray(binCount)
+
+        for (value in values) {
+            val binIndex = ((value - min) / binWidth).toInt()
+            // Handle edge case where value == max (goes into last bin)
+            val index = binIndex.coerceIn(0, binCount - 1)
+            counts[index]++
+            totals[index] += value
+        }
+
+        // Create bin objects
+        val totalCount = values.size.toFloat()
+        return counts.mapIndexed { index, count ->
+            val binStart = min + (index * binWidth)
+            val binEnd = min + ((index + 1) * binWidth)
+            HistogramBin(
+                rangeStart = binStart,
+                rangeEnd = binEnd,
+                count = count,
+                total = totals[index],
+                percentage = if (totalCount > 0) (count / totalCount) * 100f else 0f
+            )
+        }
+    }
+
+    private fun findMode(amounts: List<Double>): Double? {
+        if (amounts.isEmpty()) return null
+
+        // Round to nearest 0.50 for grouping
+        val rounded = amounts.map { round(it * 2) / 2.0 }
+        return rounded.groupBy { it }
+            .maxByOrNull { it.value.size }
+            ?.key
+    }
+}
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\domain\analytics\AdvancedAnalyticsModels.kt <a name="appsrcmainjavacomyournameexpensetrackerdomainanalyticsadvancedanalyticsmodelskt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.analytics
+
+import androidx.compose.runtime.Immutable
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+
+/**
+ * Period definition for analytics queries.
+ */
+enum class AnalyticsPeriod {
+    WEEK, MONTH, QUARTER, YEAR, CUSTOM
+}
+
+/**
+ * Represents a time range for analytics calculations.
+ */
+@Immutable
+data class PeriodRange(
+    val period: AnalyticsPeriod,
+    val startMs: Long,
+    val endMs: Long,
+    val label: String,
+    val comparisonRange: PeriodRange?
+)
+
+/**
+ * Enhanced category analytics with budget context and trends.
+ */
+@Immutable
+data class EnhancedCategoryAnalytics(
+    val category: Category,
+    val period: PeriodRange,
+
+    // Core metrics
+    val totalSpent: Double,
+    val transactionCount: Int,
+    val averagePerTransaction: Double,
+    val medianTransaction: Double,
+
+    // Comparison
+    val previousPeriodTotal: Double?,
+    val changePercent: Float?,
+    val trendDirection: CategoryTrendDirection,
+
+    // Budget context
+    val budgetAmount: Double?,
+    val budgetUtilizationPercent: Float?,
+    val budgetRemaining: Double?,
+    val budgetStatus: BudgetHealthStatus?,
+
+    // Distribution
+    val minTransaction: Double,
+    val maxTransaction: Double,
+    val percentile25: Double,
+    val percentile75: Double,
+
+    // Trend visualization
+    val sparklineData: List<Double>,
+
+    // Spending velocity (positive = accelerating)
+    val velocity: Double
+)
+
+enum class CategoryTrendDirection {
+    UP_FAST,    // >20% increase
+    UP,         // 5-20% increase  
+    STABLE,     // -5% to +5%
+    DOWN,       // 5-20% decrease
+    DOWN_FAST   // >20% decrease
+}
+
+/**
+ * Enhanced merchant analytics with loyalty and price trends.
+ */
+@Immutable
+data class EnhancedMerchantAnalytics(
+    val merchant: String,
+    val period: PeriodRange,
+
+    // Core metrics
+    val totalSpent: Double,
+    val transactionCount: Int,
+    val averagePerVisit: Double,
+    val medianPerVisit: Double,
+
+    // Frequency analysis
+    val visitFrequency: MerchantVisitFrequency,
+    val averageDaysBetweenVisits: Double?,
+    val predictedNextVisitDate: Long?,
+
+    // Price trend
+    val priceTrend: MerchantPriceTrend,
+    val firstPurchaseAmount: Double?,
+    val latestPurchaseAmount: Double?,
+    val priceChangePercent: Float?,
+
+    // Loyalty metrics
+    val loyaltyScore: Float,
+    val consistencyRating: MerchantConsistencyRating,
+    val consecutiveMonthsVisited: Int,
+
+    // Spending distribution by day of week (0=Mon, 6=Sun)
+    val spendingByDayOfWeek: Map<Int, Double>,
+
+    // Recent transactions preview
+    val recentTransactions: List<Expense>
+)
+
+enum class MerchantVisitFrequency {
+    DAILY, WEEKLY, BIWEEKLY, MONTHLY, QUARTERLY, RARE
+}
+
+enum class MerchantPriceTrend {
+    INCREASING_FAST, INCREASING, STABLE, DECREASING, DECREASING_FAST, INSUFFICIENT_DATA
+}
+
+enum class MerchantConsistencyRating {
+    HIGHLY_CONSISTENT, CONSISTENT, VARIABLE, IRREGULAR, NEW_MERCHANT
+}
+
+/**
+ * Spending pattern analysis results.
+ */
+@Immutable
+data class SpendingPatternAnalysis(
+    val period: PeriodRange,
+
+    // Day of week breakdown
+    val dayOfWeekStats: Map<Int, DayOfWeekStats>,
+    val mostActiveDayIndex: Int,
+    val leastActiveDayIndex: Int,
+
+    // Weekend vs Weekday comparison
+    val weekendVsWeekday: WeekendWeekdayComparison,
+
+    // Time of day distribution
+    val timeOfDayDistribution: Map<TimeSlot, Double>,
+
+    // Detected behavioral patterns
+    val detectedPatterns: List<DetectedPattern>
+)
+
+@Immutable
+data class DayOfWeekStats(
+    val dayName: String,
+    val dayIndex: Int,
+    val totalSpent: Double,
+    val transactionCount: Int,
+    val averagePerDay: Double,
+    val percentageOfWeek: Float
+)
+
+@Immutable
+data class WeekendWeekdayComparison(
+    val weekdayTotal: Double,
+    val weekdayCount: Int,
+    val weekendTotal: Double,
+    val weekendCount: Int,
+    val weekdayAveragePerTransaction: Double,
+    val weekendAveragePerTransaction: Double,
+    val weekendToWeekdayRatio: Float
+)
+
+enum class TimeSlot {
+    EARLY_MORNING,   // 6-9
+    MORNING,         // 9-12
+    AFTERNOON,       // 12-17
+    EVENING,         // 17-21
+    NIGHT,           // 21-24
+    LATE_NIGHT       // 0-6
+}
+
+@Immutable
+data class DetectedPattern(
+    val type: SpendingPatternType,
+    val description: String,
+    val confidence: Float,
+    val affectedMerchants: List<String>
+)
+
+enum class SpendingPatternType {
+    WEEKEND_WARRIOR,
+    LUNCH_BROWSER,
+    COMMUTER,
+    SUBSCRIPTION_HEAVY,
+    IMPULSE_BUYER,
+    PLANNER,
+    OCCASIONAL_SPLURGER
+}
+
+/**
+ * Statistical insights for a period.
+ */
+@Immutable
+data class StatisticalInsights(
+    val period: PeriodRange,
+
+    // Transaction size distribution
+    val histogramBins: List<HistogramBin>,
+    val percentiles: TransactionPercentiles,
+
+    // Volatility metrics
+    val volatilityIndex: Float,
+    val coefficientOfVariation: Float,
+    val standardDeviation: Double,
+
+    // Central tendencies
+    val meanTransaction: Double,
+    val medianTransaction: Double,
+    val modeTransaction: Double?,
+
+    // Extremes
+    val largestTransaction: Expense?,
+    val smallestTransaction: Expense?,
+
+    // Daily spending stats
+    val averageDailySpend: Double,
+    val maxDailySpend: Double,
+    val daysWithSpending: Int,
+    val daysWithoutSpending: Int
+)
+
+@Immutable
+data class HistogramBin(
+    val rangeStart: Double,
+    val rangeEnd: Double,
+    val count: Int,
+    val total: Double,
+    val percentage: Float
+)
+
+@Immutable
+data class TransactionPercentiles(
+    val p10: Double,
+    val p25: Double,
+    val p50: Double,
+    val p75: Double,
+    val p90: Double,
+    val p95: Double,
+    val p99: Double
+)
+```
 
 ---
 
@@ -126,6 +1301,7 @@ data class RecurringExpense(
     val merchant: String,
     val avgAmount: Double,
     val frequency: Int, // transactions total
+    val intervalDays: Int, // approximate days between transactions
     val amountVariation: Double, // max - min
     val isStable: Boolean // low variation
 )
@@ -257,7 +1433,8 @@ import kotlin.math.sqrt
 
 @Singleton
 class InsightsEngine @Inject constructor(
-    private val expenseDao: ExpenseDao
+    private val expenseDao: ExpenseDao,
+    private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 ) {
 
     companion object {
@@ -280,7 +1457,8 @@ class InsightsEngine @Inject constructor(
         val topMerchantsDeferred = async { buildMerchantInsights(allExpenses) }
         val spendingPaceDeferred = async { buildSpendingPace(currentMonth, previousMonth, allExpenses) }
         val anomaliesDeferred = async { findAnomalies(currentMonth, categoryMap) }
-        val recurringExpensesDeferred = async { findRecurringExpenses() }
+        // Use RecurringExpenseEngine directly
+        val recurringExpensesDeferred = async { findRecurringExpenses(allExpenses) }
 
         val threeMonthsAgo = getMonthPeriod(now, -2)
         val dayOfWeekPatternDeferred = async { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs) }
@@ -387,14 +1565,16 @@ class InsightsEngine @Inject constructor(
 
         // 4. Recurring
         snapshot.recurringExpenses.take(3).forEach { recurring ->
-             insights.add(
-                SpendingInsight(
-                    InsightType.RECURRING_DETECTED, "🔄",
-                    "Recurring: ${recurring.merchant}",
-                    "€${fmt(recurring.avgAmount)} ~every ${30.0/recurring.frequency} days", // approx
-                    0.5f
-                )
-            )
+                 if (recurring.intervalDays > 0) {
+                     insights.add(
+                        SpendingInsight(
+                            InsightType.RECURRING_DETECTED, "🔄",
+                            "Recurring: ${recurring.merchant}",
+                            "€${fmt(recurring.avgAmount)} ~every ${recurring.intervalDays} days",
+                            0.5f
+                        )
+                    )
+                 }
         }
 
         // 5. Largest Transaction
@@ -415,23 +1595,23 @@ class InsightsEngine @Inject constructor(
 
     // === Month Period Helpers ===
 
+    // === Month Period Helpers ===
+
     fun getMonthPeriod(timeMs: Long, monthOffset: Int = 0): MonthPeriod {
+        // Use TimePeriodUtils for start/end
+        val range = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(timeMs, monthOffset)
+
         val cal = Calendar.getInstance()
-        cal.timeInMillis = timeMs
-        cal.add(Calendar.MONTH, monthOffset)
-        cal.set(Calendar.DAY_OF_MONTH, 1)
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val startMs = cal.timeInMillis
+        cal.timeInMillis = range.first
         val year = cal.get(Calendar.YEAR)
         val month = cal.get(Calendar.MONTH)
 
-        cal.add(Calendar.MONTH, 1)
-        val endMs = cal.timeInMillis
-
-        return MonthPeriod(year, month, startMs, endMs)
+        return MonthPeriod(year, month, range.first, range.second + 1) // +1 because Utils gives inclusive end, MonthPeriod likely uses exclusive end or similar. 
+        // Logic check: PeriodRange is usually inclusive. ExpenseDao queries are simpler with inclusive/exclusive.
+        // Let's standardise. MonthPeriod seems to store start/end.
+        // Existing implementation: endMs is start of *next* month (exclusive).
+        // TimePeriodUtils.getMonthRange returns (start, end) inclusive (last millisecond).
+        // So endMs = utils.end + 1
     }
 
     private fun getPreviousMonthPeriod(current: MonthPeriod): MonthPeriod {
@@ -569,19 +1749,19 @@ class InsightsEngine @Inject constructor(
             .groupBy { it.merchant }
 
         return stats.map { ms ->
-            val amounts = purchasesByMerchant[ms.merchant]?.map { it.amount } ?: emptyList()
+            val amounts = purchasesByMerchant[ms.merchantName]?.map { it.amount } ?: emptyList()
             val stdDev = if (amounts.size >= 3) calculateStdDev(amounts) else null
 
-            val isRecurring = ms.txCount >= 2 &&
-                    (ms.maxAmount - ms.minAmount) < (ms.avgAmount * 0.15)
+            val isRecurring = ms.transactionCount >= 2 &&
+                    (ms.maxAmount - ms.minAmount) < (ms.averageAmount * 0.15)
 
             MerchantInsight(
-                merchant = ms.merchant,
-                avgAmount = ms.avgAmount,
+                merchant = ms.merchantName,
+                avgAmount = ms.averageAmount,
                 minAmount = ms.minAmount,
                 maxAmount = ms.maxAmount,
                 totalSpent = ms.totalAmount,
-                transactionCount = ms.txCount,
+                transactionCount = ms.transactionCount,
                 isLikelyRecurring = isRecurring,
                 stdDeviation = stdDev
             )
@@ -678,7 +1858,7 @@ class InsightsEngine @Inject constructor(
         categoryMap: Map<Long, Category>
     ): List<AnomalyTransaction> = coroutineScope {
         val merchantStats = expenseDao.getMerchantStats() // only merchants with 2+ tx
-        val statsMap = merchantStats.associateBy { it.merchant }
+        val statsMap = merchantStats.associateBy { it.merchantName }
 
         // Check top merchants this month for outliers
         val topMerchants = expenseDao.getTopMerchantsForPeriod(
@@ -686,26 +1866,26 @@ class InsightsEngine @Inject constructor(
         )
 
         val deferredAnomalies: List<kotlinx.coroutines.Deferred<AnomalyTransaction?>> = topMerchants.mapNotNull { merchantStat ->
-            val historicalStats = statsMap[merchantStat.merchant] ?: return@mapNotNull null
-            if (historicalStats.txCount < 3) return@mapNotNull null
+            val historicalStats = statsMap[merchantStat.merchantName] ?: return@mapNotNull null
+            if (historicalStats.transactionCount < 3) return@mapNotNull null
 
             // Dynamic threshold based on sample size
             val multiplier = when {
-                historicalStats.txCount < 5 -> 5.0
-                historicalStats.txCount < 10 -> 4.0
+                historicalStats.transactionCount < 5 -> 5.0
+                historicalStats.transactionCount < 10 -> 4.0
                 else -> 3.0
             }
 
             // If the max amount this month is > X times the historical average
-            if (merchantStat.maxAmount > historicalStats.avgAmount * multiplier) {
+            if (merchantStat.maxAmount > historicalStats.averageAmount * multiplier) {
                 async {
                     expenseDao.getLargestExpenseForMerchant(
-                        merchantStat.merchant, currentMonth.startMs, currentMonth.endMs
+                        merchantStat.merchantName, currentMonth.startMs, currentMonth.endMs
                     )?.let { expense ->
                         AnomalyTransaction(
                             expense = expense,
-                            merchantAvg = historicalStats.avgAmount,
-                            deviationMultiple = (expense.amount / historicalStats.avgAmount).toFloat(),
+                            merchantAvg = historicalStats.averageAmount,
+                            deviationMultiple = (expense.amount / historicalStats.averageAmount).toFloat(),
                             category = expense.categoryId?.let { categoryMap[it] }
                         )
                     }
@@ -720,16 +1900,31 @@ class InsightsEngine @Inject constructor(
 
     // === Recurring Expenses ===
 
-    private suspend fun findRecurringExpenses(): List<RecurringExpense> {
-        val candidates = expenseDao.getRecurringCandidates()
+    // === Recurring Expenses ===
 
-        return candidates.map { ms ->
+    private suspend fun findRecurringExpenses(allExpenses: List<Expense>): List<RecurringExpense> {
+        // Use the centralized engine
+        val patterns = recurringExpenseEngine.getPatterns(allExpenses)
+
+        // Map to Insights Snapshot model
+        return patterns.map { pattern ->
+            val intervalDays = when (pattern.frequency) {
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.WEEKLY -> 7
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.BIWEEKLY -> 14
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.MONTHLY -> 30
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.QUARTERLY -> 90
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.SEMI_ANNUALLY -> 180
+                com.yourname.expensetracker.domain.model.RecurrenceFrequency.ANNUALLY -> 365
+                else -> 0
+            }
+
             RecurringExpense(
-                merchant = ms.merchant,
-                avgAmount = ms.avgAmount,
-                frequency = ms.txCount,
-                amountVariation = ms.maxAmount - ms.minAmount,
-                isStable = (ms.maxAmount - ms.minAmount) < (ms.avgAmount * 0.05)
+                merchant = pattern.merchantName,
+                avgAmount = pattern.averageAmount,
+                frequency = (30.0 / intervalDays.coerceAtLeast(1)).toInt(), // Estimate monthly occurrences
+                intervalDays = intervalDays,
+                amountVariation = 0.0, // Pattern doesn't expose this raw stat easily, but could add to Pattern if needed.
+                isStable = pattern.amountVariancePercent < 0.1
             )
         }
     }
@@ -2520,7 +3715,7 @@ class HybridExpenseClassifier @Inject constructor(
         }
 
         // 3. Fallback (Improved for BUG-012)
-        val defaultCategory = categories.find { it.name.contains("Groceries", ignoreCase = true) } 
+        val defaultCategory = categories.find { it.name.equals("Uncategorized", ignoreCase = true) }
             ?: categories.find { it.name.contains("Other", ignoreCase = true) }
             ?: categories.firstOrNull()
 
@@ -6393,6 +7588,202 @@ object StringDistanceUtils {
         val levenshtein = levenshteinSimilarity(s1, s2)
 
         return 0.7 * jaroWinkler + 0.3 * levenshtein
+    }
+}
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\domain\util\TimePeriodUtils.kt <a name="appsrcmainjavacomyournameexpensetrackerdomainutiltimeperiodutilskt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.util
+
+import java.util.Calendar
+import java.util.TimeZone
+
+/**
+ * Utility to standardize date range calculations across the app.
+ * Replaces manual Calendar manipulation to prevent timezone/boundary bugs.
+ */
+object TimePeriodUtils {
+
+    /**
+     * getStartOfDay - Returns the start of the day (00:00:00.000) for a given timestamp.
+     * Uses system default timezone.
+     */
+    fun getStartOfDay(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    /**
+     * getEndOfDay - Returns the end of the day (23:59:59.999) for a given timestamp.
+     */
+    fun getEndOfDay(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.set(Calendar.HOUR_OF_DAY, 23)
+        cal.set(Calendar.MINUTE, 59)
+        cal.set(Calendar.SECOND, 59)
+        cal.set(Calendar.MILLISECOND, 999)
+        return cal.timeInMillis
+    }
+
+    /**
+     * getStartOfWeek - Returns the start of the week (Monday 00:00:00.000) for a given timestamp.
+     * Adjusts if current day is Sunday (treats Sunday as last day of week).
+     */
+    fun getStartOfWeek(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.firstDayOfWeek = Calendar.MONDAY
+
+        // Reset to start of day first
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+
+        // Set to Monday of current week
+        cal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+
+        // If we are currently Sunday, Calendar might jump to next Monday depending on locale settings.
+        // But with standard US locale, MONDAY is day 2. SUNDAY is day 1. 
+        // If today is Sunday (1), setting DAY_OF_WEEK to Monday (2) might jump forward.
+        // Safer approach: calculate delta
+
+        // Re-do with delta logic which is robust
+        val cal2 = Calendar.getInstance()
+        cal2.timeInMillis = timestamp
+        cal2.set(Calendar.HOUR_OF_DAY, 0)
+        cal2.set(Calendar.MINUTE, 0)
+        cal2.set(Calendar.SECOND, 0)
+        cal2.set(Calendar.MILLISECOND, 0)
+
+        val dayOfWeek = cal2.get(Calendar.DAY_OF_WEEK) // Sun=1, Mon=2...
+        val daysFromMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
+
+        return cal2.timeInMillis - (daysFromMonday * 86400000L)
+    }
+
+    /**
+     * getStartOfMonth - Returns the start of the month (1st, 00:00:00.000) for a given timestamp.
+     */
+    fun getStartOfMonth(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    /**
+     * getEndOfMonth - Returns the end of the month (Last Day, 23:59:59.999) for a given timestamp.
+     */
+    fun getEndOfMonth(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+        cal.set(Calendar.HOUR_OF_DAY, 23)
+        cal.set(Calendar.MINUTE, 59)
+        cal.set(Calendar.SECOND, 59)
+        cal.set(Calendar.MILLISECOND, 999)
+        return cal.timeInMillis
+    }
+
+    /**
+     * getMonthRange - Returns a pair of (start, end) timestamps for a month relative to current time.
+     * @param monthOffset 0 for current month, -1 for previous month, etc.
+     */
+    /**
+     * getMonthRange - Returns a pair of (start, end) timestamps for a month relative to current time.
+     * @param timestamp Reference time
+     * @param monthOffset 0 for current month, -1 for previous month, etc.
+     */
+    fun getMonthRange(timestamp: Long, monthOffset: Int = 0): Pair<Long, Long> {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.add(Calendar.MONTH, monthOffset)
+
+        val start = getStartOfMonth(cal.timeInMillis)
+        val end = getEndOfMonth(cal.timeInMillis)
+        return start to end
+    }
+
+    /**
+     * getLastNDaysRange - Returns a pair of (start, end) timestamps for the last N days.
+     * End is current time (or end of today), start is N days ago.
+     */
+    fun getLastNDaysRange(days: Int): Pair<Long, Long> {
+        val now = System.currentTimeMillis()
+        val start = getStartOfDay(now - (days * 86400000L))
+        return start to now
+    }
+    /**
+     * getStartOfQuarter - Returns the start of the quarter (1st of Jan, Apr, Jul, Oct)
+     */
+    fun getStartOfQuarter(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        val month = cal.get(Calendar.MONTH)
+        val quarterStartMonth = (month / 3) * 3
+        cal.set(Calendar.MONTH, quarterStartMonth)
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    /**
+     * getEndOfQuarter - Returns the end of the quarter
+     */
+    fun getEndOfQuarter(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = getStartOfQuarter(timestamp)
+        cal.add(Calendar.MONTH, 3)
+        cal.add(Calendar.MILLISECOND, -1)
+        return cal.timeInMillis
+    }
+
+    /**
+     * getStartOfYear - Returns the start of the year (Jan 1st)
+     */
+    fun getStartOfYear(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.set(Calendar.MONTH, Calendar.JANUARY)
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    /**
+     * getEndOfYear - Returns the end of the year (Dec 31st)
+     */
+    fun getEndOfYear(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.set(Calendar.MONTH, Calendar.DECEMBER)
+        cal.set(Calendar.DAY_OF_MONTH, 31)
+        cal.set(Calendar.HOUR_OF_DAY, 23)
+        cal.set(Calendar.MINUTE, 59)
+        cal.set(Calendar.SECOND, 59)
+        cal.set(Calendar.MILLISECOND, 999)
+        return cal.timeInMillis
     }
 }
 

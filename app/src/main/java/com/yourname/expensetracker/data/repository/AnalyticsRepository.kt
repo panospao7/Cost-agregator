@@ -1,0 +1,123 @@
+package com.yourname.expensetracker.data.repository
+
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import javax.inject.Inject
+import javax.inject.Singleton
+import com.yourname.expensetracker.data.database.entity.Category
+
+data class SpendingSummary(
+    val totalSpent: Double,
+    val previousTotalSpent: Double?,
+    val changePercent: Float?,
+    val dailyHistory: List<Float>,
+    val previousDailyHistory: List<Float>,
+    val transactionCount: Int
+)
+
+@Singleton
+class AnalyticsRepository @Inject constructor(
+    private val expenseDao: ExpenseDao,
+    private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository
+) {
+
+    /**
+     * getSpendingSummary - Returns a comprehensive summary of spending for the given period.
+     * Includes current total, previous period total, percent change, and daily trend.
+     */
+    fun getSpendingSummary(start: Long, end: Long): Flow<SpendingSummary> {
+        val periodLength = end - start
+        val previousStart = start - periodLength
+        val previousEnd = start
+
+        return combine(
+            expenseDao.getExpensesBetweenFlow(start, end),
+            expenseDao.getExpensesBetweenFlow(previousStart, previousEnd)
+        ) { currentExpenses, previousExpenses ->
+            
+            val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+            val previousPurchases = previousExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+            
+            val totalSpent = currentPurchases.sumOf { it.amount }
+            val previousTotal = previousPurchases.sumOf { it.amount }
+            
+            val changePercent = if (previousTotal > 0) {
+                ((totalSpent - previousTotal) / previousTotal * 100).toFloat()
+            } else null
+
+            // Generate Daily History (Trend)
+            // Determine number of days to plot
+            val days = ((end - start) / 86400000L).toInt().coerceAtLeast(1)
+            val dailyHistory = DoubleArray(days)
+            
+            val startOfDay = TimePeriodUtils.getStartOfDay(start)
+            
+            currentPurchases.forEach { expense ->
+                val dayIndex = ((expense.date - startOfDay) / 86400000L).toInt()
+                if (dayIndex in 0 until days) {
+                    dailyHistory[dayIndex] += expense.amount
+                }
+            }
+            
+            // Previous History
+            val prevDays = ((previousEnd - previousStart) / 86400000L).toInt().coerceAtLeast(1)
+            val previousDailyHistory = DoubleArray(prevDays)
+            val prevStartOfDay = TimePeriodUtils.getStartOfDay(previousStart)
+            
+            previousPurchases.forEach { expense ->
+                val dayIndex = ((expense.date - prevStartOfDay) / 86400000L).toInt()
+                if (dayIndex in 0 until prevDays) {
+                    previousDailyHistory[dayIndex] += expense.amount
+                }
+            }
+            
+            // Convert to cumulative or just daily? 
+            // SpendingTrendChart usually expects cumulative for "pace" or daily for "bars". 
+            // Existing HomeViewModel uses cumulative. Existing AnalyticsViewModel uses daily totals.
+            // Let's return Daily Totals here, UI can accumulate if needed.
+            
+            SpendingSummary(
+                totalSpent = totalSpent,
+                previousTotalSpent = if (previousTotal > 0) previousTotal else null,
+                changePercent = changePercent,
+                dailyHistory = dailyHistory.map { it.toFloat() },
+                previousDailyHistory = previousDailyHistory.map { it.toFloat() },
+                transactionCount = currentPurchases.size
+            )
+        }
+    }
+
+    /**
+     * getCategoryBreakdown - Returns a list of categories sorted by spending amount.
+     */
+    fun getCategoryBreakdown(start: Long, end: Long): Flow<List<CategoryBreakdown>> {
+        return combine(
+             expenseDao.getExpensesBetweenFlow(start, end),
+             categoryRepository.allCategories
+        ) { expenses, categories ->
+            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+            val totalSpent = purchases.sumOf { it.amount }
+            val categoryMap = categories.associateBy { it.id }
+            
+            purchases.groupBy { it.categoryId }
+                .mapNotNull { (catId, exps) ->
+                    val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
+                    val catTotal = exps.sumOf { it.amount }
+                    
+                    CategoryBreakdown(
+                        category = cat,
+                        total = catTotal,
+                        count = exps.size,
+                        percentage = if (totalSpent > 0) (catTotal / totalSpent * 100).toFloat() else 0f
+                    )
+                }
+                .sortedByDescending { it.total }
+        }
+    }
+}
