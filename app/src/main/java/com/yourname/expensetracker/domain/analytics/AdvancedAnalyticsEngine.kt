@@ -584,7 +584,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         // If the period is current, we only show up to today to avoid a long "future" flat line
         val now = timeProvider.now()
         val daysPassed = if (now in period.startMs until period.endMs) {
-            ((now - period.startMs) / MILLIS_PER_DAY).toInt() + 1
+            ((now - period.startMs) / MILLIS_PER_DAY).toInt()
         } else {
             periodDays
         }

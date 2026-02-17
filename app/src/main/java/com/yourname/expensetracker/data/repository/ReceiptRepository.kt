@@ -210,7 +210,7 @@ class ReceiptRepository @Inject constructor(
         date: Long = timeProvider.now(),
         paymentMethod: PaymentMethod = PaymentMethod.CARD,
         notes: String? = null
-    ): com.yourname.expensetracker.domain.model.OperationResult<Long> {
+    ): com.yourname.expensetracker.domain.model.Result<Long> {
         // 1. Normalize merchant
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
         val normalizedMerchant = lookupResult.canonical.normalizedName
@@ -228,7 +228,7 @@ class ReceiptRepository @Inject constructor(
             date = date,
             windowMs = com.yourname.expensetracker.domain.util.AppConstants.Windows.DUPLICATE_DETECTION
         )
-        if (isDuplicate) return com.yourname.expensetracker.domain.model.OperationResult.Duplicate
+        if (isDuplicate) return com.yourname.expensetracker.domain.model.Result.Duplicate
 
         // 4. Create expense
         val expense = Expense(
@@ -268,7 +268,7 @@ class ReceiptRepository @Inject constructor(
             }
         }
 
-        return com.yourname.expensetracker.domain.model.OperationResult.Success(expenseId)
+        return com.yourname.expensetracker.domain.model.Result.Success(expenseId)
     }
 
     fun createTempPhotoUri(): Uri {

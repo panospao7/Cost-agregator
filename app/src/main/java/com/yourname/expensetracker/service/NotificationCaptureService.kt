@@ -261,7 +261,7 @@ class NotificationCaptureService : NotificationListenerService() {
 
         try {
             repository.processAndSave(rawNotification)
-            Log.d(TAG, "Processed: $packageName | Title: $title")
+            Log.d(TAG, "Processed notification from: $packageName")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to process notification", e)
         }

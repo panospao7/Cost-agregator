@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
-import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.room.*
 
 @Entity(tableName = "source_stats")
 data class SourceStats(

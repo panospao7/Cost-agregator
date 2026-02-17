@@ -19,15 +19,18 @@ class RecurringExpenseEngineTest {
 
     private lateinit var expenseDao: ExpenseDao
     private lateinit var recurringExpenseDao: RecurringExpenseDao
+    private lateinit var timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
     private lateinit var engine: RecurringExpenseEngine
 
     @Before
     fun setup() {
         expenseDao = mockk()
         recurringExpenseDao = mockk()
+        timeProvider = mockk()
         // Default: No manual expenses
         coEvery { recurringExpenseDao.getAll() } returns emptyList()
-        engine = RecurringExpenseEngine(expenseDao, recurringExpenseDao)
+        coEvery { timeProvider.now() } returns System.currentTimeMillis()
+        engine = RecurringExpenseEngine(expenseDao, recurringExpenseDao, timeProvider)
     }
 
     @Test

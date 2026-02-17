@@ -504,13 +504,6 @@ class HomeViewModel @Inject constructor(
     }
 }
 
-data class FiveData(
-    val expenses: List<Expense>,
-    val categories: List<Category>,
-    val budgetStatuses: List<BudgetStatus>,
-    val pendingCount: Int,
-    val weather: FinancialWeather
-)
 
 data class Quadruple<A, B, C, D>(
     val first: A,

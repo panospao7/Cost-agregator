@@ -69,6 +69,8 @@ class FinancialWeatherRepository @Inject constructor(
     private val analyticsRepository: AnalyticsRepository,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
+    private val weatherScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+
     // private val calendar = Calendar.getInstance() // Removed unused field
 
     private fun com.yourname.expensetracker.data.database.entity.PlannedExpense.toDomain(): PlannedExpense {
@@ -133,7 +135,7 @@ class FinancialWeatherRepository @Inject constructor(
         }
         
         var runningTotal = 0.0
-        val pastSumDaily = (1..currentDay).map { day ->
+        val pastSumDaily = (0..currentDay).map { day ->
             runningTotal += amountByDay[day]
             runningTotal
         }
@@ -238,7 +240,7 @@ class FinancialWeatherRepository @Inject constructor(
     // Debounce to avoid running on every single transaction during sync/import
     .debounce(1000L) 
     .stateIn(
-        scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default), 
+        scope = weatherScope,
         started = kotlinx.coroutines.flow.SharingStarted.Lazily,
         initialValue = emptyList()
     )

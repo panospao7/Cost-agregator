@@ -11,7 +11,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
-import com.yourname.expensetracker.domain.model.OperationResult
+import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -210,7 +210,7 @@ class AddExpenseViewModel @Inject constructor(
                 )
 
                 when (result) {
-                    is OperationResult.Success -> {
+                    is Result.Success -> {
                         // 2. If recurring, save the rule
                         if (currentState.isRecurring) {
                             recurringExpenseRepository.addRecurringExpense(
@@ -226,18 +226,21 @@ class AddExpenseViewModel @Inject constructor(
                             it.copy(isSaving = false, saveResult = SaveResult.Success)
                         }
                     }
-                    is OperationResult.Duplicate -> {
+                    is Result.Duplicate -> {
                         _state.update {
                             it.copy(isSaving = false, saveResult = SaveResult.Duplicate)
                         }
                     }
-                    is OperationResult.Error -> {
+                    is Result.Error -> {
                         _state.update {
                             it.copy(
                                 isSaving = false,
-                                saveResult = SaveResult.Error(result.message)
+                                saveResult = SaveResult.Error(result.message ?: "Failed to save expense")
                             )
                         }
+                    }
+                    Result.Loading -> {
+                        _state.update { it.copy(isSaving = true) }
                     }
                 }
 

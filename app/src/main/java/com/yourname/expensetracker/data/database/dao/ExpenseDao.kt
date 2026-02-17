@@ -15,8 +15,11 @@ interface ExpenseDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(expense: Expense): Long
 
-    @Query("SELECT * FROM expenses ORDER BY date DESC")
-    fun getAllFlow(): Flow<List<Expense>>
+    @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
+    fun getAllFlow(limit: Int = 500): Flow<List<Expense>>
+
+    @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit OFFSET :offset")
+    suspend fun getPage(limit: Int = 100, offset: Int = 0): List<Expense>
 
     @Transaction
     @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
@@ -47,6 +50,7 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE date >= :startMs AND date <= :endMs ORDER BY date DESC")
     fun getExpensesWithCategoryInPeriodFlow(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>>
 
+    @Deprecated("Use getAllFlow(limit) or getPage(limit, offset) to prevent OOM", ReplaceWith("getAllFlow(500)"))
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     suspend fun getAll(): List<Expense>
     

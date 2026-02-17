@@ -7,7 +7,7 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
-import com.yourname.expensetracker.domain.model.OperationResult
+import com.yourname.expensetracker.domain.model.Result
 // ...
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,11 +67,12 @@ class ReviewViewModel @Inject constructor(
         }
     }
 
-    private fun handleResult(result: OperationResult<Long>, prefix: String) {
+    private fun handleResult(result: Result<Long>, prefix: String) {
         when (result) {
-            is OperationResult.Success -> { /* Handled by UI observing DB change */ }
-            is OperationResult.Duplicate -> _errorMessage.value = "Duplicate transaction detected"
-            is OperationResult.Error -> _errorMessage.value = "$prefix: ${result.message}"
+            is Result.Success -> { /* Handled by UI observing DB change */ }
+            is Result.Duplicate -> _errorMessage.value = "Duplicate transaction detected"
+            is Result.Error -> _errorMessage.value = "$prefix: ${result.message}"
+            Result.Loading -> { /* No-op or show loading */ }
         }
     }
 

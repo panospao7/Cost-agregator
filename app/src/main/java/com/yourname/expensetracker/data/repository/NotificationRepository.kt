@@ -15,7 +15,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
-import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.model.Result
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.*
 import javax.inject.Inject
@@ -45,10 +45,10 @@ class NotificationRepository @Inject constructor(
     private val repositoryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
 
     // Shared expenses flow to prevent redundant DB queries (shared by multiple ViewModels)
-    private val sharedExpenses = expenseDao.getAllFlow()
+    private val sharedExpenses = expenseDao.getAllFlow(500)
         .shareIn(
             scope = repositoryScope,
-            started = SharingStarted.WhileSubscribed(30000),
+            started = SharingStarted.WhileSubscribed(5000),
             replay = 1
         )
 
@@ -104,11 +104,11 @@ class NotificationRepository @Inject constructor(
         paymentMethod: PaymentMethod = PaymentMethod.CASH,
         date: Long = timeProvider.now(),
         notes: String? = null
-    ): OperationResult<Long> {
+    ): Result<Long> {
         // Fix 4.12: Large amount validation
         if (amount > 1000000.0) {
-            android.util.Log.w("NotificationRepo", "Manual expense amount too large: $amount")
-            return OperationResult.Error("Amount exceeds limit")
+            android.util.Log.w("NotificationRepo", "Manual expense amount too large (limit exceeded)")
+            return Result.Error(message = "Amount exceeds limit")
         }
 
         return database.withTransaction {
@@ -130,7 +130,7 @@ class NotificationRepository @Inject constructor(
                 date = date,
                 windowMs = 60000 // 1 minute window for manual double-entry prevention
             )
-            if (isDuplicate) return@withTransaction OperationResult.Duplicate
+            if (isDuplicate) return@withTransaction Result.Duplicate
 
             // 4. Create expense
             val expense = Expense(
@@ -156,7 +156,7 @@ class NotificationRepository @Inject constructor(
                 merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
             }
 
-            OperationResult.Success(id)
+            Result.Success(id)
         }
     }
 
@@ -221,7 +221,7 @@ class NotificationRepository @Inject constructor(
 
         // Fix 4.12: Large amount validation -> Force Needs Review
         if (parsed.amount > 1000000.0 && routingResult.decision == RoutingDecision.AUTO_ACCEPT) {
-            android.util.Log.w("NotificationRepo", "Auto-accept suppressed due to large amount: ${parsed.amount}")
+            android.util.Log.w("NotificationRepo", "Auto-accept suppressed due to large amount (validation limit)")
             routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
         }
 
@@ -366,12 +366,12 @@ class NotificationRepository @Inject constructor(
         finalAmount: Double? = null,
         finalMerchant: String? = null,
         finalCategoryId: Long? = null
-    ): OperationResult<Long> {
-        val review = pendingReviewDao.getById(reviewId) ?: return OperationResult.Error("Review not found")
+    ): Result<Long> {
+        val review = pendingReviewDao.getById(reviewId) ?: return Result.Error(message = "Review not found")
         
         // Critical Fix: Atomically check and update status to prevent double-processing
         val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING")
-        if (rowsUpdated == 0) return OperationResult.Error("Review already processed")
+        if (rowsUpdated == 0) return Result.Error(message = "Review already processed")
 
         // If we fail later, we should ideally revert this, but for now we secure the lock.
         // We will update to APPROVED at the end.
@@ -381,9 +381,9 @@ class NotificationRepository @Inject constructor(
         val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
         // Fix 4.12: Large amount validation
         if (amount > 1000000.0) {
-            android.util.Log.w("NotificationRepo", "Approval suppressed due to large amount: $amount")
+            android.util.Log.w("NotificationRepo", "Approval suppressed due to large amount (validation limit)")
             pendingReviewDao.updateStatus(reviewId, "PENDING") // Revert status
-            return OperationResult.Error("Amount exceeds limit")
+            return Result.Error(message = "Amount exceeds limit")
         }
 
         val type: com.yourname.expensetracker.data.database.entity.TransactionType = try {
@@ -477,15 +477,15 @@ class NotificationRepository @Inject constructor(
                         merchantNormalizer.learnMerchantAlias(review.suggestedMerchant, finalMerchant)
                     }
                     
-                    return OperationResult.Success(expenseId)
+                    return Result.Success(expenseId)
                 } else {
                     pendingReviewDao.updateStatus(reviewId, "PENDING") // Revert status
-                    return OperationResult.Error("Insertion failed")
+                    return Result.Error(message = "Insertion failed")
                 }
             } catch (e: android.database.sqlite.SQLiteConstraintException) {
                 // Unexpected constraint error, fail the operation
                 pendingReviewDao.updateStatus(reviewId, "PENDING") // Revert status
-                return OperationResult.Error("Database constraint error: ${e.message}")
+                return Result.Error(message = "Database constraint error: ${e.message}", exception = e)
             }
         } else {
              // It's a duplicate, we treat this as "processed" to clear the review
@@ -500,7 +500,7 @@ class NotificationRepository @Inject constructor(
              ).joinToString(" ")
              classifier.train(fullText, isTransaction = true)
 
-             return OperationResult.Duplicate
+             return Result.Duplicate
         }
     }
 

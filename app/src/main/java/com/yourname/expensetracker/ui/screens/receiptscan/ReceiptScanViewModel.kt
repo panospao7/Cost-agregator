@@ -8,7 +8,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
-import com.yourname.expensetracker.domain.model.OperationResult
+import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.ui.screens.debug.DebugData
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -277,7 +277,7 @@ class ReceiptScanViewModel @Inject constructor(
                 )
 
                 when (result) {
-                    is OperationResult.Success -> {
+                    is Result.Success -> {
                         _state.update {
                             it.copy(
                                 isSaving = false,
@@ -286,7 +286,7 @@ class ReceiptScanViewModel @Inject constructor(
                             )
                         }
                     }
-                    is OperationResult.Duplicate -> {
+                    is Result.Duplicate -> {
                         _state.update {
                             it.copy(
                                 isSaving = false,
@@ -294,13 +294,16 @@ class ReceiptScanViewModel @Inject constructor(
                             )
                         }
                     }
-                    is OperationResult.Error -> {
+                    is Result.Error -> {
                         _state.update {
                             it.copy(
                                 isSaving = false,
-                                saveResult = SaveReceiptResult.Error(result.message)
+                                saveResult = SaveReceiptResult.Error(result.message ?: "Unknown error")
                             )
                         }
+                    }
+                    Result.Loading -> {
+                        _state.update { it.copy(isSaving = true) }
                     }
                 }
 
