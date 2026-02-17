@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
@@ -13,7 +14,8 @@ import kotlin.math.sqrt
 @Singleton
 class RecurringExpenseEngine @Inject constructor(
     private val expenseDao: ExpenseDao,
-    private val recurringExpenseDao: RecurringExpenseDao
+    private val recurringExpenseDao: RecurringExpenseDao,
+    private val timeProvider: TimeProvider
 ) {
 
     /**
@@ -22,7 +24,7 @@ class RecurringExpenseEngine @Inject constructor(
      */
     suspend fun getPatterns(): List<RecurringPattern> {
         // Limit to last 12 months for performance - INS-009
-        val twelveMonthsAgo = System.currentTimeMillis() - (365L * 24 * 60 * 60 * 1000)
+        val twelveMonthsAgo = timeProvider.now() - (365L * 24 * 60 * 60 * 1000)
         val allExpenses = expenseDao.getExpensesSince(twelveMonthsAgo)
         return getPatterns(allExpenses)
     }
@@ -76,7 +78,7 @@ class RecurringExpenseEngine @Inject constructor(
                 
                 // Predict next date
                 // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)
-                val cal = java.util.Calendar.getInstance()
+                val cal = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
                 cal.timeInMillis = dates.last()
                 when (frequency) {
                     RecurrenceFrequency.MONTHLY -> cal.add(java.util.Calendar.MONTH, 1)
@@ -143,8 +145,8 @@ class RecurringExpenseEngine @Inject constructor(
         
         // Fix (BUG-003): Use Calendar for proper day interval calculation across DST
         val intervalsDays = mutableListOf<Int>()
-        val cal1 = java.util.Calendar.getInstance()
-        val cal2 = java.util.Calendar.getInstance()
+        val cal1 = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
+        val cal2 = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         
         for (i in 0 until dates.size - 1) {
             cal1.timeInMillis = dates[i]

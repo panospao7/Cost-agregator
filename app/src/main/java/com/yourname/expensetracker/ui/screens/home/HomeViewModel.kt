@@ -22,6 +22,7 @@ import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -101,7 +102,7 @@ data class DashboardState(
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    private val repository: NotificationRepository,
+    private val notificationRepository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
     private val budgetRepository: BudgetRepository,
     private val dashboardRepository: DashboardRepository,
@@ -110,7 +111,8 @@ class HomeViewModel @Inject constructor(
     private val plannedExpenseRepository: PlannedExpenseRepository,
     private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository,
     private val synthesisEngine: SynthesisEngine,
-    private val savingsGoalDao: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+    private val savingsGoalRepository: com.yourname.expensetracker.data.repository.SavingsGoalRepository,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val isEditMode = MutableStateFlow(false)
@@ -124,7 +126,7 @@ class HomeViewModel @Inject constructor(
 
     // Split flows to avoid 5-arg limit
     private val baseDataFlow = combine(
-        repository.getAllExpenses().catch { emit(emptyList()) },
+        notificationRepository.getAllExpenses().catch { emit(emptyList()) },
         categoryRepository.allCategories.catch { emit(emptyList()) },
         budgetRepository.getBudgetStatuses().catch { emit(emptyList()) }
     ) { expenses, categories, budgetStatuses ->
@@ -132,7 +134,7 @@ class HomeViewModel @Inject constructor(
     }
 
     private val planningDataFlow = combine(
-        repository.getPendingReviewCount().catch { emit(0) },
+        notificationRepository.getPendingReviewCount().catch { emit(0) },
         financialWeatherRepository.getFinancialWeather().catch { 
              emit(FinancialWeather(
                 state = WeatherState.UNKNOWN,
@@ -155,7 +157,7 @@ class HomeViewModel @Inject constructor(
     private val dataFlow = combine(
         baseDataFlow,
         planningDataFlow,
-        savingsGoalDao.getAllGoals().catch { emit(emptyList()) }
+        savingsGoalRepository.getAllGoals().catch { emit(emptyList()) }
     ) { base, planning, goalEntities ->
         val goals = goalEntities.map { entity ->
             SavingsGoal(
@@ -189,17 +191,17 @@ class HomeViewModel @Inject constructor(
     private val processedDataFlow = combine(
         dataFlow,
         analyticsRepository.getSpendingSummary(
-             com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(System.currentTimeMillis()),
-             com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(System.currentTimeMillis())
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()),
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(timeProvider.now())
         ),
         analyticsRepository.getCategoryBreakdown(
-             com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(System.currentTimeMillis()),
-             com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(System.currentTimeMillis())
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()),
+             com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(timeProvider.now())
         )
     ) { data, summary, categoryBreakdown ->
         val (expenses, categories, budgetStatuses, pendingCount, weather, recurringPatterns, plannedExpenses, goals) = data
         
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val todayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
         val weekStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
 
@@ -212,7 +214,7 @@ class HomeViewModel @Inject constructor(
         val txCount = summary.transactionCount
         val previousMonthTotal = summary.previousTotalSpent ?: 0.0
 
-        val calendar = java.util.Calendar.getInstance()
+        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
         val daysRemaining = daysInMonth - dayOfMonth

@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 @HiltViewModel
@@ -17,8 +18,8 @@ class MainViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
 ) : ViewModel() {
 
-    private val _navigationRequest = kotlinx.coroutines.flow.MutableSharedFlow<Int>(replay = 1)
-    val navigationRequest = _navigationRequest.asSharedFlow()
+    private val _navigationRequest = kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.BUFFERED)
+    val navigationRequest = _navigationRequest.receiveAsFlow()
 
     val pendingReviewCount: StateFlow<Int> = repository
         .getPendingReviewCount()
@@ -26,7 +27,7 @@ class MainViewModel @Inject constructor(
 
     fun navigateToTab(tabIndex: Int) {
         viewModelScope.launch {
-            _navigationRequest.emit(tabIndex)
+            _navigationRequest.send(tabIndex)
         }
     }
 

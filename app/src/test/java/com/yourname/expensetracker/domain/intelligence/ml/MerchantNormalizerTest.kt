@@ -9,33 +9,20 @@ import org.junit.Before
 import org.junit.Test
 import android.content.Context
 
+import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+
 class MerchantNormalizerTest {
     private val dao = mockk<MerchantNormalizationDao>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
+    private val merchantRules = MerchantRulesRepository() // Use real instance to test logic
     private lateinit var normalizer: MerchantNormalizer
 
     @Before
     fun setup() {
-        normalizer = MerchantNormalizer(dao, context)
+        normalizer = MerchantNormalizer(dao, merchantRules, context)
     }
 
-    @Test
-    fun `cleanMerchantName removes store numbers`() {
-        val result = normalizer.cleanMerchantName("McDonald's Store #123")
-        assertEquals("McDonald's", result)
-    }
-
-    @Test
-    fun `cleanMerchantName removes corporate suffixes`() {
-        val result = normalizer.cleanMerchantName("Starbucks Corp.")
-        assertEquals("Starbucks", result)
-    }
-
-    @Test
-    fun `cleanMerchantName removes location suffixes`() {
-        val result = normalizer.cleanMerchantName("Shell At Athens")
-        assertEquals("Shell", result)
-    }
+    // Cleaning tests moved to MerchantRulesRepositoryTest
 
     @Test
     fun `normalize uses alias if exists`() = runBlocking {

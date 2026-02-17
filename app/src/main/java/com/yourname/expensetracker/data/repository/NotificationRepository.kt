@@ -39,7 +39,8 @@ class NotificationRepository @Inject constructor(
     private val merchantNormalizer: NewMerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val classifier: TransactionClassifier,
-    private val budgetMonitor: BudgetMonitor 
+    private val budgetMonitor: BudgetMonitor,
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
     private val repositoryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
 
@@ -101,7 +102,7 @@ class NotificationRepository @Inject constructor(
         categoryId: Long?,
         transactionType: TransactionType = TransactionType.PURCHASE,
         paymentMethod: PaymentMethod = PaymentMethod.CASH,
-        date: Long = System.currentTimeMillis(),
+        date: Long = timeProvider.now(),
         notes: String? = null
     ): OperationResult<Long> {
         // Fix 4.12: Large amount validation
@@ -110,51 +111,53 @@ class NotificationRepository @Inject constructor(
             return OperationResult.Error("Amount exceeds limit")
         }
 
-        // 1. Normalize merchant name
-        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
-        val normalizedMerchant = lookupResult.canonical.normalizedName
+        return database.withTransaction {
+            // 1. Normalize merchant name
+            val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
+            val normalizedMerchant = lookupResult.canonical.normalizedName
 
-        // 2. Auto-categorize if no category provided
-        val finalCategoryId = categoryId ?: hybridClassifier.classify(
-            merchantName = normalizedMerchant,
-            amount = amount
-        ).categoryId.takeIf { it > 0 }
+            // 2. Auto-categorize if no category provided
+            val finalCategoryId = categoryId ?: hybridClassifier.classify(
+                merchantName = normalizedMerchant,
+                amount = amount
+            ).categoryId.takeIf { it > 0 }
 
-                // 3. Dedup check with tighter window for manual entries (1 minute)
-                // For manual entries, we trust the user but want to avoid accidental double-taps.
-                val isDuplicate = expenseDao.isDuplicate(
-                    amount = amount,
-                    merchant = normalizedMerchant,
-                    date = date,
-                    windowMs = 60000 // 1 minute window for manual double-entry prevention
-                )
-        if (isDuplicate) return OperationResult.Duplicate
+            // 3. Dedup check with tighter window for manual entries (1 minute)
+            // For manual entries, we trust the user but want to avoid accidental double-taps.
+            val isDuplicate = expenseDao.isDuplicate(
+                amount = amount,
+                merchant = normalizedMerchant,
+                date = date,
+                windowMs = 60000 // 1 minute window for manual double-entry prevention
+            )
+            if (isDuplicate) return@withTransaction OperationResult.Duplicate
 
-        // 4. Create expense
-        val expense = Expense(
-            amount = amount,
-            currency = currency,
-            merchant = normalizedMerchant,
-            transactionType = transactionType,
-            date = date,
-            rawNotificationId = null,
-            categoryId = finalCategoryId,
-            paymentMethod = paymentMethod,
-            isManualEntry = true,
-            notes = notes
-        )
+            // 4. Create expense
+            val expense = Expense(
+                amount = amount,
+                currency = currency,
+                merchant = normalizedMerchant,
+                transactionType = transactionType,
+                date = date,
+                rawNotificationId = null,
+                categoryId = finalCategoryId,
+                paymentMethod = paymentMethod,
+                isManualEntry = true,
+                notes = notes
+            )
 
-        val id = expenseDao.insert(expense)
+            val id = expenseDao.insert(expense)
 
-        // 5. Check budgets
-        budgetMonitor.checkBudgets()
+            // 5. Check budgets
+            budgetMonitor.checkBudgets()
 
-        // 6. Learn the merchant→category mapping for future auto-categorization
-        if (finalCategoryId != null && id > 0) {
-            merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
+            // 6. Learn the merchant→category mapping for future auto-categorization
+            if (finalCategoryId != null && id > 0) {
+                merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
+            }
+
+            OperationResult.Success(id)
         }
-
-        return OperationResult.Success(id)
     }
 
     /**
@@ -195,7 +198,7 @@ class NotificationRepository @Inject constructor(
                 if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return@withTransaction
                 
                 val rawId = try { dao.insert(notification) } catch (e: Exception) { return@withTransaction }
-                sourceStatsDao.incrementTotal(notification.packageName)
+                sourceStatsDao.incrementTotal(notification.packageName, timeProvider.now())
                 sourceStatsDao.incrementAutoRejected(notification.packageName)
                 dao.markRelevance(rawId, false)
             }
@@ -240,7 +243,7 @@ class NotificationRepository @Inject constructor(
 
             // Update stats
             confidenceRouter.ensureSourceStats(notification.packageName)
-            sourceStatsDao.incrementTotal(notification.packageName)
+            sourceStatsDao.incrementTotal(notification.packageName, timeProvider.now())
 
             when (routingResult.decision) {
                 RoutingDecision.AUTO_ACCEPT -> {
@@ -413,7 +416,7 @@ class NotificationRepository @Inject constructor(
                 transactionDate,
                 review.rawNotificationId,
                 categoryId,
-                System.currentTimeMillis(),
+                timeProvider.now(),
                 com.yourname.expensetracker.data.database.entity.PaymentMethod.CARD,
                 review.scannedReceiptId != null,
                 if (review.scannedReceiptId != null) "Scanned from receipt" else null

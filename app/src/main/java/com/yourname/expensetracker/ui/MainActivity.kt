@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainScreen()
+                    MainScreen(mainViewModel)
                 }
             }
         }
@@ -77,10 +77,9 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen() {
+fun MainScreen(mainViewModel: MainViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
     
-    val mainViewModel: MainViewModel = hiltViewModel()
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     
     // Drill-down filter state

@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 
 @HiltViewModel
@@ -16,7 +17,8 @@ class DebugViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
-    private val notificationSeeder: com.yourname.expensetracker.domain.debug.NotificationSeeder
+    private val notificationSeeder: com.yourname.expensetracker.domain.debug.NotificationSeeder,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
     
     val notifications: StateFlow<List<RawNotification>> = repository
@@ -152,8 +154,8 @@ class DebugViewModel @Inject constructor(
                 appName = "Test Bank",
                 title = "Purchase Alert",
                 text = "You paid €12.50 at Amazon",
-                timestamp = System.currentTimeMillis(),
-                capturedAt = System.currentTimeMillis()
+                timestamp = timeProvider.now(),
+                capturedAt = timeProvider.now()
             )
             repository.processAndSave(fakeNotification)
         }

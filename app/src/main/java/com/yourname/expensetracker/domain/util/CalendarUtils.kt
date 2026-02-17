@@ -4,7 +4,7 @@ import java.util.Calendar
 
 object CalendarUtils {
     
-    fun getStartOfDay(timestamp: Long = System.currentTimeMillis()): Long {
+    fun getStartOfDay(timestamp: Long): Long {
         return Calendar.getInstance().apply {
             timeInMillis = timestamp
             set(Calendar.HOUR_OF_DAY, 0)
@@ -14,7 +14,7 @@ object CalendarUtils {
         }.timeInMillis
     }
 
-    fun getStartOfMonth(timestamp: Long = System.currentTimeMillis()): Long {
+    fun getStartOfMonth(timestamp: Long): Long {
         return Calendar.getInstance().apply {
             timeInMillis = timestamp
             set(Calendar.DAY_OF_MONTH, 1)
@@ -25,7 +25,7 @@ object CalendarUtils {
         }.timeInMillis
     }
 
-    fun getDaysRemainingInMonth(timestamp: Long = System.currentTimeMillis()): Int {
+    fun getDaysRemainingInMonth(timestamp: Long): Int {
         val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
         val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)

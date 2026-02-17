@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import java.util.concurrent.ConcurrentHashMap
@@ -26,7 +27,8 @@ data class RoutingResult(
 class ConfidenceRouter @Inject constructor(
     private val sourceStatsDao: SourceStatsDao,
     private val userCorrectionDao: UserCorrectionDao,
-    private val classifier: TransactionClassifier
+    private val classifier: TransactionClassifier,
+    private val timeProvider: TimeProvider
 ) {
     companion object {
         const val AUTO_ACCEPT_THRESHOLD = 0.85f
@@ -203,7 +205,7 @@ class ConfidenceRouter @Inject constructor(
     // === Cached Data Access ===
 
     private suspend fun getCachedSourceStats(packageName: String): SourceStats? {
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val cached = sourceStatsCache[packageName]
         if (cached != null && now - cached.second < CACHE_TTL) {
             return cached.first
@@ -214,7 +216,7 @@ class ConfidenceRouter @Inject constructor(
     }
 
     private suspend fun getCachedMerchantRejectionRate(merchant: String): Float {
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val key = merchant.lowercase()
         val cached = merchantRejectionCache[key]
         if (cached != null && now - cached.second < CACHE_TTL) {
@@ -232,7 +234,7 @@ class ConfidenceRouter @Inject constructor(
     }
 
     private suspend fun getCachedPackageRejectionRate(packageName: String): Float {
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val cached = packageRejectionCache[packageName]
         if (cached != null && now - cached.second < CACHE_TTL) {
             return cached.first
@@ -249,7 +251,7 @@ class ConfidenceRouter @Inject constructor(
     }
 
     private suspend fun getCachedHasPreviousApprovals(merchant: String, packageName: String): Boolean {
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val key = "${merchant.lowercase()}|$packageName"
         val cached = approvalCache[key]
         if (cached != null && now - cached.second < CACHE_TTL) {

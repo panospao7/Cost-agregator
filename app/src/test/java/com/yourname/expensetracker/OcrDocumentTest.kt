@@ -17,13 +17,15 @@ import java.util.Calendar
  * 2. Run this test class
  * 3. Check output for pass/fail results on each section
  */
+import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+
 class OcrDocumentTest {
 
     private lateinit var parser: ReceiptParser
 
     @Before
     fun setup() {
-        parser = ReceiptParser()
+        parser = ReceiptParser(MerchantRulesRepository())
     }
 
     // ============================================

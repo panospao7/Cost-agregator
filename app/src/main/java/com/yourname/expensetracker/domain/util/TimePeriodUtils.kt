@@ -122,10 +122,10 @@ object TimePeriodUtils {
 
     /**
      * getLastNDaysRange - Returns a pair of (start, end) timestamps for the last N days.
-     * End is current time (or end of today), start is N days ago.
+     * @param now Current timestamp (pass timeProvider.now())
+     * @param days Number of days to look back
      */
-    fun getLastNDaysRange(days: Int): Pair<Long, Long> {
-        val now = System.currentTimeMillis()
+    fun getLastNDaysRange(now: Long, days: Int): Pair<Long, Long> {
         val start = getStartOfDay(now - (days * 86400000L))
         return start to now
     }

@@ -4,8 +4,8 @@ import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import kotlinx.coroutines.flow.Flow
@@ -19,7 +19,8 @@ class BudgetRepository @Inject constructor(
     private val budgetDao: BudgetDao,
     private val categoryDao: CategoryDao,
     private val expenseDao: ExpenseDao,
-    private val budgetMonitor: BudgetMonitor
+    private val budgetCalculator: BudgetCalculator,
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
     val allBudgets: Flow<List<Budget>> = budgetDao.getAllFlow()
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
@@ -27,19 +28,20 @@ class BudgetRepository @Inject constructor(
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
         // We fetch the last 13 months to cover yearly budgets + rollover
         val thirteenMonthsAgo = java.util.Calendar.getInstance().apply {
+            timeInMillis = timeProvider.now()
             add(java.util.Calendar.MONTH, -13)
         }.timeInMillis
         
         return combine(
             budgetDao.getActiveBudgetsFlow(),
             categoryDao.getAllFlow(),
-            expenseDao.getExpensesBetweenFlow(thirteenMonthsAgo, System.currentTimeMillis() + 86400000) // +1 day for safety
+            expenseDao.getExpensesBetweenFlow(thirteenMonthsAgo, timeProvider.now() + 86400000) // +1 day for safety
         ) { budgets, categories, allExpenses ->
             val purchases = allExpenses.filter { it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE }
             val categoryMap = categories.associateBy { it.id }
             
             budgets.map { budget ->
-                val window = budgetMonitor.calculatePeriodWindow(budget.period, budget.startDate)
+                val window = budgetCalculator.calculatePeriodWindow(budget.period, budget.startDate)
                 
                 fun getSpentInRange(start: Long, end: Long): Double {
                     return purchases
@@ -50,25 +52,25 @@ class BudgetRepository @Inject constructor(
                         .sumOf { it.amount }
                 }
 
-                val spent = getSpentInRange(window.first, window.second)
+                val spent = getSpentInRange(window.start, window.end)
                 var limit = budget.amount
                 
                 // LOG-002: Implement Compounding Rollover - BUG-2 FIX
                 if (budget.rollover) {
                     // we compute this by iterating forward from the budget's first period
                     val budgetFirstStart = budget.startDate
-                    var movingWindow = budgetMonitor.calculatePeriodWindow(budget.period, budgetFirstStart)
+                    var movingWindow = budgetCalculator.calculatePeriodWindow(budget.period, budgetFirstStart)
                     var effectiveLimit = budget.amount
                     
                     // Iterate forward until we reach the previous period of the current window
-                    while (movingWindow.second <= window.first) {
-                        val spentInPeriod = getSpentInRange(movingWindow.first, movingWindow.second)
+                    while (movingWindow.end <= window.start) {
+                        val spentInPeriod = getSpentInRange(movingWindow.start, movingWindow.end)
                         val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
                         effectiveLimit = budget.amount + surplus
                         
                         // Move to next period
-                        val nextStart = movingWindow.second
-                        movingWindow = budgetMonitor.calculatePeriodWindow(budget.period, nextStart)
+                        val nextStart = movingWindow.end
+                        movingWindow = budgetCalculator.calculatePeriodWindow(budget.period, nextStart)
                     }
                     limit = effectiveLimit
                 }
@@ -90,8 +92,8 @@ class BudgetRepository @Inject constructor(
                     remainingAmount = remaining,
                     percentUsed = percent,
                     healthStatus = health,
-                    periodStart = window.first,
-                    periodEnd = window.second
+                    periodStart = window.start,
+                    periodEnd = window.end
                 )
             }
         }
@@ -102,7 +104,7 @@ class BudgetRepository @Inject constructor(
             if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
             if (budget.startDate <= 0) throw IllegalArgumentException("Invalid budget start date")
             val id = budgetDao.insert(budget)
-            budgetMonitor.checkBudgets()
+            // budgetMonitor.checkBudgets() // Removed to avoid circular dependency. Monitor should observe flow.
             com.yourname.expensetracker.domain.model.Result.Success(id)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to add budget", e)
@@ -120,7 +122,7 @@ class BudgetRepository @Inject constructor(
                 lastExceededNotifiedAt = null
             )
             budgetDao.update(resetBudget)
-            budgetMonitor.checkBudgets()
+            // budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to update budget ${budget.id}", e)
@@ -141,7 +143,7 @@ class BudgetRepository @Inject constructor(
     suspend fun toggleBudget(id: Long, isActive: Boolean): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
             budgetDao.setActive(id, isActive)
-            budgetMonitor.checkBudgets()
+            // budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to toggle budget $id", e)
@@ -167,7 +169,7 @@ class BudgetRepository @Inject constructor(
         val activeBudgets = budgetDao.getActiveBudgets()
         val categoriesWithBudget = activeBudgets.mapNotNull { it.categoryId }.toSet()
 
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val oldestDate = expenseDao.getOldestExpenseDate() ?: now
         
         // Use up to 3 months of history, but at least 1 month if available

@@ -24,7 +24,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 fun rememberMarker(): Marker {
     val labelBackgroundColor = MaterialTheme.colorScheme.surface
     val labelBackground = remember(labelBackgroundColor) {
-        ShapeComponent(Shapes.pillShape, labelBackgroundColor.toArgb()).setShadow(
+        ShapeComponent(shape = Shapes.pillShape, color = labelBackgroundColor.toArgb()).setShadow(
             radius = 4f,
             dy = 2f,
             applyElevationOverlay = true,

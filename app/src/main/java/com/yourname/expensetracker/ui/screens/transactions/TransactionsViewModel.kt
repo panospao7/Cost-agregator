@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -27,9 +28,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @HiltViewModel
 class TransactionsViewModel @Inject constructor(
-    private val repository: NotificationRepository,
-    private val categoryRepository: CategoryRepository,
-    private val recurringExpenseDao: com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
+    private val repository: com.yourname.expensetracker.data.repository.NotificationRepository,
+    private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
+    private val recurringExpenseRepository: com.yourname.expensetracker.data.repository.RecurringExpenseRepository,
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) : ViewModel() {
 
     companion object {
@@ -105,7 +107,7 @@ class TransactionsViewModel @Inject constructor(
         .flatMapLatest { (tab, query, filter) ->
             if (filter != null) {
                 // FILTER MODE: Optimized SQL-level filtering
-                val (start, end) = filter.dateRange ?: Pair(0L, System.currentTimeMillis())
+                val (start, end) = filter.dateRange ?: Pair(0L, timeProvider.now())
                 
                 repository.getExpensesWithCategoryFiltered(
                     startMs = start,
@@ -315,14 +317,13 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val nextDate = System.currentTimeMillis() + frequency.intervalInMs
-                val rule = com.yourname.expensetracker.data.database.entity.ManualRecurringExpense(
+                recurringExpenseRepository.addRecurringExpense(
                     merchant = expense.merchant,
                     amount = expense.amount,
                     frequency = frequency,
-                    nextDate = nextDate
+                    lastDate = timeProvider.now(),
+                    currency = "EUR"
                 )
-                recurringExpenseDao.insert(rule)
                 _successMessage.emit("Marked as recurring (${frequency.name.lowercase().replace("_", " ")})")
             } catch (e: Exception) {
                 _error.emit("Failed to mark as recurring: ${e.message}")
@@ -357,21 +358,15 @@ class TransactionsViewModel @Inject constructor(
      * Optimized time range calculation using TimePeriodUtils.
      */
     private fun getTimeRangeForTab(tab: TransactionTab): Pair<Long, Long> {
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         
         return when (tab) {
             TransactionTab.TODAY -> {
                 val startOfDay = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
                 Pair(startOfDay, now)
             }
-            TransactionTab.WEEK -> {
-                val startOfWeek = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
-                Pair(startOfWeek, now)
-            }
-            TransactionTab.MONTH -> {
-                val startOfMonth = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
-                Pair(startOfMonth, now)
-            }
+            TransactionTab.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 7)
+            TransactionTab.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now, 0)
             TransactionTab.QUARTER -> {
                 val startOfQuarter = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfQuarter(now)
                 Pair(startOfQuarter, now)

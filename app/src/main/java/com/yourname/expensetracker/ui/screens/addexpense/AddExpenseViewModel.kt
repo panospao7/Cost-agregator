@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.OperationResult
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -55,10 +56,11 @@ sealed class SaveResult {
 class AddExpenseViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
-    private val recurringExpenseDao: RecurringExpenseDao
+    private val recurringExpenseRepository: RecurringExpenseRepository,
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(AddExpenseState())
+    private val _state = MutableStateFlow(AddExpenseState(date = timeProvider.now()))
     val state: StateFlow<AddExpenseState> = _state.asStateFlow()
 
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
@@ -211,7 +213,13 @@ class AddExpenseViewModel @Inject constructor(
                     is OperationResult.Success -> {
                         // 2. If recurring, save the rule
                         if (currentState.isRecurring) {
-                            saveRecurringRule(merchantTrimmed, normalizedAmount, currentState.recurrenceFrequency, currentState.date)
+                            recurringExpenseRepository.addRecurringExpense(
+                                merchant = merchantTrimmed,
+                                amount = normalizedAmount,
+                                frequency = currentState.recurrenceFrequency,
+                                lastDate = currentState.date,
+                                currency = "EUR"
+                            )
                         }
                         
                         _state.update {
@@ -244,40 +252,6 @@ class AddExpenseViewModel @Inject constructor(
         }
     }
 
-    private suspend fun saveRecurringRule(
-        merchant: String, 
-        amount: Double, 
-        frequency: RecurrenceFrequency, 
-        lastDate: Long
-    ) {
-        // Calculate next date based on frequency using java.time for accuracy (DST/Leap years)
-        val lastLocalDate = java.time.Instant.ofEpochMilli(lastDate)
-            .atZone(java.time.ZoneId.systemDefault())
-            .toLocalDate()
-
-        val nextLocalDate = when (frequency) {
-            RecurrenceFrequency.WEEKLY -> lastLocalDate.plusWeeks(1)
-            RecurrenceFrequency.BIWEEKLY -> lastLocalDate.plusWeeks(2)
-            RecurrenceFrequency.MONTHLY -> lastLocalDate.plusMonths(1)
-            RecurrenceFrequency.QUARTERLY -> lastLocalDate.plusMonths(3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> lastLocalDate.plusMonths(6)
-            RecurrenceFrequency.ANNUALLY -> lastLocalDate.plusYears(1)
-            RecurrenceFrequency.IRREGULAR -> lastLocalDate // Should not happen for recurring rule
-            else -> lastLocalDate.plusDays(frequency.days.toLong()) // Fallback
-        }
-
-        val nextDate = nextLocalDate.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-        
-        val rule = ManualRecurringExpense(
-            merchant = merchant,
-            amount = amount,
-            currency = "EUR",
-            frequency = frequency,
-            nextDate = nextDate,
-            note = "Created from manual entry"
-        )
-        recurringExpenseDao.insert(rule)
-    }
 
     fun reset() {
         _state.value = AddExpenseState()

@@ -8,9 +8,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
 
+import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+
 class OcrParserTest {
 
-    private val parser = ReceiptParser()
+    private val parser = ReceiptParser(MerchantRulesRepository())
 
     @Test
     fun `test decimal parsing - standard european`() {

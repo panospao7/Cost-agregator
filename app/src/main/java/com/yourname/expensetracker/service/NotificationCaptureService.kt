@@ -29,6 +29,9 @@ class NotificationCaptureService : NotificationListenerService() {
     @Inject
     lateinit var repository: NotificationRepository
 
+    @Inject
+    lateinit var timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     
@@ -183,7 +186,7 @@ class NotificationCaptureService : NotificationListenerService() {
         // contentHash ensures we catch updates to the same notification if content differs
         val contentHash = (title.orEmpty() + text.orEmpty() + bigText.orEmpty()).hashCode()
         val dedupeKey = "${sbn.key}:$contentHash"
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         
         val lastProcessed = processedNotifications[dedupeKey]
         if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
@@ -203,7 +206,7 @@ class NotificationCaptureService : NotificationListenerService() {
     private fun cleanupCacheIfNeeded() {
         if (processCount.incrementAndGet() >= CACHE_CLEANUP_THRESHOLD) {
             processCount.set(0)
-            val now = System.currentTimeMillis()
+            val now = timeProvider.now()
             processedNotifications.entries.removeIf { 
                 now - it.value > CACHE_MAX_AGE_MS 
             }
@@ -253,7 +256,7 @@ class NotificationCaptureService : NotificationListenerService() {
             subText = subText,
             extrasJson = extrasJson,
             timestamp = sbn.postTime,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = timeProvider.now()
         )
 
         try {

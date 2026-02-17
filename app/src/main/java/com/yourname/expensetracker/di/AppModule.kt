@@ -51,6 +51,7 @@ object AppModule {
                     android.util.Log.d("AppDatabase", "Database opened successfully. Version: ${db.version}")
                 }
             })
+            .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5)
             .fallbackToDestructiveMigration()
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()

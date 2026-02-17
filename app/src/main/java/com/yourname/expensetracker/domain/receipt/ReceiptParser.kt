@@ -9,8 +9,12 @@ import java.text.SimpleDateFormat
 import javax.inject.Inject
 import javax.inject.Singleton
 
+import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+
 @Singleton
-class ReceiptParser @Inject constructor() {
+class ReceiptParser @Inject constructor(
+    private val merchantRules: MerchantRulesRepository
+) {
 
     data class ParsedReceipt(
         val merchantName: String?,
@@ -147,8 +151,10 @@ class ReceiptParser @Inject constructor() {
         var normalized = text.uppercase()
 
         // Fix numbers FIRST - Remove spaces in numbers like "4 5 . 5 0"
-        normalized = normalized.replace(Regex("""(?<=\d)\s+(?=[.,\d])"""), "")
-        normalized = normalized.replace(Regex("""(?=[.,\d])\s+(?=\d)"""), "")
+        normalized = normalized.replace(Regex("""(?<=\d)[ \t\u00A0]+(?=[.,\d])"""), "")
+        // Fix spaces AROUND separators like "45 , 50" or "45, 50"
+        normalized = normalized.replace(Regex("""(?<=\d)[ \t\u00A0]+([.,])"""), "$1")
+        normalized = normalized.replace(Regex("""([.,])[ \t\u00A0]+(?=\d)"""), "$1")
 
         // Normalize Greek characters to English counterparts for easier matching
         // Use more robust matching for Greek words without \b if possible
@@ -229,61 +235,19 @@ class ReceiptParser @Inject constructor() {
 
     // --- MERCHANT EXTRACTION ---
     private fun extractMerchant(lines: List<String>): String? {
-        // Expanded invalid merchant patterns
-        val invalidMerchants = listOf(
-            // Keywords that should never be merchants
-            "APODEIXI", "AIOAEIEH", "ANOD", "NOMIMH", "ENARXI", "START",
-            "EAPA", "ADDRESS", "THA", "TEL", "AFM", "AOM", "A.M.", "ΑΦΜ",
-            "EYNONO", "ZYNOAO", "SYNOAO", "TOTAL_KEY", "CASH_KEY", "AMOUNT_KEY",
-            // Card processors - CRITICAL
-            "CARDLINK", "WORLDLINE", "VISA", "MASTERCARD", "MAESTRO",
-            "AMERICAN EXPRESS", "AMEX", "DINERS", "DISCOVER",
-            // Banks
-            "PIRAEUS", "EUROBANK", "ALPHA BANK", "NBG", "NATIONAL BANK",
-            "LYNK", "BANK OF CYPRUS", "HELLENIC BANK", "REVOLUT",
-            "VIVA", "SUMUP", "MYPOS", "STRIPE",
-            // Transaction types
-            "AGORA", "SALE", "PURCHASE", "CONTACTLESS", "TERMINAL",
-            "TRANSACTION", "ΠΑΡΑΛΑΒΗ", "ΑΓΟΡΑ",
-            // Serial/reference patterns
-            "ZEIPA", "SERIAL", "ΑΡΙΘΜΟΣ", "APIOMOE", "APIOMOX",
-            // URLs and garbage
-            "WWW.", "HTTP", ".GR", ".COM", "HTTPS://",
-            // Payment related
-            "KAPTA", "KAPTEE", "CARD", "ΚΑΡΤΑ", "METPHTA", "ΜΕΤΡΗΤΑ"
-        )
-
-        // Header markers (indicate we're past the merchant name)
-        val headerMarkers = listOf(
-            "ΑΦΜ", "A.Φ.Μ.", "Α.Φ.Μ", "@.M.", "A.M.", "AΦM",
-            "Α.Ο.Υ.", "ΑΟΥ", "A.0.Y.", "Δ.Ο.Υ.", "ΔΟΥ",
-            "ΤΗΛ", "THA", "THΛ", "ΤΗΛ:", "THA:",
-            "ΟΔΟΣ", "ΣΤΡ.", "STR.", "ADDRESS",
-            "Τ.Κ.", "TK", "Τ.Κ", "T.K.",
-            "Α.Μ.Μ.", "ΑΜΜ", "ΑΜΜ.",
-            "ΗΜΕΡΟΜΗΝΙΑ", "HM/NIA", "DATE_KEY",
-            // Card receipt markers
-            "ΑΓΟΡΑ", "AGORA", "AGORA-SALE", "SALE", "PURCHASE", 
-            "CONTACTLESS", "TERMINAL", "TRANSACTION", "ENTER BONUS",
-            // Card reference patterns
-            "****", "5356", "MARK:", "UID:", "AUTH:"
-        )
-
         // Find markers and extract merchant above them
         for ((index, line) in lines.withIndex()) {
             if (index > 10) break
 
-            for (marker in headerMarkers) {
-                if (line.contains(marker, ignoreCase = true)) {
-                    // Scan upwards for valid merchant
-                    for (j in index - 1 downTo 0) {
-                        val candidate = lines[j]
-                        if (isValidMerchantLine(candidate, invalidMerchants)) {
-                            val cleaned = cleanMerchantName(candidate)
-                            // Additional check: don't return card processor names
-                            if (!isCardProcessor(cleaned)) {
-                                return cleaned
-                            }
+            if (merchantRules.containsHeaderMarker(line)) {
+                // Scan upwards for valid merchant
+                for (j in index - 1 downTo 0) {
+                    val candidate = lines[j]
+                    if (merchantRules.isValidMerchantLine(candidate)) {
+                        val cleaned = merchantRules.cleanMerchantName(candidate)
+                        // Additional check: don't return card processor names
+                        if (!merchantRules.isCardProcessor(cleaned)) {
+                            return cleaned
                         }
                     }
                 }
@@ -292,9 +256,9 @@ class ReceiptParser @Inject constructor() {
 
         // Fallback
         for (line in lines.take(5)) {
-            if (isValidMerchantLine(line, invalidMerchants)) {
-                val cleaned = cleanMerchantName(line)
-                if (!isCardProcessor(cleaned)) {
+            if (merchantRules.isValidMerchantLine(line)) {
+                val cleaned = merchantRules.cleanMerchantName(line)
+                if (!merchantRules.isCardProcessor(cleaned)) {
                     return cleaned
                 }
             }
@@ -303,33 +267,6 @@ class ReceiptParser @Inject constructor() {
         return null
     }
 
-    private fun isCardProcessor(name: String): Boolean {
-        val processors = listOf(
-            "CARDLINK", "WORLDLINE", "VIVA", "PIRAEUS", "EUROBANK", "ALPHA BANK",
-            "LYNK", "BANK OF CYPRUS", "HELLENIC BANK", "NBG", "REVOLUT", "STRIPE",
-            "SUMUP", "MYPOS", "CIBC", "TD BANK", "AMEX", "AMERICAN EXPRESS", "DINERS"
-        )
-        return processors.any { name.contains(it, ignoreCase = true) }
-    }
-
-    private fun isValidMerchantLine(line: String, invalidHeaders: List<String>): Boolean {
-        if (line.length < 3) return false
-        if (line.all { !it.isLetter() }) return false // Must have letters
-        if (invalidHeaders.any { line.contains(it) }) return false
-        
-        // Skip if line is mostly numbers
-        val digitCount = line.count { it.isDigit() }
-        if (digitCount > line.length / 2) return false
-        
-        // Skip lines that are dates or times
-        if (line.matches(Regex(""".*(\\d{2}[/-]\\d{2}[/-]\\d{4}|\\d{2}:\\d{2}:\\d{2}|A\\.?Φ\\.?Μ\\.?).*$"""))) return false
-        
-        return true
-    }
-
-    private fun cleanMerchantName(raw: String): String {
-        return raw.replace(Regex("[^a-zA-Zα-ωΑ-Ω0-9\\s&.-]"), "").trim()
-    }
 
     private fun extractTotal(lines: List<String>): Double? {
         val amountRegex = Regex("""(\d{1,10}(?:[.,\s]\d{3})*[.,]\d{2})(?!\s?%)""")

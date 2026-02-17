@@ -41,7 +41,8 @@ class ReceiptRepository @Inject constructor(
     private val categorizationEngine: CategorizationEngine,
     private val merchantNormalizer: NewMerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
-    private val budgetMonitor: BudgetMonitor
+    private val budgetMonitor: BudgetMonitor,
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
     val allReceipts: Flow<List<ScannedReceipt>> = scannedReceiptDao.getAllFlow()
 
@@ -154,7 +155,7 @@ class ReceiptRepository @Inject constructor(
                 pendingReviewDao.insert(review)
             }
 
-            return Pair(failedReceipt.copy(id = receiptId), ReceiptParser.ParsedReceipt(null, null, null, null, System.currentTimeMillis(), "EUR", emptyList(), 0f))
+            return Pair(failedReceipt.copy(id = receiptId), ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f))
         }
     }
 
@@ -174,7 +175,7 @@ class ReceiptRepository @Inject constructor(
             rawOcrText = "[OCR Failed or Skipped]",
             parsedTotal = null,
             parsedMerchant = null,
-            parsedDate = System.currentTimeMillis(),
+            parsedDate = timeProvider.now(),
             parsedItems = null,
             parsedTaxAmount = null,
             currency = "EUR",
@@ -189,7 +190,7 @@ class ReceiptRepository @Inject constructor(
                 total = null,
                 subtotal = null,
                 tax = null,
-                date = System.currentTimeMillis(),
+                date = timeProvider.now(),
                 currency = "EUR",
                 lineItems = emptyList(),
                 confidence = 0f
@@ -206,7 +207,7 @@ class ReceiptRepository @Inject constructor(
         amount: Double,
         currency: String = "EUR",
         categoryId: Long?,
-        date: Long = System.currentTimeMillis(),
+        date: Long = timeProvider.now(),
         paymentMethod: PaymentMethod = PaymentMethod.CARD,
         notes: String? = null
     ): com.yourname.expensetracker.domain.model.OperationResult<Long> {
@@ -339,7 +340,7 @@ class ReceiptRepository @Inject constructor(
      * Process an image URI as a bank statement: extracting multiple transactions
      */
     suspend fun processStatement(imageUri: Uri): BatchResult {
-        val startTime = System.currentTimeMillis()
+        val startTime = timeProvider.now()
         val parsingLogs = mutableListOf<String>()
         
         // 1. Run OCR
@@ -354,7 +355,7 @@ class ReceiptRepository @Inject constructor(
                 rawText = ocrResult.fullText,
                 parsedTransactions = emptyList(),
                 parsingLogs = parsingLogs,
-                processingTimeMs = System.currentTimeMillis() - startTime,
+                processingTimeMs = timeProvider.now() - startTime,
                 parserUsed = "BankStatementParser"
             )
             return BatchResult(0, 1, listOf("No transactions found in screenshot"), debugData)
@@ -366,7 +367,7 @@ class ReceiptRepository @Inject constructor(
             rawOcrText = ocrResult.fullText,
             parsedTotal = null, // Varies per transaction
             parsedMerchant = "Bank Statement",
-            parsedDate = System.currentTimeMillis(),
+            parsedDate = timeProvider.now(),
             parsedItems = null,
             parsedTaxAmount = null,
             currency = parsedTransactions.firstOrNull()?.currency ?: "EUR",
@@ -397,7 +398,7 @@ class ReceiptRepository @Inject constructor(
                     suggestedMerchant = normalizedMerchant,
                     suggestedType = tx.type.name,
                     suggestedCategoryId = classification.categoryId.takeIf { id -> id > 0 },
-                    suggestedDate = tx.date ?: System.currentTimeMillis(),
+                    suggestedDate = tx.date ?: timeProvider.now(),
                     confidence = tx.confidence,
                     packageName = "statement.import",
                     notificationTitle = "Bank Screenshot",
@@ -421,7 +422,7 @@ class ReceiptRepository @Inject constructor(
         val issues = com.yourname.expensetracker.ui.screens.debug.DebugIssueDetector.detectIssues(
             rawText = ocrResult.fullText,
             transactions = parsedTransactions,
-            processingTimeMs = System.currentTimeMillis() - startTime
+            processingTimeMs = timeProvider.now() - startTime
         )
         
         // Create debug data
@@ -429,7 +430,7 @@ class ReceiptRepository @Inject constructor(
             rawText = ocrResult.fullText,
             parsedTransactions = parsedTransactions,
             parsingLogs = parsingLogs,
-            processingTimeMs = System.currentTimeMillis() - startTime,
+            processingTimeMs = timeProvider.now() - startTime,
             parserUsed = "BankStatementParser (${parsedTransactions.size} transactions)",
             issues = issues
         )

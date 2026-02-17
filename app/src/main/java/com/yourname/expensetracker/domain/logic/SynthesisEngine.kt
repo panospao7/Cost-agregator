@@ -5,13 +5,16 @@ import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.util.TimeProvider
 import java.time.Instant
 import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class SynthesisEngine @Inject constructor() {
+class SynthesisEngine @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
 
     fun synthesize(
         pastSumDaily: List<Double>,
@@ -21,10 +24,10 @@ class SynthesisEngine @Inject constructor() {
         budgetStatuses: List<BudgetStatus>,
         spendingPace: SpendingPace
     ): FinancialForecast {
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         
         // Fix: Use single Calendar instance to avoid inconsistent dates if crossing midnight
-        val calendar = Calendar.getInstance()
+        val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
         val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(1)
@@ -177,7 +180,7 @@ class SynthesisEngine @Inject constructor() {
         dailySpending: List<Float>,
         budgetLimit: Double
     ): List<BlockPartyDay> {
-        val calendar = Calendar.getInstance()
+        val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
         val currentMonth = calendar.get(Calendar.MONTH)
@@ -217,8 +220,8 @@ class SynthesisEngine @Inject constructor() {
             resCal.get(Calendar.DAY_OF_MONTH)
         }
 
-        val dateCal = Calendar.getInstance()
-        val anchorCal = Calendar.getInstance()
+        val dateCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
+        val anchorCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
 
         return (1..daysInMonth).map { day ->
             dateCal.set(Calendar.DAY_OF_MONTH, day)

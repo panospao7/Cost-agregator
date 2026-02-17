@@ -25,7 +25,7 @@ interface SourceStatsDao {
             lastSeen = :now 
         WHERE packageName = :packageName
     """)
-    suspend fun incrementTotal(packageName: String, now: Long = System.currentTimeMillis())
+    suspend fun incrementTotal(packageName: String, now: Long)
 
     @Query("""
         UPDATE source_stats 

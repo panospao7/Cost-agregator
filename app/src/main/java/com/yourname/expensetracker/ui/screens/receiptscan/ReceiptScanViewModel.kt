@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 
 enum class ScanStep {
@@ -41,7 +42,7 @@ data class ReceiptScanState(
     // Editable fields
     val editMerchant: String = "",
     val editAmount: String = "",
-    val editDate: Long = System.currentTimeMillis(),
+    val editDate: Long = 0L,
     val selectedCategoryId: Long? = null,
     val paymentMethod: PaymentMethod = PaymentMethod.CARD,
     val notes: String = "",
@@ -66,11 +67,13 @@ sealed class SaveReceiptResult {
 class ReceiptScanViewModel @Inject constructor(
     private val receiptRepository: ReceiptRepository,
     private val categoryRepository: CategoryRepository,
-    private val savedStateHandle: androidx.lifecycle.SavedStateHandle
+    private val savedStateHandle: androidx.lifecycle.SavedStateHandle,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReceiptScanState(
-        tempCameraUri = savedStateHandle.get<Uri>("temp_uri")
+        tempCameraUri = savedStateHandle.get<Uri>("temp_uri"),
+        editDate = timeProvider.now()
     ))
     val state: StateFlow<ReceiptScanState> = _state.asStateFlow()
 
@@ -112,14 +115,14 @@ class ReceiptScanViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            val startTime = System.currentTimeMillis()
+            val startTime = timeProvider.now()
             val parsingLogs = mutableListOf<String>()
             
             try {
                 // Manual scans do NOT auto-create review items (User confirms in this UI)
                 val (receipt, parsed) = receiptRepository.processReceipt(uri, autoCreateReview = false)
                 
-                val processingTime = System.currentTimeMillis() - startTime
+                val processingTime = timeProvider.now() - startTime
                 
                 // Create debug data
                 val debugData = DebugData(
@@ -154,7 +157,7 @@ class ReceiptScanViewModel @Inject constructor(
                         editAmount = parsed.total?.let { total ->
                             String.format("%.2f", total)
                         } ?: "",
-                        editDate = parsed.date ?: System.currentTimeMillis(),
+                        editDate = parsed.date ?: timeProvider.now(),
                         ocrConfidence = parsed.confidence,
                         selectedCategoryId = null, // Will be auto-detected on save
                         debugData = debugData
@@ -170,7 +173,7 @@ class ReceiptScanViewModel @Inject constructor(
                         rawText = "",
                         parsedTransactions = emptyList(),
                         parsingLogs = parsingLogs,
-                        processingTimeMs = System.currentTimeMillis() - startTime,
+                        processingTimeMs = timeProvider.now() - startTime,
                         parserUsed = "Manual (OCR Failed)"
                     )
                     

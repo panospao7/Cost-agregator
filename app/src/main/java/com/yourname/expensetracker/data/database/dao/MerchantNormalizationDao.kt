@@ -37,7 +37,7 @@ interface MerchantNormalizationDao {
     suspend fun updateCanonicalCategory(id: Long, categoryId: Long?)
     
     @Query("UPDATE merchant_canonicals SET totalOccurrences = totalOccurrences + 1, totalSpent = totalSpent + :amount, updatedAt = :timestamp WHERE id = :id")
-    suspend fun incrementMerchantStats(id: Long, amount: Double, timestamp: Long = System.currentTimeMillis())
+    suspend fun incrementMerchantStats(id: Long, amount: Double, timestamp: Long)
 
     // ==================== Merchant Aliases ====================
     
@@ -73,7 +73,7 @@ interface MerchantNormalizationDao {
     // ==================== Combined Operations ====================
     
     @Transaction
-    suspend fun linkAliasToCanonical(rawName: String, canonicalId: Long, isUserDefined: Boolean = false) {
+    suspend fun linkAliasToCanonical(rawName: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) {
         val normalizedKey = rawName.lowercase().trim()
             .replace(Regex("[^a-z0-9α-ωά-ώ]"), "")
         
@@ -83,14 +83,15 @@ interface MerchantNormalizationDao {
                 canonicalId = canonicalId,
                 isUserDefined = isUserDefined || existing.isUserDefined,
                 occurrenceCount = existing.occurrenceCount + 1,
-                lastUsedAt = System.currentTimeMillis()
+                lastUsedAt = timestamp
             ))
         } else {
             insertAlias(MerchantAlias(
                 rawName = rawName,
                 normalizedKey = normalizedKey,
                 canonicalId = canonicalId,
-                isUserDefined = isUserDefined
+                isUserDefined = isUserDefined,
+                lastUsedAt = timestamp
             ))
         }
     }

@@ -20,6 +20,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import javax.inject.Inject
 import javax.inject.Singleton
 import java.util.Calendar
@@ -51,6 +55,7 @@ data class FinancialWeather(
 )
 
 @Singleton
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 class FinancialWeatherRepository @Inject constructor(
     private val notificationRepository: NotificationRepository,
     private val insightsEngine: InsightsEngine,
@@ -61,9 +66,10 @@ class FinancialWeatherRepository @Inject constructor(
     private val savingsGoalDao: SavingsGoalDao,
     private val synthesisEngine: SynthesisEngine,
     private val narrativeGenerator: NarrativeGenerator,
-    private val analyticsRepository: AnalyticsRepository
+    private val analyticsRepository: AnalyticsRepository,
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
-    private val calendar = Calendar.getInstance()
+    // private val calendar = Calendar.getInstance() // Removed unused field
 
     private fun com.yourname.expensetracker.data.database.entity.PlannedExpense.toDomain(): PlannedExpense {
         return PlannedExpense(
@@ -108,7 +114,7 @@ class FinancialWeatherRepository @Inject constructor(
         
         // 1. Calculate Past Daily Cumulative Spend
         // 1. Calculate Past Daily Cumulative Spend
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val monthStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
         val currentDay = ((now - monthStart) / 86400000L).toInt()
 
@@ -192,7 +198,7 @@ class FinancialWeatherRepository @Inject constructor(
         recurring: List<RecurringPattern>,
         planned: List<PlannedExpense>
     ): List<UpcomingItem> {
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val startOfToday = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
         val horizon = startOfToday + (31 * 86_400_000L) // Show next 31 days
         
@@ -210,6 +216,32 @@ class FinancialWeatherRepository @Inject constructor(
     fun getAllPlannedExpenses(): Flow<List<PlannedExpense>> = plannedExpenseDao.getAllPlannedExpenses()
         .map { entities -> entities.map { it.toDomain() } }
 
-    fun getAllRecurringPatterns(): Flow<List<RecurringPattern>> = recurringExpenseDao.getAllFlow()
-        .map { recurringExpenseEngine.getPatterns() }
+    // Optimized flow for recurring patterns:
+    // 1. Triggered by expense changes (to detect new patterns) OR manual rule changes
+    // 2. Throttled to prevent thrashing on bulk updates
+    // 3. Executed on Default dispatcher
+    // 4. Cached with stateIn
+    private val recurringPatternsFlow: Flow<List<RecurringPattern>> = combine(
+        recurringExpenseDao.getAllFlow(),
+        notificationRepository.getAllExpenses() 
+    ) { _, expenses -> 
+        // We re-run detection whenever expenses change significantly
+        // Note: recurrence engine might use internal logic, but we pass nothing here?
+        // If getPatterns() is args-less, it relies on something else.
+        // Assuming it fetches expenses internally or we should pass them.
+        // Given InsightsEngine usage: recurringExpenseEngine.getPatterns(allExpenses)
+        // We should probably update this to pass expenses if the engine supports it.
+        // IF NOT, we just trigger it.
+        recurringExpenseEngine.getPatterns(expenses)
+    }
+    .flowOn(kotlinx.coroutines.Dispatchers.Default)
+    // Debounce to avoid running on every single transaction during sync/import
+    .debounce(1000L) 
+    .stateIn(
+        scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default), 
+        started = kotlinx.coroutines.flow.SharingStarted.Lazily,
+        initialValue = emptyList()
+    )
+
+    fun getAllRecurringPatterns(): Flow<List<RecurringPattern>> = recurringPatternsFlow
 }

@@ -5,8 +5,10 @@ import android.util.Log
 import com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
 import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 import com.yourname.expensetracker.domain.util.StringBKTree
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -31,26 +33,12 @@ data class MerchantLookupResult(
 @Singleton
 class MerchantNormalizer @Inject constructor(
     private val dao: MerchantNormalizationDao,
-    @ApplicationContext private val context: Context
+    private val merchantRules: MerchantRulesRepository,
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) {
     companion object {
         private const val TAG = "MerchantNormalizer"
-        
-        private val LOCATION_PATTERN = Regex(
-            """\s*#[\dA-Za-z]+|""" +
-            """\s*-\s*\d+\s*$|""" +
-            """\s*Store\s*#?\s*\d+|""" +
-            """\s*Branch\s*#?\s*\d+|""" +
-            """\s*Unit\s*#?\s*\d+|""" +
-            """\s*At\s+[A-Z][a-z]+|""" + // Matches " At Athens", " At London"
-            """\s*\([\d\s]+\)"""
-        )
-        
-        private val CORPORATE_SUFFIXES = listOf(
-            "INC", "INC.", "LLC", "LTD", "LTD.", "CORP", "CORP.", "CORPORATION",
-            "CO", "CO.", "COMPANY", "GMBH", "S.A.", "S.A.S", "B.V.", "A.G."
-        )
-        
         private val COMMON_IGNORE_WORDS = listOf("THE", "A", "AN", "OF", "AND", "OR", "&")
     }
 
@@ -97,14 +85,14 @@ class MerchantNormalizer @Inject constructor(
         // 3. Fuzzy matching
         val fuzzyResult = fuzzyMatch(cleaned, normalizedKey)
         if (fuzzyResult != null && fuzzyResult.confidence >= 0.80f) {
-            dao.linkAliasToCanonical(rawName, fuzzyResult.canonical.id, isUserDefined = false)
+            dao.linkAliasToCanonical(rawName, fuzzyResult.canonical.id, isUserDefined = false, timestamp = timeProvider.now())
             return@withContext fuzzyResult
         }
         
         // 4. Create new
         if (autoCreate) {
             val newCanonical = createNewMerchant(cleaned, normalizedKey, categoryId)
-            dao.linkAliasToCanonical(rawName, newCanonical.id, isUserDefined = false)
+            dao.linkAliasToCanonical(rawName, newCanonical.id, isUserDefined = false, timestamp = timeProvider.now())
             invalidateTreeCache()
             
             return@withContext MerchantLookupResult(
@@ -130,28 +118,14 @@ class MerchantNormalizer @Inject constructor(
         val brandId = brandLookup.canonical.id
 
         // 2. Link the original POS name to this brand ID
-        dao.linkAliasToCanonical(rawName, brandId, isUserDefined = true)
+        dao.linkAliasToCanonical(rawName, brandId, isUserDefined = true, timestamp = timeProvider.now())
         
         Log.i(TAG, "Learned alias: $rawName -> $brandName")
         invalidateTreeCache()
     }
 
     fun cleanMerchantName(rawName: String): String {
-        var cleaned = rawName.trim()
-        cleaned = LOCATION_PATTERN.replace(cleaned, "")
-        
-        val upper = cleaned.uppercase()
-        for (suffix in CORPORATE_SUFFIXES) {
-            if (upper.endsWith(" $suffix")) {
-                cleaned = cleaned.dropLast(suffix.length + 1).trim()
-            } else if (upper.endsWith(",$suffix")) {
-                cleaned = cleaned.dropLast(suffix.length + 1).trim()
-            }
-        }
-        
-        cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
-        cleaned = cleaned.trim { !it.isLetterOrDigit() }
-        return cleaned.ifEmpty { rawName.trim() }
+        return merchantRules.cleanMerchantName(rawName)
     }
 
     private fun createSearchKey(name: String): String {
@@ -221,7 +195,7 @@ class MerchantNormalizer @Inject constructor(
 
     private suspend fun getOrBuildTree(): StringBKTree {
         return treeMutex.withLock {
-            val now = System.currentTimeMillis()
+            val now = timeProvider.now()
             if (bkTree == null || now - lastTreeRebuild > TREE_REBUILD_INTERVAL) {
                 val tree = StringBKTree.create()
                 dao.getTopMerchants(1000).forEach { tree.insert(it.searchKey) }

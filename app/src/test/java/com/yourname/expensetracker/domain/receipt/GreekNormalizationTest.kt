@@ -5,9 +5,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.lang.reflect.Method
 
+import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+
 class GreekNormalizationTest {
 
-    private val parser = ReceiptParser()
+    private val parser = ReceiptParser(MerchantRulesRepository())
     private val normalizeMethod: Method = ReceiptParser::class.java.getDeclaredMethod("normalizeGreekOcr", String::class.java)
 
     init {

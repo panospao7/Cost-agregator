@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.analytics.*
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +37,8 @@ class AnalyticsViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val insightsEngine: InsightsEngine,
     private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine,
-    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository
+    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AnalyticsState())
@@ -72,7 +74,7 @@ class AnalyticsViewModel @Inject constructor(
         period: TimePeriod
     ) {
         val purchases = allExpenses.filter { it.transactionType == TransactionType.PURCHASE }
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val categoryMap = categories.associateBy { it.id }
 
         // Calculate date ranges
@@ -197,8 +199,8 @@ class AnalyticsViewModel @Inject constructor(
                 val start = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
                 Pair(start, now)
             }
-            TimePeriod.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(7)
-            TimePeriod.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(0) // Current month
+            TimePeriod.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 7)
+            TimePeriod.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now, 0) // Current month
             TimePeriod.YEAR -> {
                  // Start of year logic wasn't in Utils yet, let's keep local or add to Utils.
                  // Utils had getMonthRange.

@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -29,7 +30,8 @@ import kotlin.math.sqrt
 class AdvancedAnalyticsEngine @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val categoryDao: CategoryDao,
-    private val budgetDao: BudgetDao
+    private val budgetDao: BudgetDao,
+    private val timeProvider: TimeProvider
 ) {
     companion object {
         private const val TAG = "AdvancedAnalytics"
@@ -49,7 +51,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
      */
     fun getPeriodRange(
         period: AnalyticsPeriod,
-        referenceDate: Long = System.currentTimeMillis(),
+        referenceDate: Long = timeProvider.now(),
         computeComparison: Boolean = true
     ): PeriodRange {
         val (startMs, endMs, label) = when (period) {
@@ -91,7 +93,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val start = TimePeriodUtils.getStartOfQuarter(referenceDate)
         val end = TimePeriodUtils.getEndOfQuarter(start) + 1
         
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         cal.timeInMillis = start
         val quarterNum = (cal.get(Calendar.MONTH) / 3) + 1
         val year = cal.get(Calendar.YEAR)
@@ -103,7 +105,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val start = TimePeriodUtils.getStartOfYear(referenceDate)
         val end = TimePeriodUtils.getEndOfYear(start) + 1
         
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         cal.timeInMillis = start
         val year = cal.get(Calendar.YEAR)
         
@@ -112,7 +114,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     private fun getPreviousPeriodRange(period: AnalyticsPeriod, currentStartMs: Long): PeriodRange? {
         return try {
-            val cal = Calendar.getInstance()
+            val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
             cal.timeInMillis = currentStartMs
             
             when (period) {
@@ -326,7 +328,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             return@coroutineScope createEmptyPatternAnalysis(period)
         }
         
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val totalSpent = purchases.sumOf { it.amount }
         
         // Use arrays for better performance
@@ -451,7 +453,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         )
         
         // Daily spending analysis
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val dailyTotals = purchases.groupBy { expense ->
             cal.timeInMillis = expense.date
             "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.DAY_OF_YEAR)}"
@@ -580,14 +582,14 @@ class AdvancedAnalyticsEngine @Inject constructor(
         
         // Determine how many days to actually show
         // If the period is current, we only show up to today to avoid a long "future" flat line
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val daysPassed = if (now in period.startMs until period.endMs) {
             ((now - period.startMs) / MILLIS_PER_DAY).toInt() + 1
         } else {
             periodDays
         }
         
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val dailyByCategory = mutableMapOf<Long?, DoubleArray>()
         
         for (purchase in purchases) {
@@ -740,7 +742,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     private fun calculateStreakCount(historicalExpenses: List<Expense>): Int {
         if (historicalExpenses.isEmpty()) return 0
         
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val months = historicalExpenses.map { expense ->
             cal.timeInMillis = expense.date
             "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}"
@@ -770,7 +772,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
     
     private fun calculateSpendingByDayOfWeek(transactions: List<Expense>): Map<Int, Double> {
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val result = mutableMapOf<Int, Double>()
         
         for (tx in transactions) {
@@ -797,12 +799,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
         
         if (totalSpent <= 0 || purchases.isEmpty()) return patterns
         
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         
         // Weekend Warrior pattern
         val weekendTotal = dayTotals[5] + dayTotals[6]
         if (weekendTotal / totalSpent > 0.5) {
-            val cal = Calendar.getInstance()
+            val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
             val weekendMerchants = purchases.filter { tx ->
                 cal.timeInMillis = tx.date
                 val dow = cal.get(Calendar.DAY_OF_WEEK)
