@@ -52,14 +52,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
         referenceDate: Long = System.currentTimeMillis(),
         computeComparison: Boolean = true
     ): PeriodRange {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = referenceDate
-        
         val (startMs, endMs, label) = when (period) {
-            AnalyticsPeriod.WEEK -> calculateWeekRange(cal)
-            AnalyticsPeriod.MONTH -> calculateMonthRange(cal)
-            AnalyticsPeriod.QUARTER -> calculateQuarterRange(cal)
-            AnalyticsPeriod.YEAR -> calculateYearRange(cal)
+            AnalyticsPeriod.WEEK -> calculateWeekRange(referenceDate)
+            AnalyticsPeriod.MONTH -> calculateMonthRange(referenceDate)
+            AnalyticsPeriod.QUARTER -> calculateQuarterRange(referenceDate)
+            AnalyticsPeriod.YEAR -> calculateYearRange(referenceDate)
             AnalyticsPeriod.CUSTOM -> throw IllegalArgumentException(
                 "Custom period requires explicit date range. Use getCustomPeriodRange() instead."
             )
@@ -74,44 +71,41 @@ class AdvancedAnalyticsEngine @Inject constructor(
         )
     }
     
-    private fun calculateWeekRange(cal: Calendar): Triple<Long, Long, String> {
-        val start = TimePeriodUtils.getStartOfWeek(cal.timeInMillis)
+    private fun calculateWeekRange(referenceDate: Long): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfWeek(referenceDate)
         val end = start + (7 * MILLIS_PER_DAY)
         
         val fmt = SimpleDateFormat("MMM d", Locale.getDefault())
         return Triple(start, end, "${fmt.format(Date(start))} - ${fmt.format(Date(end - 1))}")
     }
     
-    private fun calculateMonthRange(cal: Calendar): Triple<Long, Long, String> {
-        val start = TimePeriodUtils.getStartOfMonth(cal.timeInMillis)
-        
-        // Month length varies, so we still need calendar for End or use getEndOfMonth + 1
+    private fun calculateMonthRange(referenceDate: Long): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfMonth(referenceDate)
         val end = TimePeriodUtils.getEndOfMonth(start) + 1
         
         val fmt = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
         return Triple(start, end, fmt.format(Date(start)))
     }
     
-    private fun calculateQuarterRange(cal: Calendar): Triple<Long, Long, String> {
-        val start = TimePeriodUtils.getStartOfQuarter(cal.timeInMillis)
+    private fun calculateQuarterRange(referenceDate: Long): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfQuarter(referenceDate)
         val end = TimePeriodUtils.getEndOfQuarter(start) + 1
         
-        // Re-derive quarter num for label
-        val tempCal = Calendar.getInstance()
-        tempCal.timeInMillis = start
-        val quarterNum = (tempCal.get(Calendar.MONTH) / 3) + 1
-        val year = tempCal.get(Calendar.YEAR)
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = start
+        val quarterNum = (cal.get(Calendar.MONTH) / 3) + 1
+        val year = cal.get(Calendar.YEAR)
         
         return Triple(start, end, "Q$quarterNum $year")
     }
     
-    private fun calculateYearRange(cal: Calendar): Triple<Long, Long, String> {
-        val start = TimePeriodUtils.getStartOfYear(cal.timeInMillis)
+    private fun calculateYearRange(referenceDate: Long): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfYear(referenceDate)
         val end = TimePeriodUtils.getEndOfYear(start) + 1
         
-        val tempCal = Calendar.getInstance()
-        tempCal.timeInMillis = start
-        val year = tempCal.get(Calendar.YEAR)
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = start
+        val year = cal.get(Calendar.YEAR)
         
         return Triple(start, end, year.toString())
     }
@@ -341,8 +335,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val timeSlotStats = mutableMapOf<TimeSlot, Double>()
         
         for (purchase in purchases) {
-            cal.timeInMillis = purchase.date
-            val dayIndex = calendarDayToIndex(cal)
+            val dayIndex = calendarDayToIndex(purchase.date, cal)
             val hour = cal.get(Calendar.HOUR_OF_DAY)
             
             dayTotals[dayIndex] += purchase.amount
@@ -510,7 +503,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
     // PRIVATE HELPER METHODS
     // ============================================================
     
-    private fun calendarDayToIndex(cal: Calendar): Int {
+    private fun calendarDayToIndex(timestamp: Long, cal: Calendar): Int {
+        cal.timeInMillis = timestamp
         return when (cal.get(Calendar.DAY_OF_WEEK)) {
             Calendar.MONDAY -> 0
             Calendar.TUESDAY -> 1
@@ -780,9 +774,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val result = mutableMapOf<Int, Double>()
         
         for (tx in transactions) {
-            cal.timeInMillis = tx.date
-            val dayIndex = calendarDayToIndex(cal)
-            result[dayIndex] = (result[dayIndex] ?: 0.0) + tx.amount
+            result[calendarDayToIndex(tx.date, cal)] = (result[calendarDayToIndex(tx.date, cal)] ?: 0.0) + tx.amount
         }
         
         return result
@@ -810,9 +802,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
         // Weekend Warrior pattern
         val weekendTotal = dayTotals[5] + dayTotals[6]
         if (weekendTotal / totalSpent > 0.5) {
+            val cal = Calendar.getInstance()
             val weekendMerchants = purchases.filter { tx ->
                 cal.timeInMillis = tx.date
-                cal.get(Calendar.DAY_OF_WEEK) in listOf(Calendar.SATURDAY, Calendar.SUNDAY)
+                val dow = cal.get(Calendar.DAY_OF_WEEK)
+                dow == Calendar.SATURDAY || dow == Calendar.SUNDAY
             }.map { it.merchant }.distinct()
             
             patterns.add(DetectedPattern(

@@ -36,10 +36,13 @@ import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.util.Locale
 
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdvancedAnalyticsScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToTransactions: (TransactionFilter) -> Unit,
     viewModel: AdvancedAnalyticsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -139,7 +142,17 @@ fun AdvancedAnalyticsScreen(
                             key = { it.category.id },
                             contentType = { "CategoryItem" }
                         ) { item ->
-                            EnhancedCategoryItem(item)
+                            EnhancedCategoryItem(
+                                item = item,
+                                onClick = {
+                                    onNavigateToTransactions(
+                                        TransactionFilter(
+                                            categoryId = item.category.id,
+                                            dateRange = viewModel.getCurrentDateRange()
+                                        )
+                                    )
+                                }
+                            )
                         }
                     }
 
@@ -157,7 +170,17 @@ fun AdvancedAnalyticsScreen(
                             key = { it.merchant },
                             contentType = { "MerchantItem" }
                         ) { item ->
-                            EnhancedMerchantItem(item)
+                            EnhancedMerchantItem(
+                                item = item,
+                                onClick = {
+                                    onNavigateToTransactions(
+                                        TransactionFilter(
+                                            merchantName = item.merchant,
+                                            dateRange = viewModel.getCurrentDateRange()
+                                        )
+                                    )
+                                }
+                            )
                         }
                     }
                     
@@ -251,14 +274,19 @@ fun StatisticalHighlights(stats: StatisticalInsights) {
 }
 
 @Composable
-fun EnhancedCategoryItem(item: EnhancedCategoryAnalytics) {
+fun EnhancedCategoryItem(
+    item: EnhancedCategoryAnalytics,
+    onClick: () -> Unit
+) {
     val categoryColor = remember(item.category.color) {
         try { Color(android.graphics.Color.parseColor(item.category.color)) } 
         catch (e: Exception) { Color.Gray }
     }
     
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
@@ -335,9 +363,14 @@ fun EnhancedCategoryItem(item: EnhancedCategoryAnalytics) {
 }
 
 @Composable
-fun EnhancedMerchantItem(item: EnhancedMerchantAnalytics) {
+fun EnhancedMerchantItem(
+    item: EnhancedMerchantAnalytics,
+    onClick: () -> Unit
+) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {

@@ -83,6 +83,9 @@ fun MainScreen() {
     val mainViewModel: MainViewModel = hiltViewModel()
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     
+    // Drill-down filter state
+    var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
+    
     LaunchedEffect(Unit) {
         mainViewModel.navigationRequest.collect { tabIndex ->
             selectedTab = tabIndex
@@ -133,6 +136,8 @@ fun MainScreen() {
                     onClick = { 
                         if (selectedTab != 1) haptic(HapticType.Standard)
                         selectedTab = 1 
+                        // Clear drill-down filter when manually navigating to Activity
+                        activeTransactionFilter = null
                     },
                     icon = { Icon(Icons.Rounded.History, contentDescription = "Activity") },
                     label = { Text("Activity") }
@@ -198,15 +203,24 @@ fun MainScreen() {
                 when (targetTab) {
                     0 -> HomeScreen(
                         onNavigateToReview = { selectedTab = 2 },
-                        onNavigateToRecurring = { showRecurringExpenses = true }
+                        onNavigateToRecurring = { showRecurringExpenses = true },
+                        onNavigateToTransactions = { filter ->
+                            activeTransactionFilter = filter
+                            selectedTab = 1
+                        }
                     )
                     1 -> TransactionsScreen(
-                        onNavigateToAnalytics = { selectedTab = 4 }
+                        onNavigateToAnalytics = { selectedTab = 4 },
+                        initialFilter = activeTransactionFilter
                     )
                     2 -> ReviewScreen()
                     3 -> BudgetScreen()
                     4 -> com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen(
-                        onNavigateBack = { selectedTab = 1 }
+                        onNavigateBack = { selectedTab = 1 },
+                        onNavigateToTransactions = { filter ->
+                            activeTransactionFilter = filter
+                            selectedTab = 1
+                        }
                     )
                 }
             }
@@ -242,7 +256,13 @@ fun MainScreen() {
 
             if (showRecurringExpenses) {
                 com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen(
-                    onNavigateBack = { showRecurringExpenses = false }
+                    onNavigateBack = { showRecurringExpenses = false },
+                    onNavigateToTransactions = { filter ->
+                        activeTransactionFilter = filter
+                        // Close recurring screen since it's an overlay
+                        showRecurringExpenses = false
+                        selectedTab = 1
+                    }
                 )
             }
         }

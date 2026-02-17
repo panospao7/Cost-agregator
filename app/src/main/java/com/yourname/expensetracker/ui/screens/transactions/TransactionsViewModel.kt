@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -86,14 +87,37 @@ class TransactionsViewModel @Inject constructor(
      * Main transactions flow with reactive filtering.
      * Combines tab selection, search query, and refresh triggers.
      */
+    // Filter state for drill-down
+    private val _filter = MutableStateFlow<TransactionFilter?>(null)
+    val filter: StateFlow<TransactionFilter?> = _filter.asStateFlow()
+
+    /**
+     * Main transactions flow with reactive filtering.
+     * Combines tab selection, search query, filter, and refresh triggers.
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
     val transactions: StateFlow<List<ExpenseWithCategory>> = combine(
         _selectedTab,
         _searchQuery,
+        _filter,
         _refreshTrigger
-    ) { tab, query, _ -> Pair(tab, query) }
-        .flatMapLatest { (tab, query) ->
-            if (tab == TransactionTab.ALL) {
+    ) { tab, query, filter, _ -> Triple(tab, query, filter) }
+        .flatMapLatest { (tab, query, filter) ->
+            if (filter != null) {
+                // FILTER MODE: Optimized SQL-level filtering
+                val (start, end) = filter.dateRange ?: Pair(0L, System.currentTimeMillis())
+                
+                repository.getExpensesWithCategoryFiltered(
+                    startMs = start,
+                    endMs = end,
+                    type = TransactionType.PURCHASE,
+                    categoryId = filter.categoryId,
+                    merchant = filter.merchantName
+                ).map { expenses ->
+                    if (query.isBlank()) expenses
+                    else expenses.filter { matchesSearch(it, query) }
+                }
+            } else if (tab == TransactionTab.ALL) {
                 // For ALL tab, use paged data with optional search filter
                 _pagedExpenses.map { expenses ->
                     if (query.isBlank()) expenses
@@ -158,6 +182,19 @@ class TransactionsViewModel @Inject constructor(
     // PUBLIC API
     // ============================================================
 
+    // ============================================================
+    // PUBLIC API
+    // ============================================================
+
+    fun applyFilter(filter: TransactionFilter) {
+        _filter.value = filter
+        // We might want to switch tab visual state or specific logic here if needed
+    }
+
+    fun clearFilter() {
+        _filter.value = null
+    }
+
     fun selectTab(tab: TransactionTab) {
         if (_selectedTab.value == tab) return
         
@@ -165,6 +202,7 @@ class TransactionsViewModel @Inject constructor(
         _currentPage.value = 0
         _pagedExpenses.value = emptyList() // Clear to prevent stale data flash
         _searchQuery.value = "" // Reset search on tab change
+        _filter.value = null // Clear filter when manually changing tabs
         
         if (tab == TransactionTab.ALL) {
             loadInitialAll()

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.recurring
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -34,6 +35,7 @@ import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 
 @HiltViewModel
 class RecurringExpensesViewModel @Inject constructor(
@@ -105,10 +107,12 @@ class RecurringExpensesViewModel @Inject constructor(
     }
 }
 
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecurringExpensesScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToTransactions: (TransactionFilter) -> Unit = {}, // Default for preview/safety
     viewModel: RecurringExpensesViewModel = hiltViewModel()
 ) {
     val patterns by viewModel.allPatterns.collectAsState()
@@ -160,7 +164,12 @@ fun RecurringExpensesScreen(
                             RecurringExpenseItem(
                                 pattern = pattern,
                                 onDelete = { viewModel.deleteManualRule(pattern) },
-                                onConfirm = { viewModel.confirmPattern(pattern) }
+                                onConfirm = { viewModel.confirmPattern(pattern) },
+                                onMerchantClick = { 
+                                    onNavigateToTransactions(
+                                        TransactionFilter(merchantName = pattern.merchantName)
+                                    ) 
+                                }
                             )
                         }
 
@@ -238,7 +247,8 @@ fun PlannedExpenseItem(
 fun RecurringExpenseItem(
     pattern: RecurringPattern,
     onDelete: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: () -> Unit,
+    onMerchantClick: () -> Unit = {}
 ) {
 
     val isManual = pattern.id != null || pattern.confidence >= 0.99f
@@ -256,7 +266,8 @@ fun RecurringExpenseItem(
                 Text(
                     text = pattern.merchantName,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable { onMerchantClick() }
                 )
                 Text(
                     text = "${String.format("%.2f", pattern.averageAmount)} ${pattern.currency} • ${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",

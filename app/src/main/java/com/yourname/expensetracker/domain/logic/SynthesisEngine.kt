@@ -171,6 +171,132 @@ class SynthesisEngine @Inject constructor() {
         )
     }
 
+    fun calculateBlockPartyData(
+        forecast: FinancialForecast,
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        dailySpending: List<Float>,
+        budgetLimit: Double
+    ): List<BlockPartyDay> {
+        val calendar = Calendar.getInstance()
+        val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
+        val currentMonth = calendar.get(Calendar.MONTH)
+        val currentYear = calendar.get(Calendar.YEAR)
+        
+        val components = forecast.components
+        
+        // 1. Calculate Monthly Totals for pro-rating
+        val totalMonthlyRecurring = components.recurringExpenses.sumOf { it.averageAmount }
+        
+        // Filter planned expenses for this month only
+        val thisMonthPlanned = components.plannedExpenses.filter { 
+            val pCal = Calendar.getInstance().apply { timeInMillis = it.date }
+            pCal.get(Calendar.MONTH) == currentMonth && pCal.get(Calendar.YEAR) == currentYear
+        }
+        val totalMonthlyPlanned = thisMonthPlanned.sumOf { it.amount }
+        
+        // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
+        val goalReserves = components.goalReserves
+        
+        // LOG-021: Fix - Use Discretionary Pool Formula correctly
+        val discretionaryTotal = (budgetLimit - totalMonthlyRecurring - totalMonthlyPlanned - goalReserves).coerceAtLeast(0.0)
+        val baseDiscretionaryRate = if (budgetLimit > 0) discretionaryTotal / daysInMonth else 0.0
+
+        // Optimization: Group raw expenses by day once O(N)
+        val expensesByDay = expenses.filter { 
+            val eCal = Calendar.getInstance().apply { timeInMillis = it.date }
+            eCal.get(Calendar.MONTH) == currentMonth && eCal.get(Calendar.YEAR) == currentYear
+        }.groupBy { 
+            val resCal = Calendar.getInstance().apply { timeInMillis = it.date }
+            resCal.get(Calendar.DAY_OF_MONTH)
+        }
+
+        // Optimization: Group planned expenses by day
+        val plannedByDay = thisMonthPlanned.groupBy { 
+            val resCal = Calendar.getInstance().apply { timeInMillis = it.date }
+            resCal.get(Calendar.DAY_OF_MONTH)
+        }
+
+        val dateCal = Calendar.getInstance()
+        val anchorCal = Calendar.getInstance()
+
+        return (1..daysInMonth).map { day ->
+            dateCal.set(Calendar.DAY_OF_MONTH, day)
+            dateCal.set(Calendar.HOUR_OF_DAY, 12)
+            val dateMs = dateCal.timeInMillis
+
+            // 1. Identify Recurring on this day
+            val recurringItemsOnDay = components.recurringExpenses.filter { 
+                isRecurringExpected(it, dateCal, anchorCal) 
+            }
+            val recurringOnDay = recurringItemsOnDay.sumOf { it.averageAmount }
+            val recurringNames = recurringItemsOnDay.map { it.merchantName }
+
+            // 2. Identify Planned on this day
+            val plannedItemsOnDay = plannedByDay[day] ?: emptyList()
+            val plannedOnDay = plannedItemsOnDay.sumOf { it.amount }
+            val plannedNames = plannedItemsOnDay.map { it.description }
+
+            val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
+            val actual = if (day <= dailySpending.size) dailySpending[day - 1].toDouble() else 0.0
+
+            val dayTransactions = (expensesByDay[day] ?: emptyList())
+                .sortedByDescending { it.amount }
+                .take(3)
+
+            val status = when {
+                day == dayOfMonth -> BlockPartyStatus.TODAY
+                day > dayOfMonth -> {
+                    if (recurringItemsOnDay.isNotEmpty()) BlockPartyStatus.BILL_DAY
+                    else BlockPartyStatus.FUTURE
+                }
+                actual <= dailyTarget * 1.1 -> BlockPartyStatus.UNDER_BUDGET
+                else -> BlockPartyStatus.OVER_BUDGET
+            }
+
+            BlockPartyDay(
+                dayOfMonth = day,
+                date = dateMs,
+                actualSpent = actual,
+                targetBudget = dailyTarget,
+                isToday = day == dayOfMonth,
+                status = status,
+                baseTarget = baseDiscretionaryRate,
+                recurringImpact = recurringOnDay,
+                plannedImpact = plannedOnDay,
+                recurringItems = recurringNames,
+                plannedItems = plannedNames,
+                topTransactions = dayTransactions
+            )
+        }
+    }
+
+    private fun isRecurringExpected(
+        pattern: RecurringPattern, 
+        dateCal: Calendar, 
+        anchorCal: Calendar
+    ): Boolean {
+        val anchor = pattern.nextExpectedDate
+        val frequency = pattern.frequency
+        
+        anchorCal.timeInMillis = anchor
+        
+        return when (frequency) {
+            RecurrenceFrequency.WEEKLY -> {
+                dateCal.get(Calendar.DAY_OF_WEEK) == anchorCal.get(Calendar.DAY_OF_WEEK)
+            }
+            RecurrenceFrequency.BIWEEKLY -> {
+                 val diff = dateCal.timeInMillis - anchor
+                 val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
+                 (daysDiff % 14L == 0L)
+            }
+            RecurrenceFrequency.MONTHLY -> {
+                dateCal.get(Calendar.DAY_OF_MONTH) == anchorCal.get(Calendar.DAY_OF_MONTH)
+            }
+            else -> false 
+        }
+    }
+
     private fun determineRiskLevel(
         pace: SpendingPace,
         budgets: List<BudgetStatus>,

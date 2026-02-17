@@ -61,6 +61,7 @@ import java.util.*
 @Composable
 fun TransactionsScreen(
     viewModel: TransactionsViewModel = hiltViewModel(),
+    initialFilter: TransactionFilter? = null,
     onNavigateToAnalytics: () -> Unit = {}
 ) {
     val transactions by viewModel.transactions.collectAsState()
@@ -68,6 +69,7 @@ fun TransactionsScreen(
     val categories by viewModel.categories.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
+    val activeFilter by viewModel.filter.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isLoadingMore by viewModel.isLoadingMoreState.collectAsState()
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
@@ -76,6 +78,13 @@ fun TransactionsScreen(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     
+    // Initial filter application
+    LaunchedEffect(initialFilter) {
+        if (initialFilter != null) {
+            viewModel.applyFilter(initialFilter)
+        }
+    }
+
     // Dialog states
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
@@ -244,6 +253,51 @@ fun TransactionsScreen(
                                 }
                             }
                         )
+                    }
+                }
+                
+                // Active Filter Banner
+                AnimatedVisibility(visible = activeFilter != null) {
+                    Surface(
+                        color = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            val filterText = buildString {
+                                append("Filtered by: ")
+                                val parts = mutableListOf<String>()
+                                activeFilter?.merchantName?.let { parts.add("Merchant: $it") }
+                                activeFilter?.categoryId?.let { id -> 
+                                    categories.find { it.id == id }?.name?.let { parts.add("Category: $it") }
+                                }
+                                append(parts.joinToString(", "))
+                            }
+                            
+                            Text(
+                                text = filterText,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = SemanticColors.PrimaryIndigo,
+                                modifier = Modifier.weight(1f)
+                            )
+                            
+                            IconButton(
+                                onClick = { viewModel.clearFilter() },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Close,
+                                    contentDescription = "Clear filter",
+                                    tint = SemanticColors.PrimaryIndigo,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }

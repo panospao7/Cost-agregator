@@ -702,6 +702,23 @@ interface ExpenseDao {
     suspend fun getExpensesWithCategoryPaged(limit: Int, offset: Int): List<ExpenseWithCategory>
 
     @Transaction
+    @Query("""
+        SELECT * FROM expenses 
+        WHERE date >= :startMs AND date <= :endMs 
+        AND (:type IS NULL OR transactionType = :type)
+        AND (:categoryId IS NULL OR categoryId = :categoryId)
+        AND (:merchant IS NULL OR merchant = :merchant)
+        ORDER BY date DESC
+    """)
+    fun getExpensesWithCategoryFilteredFlow(
+        startMs: Long, 
+        endMs: Long, 
+        type: String?,
+        categoryId: Long?, 
+        merchant: String?
+    ): Flow<List<ExpenseWithCategory>>
+
+    @Transaction
     @Query("SELECT * FROM expenses WHERE date >= :startMs AND date <= :endMs ORDER BY date DESC")
     fun getExpensesWithCategoryInPeriodFlow(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>>
 
@@ -790,8 +807,14 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense>
 
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String): List<Expense>
+
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
     fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
+
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String): Flow<List<Expense>>
 
     @Query("""
         SELECT SUM(amount) FROM expenses 
@@ -3638,12 +3661,9 @@ class AnalyticsRepository @Inject constructor(
         val previousEnd = start
 
         return combine(
-            expenseDao.getExpensesBetweenFlow(start, end),
-            expenseDao.getExpensesBetweenFlow(previousStart, previousEnd)
-        ) { currentExpenses, previousExpenses ->
-
-            val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE }
-            val previousPurchases = previousExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+            expenseDao.getExpensesByTypeBetweenFlow(start, end, TransactionType.PURCHASE.name),
+            expenseDao.getExpensesByTypeBetweenFlow(previousStart, previousEnd, TransactionType.PURCHASE.name)
+        ) { currentPurchases, previousPurchases ->
 
             val totalSpent = currentPurchases.sumOf { it.amount }
             val previousTotal = previousPurchases.sumOf { it.amount }
@@ -3699,10 +3719,9 @@ class AnalyticsRepository @Inject constructor(
      */
     fun getCategoryBreakdown(start: Long, end: Long): Flow<List<CategoryBreakdown>> {
         return combine(
-             expenseDao.getExpensesBetweenFlow(start, end),
+             expenseDao.getExpensesByTypeBetweenFlow(start, end, TransactionType.PURCHASE.name),
              categoryRepository.allCategories
-        ) { expenses, categories ->
-            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        ) { purchases, categories ->
             val totalSpent = purchases.sumOf { it.amount }
             val categoryMap = categories.associateBy { it.id }
 
@@ -4059,16 +4078,31 @@ class DashboardRepository @Inject constructor(
         return try {
             val array = JSONArray(json)
             val list = mutableListOf<DashboardWidgetConfig>()
+            val savedIds = mutableSetOf<String>()
+
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
+                val id = obj.getString("id")
+                savedIds.add(id)
                 list.add(
                     DashboardWidgetConfig(
-                        id = obj.getString("id"),
+                        id = id,
                         order = obj.getInt("order"),
                         isVisible = obj.optBoolean("isVisible", true)
                     )
                 )
             }
+
+            // Merge new defaults that aren't in saved config
+            val defaults = getDefaultConfig()
+            var nextOrder = (list.maxOfOrNull { it.order } ?: 0) + 1
+
+            defaults.forEach { def ->
+                if (def.id !in savedIds) {
+                    list.add(def.copy(order = nextOrder++))
+                }
+            }
+
             list.sortedBy { it.order }
         } catch (e: Exception) {
             getDefaultConfig()
@@ -4099,7 +4133,8 @@ class DashboardRepository @Inject constructor(
             DashboardWidgetConfig("period_summary", 6),
             DashboardWidgetConfig("budget_health", 7),
             DashboardWidgetConfig("top_categories", 8),
-            DashboardWidgetConfig("recent_transactions", 9)
+            DashboardWidgetConfig("recent_transactions", 9),
+            DashboardWidgetConfig("budget_block_party", 10)
         )
     }
 }
@@ -5151,6 +5186,21 @@ class NotificationRepository @Inject constructor(
 
     fun getExpensesWithCategoryInPeriod(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>> =
         expenseDao.getExpensesWithCategoryInPeriodFlow(startMs, endMs)
+
+    fun getExpensesWithCategoryFiltered(
+        startMs: Long, 
+        endMs: Long, 
+        type: TransactionType?,
+        categoryId: Long?, 
+        merchant: String?
+    ): Flow<List<ExpenseWithCategory>> =
+        expenseDao.getExpensesWithCategoryFilteredFlow(
+            startMs = startMs,
+            endMs = endMs,
+            type = type?.name,
+            categoryId = categoryId,
+            merchant = merchant
+        )
 
     suspend fun getExpensesPaged(limit: Int, offset: Int): List<ExpenseWithCategory> =
         expenseDao.getExpensesWithCategoryPaged(limit, offset)

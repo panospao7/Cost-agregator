@@ -777,6 +777,21 @@ class NotificationRepository @Inject constructor(
     fun getExpensesWithCategoryInPeriod(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>> =
         expenseDao.getExpensesWithCategoryInPeriodFlow(startMs, endMs)
 
+    fun getExpensesWithCategoryFiltered(
+        startMs: Long, 
+        endMs: Long, 
+        type: TransactionType?,
+        categoryId: Long?, 
+        merchant: String?
+    ): Flow<List<ExpenseWithCategory>> =
+        expenseDao.getExpensesWithCategoryFilteredFlow(
+            startMs = startMs,
+            endMs = endMs,
+            type = type?.name,
+            categoryId = categoryId,
+            merchant = merchant
+        )
+
     suspend fun getExpensesPaged(limit: Int, offset: Int): List<ExpenseWithCategory> =
         expenseDao.getExpensesWithCategoryPaged(limit, offset)
 

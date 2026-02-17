@@ -34,11 +34,15 @@ import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onNavigateToReview: () -> Unit,
     onNavigateToRecurring: () -> Unit,
+    onNavigateToTransactions: (TransactionFilter) -> Unit,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
@@ -153,6 +157,12 @@ fun HomeScreen(
                                     }
                                 }
                             }
+                            is DashboardWidget.BudgetBlockParty -> {
+                                BudgetBlockPartyCard(
+                                    days = widget.days,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                             is DashboardWidget.SpendingPaceWidget -> {
                                 BentoCard {
                                     Text(
@@ -206,7 +216,15 @@ fun HomeScreen(
                                 }
                             }
                             is DashboardWidget.SpendingTrend -> {
-                                BentoCard {
+                                BentoCard(
+                                    modifier = Modifier.clickable {
+                                        onNavigateToTransactions(
+                                            TransactionFilter(
+                                                dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis())
+                                            )
+                                        )
+                                    }
+                                ) {
                                     SpendingTrendChart(
                                         currentMonthData = widget.currentMonthData,
                                         previousMonthData = widget.previousMonthData

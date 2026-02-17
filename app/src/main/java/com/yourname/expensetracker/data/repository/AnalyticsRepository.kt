@@ -37,12 +37,9 @@ class AnalyticsRepository @Inject constructor(
         val previousEnd = start
 
         return combine(
-            expenseDao.getExpensesBetweenFlow(start, end),
-            expenseDao.getExpensesBetweenFlow(previousStart, previousEnd)
-        ) { currentExpenses, previousExpenses ->
-            
-            val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE }
-            val previousPurchases = previousExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+            expenseDao.getExpensesByTypeBetweenFlow(start, end, TransactionType.PURCHASE.name),
+            expenseDao.getExpensesByTypeBetweenFlow(previousStart, previousEnd, TransactionType.PURCHASE.name)
+        ) { currentPurchases, previousPurchases ->
             
             val totalSpent = currentPurchases.sumOf { it.amount }
             val previousTotal = previousPurchases.sumOf { it.amount }
@@ -98,10 +95,9 @@ class AnalyticsRepository @Inject constructor(
      */
     fun getCategoryBreakdown(start: Long, end: Long): Flow<List<CategoryBreakdown>> {
         return combine(
-             expenseDao.getExpensesBetweenFlow(start, end),
+             expenseDao.getExpensesByTypeBetweenFlow(start, end, TransactionType.PURCHASE.name),
              categoryRepository.allCategories
-        ) { expenses, categories ->
-            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        ) { purchases, categories ->
             val totalSpent = purchases.sumOf { it.amount }
             val categoryMap = categories.associateBy { it.id }
             

@@ -20,7 +20,8 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
-import com.yourname.expensetracker.data.database.entity.PlannedExpense
+import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.model.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -34,6 +35,10 @@ sealed class DashboardWidget {
         val amount: Double,
         val totalBudget: Double?,
         val daysRemaining: Int
+    ) : DashboardWidget()
+
+    data class BudgetBlockParty(
+        val days: List<com.yourname.expensetracker.ui.components.DayBudgetStatus>
     ) : DashboardWidget()
 
     data class SpendingPaceWidget(
@@ -103,12 +108,13 @@ class HomeViewModel @Inject constructor(
     private val insightsEngine: InsightsEngine,
     private val financialWeatherRepository: FinancialWeatherRepository,
     private val plannedExpenseRepository: PlannedExpenseRepository,
-    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository
+    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository,
+    private val synthesisEngine: SynthesisEngine,
+    private val savingsGoalDao: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
 ) : ViewModel() {
 
     private val isEditMode = MutableStateFlow(false)
 
-    // distinct intermediate flow for data to avoid 5-arg limit
     init {
         // Recover from destructive migration items if needed
         viewModelScope.launch {
@@ -116,14 +122,19 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private val dataFlow = combine(
+    // Split flows to avoid 5-arg limit
+    private val baseDataFlow = combine(
         repository.getAllExpenses().catch { emit(emptyList()) },
         categoryRepository.allCategories.catch { emit(emptyList()) },
-        budgetRepository.getBudgetStatuses().catch { emit(emptyList()) },
+        budgetRepository.getBudgetStatuses().catch { emit(emptyList()) }
+    ) { expenses, categories, budgetStatuses ->
+        Triple(expenses, categories, budgetStatuses)
+    }
+
+    private val planningDataFlow = combine(
         repository.getPendingReviewCount().catch { emit(0) },
         financialWeatherRepository.getFinancialWeather().catch { 
-            // Return a default "Unknown" state if the weather engine fails to prevent stalling the dashboard
-            emit(FinancialWeather(
+             emit(FinancialWeather(
                 state = WeatherState.UNKNOWN,
                 headline = "Weather Unavailable",
                 summary = "We couldn't calculate your financial outlook right now.",
@@ -134,9 +145,43 @@ class HomeViewModel @Inject constructor(
                 predictedDiscretionary = 0.0,
                 discretionaryBudget = 0.0
             ))
+        },
+        financialWeatherRepository.getAllRecurringPatterns().catch { emit(emptyList()) },
+        financialWeatherRepository.getAllPlannedExpenses().catch { emit(emptyList()) }
+    ) { pendingCount, weather, recurring, planned ->
+        Quadruple(pendingCount, weather, recurring, planned)
+    }
+
+    private val dataFlow = combine(
+        baseDataFlow,
+        planningDataFlow,
+        savingsGoalDao.getAllGoals().catch { emit(emptyList()) }
+    ) { base, planning, goalEntities ->
+        val goals = goalEntities.map { entity ->
+            SavingsGoal(
+                id = entity.id,
+                name = entity.name,
+                targetAmount = entity.targetAmount,
+                currentAmount = entity.currentAmount,
+                targetDate = entity.targetDate,
+                protectionLevel = when(entity.protectionLevel) {
+                    com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.STRICT -> GoalProtectionLevel.STRICT
+                    com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.WARNING -> GoalProtectionLevel.WARNING
+                    com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.TRACKING -> GoalProtectionLevel.TRACKING
+                }
+            )
         }
-    ) { expenses, categories, budgetStatuses, pendingCount, weather ->
-        FiveData(expenses, categories, budgetStatuses, pendingCount, weather)
+        
+        EightData(
+            expenses = base.first,
+            categories = base.second,
+            budgetStatuses = base.third,
+            pendingCount = planning.first,
+            weather = planning.second,
+            recurringPatterns = planning.third,
+            plannedExpenses = planning.fourth,
+            goals = goals
+        )
     }
     .debounce(300)
 
@@ -152,35 +197,93 @@ class HomeViewModel @Inject constructor(
              com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(System.currentTimeMillis())
         )
     ) { data, summary, categoryBreakdown ->
-        val (expenses, categories, budgetStatuses, pendingCount, weather) = data
+        val (expenses, categories, budgetStatuses, pendingCount, weather, recurringPatterns, plannedExpenses, goals) = data
         
         val now = System.currentTimeMillis()
         val todayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
         val weekStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
 
-        // Calculate "Today" and "Week" locally for now (can be moved to Repo later if heavy)
-        // Since we already have the full list `expenses` in memory from `dataFlow` (which might be overkill but existing arch),
-        // we can just filter for these small windows.
-        // ideally `dataFlow` shouldn't fetch ALL expenses if we have repo. setting that aside for now.
-        
         val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
         val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
         val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
 
         val totalSpent = summary.totalSpent
-        val monthSpent = totalSpent // Summary IS month
+        val monthSpent = totalSpent 
         val txCount = summary.transactionCount
         val previousMonthTotal = summary.previousTotalSpent ?: 0.0
 
-        val daysInMonth = java.util.Calendar.getInstance().getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
-        val dayOfMonth = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH)
+        val calendar = java.util.Calendar.getInstance()
+        val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
         val daysRemaining = daysInMonth - dayOfMonth
 
-        // Overall budget (if set)
+        // Overall budget
         val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
         val safeToSpend = weather.discretionaryBudget 
+        
+        val totalBudgetAmount = overallBudget?.budget?.amount ?: 0.0
 
-        // Category Totals from Repo
+        // === Budget Block Party Logic (Refactored to SynthesisEngine) ===
+        val monthStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
+        val currentDayIdx = ((now - monthStart) / 86400000L).toInt().coerceAtLeast(0)
+        
+        // RE-CALCULATE FORECAST FOR BLOCK PARTY (Centralized Logic)
+        val currentPace = insightsEngine.getSpendingPaceSuspend(expenses)
+        
+        // We need pastSumDaily for the forecast
+        val purchasesThisMonth = expenses.filter { 
+            it.transactionType == TransactionType.PURCHASE && it.date >= monthStart
+        }
+        val amountByDay = DoubleArray(currentDayIdx + 1)
+        purchasesThisMonth.forEach { exp ->
+            val dayIndex = ((exp.date - monthStart) / 86400000L).toInt()
+            if (dayIndex in amountByDay.indices) amountByDay[dayIndex] += exp.amount
+        }
+        var runningTotal = 0.0
+        val pastSumDaily = amountByDay.map { runningTotal += it; runningTotal }
+        
+        val forecast = synthesisEngine.synthesize(
+            pastSumDaily = pastSumDaily,
+            recurringPatterns = recurringPatterns,
+            plannedExpenses = plannedExpenses,
+            savingsGoals = goals,
+            budgetStatuses = budgetStatuses,
+            spendingPace = currentPace
+        )
+        
+        // Call centralized Block Party logic
+        val domainBlocks = synthesisEngine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = expenses,
+            dailySpending = summary.dailyHistory,
+            budgetLimit = totalBudgetAmount
+        )
+
+        // Map domain to UI models
+        val blockPartyDays = domainBlocks.map { domain ->
+            com.yourname.expensetracker.ui.components.DayBudgetStatus(
+                dayOfMonth = domain.dayOfMonth,
+                date = domain.date,
+                actualSpent = domain.actualSpent,
+                targetBudget = domain.targetBudget,
+                isToday = domain.isToday,
+                status = when(domain.status) {
+                    BlockPartyStatus.UNDER_BUDGET -> com.yourname.expensetracker.ui.components.BlockStatus.UNDER_BUDGET
+                    BlockPartyStatus.OVER_BUDGET -> com.yourname.expensetracker.ui.components.BlockStatus.OVER_BUDGET
+                    BlockPartyStatus.FUTURE -> com.yourname.expensetracker.ui.components.BlockStatus.FUTURE
+                    BlockPartyStatus.TODAY -> com.yourname.expensetracker.ui.components.BlockStatus.TODAY
+                    BlockPartyStatus.BILL_DAY -> com.yourname.expensetracker.ui.components.BlockStatus.BILL_DAY
+                },
+                baseTarget = domain.baseTarget,
+                recurringImpact = domain.recurringImpact,
+                plannedImpact = domain.plannedImpact,
+                recurringItems = domain.recurringItems,
+                plannedItems = domain.plannedItems,
+                topTransactions = domain.topTransactions
+            )
+        }
+
+        // Category Totals
         val categoryTotals = categoryBreakdown.map { 
              CategorySpending(it.category, it.total, it.percentage) 
         }
@@ -190,14 +293,13 @@ class HomeViewModel @Inject constructor(
         // Handle Day 1 Noise (LOG-005 Fix)
         val dayOfMonthCoerced = dayOfMonth.coerceAtLeast(1)
         val projectedTotal = if (dayOfMonth == 1) {
-            // Weighted average on day 1: 70% baseline, 30% current spend extrapolated
             if (baseline != null) (baseline * 0.7) + (monthSpent * 0.3 * daysInMonth)
             else monthSpent * daysInMonth
         } else {
             monthSpent * daysInMonth.toDouble() / dayOfMonth
         }
             
-        // Validated Pace Logic: Handle dayOfMonth=1 or 0 gracefully
+        // Pace Percentage
         val pacePercentage = if (baseline != null && baseline > 0) {
             val expected = baseline * dayOfMonthCoerced / daysInMonth
             val calculated = (monthSpent / expected * 100).toFloat()
@@ -240,10 +342,9 @@ class HomeViewModel @Inject constructor(
         // === Build widget list ===
         val widgets = mutableListOf<DashboardWidget>()
 
-        // Financial Weather (Always added, visibility controlled by config)
         widgets.add(DashboardWidget.FinancialWeatherWidget(weather))
 
-        // Hero: Safe-to-Spend (or total spent if no overall budget)
+        // Hero
         widgets.add(
             DashboardWidget.SafeToSpend(
                 amount = if (overallBudget != null) safeToSpend else monthSpent,
@@ -251,6 +352,11 @@ class HomeViewModel @Inject constructor(
                 daysRemaining = daysRemaining
             )
         )
+        
+        // Block Party (New)
+        if (blockPartyDays.isNotEmpty()) {
+            widgets.add(DashboardWidget.BudgetBlockParty(blockPartyDays))
+        }
 
         // Spending Pace
         if (pace.paceStatus != PaceStatus.NO_BASELINE) {
@@ -260,33 +366,12 @@ class HomeViewModel @Inject constructor(
         // Spending Trend
         widgets.add(trend)
 
-        // Pending Review Alert
-        if (pendingCount > 0) {
-            widgets.add(DashboardWidget.PendingReviewAlert(pendingCount))
-        }
-
-        // Natural language insight
-        if (insightText != null) {
-            widgets.add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
-        }
-
-        // Period summary
+        if (pendingCount > 0) widgets.add(DashboardWidget.PendingReviewAlert(pendingCount))
+        if (insightText != null) widgets.add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
         widgets.add(DashboardWidget.PeriodSummary(todaySpent, weekSpent, monthSpent))
-
-        // Budget health
-        if (budgetStatuses.isNotEmpty()) {
-            widgets.add(DashboardWidget.BudgetHealthWidget(budgetStatuses, budgetSummary))
-        }
-
-        // Top categories
-        if (categoryTotals.isNotEmpty()) {
-            widgets.add(DashboardWidget.TopCategories(categoryTotals.take(5)))
-        }
-
-        // Recent transactions
-        if (purchases.isNotEmpty()) {
-            widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
-        }
+        if (budgetStatuses.isNotEmpty()) widgets.add(DashboardWidget.BudgetHealthWidget(budgetStatuses, budgetSummary))
+        if (categoryTotals.isNotEmpty()) widgets.add(DashboardWidget.TopCategories(categoryTotals.take(5)))
+        if (purchases.isNotEmpty()) widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
         
         CompiledDashboardData(
             allWidgets = widgets,
@@ -294,8 +379,8 @@ class HomeViewModel @Inject constructor(
             txCount = txCount
         )
     }
-    .flowOn(Dispatchers.Default) // Compuation on BG thread
-    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompiledDashboardData(emptyList(), 0.0, 0)) // Cache results
+    .flowOn(Dispatchers.Default) 
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompiledDashboardData(emptyList(), 0.0, 0))
 
     val dashboard: StateFlow<DashboardState> = combine(
         processedDataFlow,
@@ -389,7 +474,7 @@ class HomeViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             plannedExpenseRepository.addPlannedExpense(
-                PlannedExpense(
+                com.yourname.expensetracker.data.database.entity.PlannedExpense(
                     description = description,
                     amount = amount,
                     date = date,
@@ -399,6 +484,7 @@ class HomeViewModel @Inject constructor(
             )
         }
     }
+
     companion object {
         fun getWidgetId(widget: DashboardWidget): String = when (widget) {
             is DashboardWidget.SafeToSpend -> "safe_to_spend"
@@ -411,6 +497,7 @@ class HomeViewModel @Inject constructor(
             is DashboardWidget.TopCategories -> "top_categories"
             is DashboardWidget.RecentTransactions -> "recent_transactions"
             is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
+            is DashboardWidget.BudgetBlockParty -> "budget_block_party"
         }
     }
 }
@@ -421,6 +508,24 @@ data class FiveData(
     val budgetStatuses: List<BudgetStatus>,
     val pendingCount: Int,
     val weather: FinancialWeather
+)
+
+data class Quadruple<A, B, C, D>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D
+)
+
+data class EightData(
+    val expenses: List<Expense>,
+    val categories: List<Category>,
+    val budgetStatuses: List<BudgetStatus>,
+    val pendingCount: Int,
+    val weather: FinancialWeather,
+    val recurringPatterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
+    val plannedExpenses: List<PlannedExpense>,
+    val goals: List<SavingsGoal>
 )
 
 data class CompiledDashboardData(

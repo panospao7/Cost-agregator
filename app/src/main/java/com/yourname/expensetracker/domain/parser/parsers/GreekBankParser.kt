@@ -59,17 +59,20 @@ class GreekBankParser @Inject constructor(
         subText: String?,
         packageName: String
     ): ParsedTransaction? {
-        val fullText = listOfNotNull(title, text, bigText).joinToString(" ")
-        val lowerFull = fullText.lowercase()
+        val fields = listOfNotNull(title, text, bigText)
+        
+        for (field in fields) {
+            val lowerField = field.lowercase()
+            
+            // Quick reject for this specific field
+            if (REJECT_PATTERNS.any { lowerField.contains(it) }) continue
 
-        // Quick reject
-        if (REJECT_PATTERNS.any { lowerFull.contains(it) }) return null
-
-        for (pattern in PURCHASE_PATTERNS) {
-            val matcher = pattern.matcher(fullText)
-            if (matcher.find()) {
-                // Groups vary by pattern but we try to extract amount and merchant
-                return tryExtract(matcher, fullText)
+            for (pattern in PURCHASE_PATTERNS) {
+                val matcher = pattern.matcher(field)
+                if (matcher.find()) {
+                    val result = tryExtract(matcher, field)
+                    if (result != null) return result
+                }
             }
         }
 

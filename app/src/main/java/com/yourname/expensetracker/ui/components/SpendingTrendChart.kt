@@ -14,6 +14,7 @@ import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.core.entry.entryOf
+import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -77,6 +78,8 @@ fun SpendingTrendChart(
                     guideline = null,
                     axis = null
                 ),
+                chartScrollSpec = rememberChartScrollSpec(isScrollEnabled = true),
+                marker = rememberMarker(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp)

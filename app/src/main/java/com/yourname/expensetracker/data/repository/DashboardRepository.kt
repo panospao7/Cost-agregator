@@ -27,16 +27,31 @@ class DashboardRepository @Inject constructor(
         return try {
             val array = JSONArray(json)
             val list = mutableListOf<DashboardWidgetConfig>()
+            val savedIds = mutableSetOf<String>()
+            
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
+                val id = obj.getString("id")
+                savedIds.add(id)
                 list.add(
                     DashboardWidgetConfig(
-                        id = obj.getString("id"),
+                        id = id,
                         order = obj.getInt("order"),
                         isVisible = obj.optBoolean("isVisible", true)
                     )
                 )
             }
+            
+            // Merge new defaults that aren't in saved config
+            val defaults = getDefaultConfig()
+            var nextOrder = (list.maxOfOrNull { it.order } ?: 0) + 1
+            
+            defaults.forEach { def ->
+                if (def.id !in savedIds) {
+                    list.add(def.copy(order = nextOrder++))
+                }
+            }
+            
             list.sortedBy { it.order }
         } catch (e: Exception) {
             getDefaultConfig()
@@ -67,7 +82,8 @@ class DashboardRepository @Inject constructor(
             DashboardWidgetConfig("period_summary", 6),
             DashboardWidgetConfig("budget_health", 7),
             DashboardWidgetConfig("top_categories", 8),
-            DashboardWidgetConfig("recent_transactions", 9)
+            DashboardWidgetConfig("recent_transactions", 9),
+            DashboardWidgetConfig("budget_block_party", 10)
         )
     }
 }

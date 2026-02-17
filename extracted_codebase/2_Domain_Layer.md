@@ -19,31 +19,32 @@
 16. [app\src\main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
 17. [app\src\main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
 18. [app\src\main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
-19. [app\src\main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
-20. [app\src\main\java\com\yourname\expensetracker\domain\model\OperationResult.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodeloperationresultkt)
-21. [app\src\main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
-22. [app\src\main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
-23. [app\src\main\java\com\yourname\expensetracker\domain\model\Result.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelresultkt)
-24. [app\src\main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
-25. [app\src\main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
-26. [app\src\main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
-27. [app\src\main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
-28. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
-29. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
-30. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
-31. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
-32. [app\src\main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
-33. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
-34. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
-35. [app\src\main\java\com\yourname\expensetracker\domain\util\AppConstants.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilappconstantskt)
-36. [app\src\main\java\com\yourname\expensetracker\domain\util\BKTree.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilbktreekt)
-37. [app\src\main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
-38. [app\src\main\java\com\yourname\expensetracker\domain\util\CommonPatterns.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcommonpatternskt)
-39. [app\src\main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
-40. [app\src\main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
-41. [app\src\main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
-42. [app\src\main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt)
-43. [app\src\main\java\com\yourname\expensetracker\domain\util\TimePeriodUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutiltimeperiodutilskt)
+19. [app\src\main\java\com\yourname\expensetracker\domain\model\BlockPartyDay.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelblockpartydaykt)
+20. [app\src\main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
+21. [app\src\main\java\com\yourname\expensetracker\domain\model\OperationResult.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodeloperationresultkt)
+22. [app\src\main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
+23. [app\src\main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
+24. [app\src\main\java\com\yourname\expensetracker\domain\model\Result.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelresultkt)
+25. [app\src\main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
+26. [app\src\main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
+27. [app\src\main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
+28. [app\src\main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
+29. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
+30. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
+31. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
+32. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
+33. [app\src\main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
+34. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
+35. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
+36. [app\src\main\java\com\yourname\expensetracker\domain\util\AppConstants.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilappconstantskt)
+37. [app\src\main\java\com\yourname\expensetracker\domain\util\BKTree.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilbktreekt)
+38. [app\src\main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
+39. [app\src\main\java\com\yourname\expensetracker\domain\util\CommonPatterns.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcommonpatternskt)
+40. [app\src\main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
+41. [app\src\main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
+42. [app\src\main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
+43. [app\src\main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt)
+44. [app\src\main\java\com\yourname\expensetracker\domain\util\TimePeriodUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutiltimeperiodutilskt)
 
 ---
 
@@ -103,14 +104,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
         referenceDate: Long = System.currentTimeMillis(),
         computeComparison: Boolean = true
     ): PeriodRange {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = referenceDate
-
         val (startMs, endMs, label) = when (period) {
-            AnalyticsPeriod.WEEK -> calculateWeekRange(cal)
-            AnalyticsPeriod.MONTH -> calculateMonthRange(cal)
-            AnalyticsPeriod.QUARTER -> calculateQuarterRange(cal)
-            AnalyticsPeriod.YEAR -> calculateYearRange(cal)
+            AnalyticsPeriod.WEEK -> calculateWeekRange(referenceDate)
+            AnalyticsPeriod.MONTH -> calculateMonthRange(referenceDate)
+            AnalyticsPeriod.QUARTER -> calculateQuarterRange(referenceDate)
+            AnalyticsPeriod.YEAR -> calculateYearRange(referenceDate)
             AnalyticsPeriod.CUSTOM -> throw IllegalArgumentException(
                 "Custom period requires explicit date range. Use getCustomPeriodRange() instead."
             )
@@ -125,44 +123,41 @@ class AdvancedAnalyticsEngine @Inject constructor(
         )
     }
 
-    private fun calculateWeekRange(cal: Calendar): Triple<Long, Long, String> {
-        val start = TimePeriodUtils.getStartOfWeek(cal.timeInMillis)
+    private fun calculateWeekRange(referenceDate: Long): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfWeek(referenceDate)
         val end = start + (7 * MILLIS_PER_DAY)
 
         val fmt = SimpleDateFormat("MMM d", Locale.getDefault())
         return Triple(start, end, "${fmt.format(Date(start))} - ${fmt.format(Date(end - 1))}")
     }
 
-    private fun calculateMonthRange(cal: Calendar): Triple<Long, Long, String> {
-        val start = TimePeriodUtils.getStartOfMonth(cal.timeInMillis)
-
-        // Month length varies, so we still need calendar for End or use getEndOfMonth + 1
+    private fun calculateMonthRange(referenceDate: Long): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfMonth(referenceDate)
         val end = TimePeriodUtils.getEndOfMonth(start) + 1
 
         val fmt = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
         return Triple(start, end, fmt.format(Date(start)))
     }
 
-    private fun calculateQuarterRange(cal: Calendar): Triple<Long, Long, String> {
-        val start = TimePeriodUtils.getStartOfQuarter(cal.timeInMillis)
+    private fun calculateQuarterRange(referenceDate: Long): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfQuarter(referenceDate)
         val end = TimePeriodUtils.getEndOfQuarter(start) + 1
 
-        // Re-derive quarter num for label
-        val tempCal = Calendar.getInstance()
-        tempCal.timeInMillis = start
-        val quarterNum = (tempCal.get(Calendar.MONTH) / 3) + 1
-        val year = tempCal.get(Calendar.YEAR)
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = start
+        val quarterNum = (cal.get(Calendar.MONTH) / 3) + 1
+        val year = cal.get(Calendar.YEAR)
 
         return Triple(start, end, "Q$quarterNum $year")
     }
 
-    private fun calculateYearRange(cal: Calendar): Triple<Long, Long, String> {
-        val start = TimePeriodUtils.getStartOfYear(cal.timeInMillis)
+    private fun calculateYearRange(referenceDate: Long): Triple<Long, Long, String> {
+        val start = TimePeriodUtils.getStartOfYear(referenceDate)
         val end = TimePeriodUtils.getEndOfYear(start) + 1
 
-        val tempCal = Calendar.getInstance()
-        tempCal.timeInMillis = start
-        val year = tempCal.get(Calendar.YEAR)
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = start
+        val year = cal.get(Calendar.YEAR)
 
         return Triple(start, end, year.toString())
     }
@@ -392,8 +387,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val timeSlotStats = mutableMapOf<TimeSlot, Double>()
 
         for (purchase in purchases) {
-            cal.timeInMillis = purchase.date
-            val dayIndex = calendarDayToIndex(cal)
+            val dayIndex = calendarDayToIndex(purchase.date, cal)
             val hour = cal.get(Calendar.HOUR_OF_DAY)
 
             dayTotals[dayIndex] += purchase.amount
@@ -561,7 +555,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
     // PRIVATE HELPER METHODS
     // ============================================================
 
-    private fun calendarDayToIndex(cal: Calendar): Int {
+    private fun calendarDayToIndex(timestamp: Long, cal: Calendar): Int {
+        cal.timeInMillis = timestamp
         return when (cal.get(Calendar.DAY_OF_WEEK)) {
             Calendar.MONDAY -> 0
             Calendar.TUESDAY -> 1
@@ -831,9 +826,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val result = mutableMapOf<Int, Double>()
 
         for (tx in transactions) {
-            cal.timeInMillis = tx.date
-            val dayIndex = calendarDayToIndex(cal)
-            result[dayIndex] = (result[dayIndex] ?: 0.0) + tx.amount
+            result[calendarDayToIndex(tx.date, cal)] = (result[calendarDayToIndex(tx.date, cal)] ?: 0.0) + tx.amount
         }
 
         return result
@@ -861,9 +854,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
         // Weekend Warrior pattern
         val weekendTotal = dayTotals[5] + dayTotals[6]
         if (weekendTotal / totalSpent > 0.5) {
+            val cal = Calendar.getInstance()
             val weekendMerchants = purchases.filter { tx ->
                 cal.timeInMillis = tx.date
-                cal.get(Calendar.DAY_OF_WEEK) in listOf(Calendar.SATURDAY, Calendar.SUNDAY)
+                val dow = cal.get(Calendar.DAY_OF_WEEK)
+                dow == Calendar.SATURDAY || dow == Calendar.SUNDAY
             }.map { it.merchant }.distinct()
 
             patterns.add(DetectedPattern(
@@ -4546,6 +4541,132 @@ class SynthesisEngine @Inject constructor() {
         )
     }
 
+    fun calculateBlockPartyData(
+        forecast: FinancialForecast,
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        dailySpending: List<Float>,
+        budgetLimit: Double
+    ): List<BlockPartyDay> {
+        val calendar = Calendar.getInstance()
+        val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
+        val currentMonth = calendar.get(Calendar.MONTH)
+        val currentYear = calendar.get(Calendar.YEAR)
+
+        val components = forecast.components
+
+        // 1. Calculate Monthly Totals for pro-rating
+        val totalMonthlyRecurring = components.recurringExpenses.sumOf { it.averageAmount }
+
+        // Filter planned expenses for this month only
+        val thisMonthPlanned = components.plannedExpenses.filter { 
+            val pCal = Calendar.getInstance().apply { timeInMillis = it.date }
+            pCal.get(Calendar.MONTH) == currentMonth && pCal.get(Calendar.YEAR) == currentYear
+        }
+        val totalMonthlyPlanned = thisMonthPlanned.sumOf { it.amount }
+
+        // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
+        val goalReserves = components.goalReserves
+
+        // LOG-021: Fix - Use Discretionary Pool Formula correctly
+        val discretionaryTotal = (budgetLimit - totalMonthlyRecurring - totalMonthlyPlanned - goalReserves).coerceAtLeast(0.0)
+        val baseDiscretionaryRate = if (budgetLimit > 0) discretionaryTotal / daysInMonth else 0.0
+
+        // Optimization: Group raw expenses by day once O(N)
+        val expensesByDay = expenses.filter { 
+            val eCal = Calendar.getInstance().apply { timeInMillis = it.date }
+            eCal.get(Calendar.MONTH) == currentMonth && eCal.get(Calendar.YEAR) == currentYear
+        }.groupBy { 
+            val resCal = Calendar.getInstance().apply { timeInMillis = it.date }
+            resCal.get(Calendar.DAY_OF_MONTH)
+        }
+
+        // Optimization: Group planned expenses by day
+        val plannedByDay = thisMonthPlanned.groupBy { 
+            val resCal = Calendar.getInstance().apply { timeInMillis = it.date }
+            resCal.get(Calendar.DAY_OF_MONTH)
+        }
+
+        val dateCal = Calendar.getInstance()
+        val anchorCal = Calendar.getInstance()
+
+        return (1..daysInMonth).map { day ->
+            dateCal.set(Calendar.DAY_OF_MONTH, day)
+            dateCal.set(Calendar.HOUR_OF_DAY, 12)
+            val dateMs = dateCal.timeInMillis
+
+            // 1. Identify Recurring on this day
+            val recurringItemsOnDay = components.recurringExpenses.filter { 
+                isRecurringExpected(it, dateCal, anchorCal) 
+            }
+            val recurringOnDay = recurringItemsOnDay.sumOf { it.averageAmount }
+            val recurringNames = recurringItemsOnDay.map { it.merchantName }
+
+            // 2. Identify Planned on this day
+            val plannedItemsOnDay = plannedByDay[day] ?: emptyList()
+            val plannedOnDay = plannedItemsOnDay.sumOf { it.amount }
+            val plannedNames = plannedItemsOnDay.map { it.description }
+
+            val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
+            val actual = if (day <= dailySpending.size) dailySpending[day - 1].toDouble() else 0.0
+
+            val dayTransactions = (expensesByDay[day] ?: emptyList())
+                .sortedByDescending { it.amount }
+                .take(3)
+
+            val status = when {
+                day == dayOfMonth -> BlockPartyStatus.TODAY
+                day > dayOfMonth -> {
+                    if (recurringItemsOnDay.isNotEmpty()) BlockPartyStatus.BILL_DAY
+                    else BlockPartyStatus.FUTURE
+                }
+                actual <= dailyTarget * 1.1 -> BlockPartyStatus.UNDER_BUDGET
+                else -> BlockPartyStatus.OVER_BUDGET
+            }
+
+            BlockPartyDay(
+                dayOfMonth = day,
+                date = dateMs,
+                actualSpent = actual,
+                targetBudget = dailyTarget,
+                isToday = day == dayOfMonth,
+                status = status,
+                baseTarget = baseDiscretionaryRate,
+                recurringImpact = recurringOnDay,
+                plannedImpact = plannedOnDay,
+                recurringItems = recurringNames,
+                plannedItems = plannedNames,
+                topTransactions = dayTransactions
+            )
+        }
+    }
+
+    private fun isRecurringExpected(
+        pattern: RecurringPattern, 
+        dateCal: Calendar, 
+        anchorCal: Calendar
+    ): Boolean {
+        val anchor = pattern.nextExpectedDate
+        val frequency = pattern.frequency
+
+        anchorCal.timeInMillis = anchor
+
+        return when (frequency) {
+            RecurrenceFrequency.WEEKLY -> {
+                dateCal.get(Calendar.DAY_OF_WEEK) == anchorCal.get(Calendar.DAY_OF_WEEK)
+            }
+            RecurrenceFrequency.BIWEEKLY -> {
+                 val diff = dateCal.timeInMillis - anchor
+                 val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
+                 (daysDiff % 14L == 0L)
+            }
+            RecurrenceFrequency.MONTHLY -> {
+                dateCal.get(Calendar.DAY_OF_MONTH) == anchorCal.get(Calendar.DAY_OF_MONTH)
+            }
+            else -> false 
+        }
+    }
+
     private fun determineRiskLevel(
         pace: SpendingPace,
         budgets: List<BudgetStatus>,
@@ -4601,6 +4722,35 @@ class SynthesisEngine @Inject constructor() {
 
         return insights
     }
+}
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\domain\model\BlockPartyDay.kt <a name="appsrcmainjavacomyournameexpensetrackerdomainmodelblockpartydaykt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.model
+
+import com.yourname.expensetracker.data.database.entity.Expense
+
+data class BlockPartyDay(
+    val dayOfMonth: Int,
+    val date: Long,
+    val actualSpent: Double,
+    val targetBudget: Double,
+    val isToday: Boolean,
+    val status: BlockPartyStatus,
+    val baseTarget: Double,
+    val recurringImpact: Double,
+    val plannedImpact: Double,
+    val recurringItems: List<String>,
+    val plannedItems: List<String>,
+    val topTransactions: List<Expense>
+)
+
+enum class BlockPartyStatus {
+    UNDER_BUDGET, OVER_BUDGET, FUTURE, TODAY, BILL_DAY
 }
 
 ```
@@ -5222,17 +5372,20 @@ class GreekBankParser @Inject constructor(
         subText: String?,
         packageName: String
     ): ParsedTransaction? {
-        val fullText = listOfNotNull(title, text, bigText).joinToString(" ")
-        val lowerFull = fullText.lowercase()
+        val fields = listOfNotNull(title, text, bigText)
 
-        // Quick reject
-        if (REJECT_PATTERNS.any { lowerFull.contains(it) }) return null
+        for (field in fields) {
+            val lowerField = field.lowercase()
 
-        for (pattern in PURCHASE_PATTERNS) {
-            val matcher = pattern.matcher(fullText)
-            if (matcher.find()) {
-                // Groups vary by pattern but we try to extract amount and merchant
-                return tryExtract(matcher, fullText)
+            // Quick reject for this specific field
+            if (REJECT_PATTERNS.any { lowerField.contains(it) }) continue
+
+            for (pattern in PURCHASE_PATTERNS) {
+                val matcher = pattern.matcher(field)
+                if (matcher.find()) {
+                    val result = tryExtract(matcher, field)
+                    if (result != null) return result
+                }
             }
         }
 
@@ -7411,10 +7564,10 @@ class MerchantCleaner @Inject constructor() {
 
     private val timeRegex = Regex("""\s\d{1,2}:\d{2}(?::\d{2})?.*$""")
     private val dateRegex = Regex("""\s\d{1,2}[/.-]\d{1,2}(?:[/.-]\d{2,4})?.*$""")
-    private val cardInfoRegex = Regex("""\s*(?:(?:Mastercard|Visa|Amex|card|•|·|-)+\s*)+\*?\.?\d+.*$""", RegexOption.IGNORE_CASE)
+    private val cardInfoRegex = Regex("""\s*(?:(?:Mastercard|Visa|Amex|card|κάρτα|•|·|-)+\s*)+\*?\.?\d+.*$""", RegexOption.IGNORE_CASE)
     private val stopWords = listOf(
         "confirmed", "successful", "completed", "declined", "pending",
-        "ολοκληρώθηκε", "επιτυχής", "with card", "με κάρτα", "στις", "at", "on", "to"
+        "ολοκληρώθηκε", "επιτυχής", "with card", "με κάρτα", "από την κάρτα", "στις", "at", "on", "to"
     )
 
     fun clean(raw: String?): String {

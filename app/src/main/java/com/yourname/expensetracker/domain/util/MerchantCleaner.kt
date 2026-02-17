@@ -13,10 +13,10 @@ class MerchantCleaner @Inject constructor() {
 
     private val timeRegex = Regex("""\s\d{1,2}:\d{2}(?::\d{2})?.*$""")
     private val dateRegex = Regex("""\s\d{1,2}[/.-]\d{1,2}(?:[/.-]\d{2,4})?.*$""")
-    private val cardInfoRegex = Regex("""\s*(?:(?:Mastercard|Visa|Amex|card|•|·|-)+\s*)+\*?\.?\d+.*$""", RegexOption.IGNORE_CASE)
+    private val cardInfoRegex = Regex("""\s*(?:(?:Mastercard|Visa|Amex|card|κάρτα|•|·|-)+\s*)+\*?\.?\d+.*$""", RegexOption.IGNORE_CASE)
     private val stopWords = listOf(
         "confirmed", "successful", "completed", "declined", "pending",
-        "ολοκληρώθηκε", "επιτυχής", "with card", "με κάρτα", "στις", "at", "on", "to"
+        "ολοκληρώθηκε", "επιτυχής", "with card", "με κάρτα", "από την κάρτα", "στις", "at", "on", "to"
     )
 
     fun clean(raw: String?): String {

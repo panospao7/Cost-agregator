@@ -49,15 +49,15 @@ class AdvancedAnalyticsViewModel @Inject constructor(
                 
                 // 3. Fetch all analytics in parallel (Async)
                 // We use async to avoid sequential blocking
-                val categoryDeffered = async { analyticsEngine.getCategoryAnalytics(range) }
-                val merchantDeffered = async { analyticsEngine.getMerchantAnalytics(range, limit = 20) }
-                val patternsDeffered = async { analyticsEngine.getSpendingPatterns(range) }
-                val statsDeffered = async { analyticsEngine.getStatisticalInsights(range) }
+                val categoryDeferred = async { analyticsEngine.getCategoryAnalytics(range) }
+                val merchantDeferred = async { analyticsEngine.getMerchantAnalytics(range, limit = 20) }
+                val patternsDeferred = async { analyticsEngine.getSpendingPatterns(range) }
+                val statsDeferred = async { analyticsEngine.getStatisticalInsights(range) }
                 
-                val categoryData = categoryDeffered.await()
-                val merchantData = merchantDeffered.await()
-                val patternsData = patternsDeffered.await()
-                val statsData = statsDeffered.await()
+                val categoryData = categoryDeferred.await()
+                val merchantData = merchantDeferred.await()
+                val patternsData = patternsDeferred.await()
+                val statsData = statsDeferred.await()
                 
                 // 4. Update state with new data
                 _uiState.update { 
@@ -85,6 +85,11 @@ class AdvancedAnalyticsViewModel @Inject constructor(
     
     fun clearError() {
         _uiState.update { it.copy(error = null) }
+    }
+    
+    fun getCurrentDateRange(): Pair<Long, Long> {
+        val range = analyticsEngine.getPeriodRange(uiState.value.selectedPeriod, computeComparison = false)
+        return Pair(range.startMs, range.endMs)
     }
 }
 

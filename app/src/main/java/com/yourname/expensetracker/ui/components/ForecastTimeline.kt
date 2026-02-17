@@ -19,6 +19,7 @@ import com.patrykandpatrick.vico.core.chart.line.LineChart
 import com.patrykandpatrick.vico.core.entry.FloatEntry
 import com.patrykandpatrick.vico.core.entry.ChartEntryModel
 import com.patrykandpatrick.vico.core.entry.entryModelOf
+import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -80,6 +81,8 @@ fun ForecastTimeline(
             model = chartEntryModel,
             startAxis = rememberStartAxis(),
             bottomAxis = rememberBottomAxis(),
+            chartScrollSpec = rememberChartScrollSpec(isScrollEnabled = true),
+            marker = rememberMarker(),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(180.dp)

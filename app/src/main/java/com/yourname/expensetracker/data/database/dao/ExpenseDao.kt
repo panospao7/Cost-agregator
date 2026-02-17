@@ -27,6 +27,23 @@ interface ExpenseDao {
     suspend fun getExpensesWithCategoryPaged(limit: Int, offset: Int): List<ExpenseWithCategory>
 
     @Transaction
+    @Query("""
+        SELECT * FROM expenses 
+        WHERE date >= :startMs AND date <= :endMs 
+        AND (:type IS NULL OR transactionType = :type)
+        AND (:categoryId IS NULL OR categoryId = :categoryId)
+        AND (:merchant IS NULL OR merchant = :merchant)
+        ORDER BY date DESC
+    """)
+    fun getExpensesWithCategoryFilteredFlow(
+        startMs: Long, 
+        endMs: Long, 
+        type: String?,
+        categoryId: Long?, 
+        merchant: String?
+    ): Flow<List<ExpenseWithCategory>>
+
+    @Transaction
     @Query("SELECT * FROM expenses WHERE date >= :startMs AND date <= :endMs ORDER BY date DESC")
     fun getExpensesWithCategoryInPeriodFlow(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>>
 
@@ -115,8 +132,14 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense>
 
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String): List<Expense>
+
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
     fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
+
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String): Flow<List<Expense>>
 
     @Query("""
         SELECT SUM(amount) FROM expenses 

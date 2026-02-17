@@ -4,37 +4,40 @@
 1. [app\src\main\java\com\yourname\expensetracker\ui\MainActivity.kt](#appsrcmainjavacomyournameexpensetrackeruimainactivitykt)
 2. [app\src\main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruimainviewmodelkt)
 3. [app\src\main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsbentocardkt)
-4. [app\src\main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
-5. [app\src\main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
-6. [app\src\main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentspulsedotkt)
-7. [app\src\main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
-8. [app\src\main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
-9. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
-10. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
-11. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsscreenkt)
-12. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsviewmodelkt)
-13. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
-14. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
-15. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
-16. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
-17. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
-18. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
-19. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugDataStorage.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugdatastoragekt)
-20. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugIssueDetector.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugissuedetectorkt)
-21. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
-22. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
-23. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewerScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewerscreenkt)
-24. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
-25. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
-26. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
-27. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
-28. [app\src\main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
-29. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
-30. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
-31. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
-32. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
-33. [app\src\main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#appsrcmainjavacomyournameexpensetrackeruithemethemekt)
-34. [app\src\main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#appsrcmainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
+4. [app\src\main\java\com\yourname\expensetracker\ui\components\BudgetBlockPartyCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsbudgetblockpartycardkt)
+5. [app\src\main\java\com\yourname\expensetracker\ui\components\ChartMarker.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentschartmarkerkt)
+6. [app\src\main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
+7. [app\src\main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
+8. [app\src\main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentspulsedotkt)
+9. [app\src\main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
+10. [app\src\main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
+11. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
+12. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
+13. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsscreenkt)
+14. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsviewmodelkt)
+15. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
+16. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
+17. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
+18. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
+19. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
+20. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
+21. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugDataStorage.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugdatastoragekt)
+22. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugIssueDetector.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugissuedetectorkt)
+23. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
+24. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
+25. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewerScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewerscreenkt)
+26. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
+27. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
+28. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
+29. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
+30. [app\src\main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
+31. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
+32. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
+33. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionFilter.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionfilterkt)
+34. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
+35. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
+36. [app\src\main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#appsrcmainjavacomyournameexpensetrackeruithemethemekt)
+37. [app\src\main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#appsrcmainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
 
 ---
 
@@ -125,6 +128,9 @@ fun MainScreen() {
     val mainViewModel: MainViewModel = hiltViewModel()
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
 
+    // Drill-down filter state
+    var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
+
     LaunchedEffect(Unit) {
         mainViewModel.navigationRequest.collect { tabIndex ->
             selectedTab = tabIndex
@@ -175,6 +181,8 @@ fun MainScreen() {
                     onClick = { 
                         if (selectedTab != 1) haptic(HapticType.Standard)
                         selectedTab = 1 
+                        // Clear drill-down filter when manually navigating to Activity
+                        activeTransactionFilter = null
                     },
                     icon = { Icon(Icons.Rounded.History, contentDescription = "Activity") },
                     label = { Text("Activity") }
@@ -240,15 +248,24 @@ fun MainScreen() {
                 when (targetTab) {
                     0 -> HomeScreen(
                         onNavigateToReview = { selectedTab = 2 },
-                        onNavigateToRecurring = { showRecurringExpenses = true }
+                        onNavigateToRecurring = { showRecurringExpenses = true },
+                        onNavigateToTransactions = { filter ->
+                            activeTransactionFilter = filter
+                            selectedTab = 1
+                        }
                     )
                     1 -> TransactionsScreen(
-                        onNavigateToAnalytics = { selectedTab = 4 }
+                        onNavigateToAnalytics = { selectedTab = 4 },
+                        initialFilter = activeTransactionFilter
                     )
                     2 -> ReviewScreen()
                     3 -> BudgetScreen()
                     4 -> com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen(
-                        onNavigateBack = { selectedTab = 1 }
+                        onNavigateBack = { selectedTab = 1 },
+                        onNavigateToTransactions = { filter ->
+                            activeTransactionFilter = filter
+                            selectedTab = 1
+                        }
                     )
                 }
             }
@@ -284,7 +301,13 @@ fun MainScreen() {
 
             if (showRecurringExpenses) {
                 com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen(
-                    onNavigateBack = { showRecurringExpenses = false }
+                    onNavigateBack = { showRecurringExpenses = false },
+                    onNavigateToTransactions = { filter ->
+                        activeTransactionFilter = filter
+                        // Close recurring screen since it's an overlay
+                        showRecurringExpenses = false
+                        selectedTab = 1
+                    }
                 )
             }
         }
@@ -637,6 +660,362 @@ fun AmountText(
         color = color,
         modifier = modifier
     )
+}
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\ui\components\BudgetBlockPartyCard.kt <a name="appsrcmainjavacomyournameexpensetrackeruicomponentsbudgetblockpartycardkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.components
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.yourname.expensetracker.ui.theme.SemanticColors
+
+enum class BlockStatus {
+    UNDER_BUDGET, // Time to Party (Green)
+    OVER_BUDGET,  // Party Pooper (Red)
+    FUTURE,       // TBD (Gray)
+    TODAY,        // Active (Blue)
+    BILL_DAY      // Bills (White Outline)
+}
+
+data class DayBudgetStatus(
+    val dayOfMonth: Int,
+    val date: Long,
+    val actualSpent: Double,
+    val targetBudget: Double,
+    val isToday: Boolean,
+    val status: BlockStatus,
+    // Drill-Down Data
+    val baseTarget: Double = 0.0,
+    val recurringImpact: Double = 0.0,
+    val plannedImpact: Double = 0.0,
+    val recurringItems: List<String> = emptyList(),
+    val plannedItems: List<String> = emptyList(),
+    val topTransactions: List<com.yourname.expensetracker.data.database.entity.Expense> = emptyList()
+)
+
+@Composable
+fun BudgetBlockPartyCard(
+    days: List<DayBudgetStatus>,
+    modifier: Modifier = Modifier
+) {
+    var selectedDay by remember { mutableStateOf<DayBudgetStatus?>(null) }
+
+    if (selectedDay != null) {
+        DayAtAGlanceDialog(
+            day = selectedDay!!,
+            onDismiss = { selectedDay = null }
+        )
+    }
+
+    BentoCard(
+        modifier = modifier,
+        contentPadding = PaddingValues(16.dp)
+    ) {
+        Text(
+            "BUDGET BLOCK PARTY",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = SemanticColors.TextSecondary
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            days.chunked(7).forEach { week ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    week.forEach { day ->
+                         Box(modifier = Modifier.weight(1f)) {
+                             DayBlock(day, onClick = { selectedDay = day })
+                         }
+                    }
+                    // Fill remaining space if last week is short
+                    if (week.size < 7) {
+                        repeat(7 - week.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DayBlock(day: DayBudgetStatus, onClick: () -> Unit) {
+    val isBillDay = day.status == BlockStatus.BILL_DAY
+    val color = when (day.status) {
+        BlockStatus.UNDER_BUDGET -> SemanticColors.SuccessGreen
+        BlockStatus.OVER_BUDGET -> SemanticColors.DangerRed
+        BlockStatus.TODAY -> SemanticColors.PrimaryIndigo
+        BlockStatus.FUTURE -> SemanticColors.GlassBorder.copy(alpha = 0.5f)
+        BlockStatus.BILL_DAY -> Color.Transparent
+    }
+
+    val borderModifier = if (isBillDay) {
+        Modifier.border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+    } else Modifier
+
+    Box(
+        modifier = Modifier
+            .aspectRatio(1.2f)
+            .clip(RoundedCornerShape(6.dp))
+            .background(color.copy(alpha = if (day.status == BlockStatus.FUTURE) 0.2f else if (isBillDay) 0f else 0.9f))
+            .then(borderModifier)
+            .clickable(enabled = day.status != BlockStatus.FUTURE, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (day.status != BlockStatus.FUTURE) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "${day.dayOfMonth}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp
+                )
+                if (isBillDay) {
+                     Text(
+                        text = "💸",
+                        fontSize = 8.sp,
+                        modifier = Modifier.alpha(0.8f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DayAtAGlanceDialog(
+    day: DayBudgetStatus,
+    onDismiss: () -> Unit
+) {
+    val dateFormat = remember { java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault()) }
+    val dateStr = dateFormat.format(java.util.Date(day.date))
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = SemanticColors.BaseNavy,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = dateStr.uppercase(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = SemanticColors.TextSecondary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (day.status == BlockStatus.UNDER_BUDGET) "Under Budget" else "Over Budget",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = if (day.status == BlockStatus.UNDER_BUDGET) SemanticColors.SuccessGreen else SemanticColors.DangerRed,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+
+                // Balance badge
+                val balance = day.targetBudget - day.actualSpent
+                val balanceColor = if (balance >= 0) SemanticColors.SuccessGreen else SemanticColors.DangerRed
+                Surface(
+                    color = balanceColor.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = (if (balance >= 0) "+" else "") + "€${String.format("%.2f", balance)}",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = balanceColor
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 🎯 Target Breakdown
+            Text("TARGET BREAKDOWN", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Base Allowance", color = SemanticColors.TextPrimary)
+                        Text("€${String.format("%.2f", day.baseTarget)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                    }
+                    if (day.recurringImpact > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Recurring (${day.recurringItems.joinToString(", ")})", color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Text("+€${String.format("%.2f", day.recurringImpact)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        }
+                    }
+                    if (day.plannedImpact > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Planned (${day.plannedItems.joinToString(", ")})", color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Text("+€${String.format("%.2f", day.plannedImpact)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp), color = SemanticColors.GlassBorder)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Total Target", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        Text("€${String.format("%.2f", day.targetBudget)}", fontWeight = FontWeight.Bold, color = SemanticColors.PrimaryIndigo)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 💸 Actual Spending
+            Text("WHAT HAPPENED", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Total Spent", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        Text("€${String.format("%.2f", day.actualSpent)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (day.topTransactions.isNotEmpty()) {
+                        day.topTransactions.forEach { exp ->
+                             Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(exp.merchant, color = SemanticColors.TextSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                                Text("€${String.format("%.2f", exp.amount)}", color = SemanticColors.TextPrimary, fontSize = 13.sp)
+                            }
+                        }
+                    } else if (day.actualSpent > 0) {
+                        Text("No specific transactions found.", style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextSecondary)
+                    } else {
+                        Text("No spending recorded.", style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextSecondary)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Button(
+                onClick = onDismiss, // Ideally navigate to transactions filtered by day, but that requires hoisting nav logic. Keep simple for now.
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.GlassSurface, contentColor = SemanticColors.TextPrimary),
+                border = androidx.compose.foundation.BorderStroke(1.dp, SemanticColors.GlassBorder)
+            ) {
+                Text("Close")
+            }
+        }
+    }
+}
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\ui\components\ChartMarker.kt <a name="appsrcmainjavacomyournameexpensetrackeruicomponentschartmarkerkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.components
+
+import android.graphics.Typeface
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.dp
+import com.patrykandpatrick.vico.compose.component.lineComponent
+import com.patrykandpatrick.vico.compose.component.overlayingComponent
+import com.patrykandpatrick.vico.compose.component.shapeComponent
+import com.patrykandpatrick.vico.compose.component.textComponent
+import com.patrykandpatrick.vico.compose.dimensions.dimensionsOf
+import com.patrykandpatrick.vico.core.component.marker.MarkerComponent
+import com.patrykandpatrick.vico.core.component.shape.DashedShape
+import com.patrykandpatrick.vico.core.component.shape.LineComponent
+import com.patrykandpatrick.vico.core.component.shape.ShapeComponent
+import com.patrykandpatrick.vico.core.component.shape.Shapes
+import com.patrykandpatrick.vico.core.marker.Marker
+import com.yourname.expensetracker.ui.theme.SemanticColors
+
+@Composable
+fun rememberMarker(): Marker {
+    val labelBackgroundColor = MaterialTheme.colorScheme.surface
+    val labelBackground = remember(labelBackgroundColor) {
+        ShapeComponent(Shapes.pillShape, labelBackgroundColor.toArgb()).setShadow(
+            radius = 4f,
+            dy = 2f,
+            applyElevationOverlay = true,
+        )
+    }
+
+    val label = textComponent(
+        color = MaterialTheme.colorScheme.onSurface,
+        background = labelBackground,
+        padding = dimensionsOf(8.dp, 4.dp),
+        typeface = Typeface.MONOSPACE,
+    )
+
+    val indicator = shapeComponent(Shapes.pillShape, SemanticColors.PrimaryIndigo)
+
+    val guidelineColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+    val guideline = lineComponent(
+        color = guidelineColor,
+        thickness = 2.dp,
+        shape = DashedShape(Shapes.pillShape, 2f, 4f),
+    )
+
+    return remember(label, indicator, guideline) {
+        object : MarkerComponent(label, indicator, guideline) {
+            init {
+                indicatorSizeDp = 6f
+                onApplyEntryColor = { entryColor ->
+                    indicator.color = withAlpha(entryColor, 255)
+                    labelBackground.color = withAlpha(entryColor, 34) // ~13% opacity
+                }
+            }
+        }
+    }
+}
+
+private fun withAlpha(color: Int, alpha: Int): Int {
+    return (color and 0x00FFFFFF) or (alpha shl 24)
 }
 
 ```
@@ -1119,6 +1498,7 @@ import com.patrykandpatrick.vico.core.chart.line.LineChart
 import com.patrykandpatrick.vico.core.entry.FloatEntry
 import com.patrykandpatrick.vico.core.entry.ChartEntryModel
 import com.patrykandpatrick.vico.core.entry.entryModelOf
+import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -1180,6 +1560,8 @@ fun ForecastTimeline(
             model = chartEntryModel,
             startAxis = rememberStartAxis(),
             bottomAxis = rememberBottomAxis(),
+            chartScrollSpec = rememberChartScrollSpec(isScrollEnabled = true),
+            marker = rememberMarker(),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(180.dp)
@@ -1443,6 +1825,7 @@ import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.core.entry.entryOf
+import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -1506,6 +1889,8 @@ fun SpendingTrendChart(
                     guideline = null,
                     axis = null
                 ),
+                chartScrollSpec = rememberChartScrollSpec(isScrollEnabled = true),
+                marker = rememberMarker(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp)
@@ -2503,10 +2888,13 @@ import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.util.Locale
 
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdvancedAnalyticsScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToTransactions: (TransactionFilter) -> Unit,
     viewModel: AdvancedAnalyticsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -2606,7 +2994,17 @@ fun AdvancedAnalyticsScreen(
                             key = { it.category.id },
                             contentType = { "CategoryItem" }
                         ) { item ->
-                            EnhancedCategoryItem(item)
+                            EnhancedCategoryItem(
+                                item = item,
+                                onClick = {
+                                    onNavigateToTransactions(
+                                        TransactionFilter(
+                                            categoryId = item.category.id,
+                                            dateRange = viewModel.getCurrentDateRange()
+                                        )
+                                    )
+                                }
+                            )
                         }
                     }
 
@@ -2624,7 +3022,17 @@ fun AdvancedAnalyticsScreen(
                             key = { it.merchant },
                             contentType = { "MerchantItem" }
                         ) { item ->
-                            EnhancedMerchantItem(item)
+                            EnhancedMerchantItem(
+                                item = item,
+                                onClick = {
+                                    onNavigateToTransactions(
+                                        TransactionFilter(
+                                            merchantName = item.merchant,
+                                            dateRange = viewModel.getCurrentDateRange()
+                                        )
+                                    )
+                                }
+                            )
                         }
                     }
 
@@ -2718,14 +3126,19 @@ fun StatisticalHighlights(stats: StatisticalInsights) {
 }
 
 @Composable
-fun EnhancedCategoryItem(item: EnhancedCategoryAnalytics) {
+fun EnhancedCategoryItem(
+    item: EnhancedCategoryAnalytics,
+    onClick: () -> Unit
+) {
     val categoryColor = remember(item.category.color) {
         try { Color(android.graphics.Color.parseColor(item.category.color)) } 
         catch (e: Exception) { Color.Gray }
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
@@ -2802,9 +3215,14 @@ fun EnhancedCategoryItem(item: EnhancedCategoryAnalytics) {
 }
 
 @Composable
-fun EnhancedMerchantItem(item: EnhancedMerchantAnalytics) {
+fun EnhancedMerchantItem(
+    item: EnhancedMerchantAnalytics,
+    onClick: () -> Unit
+) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
@@ -3033,15 +3451,15 @@ class AdvancedAnalyticsViewModel @Inject constructor(
 
                 // 3. Fetch all analytics in parallel (Async)
                 // We use async to avoid sequential blocking
-                val categoryDeffered = async { analyticsEngine.getCategoryAnalytics(range) }
-                val merchantDeffered = async { analyticsEngine.getMerchantAnalytics(range, limit = 20) }
-                val patternsDeffered = async { analyticsEngine.getSpendingPatterns(range) }
-                val statsDeffered = async { analyticsEngine.getStatisticalInsights(range) }
+                val categoryDeferred = async { analyticsEngine.getCategoryAnalytics(range) }
+                val merchantDeferred = async { analyticsEngine.getMerchantAnalytics(range, limit = 20) }
+                val patternsDeferred = async { analyticsEngine.getSpendingPatterns(range) }
+                val statsDeferred = async { analyticsEngine.getStatisticalInsights(range) }
 
-                val categoryData = categoryDeffered.await()
-                val merchantData = merchantDeffered.await()
-                val patternsData = patternsDeffered.await()
-                val statsData = statsDeffered.await()
+                val categoryData = categoryDeferred.await()
+                val merchantData = merchantDeferred.await()
+                val patternsData = patternsDeferred.await()
+                val statsData = statsDeferred.await()
 
                 // 4. Update state with new data
                 _uiState.update { 
@@ -3069,6 +3487,11 @@ class AdvancedAnalyticsViewModel @Inject constructor(
 
     fun clearError() {
         _uiState.update { it.copy(error = null) }
+    }
+
+    fun getCurrentDateRange(): Pair<Long, Long> {
+        val range = analyticsEngine.getPeriodRange(uiState.value.selectedPeriod, computeComparison = false)
+        return Pair(range.startMs, range.endMs)
     }
 }
 
@@ -6313,11 +6736,15 @@ import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onNavigateToReview: () -> Unit,
     onNavigateToRecurring: () -> Unit,
+    onNavigateToTransactions: (TransactionFilter) -> Unit,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
@@ -6432,6 +6859,12 @@ fun HomeScreen(
                                     }
                                 }
                             }
+                            is DashboardWidget.BudgetBlockParty -> {
+                                BudgetBlockPartyCard(
+                                    days = widget.days,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                             is DashboardWidget.SpendingPaceWidget -> {
                                 BentoCard {
                                     Text(
@@ -6485,7 +6918,15 @@ fun HomeScreen(
                                 }
                             }
                             is DashboardWidget.SpendingTrend -> {
-                                BentoCard {
+                                BentoCard(
+                                    modifier = Modifier.clickable {
+                                        onNavigateToTransactions(
+                                            TransactionFilter(
+                                                dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis())
+                                            )
+                                        )
+                                    }
+                                ) {
                                     SpendingTrendChart(
                                         currentMonthData = widget.currentMonthData,
                                         previousMonthData = widget.previousMonthData
@@ -7049,7 +7490,8 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
-import com.yourname.expensetracker.data.database.entity.PlannedExpense
+import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.model.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -7063,6 +7505,10 @@ sealed class DashboardWidget {
         val amount: Double,
         val totalBudget: Double?,
         val daysRemaining: Int
+    ) : DashboardWidget()
+
+    data class BudgetBlockParty(
+        val days: List<com.yourname.expensetracker.ui.components.DayBudgetStatus>
     ) : DashboardWidget()
 
     data class SpendingPaceWidget(
@@ -7132,12 +7578,13 @@ class HomeViewModel @Inject constructor(
     private val insightsEngine: InsightsEngine,
     private val financialWeatherRepository: FinancialWeatherRepository,
     private val plannedExpenseRepository: PlannedExpenseRepository,
-    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository
+    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository,
+    private val synthesisEngine: SynthesisEngine,
+    private val savingsGoalDao: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
 ) : ViewModel() {
 
     private val isEditMode = MutableStateFlow(false)
 
-    // distinct intermediate flow for data to avoid 5-arg limit
     init {
         // Recover from destructive migration items if needed
         viewModelScope.launch {
@@ -7145,14 +7592,19 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private val dataFlow = combine(
+    // Split flows to avoid 5-arg limit
+    private val baseDataFlow = combine(
         repository.getAllExpenses().catch { emit(emptyList()) },
         categoryRepository.allCategories.catch { emit(emptyList()) },
-        budgetRepository.getBudgetStatuses().catch { emit(emptyList()) },
+        budgetRepository.getBudgetStatuses().catch { emit(emptyList()) }
+    ) { expenses, categories, budgetStatuses ->
+        Triple(expenses, categories, budgetStatuses)
+    }
+
+    private val planningDataFlow = combine(
         repository.getPendingReviewCount().catch { emit(0) },
         financialWeatherRepository.getFinancialWeather().catch { 
-            // Return a default "Unknown" state if the weather engine fails to prevent stalling the dashboard
-            emit(FinancialWeather(
+             emit(FinancialWeather(
                 state = WeatherState.UNKNOWN,
                 headline = "Weather Unavailable",
                 summary = "We couldn't calculate your financial outlook right now.",
@@ -7163,9 +7615,43 @@ class HomeViewModel @Inject constructor(
                 predictedDiscretionary = 0.0,
                 discretionaryBudget = 0.0
             ))
+        },
+        financialWeatherRepository.getAllRecurringPatterns().catch { emit(emptyList()) },
+        financialWeatherRepository.getAllPlannedExpenses().catch { emit(emptyList()) }
+    ) { pendingCount, weather, recurring, planned ->
+        Quadruple(pendingCount, weather, recurring, planned)
+    }
+
+    private val dataFlow = combine(
+        baseDataFlow,
+        planningDataFlow,
+        savingsGoalDao.getAllGoals().catch { emit(emptyList()) }
+    ) { base, planning, goalEntities ->
+        val goals = goalEntities.map { entity ->
+            SavingsGoal(
+                id = entity.id,
+                name = entity.name,
+                targetAmount = entity.targetAmount,
+                currentAmount = entity.currentAmount,
+                targetDate = entity.targetDate,
+                protectionLevel = when(entity.protectionLevel) {
+                    com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.STRICT -> GoalProtectionLevel.STRICT
+                    com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.WARNING -> GoalProtectionLevel.WARNING
+                    com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.TRACKING -> GoalProtectionLevel.TRACKING
+                }
+            )
         }
-    ) { expenses, categories, budgetStatuses, pendingCount, weather ->
-        FiveData(expenses, categories, budgetStatuses, pendingCount, weather)
+
+        EightData(
+            expenses = base.first,
+            categories = base.second,
+            budgetStatuses = base.third,
+            pendingCount = planning.first,
+            weather = planning.second,
+            recurringPatterns = planning.third,
+            plannedExpenses = planning.fourth,
+            goals = goals
+        )
     }
     .debounce(300)
 
@@ -7181,35 +7667,93 @@ class HomeViewModel @Inject constructor(
              com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(System.currentTimeMillis())
         )
     ) { data, summary, categoryBreakdown ->
-        val (expenses, categories, budgetStatuses, pendingCount, weather) = data
+        val (expenses, categories, budgetStatuses, pendingCount, weather, recurringPatterns, plannedExpenses, goals) = data
 
         val now = System.currentTimeMillis()
         val todayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
         val weekStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
-
-        // Calculate "Today" and "Week" locally for now (can be moved to Repo later if heavy)
-        // Since we already have the full list `expenses` in memory from `dataFlow` (which might be overkill but existing arch),
-        // we can just filter for these small windows.
-        // ideally `dataFlow` shouldn't fetch ALL expenses if we have repo. setting that aside for now.
 
         val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
         val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
         val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
 
         val totalSpent = summary.totalSpent
-        val monthSpent = totalSpent // Summary IS month
+        val monthSpent = totalSpent 
         val txCount = summary.transactionCount
         val previousMonthTotal = summary.previousTotalSpent ?: 0.0
 
-        val daysInMonth = java.util.Calendar.getInstance().getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
-        val dayOfMonth = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH)
+        val calendar = java.util.Calendar.getInstance()
+        val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
         val daysRemaining = daysInMonth - dayOfMonth
 
-        // Overall budget (if set)
+        // Overall budget
         val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
         val safeToSpend = weather.discretionaryBudget 
 
-        // Category Totals from Repo
+        val totalBudgetAmount = overallBudget?.budget?.amount ?: 0.0
+
+        // === Budget Block Party Logic (Refactored to SynthesisEngine) ===
+        val monthStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
+        val currentDayIdx = ((now - monthStart) / 86400000L).toInt().coerceAtLeast(0)
+
+        // RE-CALCULATE FORECAST FOR BLOCK PARTY (Centralized Logic)
+        val currentPace = insightsEngine.getSpendingPaceSuspend(expenses)
+
+        // We need pastSumDaily for the forecast
+        val purchasesThisMonth = expenses.filter { 
+            it.transactionType == TransactionType.PURCHASE && it.date >= monthStart
+        }
+        val amountByDay = DoubleArray(currentDayIdx + 1)
+        purchasesThisMonth.forEach { exp ->
+            val dayIndex = ((exp.date - monthStart) / 86400000L).toInt()
+            if (dayIndex in amountByDay.indices) amountByDay[dayIndex] += exp.amount
+        }
+        var runningTotal = 0.0
+        val pastSumDaily = amountByDay.map { runningTotal += it; runningTotal }
+
+        val forecast = synthesisEngine.synthesize(
+            pastSumDaily = pastSumDaily,
+            recurringPatterns = recurringPatterns,
+            plannedExpenses = plannedExpenses,
+            savingsGoals = goals,
+            budgetStatuses = budgetStatuses,
+            spendingPace = currentPace
+        )
+
+        // Call centralized Block Party logic
+        val domainBlocks = synthesisEngine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = expenses,
+            dailySpending = summary.dailyHistory,
+            budgetLimit = totalBudgetAmount
+        )
+
+        // Map domain to UI models
+        val blockPartyDays = domainBlocks.map { domain ->
+            com.yourname.expensetracker.ui.components.DayBudgetStatus(
+                dayOfMonth = domain.dayOfMonth,
+                date = domain.date,
+                actualSpent = domain.actualSpent,
+                targetBudget = domain.targetBudget,
+                isToday = domain.isToday,
+                status = when(domain.status) {
+                    BlockPartyStatus.UNDER_BUDGET -> com.yourname.expensetracker.ui.components.BlockStatus.UNDER_BUDGET
+                    BlockPartyStatus.OVER_BUDGET -> com.yourname.expensetracker.ui.components.BlockStatus.OVER_BUDGET
+                    BlockPartyStatus.FUTURE -> com.yourname.expensetracker.ui.components.BlockStatus.FUTURE
+                    BlockPartyStatus.TODAY -> com.yourname.expensetracker.ui.components.BlockStatus.TODAY
+                    BlockPartyStatus.BILL_DAY -> com.yourname.expensetracker.ui.components.BlockStatus.BILL_DAY
+                },
+                baseTarget = domain.baseTarget,
+                recurringImpact = domain.recurringImpact,
+                plannedImpact = domain.plannedImpact,
+                recurringItems = domain.recurringItems,
+                plannedItems = domain.plannedItems,
+                topTransactions = domain.topTransactions
+            )
+        }
+
+        // Category Totals
         val categoryTotals = categoryBreakdown.map { 
              CategorySpending(it.category, it.total, it.percentage) 
         }
@@ -7219,14 +7763,13 @@ class HomeViewModel @Inject constructor(
         // Handle Day 1 Noise (LOG-005 Fix)
         val dayOfMonthCoerced = dayOfMonth.coerceAtLeast(1)
         val projectedTotal = if (dayOfMonth == 1) {
-            // Weighted average on day 1: 70% baseline, 30% current spend extrapolated
             if (baseline != null) (baseline * 0.7) + (monthSpent * 0.3 * daysInMonth)
             else monthSpent * daysInMonth
         } else {
             monthSpent * daysInMonth.toDouble() / dayOfMonth
         }
 
-        // Validated Pace Logic: Handle dayOfMonth=1 or 0 gracefully
+        // Pace Percentage
         val pacePercentage = if (baseline != null && baseline > 0) {
             val expected = baseline * dayOfMonthCoerced / daysInMonth
             val calculated = (monthSpent / expected * 100).toFloat()
@@ -7269,10 +7812,9 @@ class HomeViewModel @Inject constructor(
         // === Build widget list ===
         val widgets = mutableListOf<DashboardWidget>()
 
-        // Financial Weather (Always added, visibility controlled by config)
         widgets.add(DashboardWidget.FinancialWeatherWidget(weather))
 
-        // Hero: Safe-to-Spend (or total spent if no overall budget)
+        // Hero
         widgets.add(
             DashboardWidget.SafeToSpend(
                 amount = if (overallBudget != null) safeToSpend else monthSpent,
@@ -7280,6 +7822,11 @@ class HomeViewModel @Inject constructor(
                 daysRemaining = daysRemaining
             )
         )
+
+        // Block Party (New)
+        if (blockPartyDays.isNotEmpty()) {
+            widgets.add(DashboardWidget.BudgetBlockParty(blockPartyDays))
+        }
 
         // Spending Pace
         if (pace.paceStatus != PaceStatus.NO_BASELINE) {
@@ -7289,33 +7836,12 @@ class HomeViewModel @Inject constructor(
         // Spending Trend
         widgets.add(trend)
 
-        // Pending Review Alert
-        if (pendingCount > 0) {
-            widgets.add(DashboardWidget.PendingReviewAlert(pendingCount))
-        }
-
-        // Natural language insight
-        if (insightText != null) {
-            widgets.add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
-        }
-
-        // Period summary
+        if (pendingCount > 0) widgets.add(DashboardWidget.PendingReviewAlert(pendingCount))
+        if (insightText != null) widgets.add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
         widgets.add(DashboardWidget.PeriodSummary(todaySpent, weekSpent, monthSpent))
-
-        // Budget health
-        if (budgetStatuses.isNotEmpty()) {
-            widgets.add(DashboardWidget.BudgetHealthWidget(budgetStatuses, budgetSummary))
-        }
-
-        // Top categories
-        if (categoryTotals.isNotEmpty()) {
-            widgets.add(DashboardWidget.TopCategories(categoryTotals.take(5)))
-        }
-
-        // Recent transactions
-        if (purchases.isNotEmpty()) {
-            widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
-        }
+        if (budgetStatuses.isNotEmpty()) widgets.add(DashboardWidget.BudgetHealthWidget(budgetStatuses, budgetSummary))
+        if (categoryTotals.isNotEmpty()) widgets.add(DashboardWidget.TopCategories(categoryTotals.take(5)))
+        if (purchases.isNotEmpty()) widgets.add(DashboardWidget.RecentTransactions(purchases.take(5)))
 
         CompiledDashboardData(
             allWidgets = widgets,
@@ -7323,8 +7849,8 @@ class HomeViewModel @Inject constructor(
             txCount = txCount
         )
     }
-    .flowOn(Dispatchers.Default) // Compuation on BG thread
-    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompiledDashboardData(emptyList(), 0.0, 0)) // Cache results
+    .flowOn(Dispatchers.Default) 
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompiledDashboardData(emptyList(), 0.0, 0))
 
     val dashboard: StateFlow<DashboardState> = combine(
         processedDataFlow,
@@ -7417,7 +7943,7 @@ class HomeViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             plannedExpenseRepository.addPlannedExpense(
-                PlannedExpense(
+                com.yourname.expensetracker.data.database.entity.PlannedExpense(
                     description = description,
                     amount = amount,
                     date = date,
@@ -7427,6 +7953,7 @@ class HomeViewModel @Inject constructor(
             )
         }
     }
+
     companion object {
         fun getWidgetId(widget: DashboardWidget): String = when (widget) {
             is DashboardWidget.SafeToSpend -> "safe_to_spend"
@@ -7439,6 +7966,7 @@ class HomeViewModel @Inject constructor(
             is DashboardWidget.TopCategories -> "top_categories"
             is DashboardWidget.RecentTransactions -> "recent_transactions"
             is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
+            is DashboardWidget.BudgetBlockParty -> "budget_block_party"
         }
     }
 }
@@ -7449,6 +7977,24 @@ data class FiveData(
     val budgetStatuses: List<BudgetStatus>,
     val pendingCount: Int,
     val weather: FinancialWeather
+)
+
+data class Quadruple<A, B, C, D>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D
+)
+
+data class EightData(
+    val expenses: List<Expense>,
+    val categories: List<Category>,
+    val budgetStatuses: List<BudgetStatus>,
+    val pendingCount: Int,
+    val weather: FinancialWeather,
+    val recurringPatterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
+    val plannedExpenses: List<PlannedExpense>,
+    val goals: List<SavingsGoal>
 )
 
 data class CompiledDashboardData(
@@ -8492,6 +9038,7 @@ package com.yourname.expensetracker.ui.screens.recurring
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -8523,6 +9070,7 @@ import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 
 @HiltViewModel
 class RecurringExpensesViewModel @Inject constructor(
@@ -8597,6 +9145,7 @@ class RecurringExpensesViewModel @Inject constructor(
 @Composable
 fun RecurringExpensesScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToTransactions: (TransactionFilter) -> Unit = {}, // Default for preview/safety
     viewModel: RecurringExpensesViewModel = hiltViewModel()
 ) {
     val patterns by viewModel.allPatterns.collectAsState()
@@ -8648,7 +9197,12 @@ fun RecurringExpensesScreen(
                             RecurringExpenseItem(
                                 pattern = pattern,
                                 onDelete = { viewModel.deleteManualRule(pattern) },
-                                onConfirm = { viewModel.confirmPattern(pattern) }
+                                onConfirm = { viewModel.confirmPattern(pattern) },
+                                onMerchantClick = { 
+                                    onNavigateToTransactions(
+                                        TransactionFilter(merchantName = pattern.merchantName)
+                                    ) 
+                                }
                             )
                         }
 
@@ -8726,7 +9280,8 @@ fun PlannedExpenseItem(
 fun RecurringExpenseItem(
     pattern: RecurringPattern,
     onDelete: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: () -> Unit,
+    onMerchantClick: () -> Unit = {}
 ) {
 
     val isManual = pattern.id != null || pattern.confidence >= 0.99f
@@ -8744,7 +9299,8 @@ fun RecurringExpenseItem(
                 Text(
                     text = pattern.merchantName,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable { onMerchantClick() }
                 )
                 Text(
                     text = "${String.format("%.2f", pattern.averageAmount)} ${pattern.currency} • ${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
@@ -9712,6 +10268,21 @@ class ReviewViewModel @Inject constructor(
 
 ---
 
+## app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionFilter.kt <a name="appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionfilterkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.screens.transactions
+
+data class TransactionFilter(
+    val categoryId: Long? = null,
+    val merchantName: String? = null,
+    val dateRange: Pair<Long, Long>? = null,
+    val correlationId: Long = System.currentTimeMillis()
+)
+
+```
+
+---
+
 ## app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt <a name="appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt"></a>
 ```kotlin
 package com.yourname.expensetracker.ui.screens.transactions
@@ -9777,6 +10348,7 @@ import java.util.*
 @Composable
 fun TransactionsScreen(
     viewModel: TransactionsViewModel = hiltViewModel(),
+    initialFilter: TransactionFilter? = null,
     onNavigateToAnalytics: () -> Unit = {}
 ) {
     val transactions by viewModel.transactions.collectAsState()
@@ -9784,6 +10356,7 @@ fun TransactionsScreen(
     val categories by viewModel.categories.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
+    val activeFilter by viewModel.filter.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isLoadingMore by viewModel.isLoadingMoreState.collectAsState()
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
@@ -9791,6 +10364,13 @@ fun TransactionsScreen(
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+
+    // Initial filter application
+    LaunchedEffect(initialFilter) {
+        if (initialFilter != null) {
+            viewModel.applyFilter(initialFilter)
+        }
+    }
 
     // Dialog states
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
@@ -9960,6 +10540,51 @@ fun TransactionsScreen(
                                 }
                             }
                         )
+                    }
+                }
+
+                // Active Filter Banner
+                AnimatedVisibility(visible = activeFilter != null) {
+                    Surface(
+                        color = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            val filterText = buildString {
+                                append("Filtered by: ")
+                                val parts = mutableListOf<String>()
+                                activeFilter?.merchantName?.let { parts.add("Merchant: $it") }
+                                activeFilter?.categoryId?.let { id -> 
+                                    categories.find { it.id == id }?.name?.let { parts.add("Category: $it") }
+                                }
+                                append(parts.joinToString(", "))
+                            }
+
+                            Text(
+                                text = filterText,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = SemanticColors.PrimaryIndigo,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            IconButton(
+                                onClick = { viewModel.clearFilter() },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Close,
+                                    contentDescription = "Clear filter",
+                                    tint = SemanticColors.PrimaryIndigo,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -10711,6 +11336,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -10793,14 +11419,37 @@ class TransactionsViewModel @Inject constructor(
      * Main transactions flow with reactive filtering.
      * Combines tab selection, search query, and refresh triggers.
      */
+    // Filter state for drill-down
+    private val _filter = MutableStateFlow<TransactionFilter?>(null)
+    val filter: StateFlow<TransactionFilter?> = _filter.asStateFlow()
+
+    /**
+     * Main transactions flow with reactive filtering.
+     * Combines tab selection, search query, filter, and refresh triggers.
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
     val transactions: StateFlow<List<ExpenseWithCategory>> = combine(
         _selectedTab,
         _searchQuery,
+        _filter,
         _refreshTrigger
-    ) { tab, query, _ -> Pair(tab, query) }
-        .flatMapLatest { (tab, query) ->
-            if (tab == TransactionTab.ALL) {
+    ) { tab, query, filter, _ -> Triple(tab, query, filter) }
+        .flatMapLatest { (tab, query, filter) ->
+            if (filter != null) {
+                // FILTER MODE: Optimized SQL-level filtering
+                val (start, end) = filter.dateRange ?: Pair(0L, System.currentTimeMillis())
+
+                repository.getExpensesWithCategoryFiltered(
+                    startMs = start,
+                    endMs = end,
+                    type = TransactionType.PURCHASE,
+                    categoryId = filter.categoryId,
+                    merchant = filter.merchantName
+                ).map { expenses ->
+                    if (query.isBlank()) expenses
+                    else expenses.filter { matchesSearch(it, query) }
+                }
+            } else if (tab == TransactionTab.ALL) {
                 // For ALL tab, use paged data with optional search filter
                 _pagedExpenses.map { expenses ->
                     if (query.isBlank()) expenses
@@ -10865,6 +11514,19 @@ class TransactionsViewModel @Inject constructor(
     // PUBLIC API
     // ============================================================
 
+    // ============================================================
+    // PUBLIC API
+    // ============================================================
+
+    fun applyFilter(filter: TransactionFilter) {
+        _filter.value = filter
+        // We might want to switch tab visual state or specific logic here if needed
+    }
+
+    fun clearFilter() {
+        _filter.value = null
+    }
+
     fun selectTab(tab: TransactionTab) {
         if (_selectedTab.value == tab) return
 
@@ -10872,6 +11534,7 @@ class TransactionsViewModel @Inject constructor(
         _currentPage.value = 0
         _pagedExpenses.value = emptyList() // Clear to prevent stale data flash
         _searchQuery.value = "" // Reset search on tab change
+        _filter.value = null // Clear filter when manually changing tabs
 
         if (tab == TransactionTab.ALL) {
             loadInitialAll()
