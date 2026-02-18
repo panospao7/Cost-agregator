@@ -134,7 +134,7 @@ class ConfidenceRouter @Inject constructor(
             // 3. Adjust based on user correction history for this merchant
             val merchantRejectionRate = merchantRejectionRateDeferred.await()
             if (merchantRejectionRate > MERCHANT_REJECTION_THRESHOLD) {
-                adjustedConfidence *= 0.5f // Keep simple multiplier or extract? Let's fix this one too.
+                adjustedConfidence *= TRUST_MOD_BAD
                 reasons.add("Merchant often rejected")
             }
 
