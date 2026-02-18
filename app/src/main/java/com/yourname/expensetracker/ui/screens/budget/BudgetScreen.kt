@@ -28,6 +28,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -173,7 +174,7 @@ fun BudgetCard(
                         fontSize = 18.sp
                     )
                     Text(
-                        "${status.budget.period.name.lowercase().capitalize()} • Starts ${dateFormat.format(Date(status.budget.startDate))}",
+                        "${status.budget.period.name.lowercase().replaceFirstChar { it.titlecase(java.util.Locale.getDefault()) }} • Starts ${DateFormatterUtils.monthDay().format(Date(status.budget.startDate))}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -335,7 +336,7 @@ fun AddEditBudgetDialog(
                         FilterChip(
                             selected = period == p,
                             onClick = { period = p },
-                            label = { Text(p.name.lowercase().capitalize(), fontSize = 12.sp) }
+                            label = { Text(p.name.lowercase().replaceFirstChar { it.titlecase(java.util.Locale.getDefault()) }, fontSize = 12.sp) }
                         )
                     }
                 }
@@ -404,9 +405,6 @@ fun CategorySelector(
     }
 }
 
-
-// Extension to avoid repetitive logic
-fun String.capitalize() = replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 
 // Helper for UI scaling using graphicsLayer for better performance
 fun Modifier.budgetScale(scale: Float): Modifier = this.then(Modifier.graphicsLayer(scaleX = scale, scaleY = scale))

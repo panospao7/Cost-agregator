@@ -213,7 +213,7 @@ fun PeriodSelector(selected: AnalyticsPeriod, onSelect: (AnalyticsPeriod) -> Uni
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = period.name.lowercase().titleCase(),
+                        text = period.name.lowercase().replaceFirstChar { it.titlecase(java.util.Locale.getDefault()) },
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -490,7 +490,7 @@ fun SpendingPatternsCard(analysis: SpendingPatternAnalysis) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                pattern.type.name.replace("_", " ").lowercase().titleCase(),
+                                pattern.type.name.replace("_", " ").lowercase().replaceFirstChar { it.titlecase(java.util.Locale.getDefault()) },
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -537,7 +537,3 @@ fun AnalyticsSectionHeader(title: String, subtitle: String? = null) {
     }
 }
 
-// ... (other code)
-
-// Extension for capitalizing string
-fun String.titleCase() = this.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }

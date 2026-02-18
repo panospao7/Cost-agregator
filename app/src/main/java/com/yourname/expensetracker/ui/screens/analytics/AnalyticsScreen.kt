@@ -229,7 +229,7 @@ fun PeriodSelector(selected: TimePeriod, onSelect: (TimePeriod) -> Unit) {
             FilterChip(
                 selected = selected == period,
                 onClick = { onSelect(period) },
-                label = { Text(period.name.lowercase().capitalize()) },
+                label = { Text(period.name.lowercase().replaceFirstChar { it.titlecase(Locale.getDefault()) }) },
                 shape = RoundedCornerShape(20.dp)
             )
         }
@@ -393,5 +393,3 @@ fun RecurringItem(item: RecurringCandidate) {
     }
 }
 
-// Extension to help with capitalizing names
-fun String.capitalize() = this.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
