@@ -10,6 +10,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -560,13 +561,12 @@ class InsightsEngine @Inject constructor(
         val now = timeProvider.now()
         val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val result = LinkedHashMap<String, Double>()
-        val dateKeyFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
 
         // Initialize all days with 0
         for (i in days - 1 downTo 0) {
             cal.timeInMillis = now
             cal.add(Calendar.DAY_OF_YEAR, -i)
-            val key = dateKeyFormat.format(cal.time)
+            val key = DateFormatterUtils.dateKey().format(cal.time)
             result[key] = 0.0
         }
 
@@ -575,7 +575,7 @@ class InsightsEngine @Inject constructor(
         val dateObj = java.util.Date()
         for (expense in purchases) {
             dateObj.time = expense.date
-            val key = dateKeyFormat.format(dateObj)
+            val key = DateFormatterUtils.dateKey().format(dateObj)
             if (result.containsKey(key)) {
                 result[key] = (result[key] ?: 0.0) + expense.amount
             }
@@ -637,7 +637,6 @@ class InsightsEngine @Inject constructor(
     private fun fmt(amount: Double): String = String.format(java.util.Locale.US, "%.2f", amount)
     
     private fun formatDate(dateMs: Long): String {
-         val format = java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault())
-         return format.format(java.util.Date(dateMs))
+         return DateFormatterUtils.monthDay().format(java.util.Date(dateMs))
     }
 }

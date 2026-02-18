@@ -9,11 +9,11 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -77,16 +77,14 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val start = TimePeriodUtils.getStartOfWeek(referenceDate)
         val end = start + (7 * MILLIS_PER_DAY)
         
-        val fmt = SimpleDateFormat("MMM d", Locale.getDefault())
-        return Triple(start, end, "${fmt.format(Date(start))} - ${fmt.format(Date(end - 1))}")
+        return Triple(start, end, "${DateFormatterUtils.monthDayShort().format(Date(start))} - ${DateFormatterUtils.monthDayShort().format(Date(end - 1))}")
     }
     
     private fun calculateMonthRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfMonth(referenceDate)
         val end = TimePeriodUtils.getEndOfMonth(start) + 1
         
-        val fmt = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
-        return Triple(start, end, fmt.format(Date(start)))
+        return Triple(start, end, DateFormatterUtils.monthYear().format(Date(start)))
     }
     
     private fun calculateQuarterRange(referenceDate: Long): Triple<Long, Long, String> {

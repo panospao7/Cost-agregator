@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import javax.inject.Inject
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -401,15 +402,10 @@ class TransactionsViewModel @Inject constructor(
     ): Map<String, List<ExpenseWithCategory>> {
         if (expenses.isEmpty()) return emptyMap()
         
-        val dateFormat = java.text.SimpleDateFormat(
-            "EEEE, MMMM d, yyyy", 
-            java.util.Locale.getDefault()
-        )
-        
         return expenses
             .sortedByDescending { it.expense.date }
             .groupBy { item ->
-                dateFormat.format(java.util.Date(item.expense.date))
+                DateFormatterUtils.fullDateWithDay().format(java.util.Date(item.expense.date))
             }
     }
 }

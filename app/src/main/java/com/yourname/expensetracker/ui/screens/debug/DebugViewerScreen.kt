@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -602,8 +603,7 @@ private fun IssueCard(issue: DebugIssue, accentColor: Color) {
 }
 
 private fun formatDate(timestamp: Long): String {
-    val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-    return sdf.format(Date(timestamp))
+    return DateFormatterUtils.shortDateWithTime().format(Date(timestamp))
 }
 
 /**
@@ -626,7 +626,7 @@ data class DebugData(
         return buildString {
             appendLine("{")
             appendLine("  \"metadata\": {")
-            appendLine("    \"timestamp\": \"${java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss").format(java.util.Date())}\",")
+            appendLine("    \"timestamp\": \"${DateFormatterUtils.isoTimestamp().format(java.util.Date())}\",")
             appendLine("    \"processingTimeMs\": $processingTimeMs,")
             appendLine("    \"parserUsed\": \"$parserUsed\"")
             appendLine("  },")

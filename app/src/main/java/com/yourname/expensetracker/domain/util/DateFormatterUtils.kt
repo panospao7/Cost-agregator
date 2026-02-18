@@ -30,10 +30,12 @@ object DateFormatterUtils {
     fun monthYear(): SimpleDateFormat = get("MMMM yyyy")
     fun timeOnly(): SimpleDateFormat = get("HH:mm")
     fun timeWithSeconds(): SimpleDateFormat = get("HH:mm:ss")
+    fun timeWithSecondsAndDate(): SimpleDateFormat = get("HH:mm:ss dd/MM")
     fun shortDate(): SimpleDateFormat = get("dd/MM/yyyy")
     fun shortDateWithTime(): SimpleDateFormat = get("dd/MM/yyyy HH:mm")
     fun isoTimestamp(): SimpleDateFormat = get("yyyy-MM-dd'T'HH:mm:ss")
     fun dateKey(): SimpleDateFormat = get("yyyy-MM-dd")
+    fun fullDateWithDay(): SimpleDateFormat = get("EEEE, MMMM d, yyyy")
 
     fun formatTimestamp(timestamp: Long, pattern: String): String {
         return get(pattern).format(Date(timestamp))

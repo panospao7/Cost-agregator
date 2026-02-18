@@ -29,6 +29,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -45,7 +46,6 @@ fun DebugScreen(
     val selectedFilter by viewModel.selectedPackageFilter.collectAsState()
     
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault()) }
 
     Scaffold(
         topBar = {
@@ -320,7 +320,6 @@ fun DebugScreen(
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         NotificationCard(
                             notification = notification,
-                            dateFormat = dateFormat,
                             isExpanded = expandedNotificationId == notification.id,
                             onClick = {
                                 expandedNotificationId = 
@@ -341,7 +340,6 @@ fun DebugScreen(
 @Composable
 fun NotificationCard(
     notification: RawNotification,
-    dateFormat: SimpleDateFormat,
     isExpanded: Boolean,
     onClick: () -> Unit,
     onMarkRelevant: () -> Unit,
@@ -377,7 +375,7 @@ fun NotificationCard(
                     fontSize = 14.sp
                 )
                 Text(
-                    text = dateFormat.format(Date(notification.capturedAt)),
+                    text = DateFormatterUtils.timeWithSecondsAndDate().format(Date(notification.capturedAt)),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
