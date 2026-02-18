@@ -24,7 +24,8 @@ enum class BlockStatus {
     OVER_BUDGET,  // Party Pooper (Red)
     FUTURE,       // TBD (Gray)
     TODAY,        // Active (Blue)
-    BILL_DAY      // Bills (White Outline)
+    BILL_DAY,     // Bills (White Outline)
+    NO_DATA       // No spending recorded yet (Gray)
 }
 
 data class DayBudgetStatus(
@@ -101,6 +102,7 @@ fun DayBlock(day: DayBudgetStatus, onClick: () -> Unit) {
         BlockStatus.TODAY -> SemanticColors.PrimaryIndigo
         BlockStatus.FUTURE -> SemanticColors.GlassBorder.copy(alpha = 0.5f)
         BlockStatus.BILL_DAY -> Color.Transparent
+        BlockStatus.NO_DATA -> SemanticColors.GlassBorder.copy(alpha = 0.3f)
     }
 
     val borderModifier = if (isBillDay) {

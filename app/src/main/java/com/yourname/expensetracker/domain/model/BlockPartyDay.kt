@@ -18,5 +18,10 @@ data class BlockPartyDay(
 )
 
 enum class BlockPartyStatus {
-    UNDER_BUDGET, OVER_BUDGET, FUTURE, TODAY, BILL_DAY
+    UNDER_BUDGET,
+    OVER_BUDGET,
+    FUTURE,
+    TODAY,
+    BILL_DAY,
+    NO_DATA
 }

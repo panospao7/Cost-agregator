@@ -325,6 +325,7 @@ class HomeViewModel @Inject constructor(
                     BlockPartyStatus.FUTURE -> com.yourname.expensetracker.ui.components.BlockStatus.FUTURE
                     BlockPartyStatus.TODAY -> com.yourname.expensetracker.ui.components.BlockStatus.TODAY
                     BlockPartyStatus.BILL_DAY -> com.yourname.expensetracker.ui.components.BlockStatus.BILL_DAY
+                    BlockPartyStatus.NO_DATA -> com.yourname.expensetracker.ui.components.BlockStatus.NO_DATA
                 },
                 baseTarget = domain.baseTarget,
                 recurringImpact = domain.recurringImpact,

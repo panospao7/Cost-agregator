@@ -15,6 +15,9 @@ import javax.inject.Singleton
 class SynthesisEngine @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
+    companion object {
+        private const val TAG = "SynthesisEngine"
+    }
 
     fun synthesize(
         pastSumDaily: List<Double>,
@@ -243,7 +246,8 @@ class SynthesisEngine @Inject constructor(
             val plannedNames = plannedItemsOnDay.map { it.description }
 
             val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
-            val actual = if (day <= dailySpending.size) dailySpending[day - 1].toDouble() else 0.0
+            val actual = dailySpending.getOrNull(day - 1)?.toDouble()
+            val actualOrZero = actual ?: 0.0
 
             val dayTransactions = (expensesByDay[day] ?: emptyList())
                 .sortedByDescending { it.amount }
@@ -255,14 +259,15 @@ class SynthesisEngine @Inject constructor(
                     if (recurringItemsOnDay.isNotEmpty()) BlockPartyStatus.BILL_DAY
                     else BlockPartyStatus.FUTURE
                 }
-                actual <= dailyTarget * 1.1 -> BlockPartyStatus.UNDER_BUDGET
+                actual == null -> BlockPartyStatus.NO_DATA
+                actual <= dailyTarget -> BlockPartyStatus.UNDER_BUDGET
                 else -> BlockPartyStatus.OVER_BUDGET
             }
 
             BlockPartyDay(
                 dayOfMonth = day,
                 date = dateMs,
-                actualSpent = actual,
+                actualSpent = actualOrZero,
                 targetBudget = dailyTarget,
                 isToday = day == dayOfMonth,
                 status = status,
@@ -296,7 +301,29 @@ class SynthesisEngine @Inject constructor(
                  (daysDiff % 14L == 0L)
             }
             RecurrenceFrequency.MONTHLY -> {
-                dateCal.get(Calendar.DAY_OF_MONTH) == anchorCal.get(Calendar.DAY_OF_MONTH)
+                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+                val targetDay = dateCal.get(Calendar.DAY_OF_MONTH)
+                if (anchorDay > 28) {
+                    val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    targetDay == maxDayInTargetMonth
+                } else {
+                    targetDay == anchorDay
+                }
+            }
+            RecurrenceFrequency.QUARTERLY -> {
+                 val diff = dateCal.timeInMillis - anchor
+                 val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
+                 daysDiff in 88L..94L
+            }
+            RecurrenceFrequency.SEMI_ANNUALLY -> {
+                 val diff = dateCal.timeInMillis - anchor
+                 val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
+                 daysDiff in 175L..190L
+            }
+            RecurrenceFrequency.ANNUALLY -> {
+                 val diff = dateCal.timeInMillis - anchor
+                 val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
+                 daysDiff in 358L..372L
             }
             else -> false 
         }
