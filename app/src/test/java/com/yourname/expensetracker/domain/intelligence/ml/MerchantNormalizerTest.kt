@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.intelligence.ml
 
-import com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
@@ -13,7 +13,7 @@ import android.content.Context
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 
 class MerchantNormalizerTest {
-    private val dao = mockk<MerchantNormalizationDao>(relaxed = true)
+    private val repository = mockk<MerchantNormalizationRepository>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
     private val merchantRules = MerchantRulesRepository() // Use real instance to test logic
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
@@ -22,7 +22,7 @@ class MerchantNormalizerTest {
     @Before
     fun setup() {
         every { timeProvider.now() } returns System.currentTimeMillis()
-        normalizer = MerchantNormalizer(dao, merchantRules, context, timeProvider)
+        normalizer = MerchantNormalizer(repository, merchantRules, context, timeProvider)
     }
 
     // Cleaning tests moved to MerchantRulesRepositoryTest
@@ -34,8 +34,8 @@ class MerchantNormalizerTest {
         
         coEvery { alias.canonicalId } returns 1
         coEvery { alias.isUserDefined } returns true
-        coEvery { dao.getAliasByNormalizedKey("target") } returns alias
-        coEvery { dao.getCanonicalById(1) } returns canonical
+        coEvery { repository.getAliasByNormalizedKey("target") } returns alias
+        coEvery { repository.getCanonicalById(1) } returns canonical
 
         val result = normalizer.normalize("Target")
         assertEquals("Target", result.canonical.normalizedName)

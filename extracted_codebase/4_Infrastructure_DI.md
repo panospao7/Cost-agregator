@@ -4,15 +4,16 @@
 1. [Critical_Tests_Implementation_Examples.kt](#critical_tests_implementation_exampleskt)
 2. [app\src\main\java\com\yourname\expensetracker\ExpenseTrackerApp.kt](#appsrcmainjavacomyournameexpensetrackerexpensetrackerappkt)
 3. [app\src\main\java\com\yourname\expensetracker\di\AppModule.kt](#appsrcmainjavacomyournameexpensetrackerdiappmodulekt)
-4. [app\src\main\java\com\yourname\expensetracker\receiver\BootReceiver.kt](#appsrcmainjavacomyournameexpensetrackerreceiverbootreceiverkt)
-5. [app\src\main\java\com\yourname\expensetracker\service\NotificationCaptureService.kt](#appsrcmainjavacomyournameexpensetrackerservicenotificationcaptureservicekt)
-6. [new discussion\FIXED_RECEIPT_PARSER_NORMALIZATION.kt](#new-discussionfixed_receipt_parser_normalizationkt)
-7. [new discussion\IMPROVED_GREEK_NORMALIZATION.kt](#new-discussionimproved_greek_normalizationkt)
-8. [new discussion\OcrParserTest.kt](#new-discussionocrparsertestkt)
-9. [updated code\FIXED_RECEIPT_PARSER_NORMALIZATION.kt](#updated-codefixed_receipt_parser_normalizationkt)
-10. [updated code\OcrDocumentTest.kt](#updated-codeocrdocumenttestkt)
-11. [updated code\OcrDocumentValidator.kt](#updated-codeocrdocumentvalidatorkt)
-12. [updated code\RECEIPT_PARSER_FIXES.kt](#updated-codereceipt_parser_fixeskt)
+4. [app\src\main\java\com\yourname\expensetracker\di\DispatchersModule.kt](#appsrcmainjavacomyournameexpensetrackerdidispatchersmodulekt)
+5. [app\src\main\java\com\yourname\expensetracker\receiver\BootReceiver.kt](#appsrcmainjavacomyournameexpensetrackerreceiverbootreceiverkt)
+6. [app\src\main\java\com\yourname\expensetracker\service\NotificationCaptureService.kt](#appsrcmainjavacomyournameexpensetrackerservicenotificationcaptureservicekt)
+7. [new discussion\FIXED_RECEIPT_PARSER_NORMALIZATION.kt](#new-discussionfixed_receipt_parser_normalizationkt)
+8. [new discussion\IMPROVED_GREEK_NORMALIZATION.kt](#new-discussionimproved_greek_normalizationkt)
+9. [new discussion\OcrParserTest.kt](#new-discussionocrparsertestkt)
+10. [updated code\FIXED_RECEIPT_PARSER_NORMALIZATION.kt](#updated-codefixed_receipt_parser_normalizationkt)
+11. [updated code\OcrDocumentTest.kt](#updated-codeocrdocumenttestkt)
+12. [updated code\OcrDocumentValidator.kt](#updated-codeocrdocumentvalidatorkt)
+13. [updated code\RECEIPT_PARSER_FIXES.kt](#updated-codereceipt_parser_fixeskt)
 
 ---
 
@@ -1056,6 +1057,7 @@ object AppModule {
                     android.util.Log.d("AppDatabase", "Database opened successfully. Version: ${db.version}")
                 }
             })
+            .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5)
             .fallbackToDestructiveMigration()
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()
@@ -1130,6 +1132,52 @@ object AppModule {
     @Provides
     @Singleton
     fun provideMerchantNormalizationDao(database: AppDatabase): MerchantNormalizationDao = database.merchantNormalizationDao()
+}
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\di\DispatchersModule.kt <a name="appsrcmainjavacomyournameexpensetrackerdidispatchersmodulekt"></a>
+```kotlin
+package com.yourname.expensetracker.di
+
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import javax.inject.Qualifier
+import javax.inject.Singleton
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class IoDispatcher
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class DefaultDispatcher
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class MainDispatcher
+
+@Module
+@InstallIn(SingletonComponent::class)
+object DispatchersModule {
+
+    @DefaultDispatcher
+    @Provides
+    fun providesDefaultDispatcher(): CoroutineDispatcher = Dispatchers.Default
+
+    @IoDispatcher
+    @Provides
+    fun providesIoDispatcher(): CoroutineDispatcher = Dispatchers.IO
+
+    @MainDispatcher
+    @Provides
+    fun providesMainDispatcher(): CoroutineDispatcher = Dispatchers.Main
 }
 
 ```

@@ -3,7 +3,7 @@ package com.yourname.expensetracker.domain.intelligence
 
 import android.content.Context
 import android.util.Log
-import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
@@ -24,7 +24,7 @@ import kotlin.math.ln
 @Singleton
 open class TransactionClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val userCorrectionDao: UserCorrectionDao
+    private val userCorrectionRepository: UserCorrectionRepository
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var saveJob: Job? = null
@@ -85,7 +85,7 @@ open class TransactionClassifier @Inject constructor(
                 Log.d(TAG, "Loaded model from disk: +$totalPositive/-$totalNegative samples")
             }
 
-            val correctionCount = userCorrectionDao.getCount()
+            val correctionCount = userCorrectionRepository.getCount()
             if (correctionCount > lastTrainingCount && correctionCount >= MIN_TRAINING_SAMPLES) {
                 retrainFromCorrectionsInternal()
             }
@@ -126,7 +126,7 @@ open class TransactionClassifier @Inject constructor(
     }
 
     private suspend fun retrainFromCorrectionsInternal() {
-        val corrections = userCorrectionDao.getAll()
+        val corrections = userCorrectionRepository.getAll()
         if (corrections.size < MIN_TRAINING_SAMPLES) {
             Log.d(TAG, "Not enough corrections to train: ${corrections.size}/$MIN_TRAINING_SAMPLES")
             return

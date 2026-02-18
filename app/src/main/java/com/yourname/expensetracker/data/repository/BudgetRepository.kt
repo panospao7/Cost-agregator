@@ -211,4 +211,16 @@ class BudgetRepository @Inject constructor(
         }
         return suggestions.sortedByDescending { it.suggestedAmount }.take(3)
     }
+
+    suspend fun updateExceededNotification(id: Long, timestamp: Long) {
+        budgetDao.updateExceededNotification(id, timestamp)
+    }
+
+    suspend fun updateCriticalNotification(id: Long, timestamp: Long) {
+        budgetDao.updateCriticalNotification(id, timestamp)
+    }
+
+    suspend fun updateWarningNotification(id: Long, timestamp: Long) {
+        budgetDao.updateWarningNotification(id, timestamp)
+    }
 }

@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.SourceStatsRepository
+import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.runBlocking
@@ -12,21 +14,21 @@ import io.mockk.*
 class ConfidenceRouterTest {
 
     private lateinit var router: ConfidenceRouter
-    private val sourceStatsDao = mockk<com.yourname.expensetracker.data.database.dao.SourceStatsDao>(relaxed = true)
-    private val userCorrectionDao = mockk<com.yourname.expensetracker.data.database.dao.UserCorrectionDao>(relaxed = true)
+    private val sourceStatsRepository = mockk<SourceStatsRepository>(relaxed = true)
+    private val userCorrectionRepository = mockk<UserCorrectionRepository>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
 
     @Before
     fun setup() {
         every { timeProvider.now() } returns System.currentTimeMillis()
-        router = ConfidenceRouter(sourceStatsDao, userCorrectionDao, classifier, timeProvider)
+        router = ConfidenceRouter(sourceStatsRepository, userCorrectionRepository, classifier, timeProvider)
 
         // Default: no source stats, no corrections, classifier not ready
-        coEvery { sourceStatsDao.getByPackage(any()) } returns null
-        coEvery { userCorrectionDao.getMerchantTotalCorrections(any()) } returns 0
-        coEvery { userCorrectionDao.getTotalCorrections(any()) } returns 0
-        coEvery { userCorrectionDao.hasPreviousApprovals(any(), any()) } returns false
+        coEvery { sourceStatsRepository.getByPackage(any()) } returns null
+        coEvery { userCorrectionRepository.getMerchantTotalCorrections(any()) } returns 0
+        coEvery { userCorrectionRepository.getTotalCorrections(any()) } returns 0
+        coEvery { userCorrectionRepository.hasPreviousApprovals(any(), any()) } returns false
         coEvery { classifier.getStats() } returns ClassifierStats(0, 0, 0, false)
         coEvery { classifier.predict(any()) } returns 0.5f
     }
@@ -61,15 +63,15 @@ class ConfidenceRouterTest {
 
     @Test
     fun `previously approved merchant gets boost`() = runBlocking {
-        coEvery { userCorrectionDao.hasPreviousApprovals("TestMerchant", "com.test") } returns true
+        coEvery { userCorrectionRepository.hasPreviousApprovals("TestMerchant", "com.test") } returns true
         val result = router.route(makeParsed(0.80f), "com.test")
         assertTrue(result.adjustedConfidence > 0.80f)
     }
 
     @Test
     fun `high merchant rejection rate reduces confidence`() = runBlocking {
-        coEvery { userCorrectionDao.getMerchantTotalCorrections("TestMerchant") } returns 10
-        coEvery { userCorrectionDao.getMerchantRejectionCount("TestMerchant") } returns 8
+        coEvery { userCorrectionRepository.getMerchantTotalCorrections("TestMerchant") } returns 10
+        coEvery { userCorrectionRepository.getMerchantRejectionCount("TestMerchant") } returns 8
 
         val result = router.route(makeParsed(0.90f), "com.test")
         assertTrue(result.adjustedConfidence < 0.90f)
@@ -77,7 +79,7 @@ class ConfidenceRouterTest {
 
     @Test
     fun `spam source dramatically reduces confidence`() = runBlocking {
-        coEvery { sourceStatsDao.getByPackage("com.spam") } returns
+        coEvery { sourceStatsRepository.getByPackage("com.spam") } returns
             com.yourname.expensetracker.data.database.entity.SourceStats(
                 packageName = "com.spam",
                 totalNotifications = 100,
@@ -90,7 +92,7 @@ class ConfidenceRouterTest {
 
     @Test
     fun `confidence is clamped to 0-1 range`() = runBlocking {
-        coEvery { userCorrectionDao.hasPreviousApprovals(any(), any()) } returns true
+        coEvery { userCorrectionRepository.hasPreviousApprovals(any(), any()) } returns true
 
         val result = router.route(makeParsed(0.99f), "com.test")
         assertTrue(result.adjustedConfidence <= 1.0f)

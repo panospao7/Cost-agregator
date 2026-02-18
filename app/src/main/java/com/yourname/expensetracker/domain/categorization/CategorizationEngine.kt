@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.domain.categorization
 
+import android.content.Context
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
-import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
@@ -10,8 +12,9 @@ import kotlinx.coroutines.sync.withLock
 
 @Singleton
 class CategorizationEngine @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val merchantCategoryDao: MerchantCategoryDao,
-    private val merchantNormalizer: NewMerchantNormalizer
+    private val merchantNormalizer: MerchantNormalizer
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
@@ -72,8 +75,8 @@ class CategorizationEngine @Inject constructor(
                 cachedMappingsMap = all.associateBy { it.merchantPattern }
                 lastCacheTime = now
             }
-            return Pair(cachedMappings!!, cachedMappingsMap!!)
         }
+        return Pair(cachedMappings!!, cachedMappingsMap!!)
     }
 
     suspend fun invalidateCache() {

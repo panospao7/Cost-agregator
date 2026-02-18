@@ -102,7 +102,7 @@ class BudgetViewModel @Inject constructor(
             _manualState.value = ManualState.Error("Warning threshold must be between 0 and 1")
             return false
         }
-        if (budget.notifyAtCritical <= budget.notifyAtWarning || budget.notifyAtCritical >= 1.05f) {
+        if (budget.notifyAtCritical <= budget.notifyAtWarning || budget.notifyAtCritical > 1.0f) {
             _manualState.value = ManualState.Error("Critical threshold must be between warning and 100%")
             return false
         }

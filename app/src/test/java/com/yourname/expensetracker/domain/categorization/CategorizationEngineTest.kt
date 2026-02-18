@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.categorization
 
+import android.content.Context
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
@@ -12,6 +13,7 @@ import org.junit.Before
 import org.junit.Test
 
 class CategorizationEngineTest {
+    private val context = mockk<Context>(relaxed = true)
     private val merchantCategoryDao = mockk<com.yourname.expensetracker.data.database.dao.MerchantCategoryDao>(relaxed = true)
     private val merchantNormalizer = mockk<NewMerchantNormalizer>(relaxed = true)
     private lateinit var engine: CategorizationEngine
@@ -27,7 +29,7 @@ class CategorizationEngineTest {
                 matchType = MatchType.EXACT_MATCH
             )
         }
-        engine = CategorizationEngine(merchantCategoryDao, merchantNormalizer)
+        engine = CategorizationEngine(context, merchantCategoryDao, merchantNormalizer)
     }
 
     @Test

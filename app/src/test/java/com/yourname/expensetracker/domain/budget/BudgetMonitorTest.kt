@@ -3,7 +3,6 @@ package com.yourname.expensetracker.domain.budget
 import android.app.NotificationManager
 import android.content.Context
 import androidx.core.app.NotificationCompat
-import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
@@ -25,7 +24,6 @@ import org.junit.Test
 class BudgetMonitorTest {
 
     private val context = mockk<Context>(relaxed = true)
-    private val budgetDao = mockk<BudgetDao>(relaxed = true)
     private val budgetRepository = mockk<BudgetRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     
@@ -52,7 +50,7 @@ class BudgetMonitorTest {
         every { anyConstructed<NotificationCompat.Builder>().setAutoCancel(any()) } returns mockk(relaxed = true)
         every { anyConstructed<NotificationCompat.Builder>().build() } returns mockNotification
         
-        monitor = BudgetMonitor(context, budgetDao, budgetRepository, timeProvider, testDispatcher)
+        monitor = BudgetMonitor(context, budgetRepository, timeProvider, testDispatcher)
     }
 
     @After
@@ -92,7 +90,7 @@ class BudgetMonitorTest {
         
         // Verify notification fired (DAO update called)
         coVerify { 
-            budgetDao.updateWarningNotification(1, any()) 
+            budgetRepository.updateWarningNotification(1, any()) 
         }
     }
 
@@ -129,7 +127,7 @@ class BudgetMonitorTest {
         
         // Should NOT update notification time
         coVerify(exactly = 0) { 
-            budgetDao.updateWarningNotification(any(), any()) 
+            budgetRepository.updateWarningNotification(any(), any()) 
         }
     }
 }

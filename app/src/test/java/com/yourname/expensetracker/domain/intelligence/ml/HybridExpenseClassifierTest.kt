@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.intelligence.ml
 
-import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.database.entity.Category
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
@@ -10,7 +10,7 @@ import org.junit.Test
 import android.content.Context
 
 class HybridExpenseClassifierTest {
-    private val categoryDao = mockk<CategoryDao>(relaxed = true)
+    private val categoryRepository = mockk<CategoryRepository>(relaxed = true)
     private val nbClassifier = mockk<ExpenseCategoryClassifier>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
     private lateinit var hybridClassifier: HybridExpenseClassifier
@@ -22,8 +22,8 @@ class HybridExpenseClassifierTest {
 
     @Before
     fun setup() {
-        coEvery { categoryDao.getAll() } returns listOf(foodCategory, groceriesCategory, miscCategory, uncategorizedCategory)
-        hybridClassifier = HybridExpenseClassifier(context, categoryDao, nbClassifier)
+        coEvery { categoryRepository.getAll() } returns listOf(foodCategory, groceriesCategory, miscCategory, uncategorizedCategory)
+        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, nbClassifier)
     }
 
     @Test

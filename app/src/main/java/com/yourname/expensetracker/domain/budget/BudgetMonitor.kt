@@ -3,7 +3,6 @@ package com.yourname.expensetracker.domain.budget
 import android.app.NotificationManager
 import android.content.Context
 import androidx.core.app.NotificationCompat
-import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -19,7 +18,6 @@ import javax.inject.Singleton
 @Singleton
 class BudgetMonitor @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val budgetDao: BudgetDao,
     private val budgetRepository: BudgetRepository,
     private val timeProvider: TimeProvider,
     @com.yourname.expensetracker.di.IoDispatcher private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher
@@ -62,19 +60,19 @@ class BudgetMonitor @Inject constructor(
             percent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart)) {
                     sendNotificationDirect(budget, spent, "Budget Exceeded!", categoryName)
-                    budgetDao.updateExceededNotification(budget.id, now)
+                    budgetRepository.updateExceededNotification(budget.id, now)
                 }
             }
             percent >= budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart)) {
                     sendNotificationDirect(budget, spent, "Critical Budget Warning", categoryName)
-                    budgetDao.updateCriticalNotification(budget.id, now)
+                    budgetRepository.updateCriticalNotification(budget.id, now)
                 }
             }
             percent >= budget.notifyAtWarning -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart)) {
                     sendNotificationDirect(budget, spent, "Budget Warning", categoryName)
-                    budgetDao.updateWarningNotification(budget.id, now)
+                    budgetRepository.updateWarningNotification(budget.id, now)
                 }
             }
         }

@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.domain.intelligence
 
-import com.yourname.expensetracker.data.database.dao.SourceStatsDao
-import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.SourceStats
+import com.yourname.expensetracker.data.repository.SourceStatsRepository
+import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.async
@@ -25,8 +25,8 @@ data class RoutingResult(
 
 @Singleton
 class ConfidenceRouter @Inject constructor(
-    private val sourceStatsDao: SourceStatsDao,
-    private val userCorrectionDao: UserCorrectionDao,
+    private val sourceStatsRepository: SourceStatsRepository,
+    private val userCorrectionRepository: UserCorrectionRepository,
     private val classifier: TransactionClassifier,
     private val timeProvider: TimeProvider
 ) {
@@ -210,7 +210,7 @@ class ConfidenceRouter @Inject constructor(
         if (cached != null && now - cached.second < CACHE_TTL) {
             return cached.first
         }
-        val stats = sourceStatsDao.getByPackage(packageName)
+        val stats = sourceStatsRepository.getByPackage(packageName)
         sourceStatsCache[packageName] = Pair(stats, now)
         return stats
     }
@@ -223,9 +223,9 @@ class ConfidenceRouter @Inject constructor(
             return cached.first
         }
 
-        val total = userCorrectionDao.getMerchantTotalCorrections(merchant)
+        val total = userCorrectionRepository.getMerchantTotalCorrections(merchant)
         val result = if (total < 3) 0f else {
-            val rejections = userCorrectionDao.getMerchantRejectionCount(merchant)
+            val rejections = userCorrectionRepository.getMerchantRejectionCount(merchant)
             rejections.toFloat() / total
         }
 
@@ -240,9 +240,9 @@ class ConfidenceRouter @Inject constructor(
             return cached.first
         }
 
-        val total = userCorrectionDao.getTotalCorrections(packageName)
+        val total = userCorrectionRepository.getTotalCorrections(packageName)
         val result = if (total < 5) 0f else {
-            val rejections = userCorrectionDao.getRejectionCount(packageName)
+            val rejections = userCorrectionRepository.getRejectionCount(packageName)
             rejections.toFloat() / total
         }
 
@@ -258,7 +258,7 @@ class ConfidenceRouter @Inject constructor(
             return cached.first
         }
 
-        val result = userCorrectionDao.hasPreviousApprovals(merchant, packageName)
+        val result = userCorrectionRepository.hasPreviousApprovals(merchant, packageName)
         approvalCache[key] = Pair(result, now)
         return result
     }
@@ -268,9 +268,9 @@ class ConfidenceRouter @Inject constructor(
         val cached = sourceStatsCache[packageName]?.first
         if (cached != null) return
 
-        val existing = sourceStatsDao.getByPackage(packageName)
+        val existing = sourceStatsRepository.getByPackage(packageName)
         if (existing == null) {
-            sourceStatsDao.insertIfNotExists(SourceStats(packageName = packageName))
+            sourceStatsRepository.insertIfNotExists(SourceStats(packageName = packageName))
         }
         // Update cache
         sourceStatsCache[packageName] = Pair(existing ?: SourceStats(packageName = packageName), System.currentTimeMillis())

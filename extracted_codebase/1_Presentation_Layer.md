@@ -3,41 +3,42 @@
 ## Table of Contents
 1. [app\src\main\java\com\yourname\expensetracker\ui\MainActivity.kt](#appsrcmainjavacomyournameexpensetrackeruimainactivitykt)
 2. [app\src\main\java\com\yourname\expensetracker\ui\MainViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruimainviewmodelkt)
-3. [app\src\main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsbentocardkt)
-4. [app\src\main\java\com\yourname\expensetracker\ui\components\BudgetBlockPartyCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsbudgetblockpartycardkt)
-5. [app\src\main\java\com\yourname\expensetracker\ui\components\ChartMarker.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentschartmarkerkt)
-6. [app\src\main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
-7. [app\src\main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
-8. [app\src\main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentspulsedotkt)
-9. [app\src\main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
-10. [app\src\main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
-11. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
-12. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
-13. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsscreenkt)
-14. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsviewmodelkt)
-15. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
-16. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
-17. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
-18. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
-19. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
-20. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
-21. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugDataStorage.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugdatastoragekt)
-22. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugIssueDetector.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugissuedetectorkt)
-23. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
-24. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
-25. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewerScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewerscreenkt)
-26. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
-27. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
-28. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
-29. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
-30. [app\src\main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
-31. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
-32. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
-33. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionFilter.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionfilterkt)
-34. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
-35. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
-36. [app\src\main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#appsrcmainjavacomyournameexpensetrackeruithemethemekt)
-37. [app\src\main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#appsrcmainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
+3. [app\src\main\java\com\yourname\expensetracker\ui\common\CurrencyFormatter.kt](#appsrcmainjavacomyournameexpensetrackeruicommoncurrencyformatterkt)
+4. [app\src\main\java\com\yourname\expensetracker\ui\components\BentoCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsbentocardkt)
+5. [app\src\main\java\com\yourname\expensetracker\ui\components\BudgetBlockPartyCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsbudgetblockpartycardkt)
+6. [app\src\main\java\com\yourname\expensetracker\ui\components\ChartMarker.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentschartmarkerkt)
+7. [app\src\main\java\com\yourname\expensetracker\ui\components\FinancialWeatherCard.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsfinancialweathercardkt)
+8. [app\src\main\java\com\yourname\expensetracker\ui\components\ForecastTimeline.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsforecasttimelinekt)
+9. [app\src\main\java\com\yourname\expensetracker\ui\components\PulseDot.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentspulsedotkt)
+10. [app\src\main\java\com\yourname\expensetracker\ui\components\SpendingPaceGauge.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsspendingpacegaugekt)
+11. [app\src\main\java\com\yourname\expensetracker\ui\components\SpendingTrendChart.kt](#appsrcmainjavacomyournameexpensetrackeruicomponentsspendingtrendchartkt)
+12. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseSheet.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpensesheetkt)
+13. [app\src\main\java\com\yourname\expensetracker\ui\screens\addexpense\AddExpenseViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensaddexpenseaddexpenseviewmodelkt)
+14. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsscreenkt)
+15. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AdvancedAnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsadvancedanalyticsviewmodelkt)
+16. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsscreenkt)
+17. [app\src\main\java\com\yourname\expensetracker\ui\screens\analytics\AnalyticsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensanalyticsanalyticsviewmodelkt)
+18. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetscreenkt)
+19. [app\src\main\java\com\yourname\expensetracker\ui\screens\budget\BudgetViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensbudgetbudgetviewmodelkt)
+20. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryscreenkt)
+21. [app\src\main\java\com\yourname\expensetracker\ui\screens\categories\CategoryViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenscategoriescategoryviewmodelkt)
+22. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugDataStorage.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugdatastoragekt)
+23. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugIssueDetector.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugissuedetectorkt)
+24. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugscreenkt)
+25. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewmodelkt)
+26. [app\src\main\java\com\yourname\expensetracker\ui\screens\debug\DebugViewerScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensdebugdebugviewerscreenkt)
+27. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomescreenkt)
+28. [app\src\main\java\com\yourname\expensetracker\ui\screens\home\HomeViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenshomehomeviewmodelkt)
+29. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanscreenkt)
+30. [app\src\main\java\com\yourname\expensetracker\ui\screens\receiptscan\ReceiptScanViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreceiptscanreceiptscanviewmodelkt)
+31. [app\src\main\java\com\yourname\expensetracker\ui\screens\recurring\RecurringExpensesScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensrecurringrecurringexpensesscreenkt)
+32. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewscreenkt)
+33. [app\src\main\java\com\yourname\expensetracker\ui\screens\review\ReviewViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreensreviewreviewviewmodelkt)
+34. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionFilter.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionfilterkt)
+35. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsScreen.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsscreenkt)
+36. [app\src\main\java\com\yourname\expensetracker\ui\screens\transactions\TransactionsViewModel.kt](#appsrcmainjavacomyournameexpensetrackeruiscreenstransactionstransactionsviewmodelkt)
+37. [app\src\main\java\com\yourname\expensetracker\ui\theme\Theme.kt](#appsrcmainjavacomyournameexpensetrackeruithemethemekt)
+38. [app\src\main\java\com\yourname\expensetracker\ui\util\HapticFeedback.kt](#appsrcmainjavacomyournameexpensetrackeruiutilhapticfeedbackkt)
 
 ---
 
@@ -94,7 +95,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainScreen()
+                    MainScreen(mainViewModel)
                 }
             }
         }
@@ -122,10 +123,9 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen() {
+fun MainScreen(mainViewModel: MainViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
 
-    val mainViewModel: MainViewModel = hiltViewModel()
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
 
     // Drill-down filter state
@@ -485,6 +485,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 @HiltViewModel
@@ -493,8 +494,8 @@ class MainViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
 ) : ViewModel() {
 
-    private val _navigationRequest = kotlinx.coroutines.flow.MutableSharedFlow<Int>(replay = 1)
-    val navigationRequest = _navigationRequest.asSharedFlow()
+    private val _navigationRequest = kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.BUFFERED)
+    val navigationRequest = _navigationRequest.receiveAsFlow()
 
     val pendingReviewCount: StateFlow<Int> = repository
         .getPendingReviewCount()
@@ -502,7 +503,7 @@ class MainViewModel @Inject constructor(
 
     fun navigateToTab(tabIndex: Int) {
         viewModelScope.launch {
-            _navigationRequest.emit(tabIndex)
+            _navigationRequest.send(tabIndex)
         }
     }
 
@@ -516,6 +517,51 @@ class MainViewModel @Inject constructor(
     }
 }
 
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\ui\common\CurrencyFormatter.kt <a name="appsrcmainjavacomyournameexpensetrackeruicommoncurrencyformatterkt"></a>
+```kotlin
+package com.yourname.expensetracker.ui.common
+
+import java.text.NumberFormat
+import java.util.Locale
+
+/**
+ * centralized currency formatting logic to ensure consistency across the app.
+ * Replaces hardcoded "%.2f" formatting.
+ */
+object CurrencyFormatter {
+
+    private val defaultFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    private val decimalFormat = NumberFormat.getNumberInstance(Locale.getDefault()).apply {
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+    }
+
+    fun format(amount: Double, currencyCode: String = "EUR"): String {
+        return try {
+             // For now, simple format, can be extended to use Currency class
+             // If we just want the number format like 1,234.56
+             decimalFormat.format(amount)
+        } catch (e: Exception) {
+            "%.2f".format(amount)
+        }
+    }
+
+    fun formatWithSymbol(amount: Double, currencyCode: String = "EUR"): String {
+        return try {
+            val format = NumberFormat.getCurrencyInstance()
+            format.currency = java.util.Currency.getInstance(currencyCode)
+            format.format(amount)
+        } catch (e: Exception) {
+             val symbol = if (currencyCode == "EUR") "€" else currencyCode
+             "${decimalFormat.format(amount)} $symbol"
+        }
+    }
+}
 
 ```
 
@@ -978,7 +1024,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 fun rememberMarker(): Marker {
     val labelBackgroundColor = MaterialTheme.colorScheme.surface
     val labelBackground = remember(labelBackgroundColor) {
-        ShapeComponent(Shapes.pillShape, labelBackgroundColor.toArgb()).setShadow(
+        ShapeComponent(shape = Shapes.pillShape, color = labelBackgroundColor.toArgb()).setShadow(
             radius = 4f,
             dy = 2f,
             applyElevationOverlay = true,
@@ -2557,6 +2603,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.OperationResult
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -2602,7 +2649,7 @@ sealed class SaveResult {
 class AddExpenseViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
-    private val recurringExpenseDao: RecurringExpenseDao
+    private val recurringExpenseRepository: RecurringExpenseRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AddExpenseState())
@@ -2758,7 +2805,13 @@ class AddExpenseViewModel @Inject constructor(
                     is OperationResult.Success -> {
                         // 2. If recurring, save the rule
                         if (currentState.isRecurring) {
-                            saveRecurringRule(merchantTrimmed, normalizedAmount, currentState.recurrenceFrequency, currentState.date)
+                            recurringExpenseRepository.addRecurringExpense(
+                                merchant = merchantTrimmed,
+                                amount = normalizedAmount,
+                                frequency = currentState.recurrenceFrequency,
+                                lastDate = currentState.date,
+                                currency = "EUR"
+                            )
                         }
 
                         _state.update {
@@ -2789,41 +2842,6 @@ class AddExpenseViewModel @Inject constructor(
                 }
             }
         }
-    }
-
-    private suspend fun saveRecurringRule(
-        merchant: String, 
-        amount: Double, 
-        frequency: RecurrenceFrequency, 
-        lastDate: Long
-    ) {
-        // Calculate next date based on frequency using java.time for accuracy (DST/Leap years)
-        val lastLocalDate = java.time.Instant.ofEpochMilli(lastDate)
-            .atZone(java.time.ZoneId.systemDefault())
-            .toLocalDate()
-
-        val nextLocalDate = when (frequency) {
-            RecurrenceFrequency.WEEKLY -> lastLocalDate.plusWeeks(1)
-            RecurrenceFrequency.BIWEEKLY -> lastLocalDate.plusWeeks(2)
-            RecurrenceFrequency.MONTHLY -> lastLocalDate.plusMonths(1)
-            RecurrenceFrequency.QUARTERLY -> lastLocalDate.plusMonths(3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> lastLocalDate.plusMonths(6)
-            RecurrenceFrequency.ANNUALLY -> lastLocalDate.plusYears(1)
-            RecurrenceFrequency.IRREGULAR -> lastLocalDate // Should not happen for recurring rule
-            else -> lastLocalDate.plusDays(frequency.days.toLong()) // Fallback
-        }
-
-        val nextDate = nextLocalDate.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-
-        val rule = ManualRecurringExpense(
-            merchant = merchant,
-            amount = amount,
-            currency = "EUR",
-            frequency = frequency,
-            nextDate = nextDate,
-            note = "Created from manual entry"
-        )
-        recurringExpenseDao.insert(rule)
     }
 
     fun reset() {
@@ -7580,7 +7598,7 @@ class HomeViewModel @Inject constructor(
     private val plannedExpenseRepository: PlannedExpenseRepository,
     private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository,
     private val synthesisEngine: SynthesisEngine,
-    private val savingsGoalDao: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+    private val savingsGoalRepository: com.yourname.expensetracker.data.repository.SavingsGoalRepository
 ) : ViewModel() {
 
     private val isEditMode = MutableStateFlow(false)
@@ -7625,7 +7643,7 @@ class HomeViewModel @Inject constructor(
     private val dataFlow = combine(
         baseDataFlow,
         planningDataFlow,
-        savingsGoalDao.getAllGoals().catch { emit(emptyList()) }
+        savingsGoalRepository.getAllGoals().catch { emit(emptyList()) }
     ) { base, planning, goalEntities ->
         val goals = goalEntities.map { entity ->
             SavingsGoal(
@@ -11361,7 +11379,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TransactionsViewModel @Inject constructor(
     private val repository: NotificationRepository,
     private val categoryRepository: CategoryRepository,
-    private val recurringExpenseDao: com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
+    private val recurringExpenseRepository: com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 ) : ViewModel() {
 
     companion object {
@@ -11647,14 +11665,13 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val nextDate = System.currentTimeMillis() + frequency.intervalInMs
-                val rule = com.yourname.expensetracker.data.database.entity.ManualRecurringExpense(
+                recurringExpenseRepository.addRecurringExpense(
                     merchant = expense.merchant,
                     amount = expense.amount,
                     frequency = frequency,
-                    nextDate = nextDate
+                    lastDate = System.currentTimeMillis(),
+                    currency = "EUR"
                 )
-                recurringExpenseDao.insert(rule)
                 _successMessage.emit("Marked as recurring (${frequency.name.lowercase().replace("_", " ")})")
             } catch (e: Exception) {
                 _error.emit("Failed to mark as recurring: ${e.message}")

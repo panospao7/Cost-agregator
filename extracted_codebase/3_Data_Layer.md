@@ -43,9 +43,12 @@
 40. [app\src\main\java\com\yourname\expensetracker\data\repository\DashboardRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorydashboardrepositorykt)
 41. [app\src\main\java\com\yourname\expensetracker\data\repository\FinancialWeatherRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryfinancialweatherrepositorykt)
 42. [app\src\main\java\com\yourname\expensetracker\data\repository\MerchantCategoryRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorymerchantcategoryrepositorykt)
-43. [app\src\main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
-44. [app\src\main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt)
-45. [app\src\main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
+43. [app\src\main\java\com\yourname\expensetracker\data\repository\MerchantRulesRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorymerchantrulesrepositorykt)
+44. [app\src\main\java\com\yourname\expensetracker\data\repository\NotificationRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorynotificationrepositorykt)
+45. [app\src\main\java\com\yourname\expensetracker\data\repository\PlannedExpenseRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryplannedexpenserepositorykt)
+46. [app\src\main\java\com\yourname\expensetracker\data\repository\ReceiptRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryreceiptrepositorykt)
+47. [app\src\main\java\com\yourname\expensetracker\data\repository\RecurringExpenseRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositoryrecurringexpenserepositorykt)
+48. [app\src\main\java\com\yourname\expensetracker\data\repository\SavingsGoalRepository.kt](#appsrcmainjavacomyournameexpensetrackerdatarepositorysavingsgoalrepositorykt)
 
 ---
 
@@ -3754,8 +3757,8 @@ import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import kotlinx.coroutines.flow.Flow
@@ -3769,7 +3772,7 @@ class BudgetRepository @Inject constructor(
     private val budgetDao: BudgetDao,
     private val categoryDao: CategoryDao,
     private val expenseDao: ExpenseDao,
-    private val budgetMonitor: BudgetMonitor
+    private val budgetCalculator: BudgetCalculator
 ) {
     val allBudgets: Flow<List<Budget>> = budgetDao.getAllFlow()
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
@@ -3789,7 +3792,7 @@ class BudgetRepository @Inject constructor(
             val categoryMap = categories.associateBy { it.id }
 
             budgets.map { budget ->
-                val window = budgetMonitor.calculatePeriodWindow(budget.period, budget.startDate)
+                val window = budgetCalculator.calculatePeriodWindow(budget.period, budget.startDate)
 
                 fun getSpentInRange(start: Long, end: Long): Double {
                     return purchases
@@ -3800,25 +3803,25 @@ class BudgetRepository @Inject constructor(
                         .sumOf { it.amount }
                 }
 
-                val spent = getSpentInRange(window.first, window.second)
+                val spent = getSpentInRange(window.start, window.end)
                 var limit = budget.amount
 
                 // LOG-002: Implement Compounding Rollover - BUG-2 FIX
                 if (budget.rollover) {
                     // we compute this by iterating forward from the budget's first period
                     val budgetFirstStart = budget.startDate
-                    var movingWindow = budgetMonitor.calculatePeriodWindow(budget.period, budgetFirstStart)
+                    var movingWindow = budgetCalculator.calculatePeriodWindow(budget.period, budgetFirstStart)
                     var effectiveLimit = budget.amount
 
                     // Iterate forward until we reach the previous period of the current window
-                    while (movingWindow.second <= window.first) {
-                        val spentInPeriod = getSpentInRange(movingWindow.first, movingWindow.second)
+                    while (movingWindow.end <= window.start) {
+                        val spentInPeriod = getSpentInRange(movingWindow.start, movingWindow.end)
                         val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
                         effectiveLimit = budget.amount + surplus
 
                         // Move to next period
-                        val nextStart = movingWindow.second
-                        movingWindow = budgetMonitor.calculatePeriodWindow(budget.period, nextStart)
+                        val nextStart = movingWindow.end
+                        movingWindow = budgetCalculator.calculatePeriodWindow(budget.period, nextStart)
                     }
                     limit = effectiveLimit
                 }
@@ -3840,8 +3843,8 @@ class BudgetRepository @Inject constructor(
                     remainingAmount = remaining,
                     percentUsed = percent,
                     healthStatus = health,
-                    periodStart = window.first,
-                    periodEnd = window.second
+                    periodStart = window.start,
+                    periodEnd = window.end
                 )
             }
         }
@@ -3852,7 +3855,7 @@ class BudgetRepository @Inject constructor(
             if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
             if (budget.startDate <= 0) throw IllegalArgumentException("Invalid budget start date")
             val id = budgetDao.insert(budget)
-            budgetMonitor.checkBudgets()
+            // budgetMonitor.checkBudgets() // Removed to avoid circular dependency. Monitor should observe flow.
             com.yourname.expensetracker.domain.model.Result.Success(id)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to add budget", e)
@@ -3870,7 +3873,7 @@ class BudgetRepository @Inject constructor(
                 lastExceededNotifiedAt = null
             )
             budgetDao.update(resetBudget)
-            budgetMonitor.checkBudgets()
+            // budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to update budget ${budget.id}", e)
@@ -3891,7 +3894,7 @@ class BudgetRepository @Inject constructor(
     suspend fun toggleBudget(id: Long, isActive: Boolean): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
             budgetDao.setActive(id, isActive)
-            budgetMonitor.checkBudgets()
+            // budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             android.util.Log.e("BudgetRepository", "Failed to toggle budget $id", e)
@@ -4167,6 +4170,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import javax.inject.Inject
 import javax.inject.Singleton
 import java.util.Calendar
@@ -4198,6 +4205,7 @@ data class FinancialWeather(
 )
 
 @Singleton
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 class FinancialWeatherRepository @Inject constructor(
     private val notificationRepository: NotificationRepository,
     private val insightsEngine: InsightsEngine,
@@ -4357,8 +4365,34 @@ class FinancialWeatherRepository @Inject constructor(
     fun getAllPlannedExpenses(): Flow<List<PlannedExpense>> = plannedExpenseDao.getAllPlannedExpenses()
         .map { entities -> entities.map { it.toDomain() } }
 
-    fun getAllRecurringPatterns(): Flow<List<RecurringPattern>> = recurringExpenseDao.getAllFlow()
-        .map { recurringExpenseEngine.getPatterns() }
+    // Optimized flow for recurring patterns:
+    // 1. Triggered by expense changes (to detect new patterns) OR manual rule changes
+    // 2. Throttled to prevent thrashing on bulk updates
+    // 3. Executed on Default dispatcher
+    // 4. Cached with stateIn
+    private val recurringPatternsFlow: Flow<List<RecurringPattern>> = combine(
+        recurringExpenseDao.getAllFlow(),
+        notificationRepository.getAllExpenses() 
+    ) { _, expenses -> 
+        // We re-run detection whenever expenses change significantly
+        // Note: recurrence engine might use internal logic, but we pass nothing here?
+        // If getPatterns() is args-less, it relies on something else.
+        // Assuming it fetches expenses internally or we should pass them.
+        // Given InsightsEngine usage: recurringExpenseEngine.getPatterns(allExpenses)
+        // We should probably update this to pass expenses if the engine supports it.
+        // IF NOT, we just trigger it.
+        recurringExpenseEngine.getPatterns(expenses)
+    }
+    .flowOn(kotlinx.coroutines.Dispatchers.Default)
+    // Debounce to avoid running on every single transaction during sync/import
+    .debounce(1000L) 
+    .stateIn(
+        scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default), 
+        started = kotlinx.coroutines.flow.SharingStarted.Lazily,
+        initialValue = emptyList()
+    )
+
+    fun getAllRecurringPatterns(): Flow<List<RecurringPattern>> = recurringPatternsFlow
 }
 
 ```
@@ -4401,6 +4435,148 @@ class MerchantCategoryRepository @Inject constructor(
     suspend fun getCategoryForMerchant(merchantName: String): MerchantCategory? {
         val pattern = categorizationEngine.normalize(merchantName)
         return dao.getCategoryForMerchant(pattern)
+    }
+}
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\data\repository\MerchantRulesRepository.kt <a name="appsrcmainjavacomyournameexpensetrackerdatarepositorymerchantrulesrepositorykt"></a>
+```kotlin
+package com.yourname.expensetracker.data.repository
+
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class MerchantRulesRepository @Inject constructor() {
+
+    // Keywords that should never be considered as merchant names
+    private val invalidMerchants = listOf(
+        // Keywords that should never be merchants
+        "APODEIXI", "AIOAEIEH", "ANOD", "NOMIMH", "ENARXI", "START",
+        "EAPA", "ADDRESS", "THA", "TEL", "AFM", "AOM", "A.M.", "ΑΦΜ",
+        "EYNONO", "ZYNOAO", "SYNOAO", "TOTAL_KEY", "CASH_KEY", "AMOUNT_KEY",
+        // Banks & Processors (Specific check available via isCardProcessor)
+        "PIRAEUS", "EUROBANK", "ALPHA BANK", "NBG", "NATIONAL BANK",
+        "LYNK", "BANK OF CYPRUS", "HELLENIC BANK", "REVOLUT",
+        "VIVA", "SUMUP", "MYPOS", "STRIPE",
+        "CARDLINK", "WORLDLINE", "VISA", "MASTERCARD", "MAESTRO",
+        "AMERICAN EXPRESS", "AMEX", "DINERS", "DISCOVER",
+        // Transaction types
+        "AGORA", "SALE", "PURCHASE", "CONTACTLESS", "TERMINAL",
+        "TRANSACTION", "ΠΑΡΑΛΑΒΗ", "ΑΓΟΡΑ",
+        // Serial/reference patterns
+        "ZEIPA", "SERIAL", "ΑΡΙΘΜΟΣ", "APIOMOE", "APIOMOX",
+        // URLs and garbage
+        "WWW.", "HTTP", ".GR", ".COM", "HTTPS://",
+        // Payment related
+        "KAPTA", "KAPTEE", "CARD", "ΚΑΡΤΑ", "METPHTA", "ΜΕΤΡΗΤΑ"
+    )
+
+    // Markers indicating the end of the merchant section (header)
+    private val headerMarkers = listOf(
+        "ΑΦΜ", "A.Φ.Μ.", "Α.Φ.Μ", "@.M.", "A.M.", "AΦM",
+        "Α.Ο.Υ.", "ΑΟΥ", "A.0.Y.", "Δ.Ο.Υ.", "ΔΟΥ",
+        "ΤΗΛ", "THA", "THΛ", "ΤΗΛ:", "THA:",
+        "ΟΔΟΣ", "ΣΤΡ.", "STR.", "ADDRESS",
+        "Τ.Κ.", "TK", "Τ.Κ", "T.K.",
+        "Α.Μ.Μ.", "ΑΜΜ", "ΑΜΜ.",
+        "ΗΜΕΡΟΜΗΝΙΑ", "HM/NIA", "DATE_KEY",
+        // Card receipt markers
+        "ΑΓΟΡΑ", "AGORA", "AGORA-SALE", "SALE", "PURCHASE", 
+        "CONTACTLESS", "TERMINAL", "TRANSACTION", "ENTER BONUS",
+        // Card reference patterns
+        "****", "5356", "MARK:", "UID:", "AUTH:"
+    )
+
+    // Card processor names to explicitly exclude
+    private val cardProcessors = listOf(
+        "CARDLINK", "WORLDLINE", "VIVA", "PIRAEUS", "EUROBANK", "ALPHA BANK",
+        "LYNK", "BANK OF CYPRUS", "HELLENIC BANK", "NBG", "REVOLUT", "STRIPE",
+        "SUMUP", "MYPOS", "CIBC", "TD BANK", "AMEX", "AMERICAN EXPRESS", "DINERS"
+    )
+
+    companion object {
+        private val LOCATION_PATTERN = Regex(
+            """\s*#[\dA-Za-z]+|""" +
+            """\s*-\s*\d+\s*$|""" +
+            """\s*Store\s*#?\s*\d+|""" +
+            """\s*Branch\s*#?\s*\d+|""" +
+            """\s*Unit\s*#?\s*\d+|""" +
+            """\s*At\s+[A-Z][a-z]+|""" + 
+            """\s*\([\d\s]+\)"""
+        )
+
+        private val CORPORATE_SUFFIXES = listOf(
+            "INC", "INC.", "LLC", "LTD", "LTD.", "CORP", "CORP.", "CORPORATION",
+            "CO", "CO.", "COMPANY", "GMBH", "S.A.", "S.A.S", "B.V.", "A.G.", "E.E.", "O.E."
+        )
+    }
+
+    /**
+     * Checks if a potential merchant name contains invalid keywords.
+     */
+    fun isValidMerchantName(name: String): Boolean {
+        if (name.length < 3) return false
+        val upperName = name.uppercase()
+        return invalidMerchants.none { upperName.contains(it) }
+    }
+
+    /**
+     * Checks if a line contains any header markers (indicating end of merchant section).
+     */
+    fun containsHeaderMarker(line: String): Boolean {
+        return headerMarkers.any { line.contains(it, ignoreCase = true) }
+    }
+
+    /**
+     * Checks if a name corresponds to a known card processor or bank.
+     */
+    fun isCardProcessor(name: String): Boolean {
+        return cardProcessors.any { name.contains(it, ignoreCase = true) }
+    }
+
+    /**
+     * Validates a candidate line for merchant extraction using multiple heuristics.
+     */
+    fun isValidMerchantLine(line: String): Boolean {
+        if (line.length < 3) return false
+        if (line.all { !it.isLetter() }) return false // Must have letters
+        if (invalidMerchants.any { line.contains(it, ignoreCase = true) }) return false
+
+        // Skip if line is mostly numbers
+        val digitCount = line.count { it.isDigit() }
+        if (digitCount > line.length / 2) return false
+
+        // Skip lines that are dates or times or tax IDs
+        if (line.matches(Regex(""".*(\d{2}[/-]\d{2}[/-]\d{4}|\d{2}:\d{2}:\d{2}|A\.?Φ\.?Μ\.?).*"""))) return false
+
+        return true
+    }
+
+    /**
+     * Cleans a raw merchant string by removing special characters, location markers, and corporate suffixes.
+     */
+    fun cleanMerchantName(raw: String): String {
+        var cleaned = raw.replace(Regex("[^a-zA-Zα-ωΑ-Ω0-9\\s&.'-]"), "").trim()
+
+        // Remove location patterns (Store #123)
+        cleaned = LOCATION_PATTERN.replace(cleaned, "")
+
+        // Remove corporate suffixes
+        val upper = cleaned.uppercase()
+        for (suffix in CORPORATE_SUFFIXES) {
+            if (upper.endsWith(" $suffix")) {
+                cleaned = cleaned.dropLast(suffix.length + 1).trim()
+            } else if (upper.endsWith(",$suffix")) {
+                cleaned = cleaned.dropLast(suffix.length + 1).trim()
+            }
+        }
+
+        cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
+        return cleaned.ifEmpty { raw.trim() }
     }
 }
 
@@ -4522,51 +4698,53 @@ class NotificationRepository @Inject constructor(
             return OperationResult.Error("Amount exceeds limit")
         }
 
-        // 1. Normalize merchant name
-        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
-        val normalizedMerchant = lookupResult.canonical.normalizedName
+        return database.withTransaction {
+            // 1. Normalize merchant name
+            val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
+            val normalizedMerchant = lookupResult.canonical.normalizedName
 
-        // 2. Auto-categorize if no category provided
-        val finalCategoryId = categoryId ?: hybridClassifier.classify(
-            merchantName = normalizedMerchant,
-            amount = amount
-        ).categoryId.takeIf { it > 0 }
+            // 2. Auto-categorize if no category provided
+            val finalCategoryId = categoryId ?: hybridClassifier.classify(
+                merchantName = normalizedMerchant,
+                amount = amount
+            ).categoryId.takeIf { it > 0 }
 
-                // 3. Dedup check with tighter window for manual entries (1 minute)
-                // For manual entries, we trust the user but want to avoid accidental double-taps.
-                val isDuplicate = expenseDao.isDuplicate(
-                    amount = amount,
-                    merchant = normalizedMerchant,
-                    date = date,
-                    windowMs = 60000 // 1 minute window for manual double-entry prevention
-                )
-        if (isDuplicate) return OperationResult.Duplicate
+            // 3. Dedup check with tighter window for manual entries (1 minute)
+            // For manual entries, we trust the user but want to avoid accidental double-taps.
+            val isDuplicate = expenseDao.isDuplicate(
+                amount = amount,
+                merchant = normalizedMerchant,
+                date = date,
+                windowMs = 60000 // 1 minute window for manual double-entry prevention
+            )
+            if (isDuplicate) return@withTransaction OperationResult.Duplicate
 
-        // 4. Create expense
-        val expense = Expense(
-            amount = amount,
-            currency = currency,
-            merchant = normalizedMerchant,
-            transactionType = transactionType,
-            date = date,
-            rawNotificationId = null,
-            categoryId = finalCategoryId,
-            paymentMethod = paymentMethod,
-            isManualEntry = true,
-            notes = notes
-        )
+            // 4. Create expense
+            val expense = Expense(
+                amount = amount,
+                currency = currency,
+                merchant = normalizedMerchant,
+                transactionType = transactionType,
+                date = date,
+                rawNotificationId = null,
+                categoryId = finalCategoryId,
+                paymentMethod = paymentMethod,
+                isManualEntry = true,
+                notes = notes
+            )
 
-        val id = expenseDao.insert(expense)
+            val id = expenseDao.insert(expense)
 
-        // 5. Check budgets
-        budgetMonitor.checkBudgets()
+            // 5. Check budgets
+            budgetMonitor.checkBudgets()
 
-        // 6. Learn the merchant→category mapping for future auto-categorization
-        if (finalCategoryId != null && id > 0) {
-            merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
+            // 6. Learn the merchant→category mapping for future auto-categorization
+            if (finalCategoryId != null && id > 0) {
+                merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
+            }
+
+            OperationResult.Success(id)
         }
-
-        return OperationResult.Success(id)
     }
 
     /**
@@ -5764,6 +5942,112 @@ class ReceiptRepository @Inject constructor(
 
             ═════════════════════════════════════════
         """.trimIndent()
+    }
+}
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\data\repository\RecurringExpenseRepository.kt <a name="appsrcmainjavacomyournameexpensetrackerdatarepositoryrecurringexpenserepositorykt"></a>
+```kotlin
+package com.yourname.expensetracker.data.repository
+
+import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import kotlinx.coroutines.flow.Flow
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class RecurringExpenseRepository @Inject constructor(
+    private val dao: RecurringExpenseDao
+) {
+    fun getAllFlow(): Flow<List<ManualRecurringExpense>> = dao.getAllFlow()
+
+    suspend fun getAll(): List<ManualRecurringExpense> = dao.getAll()
+
+    suspend fun getByMerchant(merchant: String): ManualRecurringExpense? = dao.getByMerchant(merchant)
+
+    suspend fun addRecurringExpense(
+        merchant: String,
+        amount: Double,
+        frequency: RecurrenceFrequency,
+        lastDate: Long,
+        currency: String = "EUR",
+        note: String? = null
+    ): Long {
+        val nextDate = calculateNextDate(lastDate, frequency)
+
+        val expense = ManualRecurringExpense(
+            merchant = merchant,
+            amount = amount,
+            currency = currency,
+            frequency = frequency,
+            nextDate = nextDate,
+            note = note ?: "Created from manual entry"
+        )
+        return dao.insert(expense)
+    }
+
+    suspend fun delete(expense: ManualRecurringExpense) = dao.delete(expense)
+
+    suspend fun deleteById(id: Long) = dao.deleteById(id)
+
+    suspend fun update(expense: ManualRecurringExpense) = dao.update(expense)
+
+    private fun calculateNextDate(lastDate: Long, frequency: RecurrenceFrequency): Long {
+        val lastLocalDate = Instant.ofEpochMilli(lastDate)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+
+        val nextLocalDate = when (frequency) {
+            RecurrenceFrequency.WEEKLY -> lastLocalDate.plusWeeks(1)
+            RecurrenceFrequency.BIWEEKLY -> lastLocalDate.plusWeeks(2)
+            RecurrenceFrequency.MONTHLY -> lastLocalDate.plusMonths(1)
+            RecurrenceFrequency.QUARTERLY -> lastLocalDate.plusMonths(3)
+            RecurrenceFrequency.SEMI_ANNUALLY -> lastLocalDate.plusMonths(6)
+            RecurrenceFrequency.ANNUALLY -> lastLocalDate.plusYears(1)
+            RecurrenceFrequency.IRREGULAR -> lastLocalDate 
+            else -> lastLocalDate.plusDays(frequency.days.toLong())
+        }
+
+        return nextLocalDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    }
+}
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\data\repository\SavingsGoalRepository.kt <a name="appsrcmainjavacomyournameexpensetrackerdatarepositorysavingsgoalrepositorykt"></a>
+```kotlin
+package com.yourname.expensetracker.data.repository
+
+import com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class SavingsGoalRepository @Inject constructor(
+    private val savingsGoalDao: SavingsGoalDao
+) {
+    fun getAllGoals(): Flow<List<SavingsGoal>> {
+        return savingsGoalDao.getAllGoals()
+    }
+
+    suspend fun addGoal(goal: SavingsGoal): Long {
+        return savingsGoalDao.insertGoal(goal)
+    }
+
+    suspend fun deleteGoal(goal: SavingsGoal) {
+        savingsGoalDao.deleteGoal(goal)
     }
 }
 

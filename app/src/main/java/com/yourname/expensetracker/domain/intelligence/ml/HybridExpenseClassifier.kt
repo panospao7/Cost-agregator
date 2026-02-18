@@ -2,8 +2,8 @@ package com.yourname.expensetracker.domain.intelligence.ml
 
 import android.content.Context
 import android.util.Log
-import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,7 +17,7 @@ import javax.inject.Singleton
 @Singleton
 class HybridExpenseClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val categoryDao: CategoryDao,
+    private val categoryRepository: CategoryRepository,
     private val nbClassifier: ExpenseCategoryClassifier
 ) {
     companion object {
@@ -42,7 +42,7 @@ class HybridExpenseClassifier @Inject constructor(
     private var categoryMap: Map<String, Category> = emptyMap()
 
     suspend fun initialize() {
-        categories = categoryDao.getAll()
+        categories = categoryRepository.getAll()
         categoryMap = categories.associateBy { it.name.lowercase() }
     }
 

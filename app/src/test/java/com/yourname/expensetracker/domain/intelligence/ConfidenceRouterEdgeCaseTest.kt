@@ -2,8 +2,8 @@ package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
-import com.yourname.expensetracker.data.database.dao.SourceStatsDao
-import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+import com.yourname.expensetracker.data.repository.SourceStatsRepository
+import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
@@ -18,20 +18,20 @@ import kotlin.math.abs
 class ConfidenceRouterEdgeCaseTest {
     
     private lateinit var router: ConfidenceRouter
-    private val sourceStatsDao = mockk<SourceStatsDao>(relaxed = true)
-    private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
+    private val sourceStatsRepository = mockk<SourceStatsRepository>(relaxed = true)
+    private val userCorrectionRepository = mockk<UserCorrectionRepository>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
 
     @Before
     fun setup() {
         every { timeProvider.now() } returns System.currentTimeMillis()
-        router = ConfidenceRouter(sourceStatsDao, userCorrectionDao, classifier, timeProvider)
-        coEvery { sourceStatsDao.getByPackage(any()) } returns null
-        coEvery { userCorrectionDao.getMerchantTotalCorrections(any()) } returns 0
-        coEvery { userCorrectionDao.getMerchantRejectionCount(any()) } returns 0
-        coEvery { userCorrectionDao.getTotalCorrections(any()) } returns 0
-        coEvery { userCorrectionDao.hasPreviousApprovals(any(), any()) } returns false
+        router = ConfidenceRouter(sourceStatsRepository, userCorrectionRepository, classifier, timeProvider)
+        coEvery { sourceStatsRepository.getByPackage(any()) } returns null
+        coEvery { userCorrectionRepository.getMerchantTotalCorrections(any()) } returns 0
+        coEvery { userCorrectionRepository.getMerchantRejectionCount(any()) } returns 0
+        coEvery { userCorrectionRepository.getTotalCorrections(any()) } returns 0
+        coEvery { userCorrectionRepository.hasPreviousApprovals(any(), any()) } returns false
         coEvery { classifier.getStats() } returns ClassifierStats(0, 0, 0, false)
         coEvery { classifier.predict(any()) } returns 0.5f
     }
@@ -82,7 +82,7 @@ class ConfidenceRouterEdgeCaseTest {
 
     @Test
     fun `sourceStats with zero totalNotifications does not crash`() = runBlocking {
-        coEvery { sourceStatsDao.getByPackage("com.test") } returns
+        coEvery { sourceStatsRepository.getByPackage("com.test") } returns
             SourceStats(
                 packageName = "com.test",
                 totalNotifications = 0,

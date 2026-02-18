@@ -2,9 +2,9 @@ package com.yourname.expensetracker.domain.intelligence.ml
 
 import android.content.Context
 import android.util.Log
-import com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
 import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 import com.yourname.expensetracker.domain.util.StringBKTree
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
@@ -32,7 +32,7 @@ data class MerchantLookupResult(
  */
 @Singleton
 class MerchantNormalizer @Inject constructor(
-    private val dao: MerchantNormalizationDao,
+    private val repository: MerchantNormalizationRepository,
     private val merchantRules: MerchantRulesRepository,
     @ApplicationContext private val context: Context,
     private val timeProvider: TimeProvider
@@ -60,8 +60,8 @@ class MerchantNormalizer @Inject constructor(
         val normalizedKey = createSearchKey(cleaned)
         
         // 1. Alias match
-        dao.getAliasByNormalizedKey(normalizedKey)?.let { alias ->
-            val canonical = dao.getCanonicalById(alias.canonicalId)
+        repository.getAliasByNormalizedKey(normalizedKey)?.let { alias ->
+            val canonical = repository.getCanonicalById(alias.canonicalId)
             if (canonical != null) {
                 return@withContext MerchantLookupResult(
                     canonical = canonical,
@@ -73,7 +73,7 @@ class MerchantNormalizer @Inject constructor(
         }
         
         // 2. Exact canonical match
-        dao.getCanonicalBySearchKey(normalizedKey)?.let { canonical ->
+        repository.getCanonicalBySearchKey(normalizedKey)?.let { canonical ->
             return@withContext MerchantLookupResult(
                 canonical = canonical,
                 alias = null,
@@ -85,14 +85,14 @@ class MerchantNormalizer @Inject constructor(
         // 3. Fuzzy matching
         val fuzzyResult = fuzzyMatch(cleaned, normalizedKey)
         if (fuzzyResult != null && fuzzyResult.confidence >= 0.80f) {
-            dao.linkAliasToCanonical(rawName, fuzzyResult.canonical.id, isUserDefined = false, timestamp = timeProvider.now())
+            repository.linkAliasToCanonical(rawName, fuzzyResult.canonical.id, isUserDefined = false, timestamp = timeProvider.now())
             return@withContext fuzzyResult
         }
         
         // 4. Create new
         if (autoCreate) {
             val newCanonical = createNewMerchant(cleaned, normalizedKey, categoryId)
-            dao.linkAliasToCanonical(rawName, newCanonical.id, isUserDefined = false, timestamp = timeProvider.now())
+            repository.linkAliasToCanonical(rawName, newCanonical.id, isUserDefined = false, timestamp = timeProvider.now())
             invalidateTreeCache()
             
             return@withContext MerchantLookupResult(
@@ -118,7 +118,7 @@ class MerchantNormalizer @Inject constructor(
         val brandId = brandLookup.canonical.id
 
         // 2. Link the original POS name to this brand ID
-        dao.linkAliasToCanonical(rawName, brandId, isUserDefined = true, timestamp = timeProvider.now())
+        repository.linkAliasToCanonical(rawName, brandId, isUserDefined = true, timestamp = timeProvider.now())
         
         Log.i(TAG, "Learned alias: $rawName -> $brandName")
         invalidateTreeCache()
@@ -142,7 +142,7 @@ class MerchantNormalizer @Inject constructor(
         if (matches.isEmpty()) return null
         
         val best = matches.first()
-        val canonical = dao.getCanonicalBySearchKey(best.first) ?: return null
+        val canonical = repository.getCanonicalBySearchKey(best.first) ?: return null
         val similarity = StringDistanceUtils.jaroWinklerSimilarity(normalizedKey, best.first)
         
         return MerchantLookupResult(
@@ -157,7 +157,7 @@ class MerchantNormalizer @Inject constructor(
 
     private suspend fun createNewMerchant(cleaned: String, key: String, catId: Long?): MerchantCanonical = creationMutex.withLock {
         // Double-check existence inside the lock to prevent redundant insertion attempts
-        dao.getCanonicalBySearchKey(key)?.let { return it }
+        repository.getCanonicalBySearchKey(key)?.let { return it }
 
         val canonical = MerchantCanonical(
             normalizedName = formatDisplayName(cleaned),
@@ -167,11 +167,11 @@ class MerchantNormalizer @Inject constructor(
             isVerified = false
         )
         
-        val id = dao.insertCanonical(canonical)
+        val id = repository.insertCanonical(canonical)
         
         if (id == -1L) {
             // Insertion failed (likely already exists), retrieve the existing ID
-            return dao.getCanonicalBySearchKey(key)
+            return repository.getCanonicalBySearchKey(key)
                 ?: throw IllegalStateException("Failed to create or retrieve merchant: $key")
         }
         
@@ -198,7 +198,7 @@ class MerchantNormalizer @Inject constructor(
             val now = timeProvider.now()
             if (bkTree == null || now - lastTreeRebuild > TREE_REBUILD_INTERVAL) {
                 val tree = StringBKTree.create()
-                dao.getTopMerchants(1000).forEach { tree.insert(it.searchKey) }
+                repository.getTopMerchants(1000).forEach { tree.insert(it.searchKey) }
                 bkTree = tree
                 lastTreeRebuild = now
             }

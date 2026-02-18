@@ -12,6 +12,10 @@ class MerchantCategoryRepository @Inject constructor(
     private val categorizationEngine: CategorizationEngine
 ) {
 
+    suspend fun getAll(): List<MerchantCategory> = dao.getAll()
+
+    suspend fun deleteAll() = dao.deleteAll()
+
     /**
      * Learns a merchant -> category mapping.
      * Normalizes the merchant name before saving.

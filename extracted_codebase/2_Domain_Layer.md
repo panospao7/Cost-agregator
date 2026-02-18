@@ -5,46 +5,48 @@
 2. [app\src\main\java\com\yourname\expensetracker\domain\analytics\AdvancedAnalyticsModels.kt](#appsrcmainjavacomyournameexpensetrackerdomainanalyticsadvancedanalyticsmodelskt)
 3. [app\src\main\java\com\yourname\expensetracker\domain\analytics\AnalyticsModels.kt](#appsrcmainjavacomyournameexpensetrackerdomainanalyticsanalyticsmodelskt)
 4. [app\src\main\java\com\yourname\expensetracker\domain\analytics\InsightsEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainanalyticsinsightsenginekt)
-5. [app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
-6. [app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
-7. [app\src\main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
-8. [app\src\main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#appsrcmainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
-9. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
-10. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
-11. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseCategoryClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlexpensecategoryclassifierkt)
-12. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlexpenseclassifierkt)
-13. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\FeatureExtractor.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlfeatureextractorkt)
-14. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\HybridExpenseClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlhybridexpenseclassifierkt)
-15. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\MerchantNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlmerchantnormalizerkt)
-16. [app\src\main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
-17. [app\src\main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
-18. [app\src\main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
-19. [app\src\main\java\com\yourname\expensetracker\domain\model\BlockPartyDay.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelblockpartydaykt)
-20. [app\src\main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
-21. [app\src\main\java\com\yourname\expensetracker\domain\model\OperationResult.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodeloperationresultkt)
-22. [app\src\main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
-23. [app\src\main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
-24. [app\src\main\java\com\yourname\expensetracker\domain\model\Result.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelresultkt)
-25. [app\src\main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
-26. [app\src\main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
-27. [app\src\main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
-28. [app\src\main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
-29. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
-30. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
-31. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
-32. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
-33. [app\src\main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
-34. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
-35. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
-36. [app\src\main\java\com\yourname\expensetracker\domain\util\AppConstants.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilappconstantskt)
-37. [app\src\main\java\com\yourname\expensetracker\domain\util\BKTree.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilbktreekt)
-38. [app\src\main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
-39. [app\src\main\java\com\yourname\expensetracker\domain\util\CommonPatterns.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcommonpatternskt)
-40. [app\src\main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
-41. [app\src\main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
-42. [app\src\main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
-43. [app\src\main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt)
-44. [app\src\main\java\com\yourname\expensetracker\domain\util\TimePeriodUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutiltimeperiodutilskt)
+5. [app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetCalculator.kt](#appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetcalculatorkt)
+6. [app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt](#appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt)
+7. [app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetMonitor.kt](#appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetmonitorkt)
+8. [app\src\main\java\com\yourname\expensetracker\domain\categorization\CategorizationEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomaincategorizationcategorizationenginekt)
+9. [app\src\main\java\com\yourname\expensetracker\domain\debug\NotificationSeeder.kt](#appsrcmainjavacomyournameexpensetrackerdomaindebugnotificationseederkt)
+10. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ConfidenceRouter.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligenceconfidencerouterkt)
+11. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\TransactionClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencetransactionclassifierkt)
+12. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseCategoryClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlexpensecategoryclassifierkt)
+13. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\ExpenseClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlexpenseclassifierkt)
+14. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\FeatureExtractor.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlfeatureextractorkt)
+15. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\HybridExpenseClassifier.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlhybridexpenseclassifierkt)
+16. [app\src\main\java\com\yourname\expensetracker\domain\intelligence\ml\MerchantNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainintelligencemlmerchantnormalizerkt)
+17. [app\src\main\java\com\yourname\expensetracker\domain\logic\NarrativeGenerator.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicnarrativegeneratorkt)
+18. [app\src\main\java\com\yourname\expensetracker\domain\logic\RecurringExpenseEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicrecurringexpenseenginekt)
+19. [app\src\main\java\com\yourname\expensetracker\domain\logic\SynthesisEngine.kt](#appsrcmainjavacomyournameexpensetrackerdomainlogicsynthesisenginekt)
+20. [app\src\main\java\com\yourname\expensetracker\domain\model\BlockPartyDay.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelblockpartydaykt)
+21. [app\src\main\java\com\yourname\expensetracker\domain\model\FinancialForecast.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelfinancialforecastkt)
+22. [app\src\main\java\com\yourname\expensetracker\domain\model\OperationResult.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodeloperationresultkt)
+23. [app\src\main\java\com\yourname\expensetracker\domain\model\PeriodRange.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelperiodrangekt)
+24. [app\src\main\java\com\yourname\expensetracker\domain\model\PlannedExpense.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelplannedexpensekt)
+25. [app\src\main\java\com\yourname\expensetracker\domain\model\RecurringPattern.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelrecurringpatternkt)
+26. [app\src\main\java\com\yourname\expensetracker\domain\model\Result.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelresultkt)
+27. [app\src\main\java\com\yourname\expensetracker\domain\model\SavingsGoal.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelsavingsgoalkt)
+28. [app\src\main\java\com\yourname\expensetracker\domain\model\UpcomingItem.kt](#appsrcmainjavacomyournameexpensetrackerdomainmodelupcomingitemkt)
+29. [app\src\main\java\com\yourname\expensetracker\domain\parser\AppParserRegistry.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserappparserregistrykt)
+30. [app\src\main\java\com\yourname\expensetracker\domain\parser\GenericTransactionParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparsergenerictransactionparserkt)
+31. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GoogleWalletParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgooglewalletparserkt)
+32. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\GreekBankParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersgreekbankparserkt)
+33. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\RevolutParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparsersrevolutparserkt)
+34. [app\src\main\java\com\yourname\expensetracker\domain\parser\parsers\SmsParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainparserparserssmsparserkt)
+35. [app\src\main\java\com\yourname\expensetracker\domain\receipt\BankStatementParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptbankstatementparserkt)
+36. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptOcrService.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptocrservicekt)
+37. [app\src\main\java\com\yourname\expensetracker\domain\receipt\ReceiptParser.kt](#appsrcmainjavacomyournameexpensetrackerdomainreceiptreceiptparserkt)
+38. [app\src\main\java\com\yourname\expensetracker\domain\util\AppConstants.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilappconstantskt)
+39. [app\src\main\java\com\yourname\expensetracker\domain\util\BKTree.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilbktreekt)
+40. [app\src\main\java\com\yourname\expensetracker\domain\util\CalendarUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcalendarutilskt)
+41. [app\src\main\java\com\yourname\expensetracker\domain\util\CommonPatterns.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcommonpatternskt)
+42. [app\src\main\java\com\yourname\expensetracker\domain\util\CurrencyNormalizer.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilcurrencynormalizerkt)
+43. [app\src\main\java\com\yourname\expensetracker\domain\util\MerchantCleaner.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilmerchantcleanerkt)
+44. [app\src\main\java\com\yourname\expensetracker\domain\util\StatisticsUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstatisticsutilskt)
+45. [app\src\main\java\com\yourname\expensetracker\domain\util\StringDistanceUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutilstringdistanceutilskt)
+46. [app\src\main\java\com\yourname\expensetracker\domain\util\TimePeriodUtils.kt](#appsrcmainjavacomyournameexpensetrackerdomainutiltimeperiodutilskt)
 
 ---
 
@@ -1860,7 +1862,9 @@ class InsightsEngine @Inject constructor(
             currentMonth.startMs, currentMonth.endMs, 100
         )
 
-        val deferredAnomalies: List<kotlinx.coroutines.Deferred<AnomalyTransaction?>> = topMerchants.mapNotNull { merchantStat ->
+        // 1. Identify and score candidates in memory using existing aggregate data
+        // This avoids N+1 queries for merchants that won't make the top 5 cutoff
+        val candidates = topMerchants.mapNotNull { merchantStat ->
             val historicalStats = statsMap[merchantStat.merchantName] ?: return@mapNotNull null
             if (historicalStats.transactionCount < 3) return@mapNotNull null
 
@@ -1871,27 +1875,48 @@ class InsightsEngine @Inject constructor(
                 else -> 3.0
             }
 
-            // If the max amount this month is > X times the historical average
+            // Check if potential anomaly
             if (merchantStat.maxAmount > historicalStats.averageAmount * multiplier) {
-                async {
-                    expenseDao.getLargestExpenseForMerchant(
-                        merchantStat.merchantName, currentMonth.startMs, currentMonth.endMs
-                    )?.let { expense ->
-                        AnomalyTransaction(
-                            expense = expense,
-                            merchantAvg = historicalStats.averageAmount,
-                            deviationMultiple = (expense.amount / historicalStats.averageAmount).toFloat(),
-                            category = expense.categoryId?.let { categoryMap[it] }
-                        )
-                    }
-                }
+                // Return candidate with score
+                AnomalyCandidate(
+                    merchantName = merchantStat.merchantName,
+                    maxAmount = merchantStat.maxAmount,
+                    historicalAvg = historicalStats.averageAmount,
+                    deviationMultiple = (merchantStat.maxAmount / historicalStats.averageAmount).toFloat()
+                )
             } else null
         }
 
-        deferredAnomalies.awaitAll().filterNotNull()
+        // 2. Sort by severity and take top 5
+        val topCandidates = candidates
             .sortedByDescending { it.deviationMultiple }
             .take(5)
+
+        // 3. Fetch details only for the top 5
+        val deferredAnomalies = topCandidates.map { candidate ->
+            async {
+                expenseDao.getLargestExpenseForMerchant(
+                    candidate.merchantName, currentMonth.startMs, currentMonth.endMs
+                )?.let { expense ->
+                    AnomalyTransaction(
+                        expense = expense,
+                        merchantAvg = candidate.historicalAvg,
+                        deviationMultiple = candidate.deviationMultiple,
+                        category = expense.categoryId?.let { categoryMap[it] }
+                    )
+                }
+            }
+        }
+
+        deferredAnomalies.awaitAll().filterNotNull()
     }
+
+    private data class AnomalyCandidate(
+        val merchantName: String,
+        val maxAmount: Double,
+        val historicalAvg: Double,
+        val deviationMultiple: Float
+    )
 
     // === Recurring Expenses ===
 
@@ -2037,6 +2062,112 @@ class InsightsEngine @Inject constructor(
 
 ---
 
+## app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetCalculator.kt <a name="appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetcalculatorkt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.budget
+
+import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.domain.model.PeriodRange
+import java.util.Calendar
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class BudgetCalculator @Inject constructor() {
+
+    fun calculatePeriodWindow(period: BudgetPeriod, anchorDate: Long): PeriodRange {
+        return calculatePeriodWindowForTime(period, anchorDate, System.currentTimeMillis())
+    }
+
+    fun getPreviousPeriodWindow(period: BudgetPeriod, anchorDate: Long): PeriodRange {
+        val currentWindow = calculatePeriodWindow(period, anchorDate)
+        // To get previous, subtract a small amount from the start of current and recalculate
+        return calculatePeriodWindowForTime(period, anchorDate, currentWindow.start - 1000)
+    }
+
+    fun calculatePeriodWindowForTime(period: BudgetPeriod, anchorDate: Long, evaluationTime: Long): PeriodRange {
+        val anchorCal = Calendar.getInstance()
+        anchorCal.timeInMillis = anchorDate
+
+        // Use TimePeriodUtils for consistent start-of-day logic
+        val startOfDay = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(evaluationTime)
+
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = startOfDay
+
+        return when (period) {
+            BudgetPeriod.DAILY -> {
+                val start = cal.timeInMillis
+                cal.add(Calendar.DAY_OF_YEAR, 1)
+                PeriodRange(start, cal.timeInMillis)
+            }
+            BudgetPeriod.WEEKLY -> {
+                // Find the most recent occurrence of the anchor weekday
+                val anchorDayOfWeek = anchorCal.get(Calendar.DAY_OF_WEEK)
+                while (cal.get(Calendar.DAY_OF_WEEK) != anchorDayOfWeek) {
+                    cal.add(Calendar.DAY_OF_YEAR, -1)
+                }
+                val start = cal.timeInMillis
+                cal.add(Calendar.WEEK_OF_YEAR, 1)
+                PeriodRange(start, cal.timeInMillis)
+            }
+            BudgetPeriod.MONTHLY -> {
+                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+
+                // Set to start of current month first
+                cal.set(Calendar.DAY_OF_MONTH, 1)
+                val currentMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(currentMonthMax))
+
+                if (evaluationTime < cal.timeInMillis) {
+                    // If evaluation time is before the start of this month's cycle, the cycle started last month
+                    cal.add(Calendar.MONTH, -1)
+                    val prevMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(prevMonthMax))
+                }
+
+                val start = cal.timeInMillis
+
+                // To find the end, go to the start of the next cycle
+                cal.add(Calendar.MONTH, 1)
+                val nextMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(nextMonthMax))
+
+                val end = cal.timeInMillis
+                PeriodRange(start, end)
+            }
+            BudgetPeriod.YEARLY -> {
+                val anchorMonth = anchorCal.get(Calendar.MONTH)
+                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+
+                val currentMonth = cal.get(Calendar.MONTH)
+                val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+
+                // Check if we passed the anniversary this year
+                var passed = false
+                if (currentMonth > anchorMonth) passed = true
+                else if (currentMonth == anchorMonth && currentDay >= anchorDay) passed = true
+
+                if (!passed) {
+                    cal.add(Calendar.YEAR, -1)
+                }
+
+                cal.set(Calendar.MONTH, anchorMonth)
+                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH)))
+
+                val start = cal.timeInMillis
+                cal.add(Calendar.YEAR, 1)
+                val end = cal.timeInMillis
+                PeriodRange(start, end)
+            }
+        }
+    }
+}
+
+```
+
+---
+
 ## app\src\main\java\com\yourname\expensetracker\domain\budget\BudgetModels.kt <a name="appsrcmainjavacomyournameexpensetrackerdomainbudgetbudgetmodelskt"></a>
 ```kotlin
 package com.yourname.expensetracker.domain.budget
@@ -2089,16 +2220,14 @@ import android.app.NotificationManager
 import android.content.Context
 import androidx.core.app.NotificationCompat
 import com.yourname.expensetracker.data.database.dao.BudgetDao
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.Budget
-import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.data.repository.BudgetRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -2106,53 +2235,23 @@ import javax.inject.Singleton
 class BudgetMonitor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val budgetDao: BudgetDao,
-    private val expenseDao: ExpenseDao,
-    private val categoryDao: CategoryDao
+    private val budgetRepository: BudgetRepository,
+    @com.yourname.expensetracker.di.IoDispatcher private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher
 ) {
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val serviceScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     fun checkBudgets() {
         serviceScope.launch {
             try {
-                val activeBudgets = budgetDao.getActiveBudgets()
-                if (activeBudgets.isEmpty()) return@launch
+                // Use Repository to get calculated statuses (includes rollover logic)
+                val budgetStatuses = budgetRepository.getBudgetStatuses().first()
+                if (budgetStatuses.isEmpty()) return@launch
 
-                // 1. Pre-fetch categories for notifications (Avoid N+1 in sendNotification)
-                val categoryIds = activeBudgets.mapNotNull { it.categoryId }.distinct()
-                val categoryMap = if (categoryIds.isNotEmpty()) {
-                    categoryDao.getByIds(categoryIds).associateBy { it.id }
-                } else emptyMap()
-
-                // 2. Group budgets by their period window to batch spending queries
                 val now = System.currentTimeMillis()
-                val budgetsByWindow = activeBudgets.groupBy { 
-                    calculatePeriodWindow(it.period, it.startDate)
-                }
 
-                for ((window, budgets) in budgetsByWindow) {
-                    val startMs = window.first
-                    val endMs = window.second
-
-                    // Bulk query category totals for this window
-                    val categoryTotals = expenseDao.getCategoryTotalsForPeriod(startMs, endMs)
-                        .associateBy { it.categoryId }
-
-                    // If any budget is overall (no category), query total spent for the period
-                    val totalSpent = if (budgets.any { it.categoryId == null }) {
-                        expenseDao.getTotalForPeriod(startMs, endMs)
-                    } else null
-
-                    for (budget in budgets) {
-                        val spent = if (budget.categoryId != null) {
-                            categoryTotals[budget.categoryId]?.total ?: 0.0
-                        } else {
-                            totalSpent ?: 0.0
-                        }
-
-                        val categoryName = budget.categoryId?.let { categoryMap[it]?.name } ?: "Overall"
-                        processBudgetWithSpent(budget, spent, now, startMs, categoryName)
-                    }
+                for (status in budgetStatuses) {
+                    processBudgetStatus(status, now)
                 }
             } catch (e: Exception) {
                 android.util.Log.e("BudgetMonitor", "Error in checkBudgets: ${e.message}", e)
@@ -2160,16 +2259,18 @@ class BudgetMonitor @Inject constructor(
         }
     }
 
-    private suspend fun processBudgetWithSpent(
-        budget: Budget, 
-        spent: Double, 
-        now: Long, 
-        periodStart: Long,
-        categoryName: String
+    private suspend fun processBudgetStatus(
+        status: BudgetStatus, 
+        now: Long
     ) {
+        val budget = status.budget
+        val spent = status.spentAmount
+        val categoryName = status.category?.name ?: "Overall"
+        val periodStart = status.periodStart
+
         if (spent <= 0 || budget.amount <= 0) return
 
-        val percent = (spent / budget.amount).toFloat()
+        val percent = status.percentUsed
 
         when {
             percent >= 1.0f -> {
@@ -2216,100 +2317,6 @@ class BudgetMonitor @Inject constructor(
             .setAutoCancel(true)
 
         notificationManager.notify(budget.id.toInt(), builder.build())
-    }
-
-    fun calculatePeriodWindow(period: BudgetPeriod, anchorDate: Long): Pair<Long, Long> {
-        return calculatePeriodWindowForTime(period, anchorDate, System.currentTimeMillis())
-    }
-
-    fun getPreviousPeriodWindow(period: BudgetPeriod, anchorDate: Long): Pair<Long, Long> {
-        val currentWindow = calculatePeriodWindow(period, anchorDate)
-        // To get previous, we can just subtract a small amount from the start of current and recalculate
-        // This is safer than date math which might miss (e.g. variable month lengths)
-        // If current start is Nov 1. Nov 1 - 1ms = Oct 31.
-        // Calculate window for Oct 31. It will be Oct 1 - Nov 1.
-        return calculatePeriodWindowForTime(period, anchorDate, currentWindow.first - 1000)
-    }
-
-    private fun calculatePeriodWindowForTime(period: BudgetPeriod, anchorDate: Long, evaluationTime: Long): Pair<Long, Long> {
-        val anchorCal = Calendar.getInstance()
-        anchorCal.timeInMillis = anchorDate
-
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = evaluationTime
-
-        // Reset time components to start of day
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-
-        return when (period) {
-            BudgetPeriod.DAILY -> {
-                val start = cal.timeInMillis
-                cal.add(Calendar.DAY_OF_YEAR, 1)
-                Pair(start, cal.timeInMillis)
-            }
-            BudgetPeriod.WEEKLY -> {
-                // Find the most recent occurrence of the anchor weekday
-                val anchorDayOfWeek = anchorCal.get(Calendar.DAY_OF_WEEK)
-                while (cal.get(Calendar.DAY_OF_WEEK) != anchorDayOfWeek) {
-                    cal.add(Calendar.DAY_OF_YEAR, -1)
-                }
-                val start = cal.timeInMillis
-                cal.add(Calendar.WEEK_OF_YEAR, 1)
-                Pair(start, cal.timeInMillis)
-            }
-            BudgetPeriod.MONTHLY -> {
-                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-
-                // Set to start of current month first
-                cal.set(Calendar.DAY_OF_MONTH, 1)
-                val currentMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(currentMonthMax))
-
-                if (evaluationTime < cal.timeInMillis) {
-                    // If evaluation time is before the start of this month's cycle, the cycle started last month
-                    cal.add(Calendar.MONTH, -1)
-                    val prevMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                    cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(prevMonthMax))
-                }
-
-                val start = cal.timeInMillis
-
-                // To find the end, go to the start of the next cycle
-                cal.add(Calendar.MONTH, 1)
-                val nextMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(nextMonthMax))
-
-                val end = cal.timeInMillis
-                Pair(start, end)
-            }
-            BudgetPeriod.YEARLY -> {
-                val anchorMonth = anchorCal.get(Calendar.MONTH)
-                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-
-                val currentMonth = cal.get(Calendar.MONTH)
-                val currentDay = cal.get(Calendar.DAY_OF_MONTH)
-
-                // Check if we passed the anniversary this year
-                var passed = false
-                if (currentMonth > anchorMonth) passed = true
-                else if (currentMonth == anchorMonth && currentDay >= anchorDay) passed = true
-
-                if (!passed) {
-                    cal.add(Calendar.YEAR, -1)
-                }
-
-                cal.set(Calendar.MONTH, anchorMonth)
-                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH)))
-
-                val start = cal.timeInMillis
-                cal.add(Calendar.YEAR, 1)
-                val end = cal.timeInMillis
-                Pair(start, end)
-            }
-        }
     }
 }
 
@@ -3771,6 +3778,7 @@ import android.util.Log
 import com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
 import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 import com.yourname.expensetracker.domain.util.StringBKTree
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -3797,26 +3805,11 @@ data class MerchantLookupResult(
 @Singleton
 class MerchantNormalizer @Inject constructor(
     private val dao: MerchantNormalizationDao,
+    private val merchantRules: MerchantRulesRepository,
     @ApplicationContext private val context: Context
 ) {
     companion object {
         private const val TAG = "MerchantNormalizer"
-
-        private val LOCATION_PATTERN = Regex(
-            """\s*#[\dA-Za-z]+|""" +
-            """\s*-\s*\d+\s*$|""" +
-            """\s*Store\s*#?\s*\d+|""" +
-            """\s*Branch\s*#?\s*\d+|""" +
-            """\s*Unit\s*#?\s*\d+|""" +
-            """\s*At\s+[A-Z][a-z]+|""" + // Matches " At Athens", " At London"
-            """\s*\([\d\s]+\)"""
-        )
-
-        private val CORPORATE_SUFFIXES = listOf(
-            "INC", "INC.", "LLC", "LTD", "LTD.", "CORP", "CORP.", "CORPORATION",
-            "CO", "CO.", "COMPANY", "GMBH", "S.A.", "S.A.S", "B.V.", "A.G."
-        )
-
         private val COMMON_IGNORE_WORDS = listOf("THE", "A", "AN", "OF", "AND", "OR", "&")
     }
 
@@ -3903,21 +3896,7 @@ class MerchantNormalizer @Inject constructor(
     }
 
     fun cleanMerchantName(rawName: String): String {
-        var cleaned = rawName.trim()
-        cleaned = LOCATION_PATTERN.replace(cleaned, "")
-
-        val upper = cleaned.uppercase()
-        for (suffix in CORPORATE_SUFFIXES) {
-            if (upper.endsWith(" $suffix")) {
-                cleaned = cleaned.dropLast(suffix.length + 1).trim()
-            } else if (upper.endsWith(",$suffix")) {
-                cleaned = cleaned.dropLast(suffix.length + 1).trim()
-            }
-        }
-
-        cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
-        cleaned = cleaned.trim { !it.isLetterOrDigit() }
-        return cleaned.ifEmpty { rawName.trim() }
+        return merchantRules.cleanMerchantName(rawName)
     }
 
     private fun createSearchKey(name: String): String {
@@ -4827,6 +4806,23 @@ sealed class OperationResult<out T> {
     data class Success<out T>(val data: T) : OperationResult<T>()
     data class Error(val message: String, val throwable: Throwable? = null) : OperationResult<Nothing>()
     data object Duplicate : OperationResult<Nothing>()
+}
+
+```
+
+---
+
+## app\src\main\java\com\yourname\expensetracker\domain\model\PeriodRange.kt <a name="appsrcmainjavacomyournameexpensetrackerdomainmodelperiodrangekt"></a>
+```kotlin
+package com.yourname.expensetracker.domain.model
+
+data class PeriodRange(
+    val start: Long,
+    val end: Long
+) {
+    fun contains(date: Long): Boolean = date in start until end
+
+    val duration: Long get() = end - start
 }
 
 ```
@@ -6501,8 +6497,12 @@ import java.text.SimpleDateFormat
 import javax.inject.Inject
 import javax.inject.Singleton
 
+import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+
 @Singleton
-class ReceiptParser @Inject constructor() {
+class ReceiptParser @Inject constructor(
+    private val merchantRules: MerchantRulesRepository
+) {
 
     data class ParsedReceipt(
         val merchantName: String?,
@@ -6639,8 +6639,10 @@ class ReceiptParser @Inject constructor() {
         var normalized = text.uppercase()
 
         // Fix numbers FIRST - Remove spaces in numbers like "4 5 . 5 0"
-        normalized = normalized.replace(Regex("""(?<=\d)\s+(?=[.,\d])"""), "")
-        normalized = normalized.replace(Regex("""(?=[.,\d])\s+(?=\d)"""), "")
+        normalized = normalized.replace(Regex("""(?<=\d)[ \t\u00A0]+(?=[.,\d])"""), "")
+        // Fix spaces AROUND separators like "45 , 50" or "45, 50"
+        normalized = normalized.replace(Regex("""(?<=\d)[ \t\u00A0]+([.,])"""), "$1")
+        normalized = normalized.replace(Regex("""([.,])[ \t\u00A0]+(?=\d)"""), "$1")
 
         // Normalize Greek characters to English counterparts for easier matching
         // Use more robust matching for Greek words without \b if possible
@@ -6720,61 +6722,19 @@ class ReceiptParser @Inject constructor() {
 
     // --- MERCHANT EXTRACTION ---
     private fun extractMerchant(lines: List<String>): String? {
-        // Expanded invalid merchant patterns
-        val invalidMerchants = listOf(
-            // Keywords that should never be merchants
-            "APODEIXI", "AIOAEIEH", "ANOD", "NOMIMH", "ENARXI", "START",
-            "EAPA", "ADDRESS", "THA", "TEL", "AFM", "AOM", "A.M.", "ΑΦΜ",
-            "EYNONO", "ZYNOAO", "SYNOAO", "TOTAL_KEY", "CASH_KEY", "AMOUNT_KEY",
-            // Card processors - CRITICAL
-            "CARDLINK", "WORLDLINE", "VISA", "MASTERCARD", "MAESTRO",
-            "AMERICAN EXPRESS", "AMEX", "DINERS", "DISCOVER",
-            // Banks
-            "PIRAEUS", "EUROBANK", "ALPHA BANK", "NBG", "NATIONAL BANK",
-            "LYNK", "BANK OF CYPRUS", "HELLENIC BANK", "REVOLUT",
-            "VIVA", "SUMUP", "MYPOS", "STRIPE",
-            // Transaction types
-            "AGORA", "SALE", "PURCHASE", "CONTACTLESS", "TERMINAL",
-            "TRANSACTION", "ΠΑΡΑΛΑΒΗ", "ΑΓΟΡΑ",
-            // Serial/reference patterns
-            "ZEIPA", "SERIAL", "ΑΡΙΘΜΟΣ", "APIOMOE", "APIOMOX",
-            // URLs and garbage
-            "WWW.", "HTTP", ".GR", ".COM", "HTTPS://",
-            // Payment related
-            "KAPTA", "KAPTEE", "CARD", "ΚΑΡΤΑ", "METPHTA", "ΜΕΤΡΗΤΑ"
-        )
-
-        // Header markers (indicate we're past the merchant name)
-        val headerMarkers = listOf(
-            "ΑΦΜ", "A.Φ.Μ.", "Α.Φ.Μ", "@.M.", "A.M.", "AΦM",
-            "Α.Ο.Υ.", "ΑΟΥ", "A.0.Y.", "Δ.Ο.Υ.", "ΔΟΥ",
-            "ΤΗΛ", "THA", "THΛ", "ΤΗΛ:", "THA:",
-            "ΟΔΟΣ", "ΣΤΡ.", "STR.", "ADDRESS",
-            "Τ.Κ.", "TK", "Τ.Κ", "T.K.",
-            "Α.Μ.Μ.", "ΑΜΜ", "ΑΜΜ.",
-            "ΗΜΕΡΟΜΗΝΙΑ", "HM/NIA", "DATE_KEY",
-            // Card receipt markers
-            "ΑΓΟΡΑ", "AGORA", "AGORA-SALE", "SALE", "PURCHASE", 
-            "CONTACTLESS", "TERMINAL", "TRANSACTION", "ENTER BONUS",
-            // Card reference patterns
-            "****", "5356", "MARK:", "UID:", "AUTH:"
-        )
-
         // Find markers and extract merchant above them
         for ((index, line) in lines.withIndex()) {
             if (index > 10) break
 
-            for (marker in headerMarkers) {
-                if (line.contains(marker, ignoreCase = true)) {
-                    // Scan upwards for valid merchant
-                    for (j in index - 1 downTo 0) {
-                        val candidate = lines[j]
-                        if (isValidMerchantLine(candidate, invalidMerchants)) {
-                            val cleaned = cleanMerchantName(candidate)
-                            // Additional check: don't return card processor names
-                            if (!isCardProcessor(cleaned)) {
-                                return cleaned
-                            }
+            if (merchantRules.containsHeaderMarker(line)) {
+                // Scan upwards for valid merchant
+                for (j in index - 1 downTo 0) {
+                    val candidate = lines[j]
+                    if (merchantRules.isValidMerchantLine(candidate)) {
+                        val cleaned = merchantRules.cleanMerchantName(candidate)
+                        // Additional check: don't return card processor names
+                        if (!merchantRules.isCardProcessor(cleaned)) {
+                            return cleaned
                         }
                     }
                 }
@@ -6783,43 +6743,15 @@ class ReceiptParser @Inject constructor() {
 
         // Fallback
         for (line in lines.take(5)) {
-            if (isValidMerchantLine(line, invalidMerchants)) {
-                val cleaned = cleanMerchantName(line)
-                if (!isCardProcessor(cleaned)) {
+            if (merchantRules.isValidMerchantLine(line)) {
+                val cleaned = merchantRules.cleanMerchantName(line)
+                if (!merchantRules.isCardProcessor(cleaned)) {
                     return cleaned
                 }
             }
         }
 
         return null
-    }
-
-    private fun isCardProcessor(name: String): Boolean {
-        val processors = listOf(
-            "CARDLINK", "WORLDLINE", "VIVA", "PIRAEUS", "EUROBANK", "ALPHA BANK",
-            "LYNK", "BANK OF CYPRUS", "HELLENIC BANK", "NBG", "REVOLUT", "STRIPE",
-            "SUMUP", "MYPOS", "CIBC", "TD BANK", "AMEX", "AMERICAN EXPRESS", "DINERS"
-        )
-        return processors.any { name.contains(it, ignoreCase = true) }
-    }
-
-    private fun isValidMerchantLine(line: String, invalidHeaders: List<String>): Boolean {
-        if (line.length < 3) return false
-        if (line.all { !it.isLetter() }) return false // Must have letters
-        if (invalidHeaders.any { line.contains(it) }) return false
-
-        // Skip if line is mostly numbers
-        val digitCount = line.count { it.isDigit() }
-        if (digitCount > line.length / 2) return false
-
-        // Skip lines that are dates or times
-        if (line.matches(Regex(""".*(\\d{2}[/-]\\d{2}[/-]\\d{4}|\\d{2}:\\d{2}:\\d{2}|A\\.?Φ\\.?Μ\\.?).*$"""))) return false
-
-        return true
-    }
-
-    private fun cleanMerchantName(raw: String): String {
-        return raw.replace(Regex("[^a-zA-Zα-ωΑ-Ω0-9\\s&.-]"), "").trim()
     }
 
     private fun extractTotal(lines: List<String>): Double? {
