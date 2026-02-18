@@ -36,6 +36,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -524,7 +525,6 @@ fun CategorySpendingRow(item: CategorySpending) {
 
 @Composable
 fun RecentExpenseRow(expense: Expense) {
-    val dateFormat = remember { SimpleDateFormat("MMM dd", Locale.getDefault()) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -541,7 +541,7 @@ fun RecentExpenseRow(expense: Expense) {
                 }
             }
             Text(
-                dateFormat.format(Date(expense.date)),
+                DateFormatterUtils.monthDay().format(Date(expense.date)),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -695,7 +695,6 @@ fun DateSelector(
     dateMs: Long,
     onDateSelected: (Long) -> Unit
 ) {
-    val dateFormat = remember { java.text.SimpleDateFormat("EEE, dd MMM yyyy", java.util.Locale.getDefault()) }
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
         initialSelectedDateMillis = dateMs
@@ -722,7 +721,7 @@ fun DateSelector(
                 color = SemanticColors.TextSecondary
             )
             Text(
-                dateFormat.format(java.util.Date(dateMs)),
+                DateFormatterUtils.fullDate().format(java.util.Date(dateMs)),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextPrimary
             )

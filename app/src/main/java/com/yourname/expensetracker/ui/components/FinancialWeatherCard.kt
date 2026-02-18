@@ -23,6 +23,7 @@ import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.UpcomingItem
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.material.icons.Icons
@@ -326,13 +327,12 @@ fun ForecastMetric(label: String, amount: Double, color: Color) {
 
 @Composable
 fun UpcomingRow(item: UpcomingItem) {
-    val dateFormat = remember { SimpleDateFormat("EEE, MMM d", Locale.getDefault()) }
     val daysUntil = ((item.date - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)).toInt()
     
     val dateLabel = when {
         daysUntil <= 0 -> "Today"
         daysUntil == 1 -> "Tomorrow"
-        else -> dateFormat.format(Date(item.date))
+        else -> DateFormatterUtils.get("EEE, MMM d").format(Date(item.date))
     }
 
     Row(

@@ -16,6 +16,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import java.util.Date
 
 enum class BlockStatus {
     UNDER_BUDGET, // Time to Party (Green)
@@ -141,8 +143,7 @@ fun DayAtAGlanceDialog(
     day: DayBudgetStatus,
     onDismiss: () -> Unit
 ) {
-    val dateFormat = remember { java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault()) }
-    val dateStr = dateFormat.format(java.util.Date(day.date))
+    val dateStr = DateFormatterUtils.monthDay().format(Date(day.date))
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
