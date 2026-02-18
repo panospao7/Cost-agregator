@@ -1,4 +1,3 @@
-
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.dao.BudgetDao
@@ -10,8 +9,10 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
 import com.yourname.expensetracker.domain.analytics.PeriodRange
 import com.yourname.expensetracker.domain.analytics.SpendingPatternType
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.mockk
+import io.mockk.every
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -24,13 +25,15 @@ class AdvancedAnalyticsEngineTest {
     private lateinit var expenseDao: ExpenseDao
     private lateinit var categoryDao: CategoryDao
     private lateinit var budgetDao: BudgetDao
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
 
     @Before
     fun setup() {
         expenseDao = mockk()
         categoryDao = mockk()
         budgetDao = mockk()
-        engine = AdvancedAnalyticsEngine(expenseDao, categoryDao, budgetDao)
+        every { timeProvider.now() } returns 1705320000000L // Jan 15, 2024
+        engine = AdvancedAnalyticsEngine(expenseDao, categoryDao, budgetDao, timeProvider)
     }
 
     @Test
@@ -53,8 +56,6 @@ class AdvancedAnalyticsEngineTest {
         assertEquals(periodRange.startMs - 7 * 24 * 3600 * 1000, comparison?.startMs)
     }
 
-
-    
     @Test
     fun `test getSpendingPatterns detects Weekend Warrior`() = runTest {
         // Setup a weekend-heavy spending scenario
@@ -96,6 +97,4 @@ class AdvancedAnalyticsEngineTest {
         assertEquals(10.0, stats.smallestTransaction!!.amount, 0.01)
         assertEquals(30.0, stats.largestTransaction!!.amount, 0.01)
     }
-    
 }
-

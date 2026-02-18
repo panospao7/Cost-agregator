@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
@@ -14,10 +15,12 @@ class ConfidenceRouterTest {
     private val sourceStatsDao = mockk<com.yourname.expensetracker.data.database.dao.SourceStatsDao>(relaxed = true)
     private val userCorrectionDao = mockk<com.yourname.expensetracker.data.database.dao.UserCorrectionDao>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
 
     @Before
     fun setup() {
-        router = ConfidenceRouter(sourceStatsDao, userCorrectionDao, classifier)
+        every { timeProvider.now() } returns System.currentTimeMillis()
+        router = ConfidenceRouter(sourceStatsDao, userCorrectionDao, classifier, timeProvider)
 
         // Default: no source stats, no corrections, classifier not ready
         coEvery { sourceStatsDao.getByPackage(any()) } returns null

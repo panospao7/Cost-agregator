@@ -25,8 +25,37 @@ class BudgetViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(BudgetUiState(isLoading = true))
-    val uiState: StateFlow<BudgetUiState> = _uiState.asStateFlow()
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val _manualState = MutableStateFlow<ManualState>(ManualState.Idle)
+    private val _refreshTrigger = MutableStateFlow(0)
+
+    private sealed class ManualState {
+        object Idle : ManualState()
+        object Loading : ManualState()
+        data class Error(val message: String?) : ManualState()
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val uiState: StateFlow<BudgetUiState> = combine(
+        budgetRepository.getBudgetStatuses(),
+        _refreshTrigger.flatMapLatest { flow { emit(budgetRepository.getSuggestions()) } },
+        _manualState
+    ) { statuses, suggestions, manual ->
+        BudgetUiState(
+            budgets = statuses,
+            suggestions = suggestions,
+            isLoading = manual is ManualState.Loading,
+            error = (manual as? ManualState.Error)?.message
+        )
+    }
+    .catch { e ->
+        emit(BudgetUiState(error = e.message, isLoading = false))
+    }
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = BudgetUiState(isLoading = true)
+    )
 
     val categories = categoryRepository.allCategories.stateIn(
         scope = viewModelScope,
@@ -34,42 +63,19 @@ class BudgetViewModel @Inject constructor(
         initialValue = emptyList()
     )
 
-    init {
-        loadData()
-    }
-
-    private fun loadData() {
-        viewModelScope.launch {
-            combine(
-                budgetRepository.getBudgetStatuses(),
-                flow { emit(budgetRepository.getSuggestions()) }
-            ) { statuses, suggestions ->
-                BudgetUiState(
-                    budgets = statuses,
-                    suggestions = suggestions,
-                    isLoading = false
-                )
-            }.catch { e ->
-                _uiState.emit(BudgetUiState(error = e.message, isLoading = false))
-            }.collect {
-                _uiState.emit(it)
-            }
-        }
-    }
-
     fun addBudget(budget: Budget) {
         if (!validateThresholds(budget)) return
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _manualState.value = ManualState.Loading
             val result = budgetRepository.addBudget(budget)
             when (result) {
                 is com.yourname.expensetracker.domain.model.Result.Success -> {
-                    _uiState.update { it.copy(isLoading = false) }
+                    _manualState.value = ManualState.Idle
                 }
                 is com.yourname.expensetracker.domain.model.Result.Error -> {
-                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                    _manualState.value = ManualState.Error(result.message)
                 }
-                else -> {}
+                else -> { _manualState.value = ManualState.Idle }
             }
         }
     }
@@ -77,27 +83,27 @@ class BudgetViewModel @Inject constructor(
     fun updateBudget(budget: Budget) {
         if (!validateThresholds(budget)) return
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _manualState.value = ManualState.Loading
             val result = budgetRepository.updateBudget(budget)
             when (result) {
                 is com.yourname.expensetracker.domain.model.Result.Success -> {
-                    _uiState.update { it.copy(isLoading = false) }
+                    _manualState.value = ManualState.Idle
                 }
                 is com.yourname.expensetracker.domain.model.Result.Error -> {
-                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                    _manualState.value = ManualState.Error(result.message)
                 }
-                else -> {}
+                else -> { _manualState.value = ManualState.Idle }
             }
         }
     }
 
     private fun validateThresholds(budget: Budget): Boolean {
         if (budget.notifyAtWarning <= 0f || budget.notifyAtWarning >= 1f) {
-            _uiState.update { it.copy(error = "Warning threshold must be between 0 and 1") }
+            _manualState.value = ManualState.Error("Warning threshold must be between 0 and 1")
             return false
         }
         if (budget.notifyAtCritical <= budget.notifyAtWarning || budget.notifyAtCritical >= 1.05f) {
-            _uiState.update { it.copy(error = "Critical threshold must be between warning and 100%") }
+            _manualState.value = ManualState.Error("Critical threshold must be between warning and 100%")
             return false
         }
         return true
@@ -105,40 +111,41 @@ class BudgetViewModel @Inject constructor(
 
     fun deleteBudget(budget: Budget) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _manualState.value = ManualState.Loading
             val result = budgetRepository.deleteBudget(budget)
              when (result) {
                 is com.yourname.expensetracker.domain.model.Result.Success -> {
-                    _uiState.update { it.copy(isLoading = false) }
+                    _manualState.value = ManualState.Idle
                 }
                 is com.yourname.expensetracker.domain.model.Result.Error -> {
-                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                    _manualState.value = ManualState.Error(result.message)
                 }
-                else -> {}
+                else -> { _manualState.value = ManualState.Idle }
             }
         }
     }
 
     fun toggleBudget(id: Long, isActive: Boolean) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _manualState.value = ManualState.Loading
              val result = budgetRepository.toggleBudget(id, isActive)
              when (result) {
                 is com.yourname.expensetracker.domain.model.Result.Success -> {
-                    _uiState.update { it.copy(isLoading = false) }
+                    _manualState.value = ManualState.Idle
                 }
                 is com.yourname.expensetracker.domain.model.Result.Error -> {
-                    _uiState.update { it.copy(isLoading = false, error = result.message) }
+                    _manualState.value = ManualState.Error(result.message)
                 }
-                else -> {}
+                else -> { _manualState.value = ManualState.Idle }
             }
         }
     }
 
     fun refreshSuggestions() {
-        viewModelScope.launch {
-            val suggestions = budgetRepository.getSuggestions()
-            _uiState.update { it.copy(suggestions = suggestions) }
-        }
+        _refreshTrigger.value += 1
+    }
+
+    fun clearError() {
+        _manualState.value = ManualState.Idle
     }
 }

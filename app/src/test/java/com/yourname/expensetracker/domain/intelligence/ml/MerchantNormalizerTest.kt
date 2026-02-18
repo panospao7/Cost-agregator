@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.intelligence.ml
 
 import com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -15,11 +16,13 @@ class MerchantNormalizerTest {
     private val dao = mockk<MerchantNormalizationDao>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
     private val merchantRules = MerchantRulesRepository() // Use real instance to test logic
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var normalizer: MerchantNormalizer
 
     @Before
     fun setup() {
-        normalizer = MerchantNormalizer(dao, merchantRules, context)
+        every { timeProvider.now() } returns System.currentTimeMillis()
+        normalizer = MerchantNormalizer(dao, merchantRules, context, timeProvider)
     }
 
     // Cleaning tests moved to MerchantRulesRepositoryTest

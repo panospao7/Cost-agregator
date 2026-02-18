@@ -186,4 +186,14 @@ object TimePeriodUtils {
         cal.set(Calendar.MILLISECOND, 999)
         return cal.timeInMillis
     }
+
+    /**
+     * getDaysRemainingInMonth - Returns the number of days remaining in the current month.
+     */
+    fun getDaysRemainingInMonth(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
+        return daysInMonth - dayOfMonth
+    }
 }

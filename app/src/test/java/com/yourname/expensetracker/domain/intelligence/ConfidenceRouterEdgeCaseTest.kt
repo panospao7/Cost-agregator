@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -20,10 +21,12 @@ class ConfidenceRouterEdgeCaseTest {
     private val sourceStatsDao = mockk<SourceStatsDao>(relaxed = true)
     private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
 
     @Before
     fun setup() {
-        router = ConfidenceRouter(sourceStatsDao, userCorrectionDao, classifier)
+        every { timeProvider.now() } returns System.currentTimeMillis()
+        router = ConfidenceRouter(sourceStatsDao, userCorrectionDao, classifier, timeProvider)
         coEvery { sourceStatsDao.getByPackage(any()) } returns null
         coEvery { userCorrectionDao.getMerchantTotalCorrections(any()) } returns 0
         coEvery { userCorrectionDao.getMerchantRejectionCount(any()) } returns 0

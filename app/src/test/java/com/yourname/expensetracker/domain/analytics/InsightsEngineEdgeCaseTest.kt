@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -15,12 +16,14 @@ class InsightsEngineEdgeCaseTest {
     
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var engine: InsightsEngine
 
     @Before
     fun setup() {
+        every { timeProvider.now() } returns System.currentTimeMillis()
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
-        engine = InsightsEngine(expenseDao, recurringEngine)
+        engine = InsightsEngine(expenseDao, recurringEngine, timeProvider)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCountForPeriod(any(), any()) } returns 0
         coEvery { expenseDao.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
@@ -63,6 +66,7 @@ class InsightsEngineEdgeCaseTest {
     fun `leap year february calculations are correct`() {
         val cal = Calendar.getInstance()
         cal.set(2024, Calendar.FEBRUARY, 29)
+        every { timeProvider.now() } returns cal.timeInMillis
         val period = engine.getMonthPeriod(cal.timeInMillis)
         
         assertEquals(2024, period.year)

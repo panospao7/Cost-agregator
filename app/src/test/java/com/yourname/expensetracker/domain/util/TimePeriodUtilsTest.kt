@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.util
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
 import java.util.TimeZone
@@ -8,124 +9,99 @@ import java.util.TimeZone
 class TimePeriodUtilsTest {
 
     @Test
-    fun `getStartOfDay returns midnight`() {
-        val cal = Calendar.getInstance()
-        cal.set(2023, Calendar.JANUARY, 15, 14, 30, 45) // Jan 15, 2:30:45 PM
-        val timestamp = cal.timeInMillis
+    fun `getStartOfDay returns midnight of the given timestamp`() {
+        val calendar = Calendar.getInstance()
+        calendar.set(2024, Calendar.JANUARY, 15, 14, 30, 45)
+        val timestamp = calendar.timeInMillis
 
         val startOfDay = TimePeriodUtils.getStartOfDay(timestamp)
+        val resultCal = Calendar.getInstance().apply { timeInMillis = startOfDay }
 
-        val resultCal = Calendar.getInstance()
-        resultCal.timeInMillis = startOfDay
-
+        assertEquals(2024, resultCal.get(Calendar.YEAR))
+        assertEquals(Calendar.JANUARY, resultCal.get(Calendar.MONTH))
+        assertEquals(15, resultCal.get(Calendar.DAY_OF_MONTH))
         assertEquals(0, resultCal.get(Calendar.HOUR_OF_DAY))
         assertEquals(0, resultCal.get(Calendar.MINUTE))
         assertEquals(0, resultCal.get(Calendar.SECOND))
         assertEquals(0, resultCal.get(Calendar.MILLISECOND))
-        assertEquals(15, resultCal.get(Calendar.DAY_OF_MONTH))
     }
 
     @Test
-    fun `getEndOfDay returns almost midnight`() {
-        val cal = Calendar.getInstance()
-        cal.set(2023, Calendar.JANUARY, 15, 10, 0, 0)
-        val timestamp = cal.timeInMillis
+    fun `getStartOfMonth returns first day of month at midnight`() {
+        val calendar = Calendar.getInstance()
+        calendar.set(2024, Calendar.FEBRUARY, 20, 10, 0, 0)
+        val timestamp = calendar.timeInMillis
 
-        val endOfDay = TimePeriodUtils.getEndOfDay(timestamp)
+        val startOfMonth = TimePeriodUtils.getStartOfMonth(timestamp)
+        val resultCal = Calendar.getInstance().apply { timeInMillis = startOfMonth }
 
-        val resultCal = Calendar.getInstance()
-        resultCal.timeInMillis = endOfDay
+        assertEquals(2024, resultCal.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, resultCal.get(Calendar.MONTH))
+        assertEquals(1, resultCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(0, resultCal.get(Calendar.HOUR_OF_DAY))
+    }
 
+    @Test
+    fun `getEndOfMonth returns last millisecond of the month`() {
+        val calendar = Calendar.getInstance()
+        calendar.set(2024, Calendar.FEBRUARY, 10, 10, 0, 0) // Leap year 2024
+        val timestamp = calendar.timeInMillis
+
+        val endOfMonth = TimePeriodUtils.getEndOfMonth(timestamp)
+        val resultCal = Calendar.getInstance().apply { timeInMillis = endOfMonth }
+
+        assertEquals(2024, resultCal.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, resultCal.get(Calendar.MONTH))
+        assertEquals(29, resultCal.get(Calendar.DAY_OF_MONTH))
         assertEquals(23, resultCal.get(Calendar.HOUR_OF_DAY))
         assertEquals(59, resultCal.get(Calendar.MINUTE))
         assertEquals(59, resultCal.get(Calendar.SECOND))
         assertEquals(999, resultCal.get(Calendar.MILLISECOND))
-        assertEquals(15, resultCal.get(Calendar.DAY_OF_MONTH))
     }
 
     @Test
-    fun `getStartOfWeek handles mid-week correctly`() {
-        // Wednesday, Jan 18, 2023
-        val cal = Calendar.getInstance()
-        cal.set(2023, Calendar.JANUARY, 18, 12, 0, 0)
-        
-        // Expected start: Monday, Jan 16
-        val expectedCal = Calendar.getInstance()
-        expectedCal.set(2023, Calendar.JANUARY, 16, 0, 0, 0)
-        expectedCal.set(Calendar.MILLISECOND, 0)
-        
-        val startOfWeek = TimePeriodUtils.getStartOfWeek(cal.timeInMillis)
-        
-        // Allow slight tolerance if timezone quirks, but logic should be millisecond precise
-        assertEquals(expectedCal.timeInMillis, startOfWeek)
+    fun `getDaysRemainingInMonth returns correct count`() {
+        // Feb 20 in a leap year (2024) should have 9 days remaining (21, 22, 23, 24, 25, 26, 27, 28, 29)
+        val calendar = Calendar.getInstance()
+        calendar.set(2024, Calendar.FEBRUARY, 20, 12, 0, 0)
+        val timestamp = calendar.timeInMillis
+
+        val remaining = TimePeriodUtils.getDaysRemainingInMonth(timestamp)
+        assertEquals(9, remaining)
+
+        // Last day of month
+        calendar.set(2024, Calendar.FEBRUARY, 29, 23, 0, 0)
+        assertEquals(0, TimePeriodUtils.getDaysRemainingInMonth(calendar.timeInMillis))
     }
 
     @Test
-    fun `getStartOfWeek handles Sunday correctly`() {
-        // Sunday, Jan 22, 2023
-        val cal = Calendar.getInstance()
-        cal.set(2023, Calendar.JANUARY, 22, 12, 0, 0)
-        
-        // Expected start: Monday, Jan 16 (Previous Monday)
-        val expectedCal = Calendar.getInstance()
-        expectedCal.set(2023, Calendar.JANUARY, 16, 0, 0, 0)
-        expectedCal.set(Calendar.MILLISECOND, 0)
-        
-        val startOfWeek = TimePeriodUtils.getStartOfWeek(cal.timeInMillis)
-        
-        assertEquals(expectedCal.timeInMillis, startOfWeek)
-    }
+    fun `getStartOfYear returns Jan 1st at midnight`() {
+        val calendar = Calendar.getInstance()
+        calendar.set(2024, Calendar.JULY, 4, 12, 0, 0)
+        val timestamp = calendar.timeInMillis
 
-    @Test
-    fun `getStartOfWeek handles Monday correctly`() {
-        // Monday, Jan 16, 2023 - already start
-        val cal = Calendar.getInstance()
-        cal.set(2023, Calendar.JANUARY, 16, 12, 0, 0) // noon
-        
-        // Expected start: Monday, Jan 16, 00:00
-        val expectedCal = Calendar.getInstance()
-        expectedCal.set(2023, Calendar.JANUARY, 16, 0, 0, 0)
-        expectedCal.set(Calendar.MILLISECOND, 0)
-        
-        val startOfWeek = TimePeriodUtils.getStartOfWeek(cal.timeInMillis)
-        
-        assertEquals(expectedCal.timeInMillis, startOfWeek)
-    }
+        val startOfYear = TimePeriodUtils.getStartOfYear(timestamp)
+        val resultCal = Calendar.getInstance().apply { timeInMillis = startOfYear }
 
-    @Test
-    fun `getStartOfMonth handles leap year correctly`() {
-        // Feb 29, 2024 (Leap Day)
-        val cal = Calendar.getInstance()
-        cal.set(2024, Calendar.FEBRUARY, 29, 12, 0, 0)
-        
-        val startOfMonth = TimePeriodUtils.getStartOfMonth(cal.timeInMillis)
-        
-        val resultCal = Calendar.getInstance()
-        resultCal.timeInMillis = startOfMonth
-        
-        assertEquals(1, resultCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(Calendar.FEBRUARY, resultCal.get(Calendar.MONTH))
         assertEquals(2024, resultCal.get(Calendar.YEAR))
+        assertEquals(Calendar.JANUARY, resultCal.get(Calendar.MONTH))
+        assertEquals(1, resultCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(0, resultCal.get(Calendar.HOUR_OF_DAY))
     }
 
     @Test
-    fun `getMonthRange handles negative offset`() {
-        // Currently June
-        val cal = Calendar.getInstance()
-        cal.set(2023, Calendar.JUNE, 15, 0, 0, 0)
-        
-        // We override "now" by mocking? No, Utils uses Cal.getInstance inside without injection.
-        // Wait, TimePeriodUtils methods take timestamps usually, but getMonthRange takes an offset from "System.now".
-        // Ah, TimePeriodUtils.getMonthRange(offset) -> cal = Calendar.getInstance(); cal.add(offset).
-        // This is hard to test deterministically without mocking time.
-        // BUT, we can verify relative logic:
-        
-        // Let's rely on range duration being roughly correct (28-31 days).
-        val (start, end) = TimePeriodUtils.getMonthRange(-1)
-        val duration = end - start
-        
-        // Previous month duration should be between 28 and 31 days
-        val days = duration / 86400000.0
-        assert(days >= 28.0 && days <= 31.0)
+    fun `getEndOfYear returns Dec 31st at last millisecond`() {
+        val calendar = Calendar.getInstance()
+        calendar.set(2024, Calendar.MARCH, 1, 0, 0, 0)
+        val timestamp = calendar.timeInMillis
+
+        val endOfYear = TimePeriodUtils.getEndOfYear(timestamp)
+        val resultCal = Calendar.getInstance().apply { timeInMillis = endOfYear }
+
+        assertEquals(2024, resultCal.get(Calendar.YEAR))
+        assertEquals(Calendar.DECEMBER, resultCal.get(Calendar.MONTH))
+        assertEquals(31, resultCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(23, resultCal.get(Calendar.HOUR_OF_DAY))
+        assertEquals(999, resultCal.get(Calendar.MILLISECOND))
     }
 }

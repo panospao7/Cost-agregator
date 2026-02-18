@@ -41,38 +41,40 @@ class AnalyticsViewModel @Inject constructor(
     private val timeProvider: TimeProvider
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(AnalyticsState())
-    val state: StateFlow<AnalyticsState> = _state.asStateFlow()
-
     private val _selectedPeriod = MutableStateFlow(TimePeriod.MONTH)
 
-    init {
-        viewModelScope.launch {
-            combine(
-                repository.getAllExpenses(),
-                categoryRepository.allCategories,
-                _selectedPeriod
-            ) { expenses, categories, period ->
-                Triple(expenses, categories, period)
-            }
-            .debounce(300)
-            .flowOn(Dispatchers.Default)
-            .collectLatest { (expenses, categories, period) ->
-                _state.update { it.copy(isLoading = true, selectedPeriod = period) }
-                computeAnalytics(expenses, categories, period)
-            }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val state: StateFlow<AnalyticsState> = combine(
+        repository.getAllExpenses(),
+        categoryRepository.allCategories,
+        _selectedPeriod
+    ) { expenses, categories, period ->
+        Triple(expenses, categories, period)
+    }
+    .debounce(300)
+    .flatMapLatest { (expenses, categories, period) ->
+        flow {
+            emit(AnalyticsState(isLoading = true, selectedPeriod = period))
+            val result = computeAnalyticsInternal(expenses, categories, period)
+            emit(result)
         }
     }
+    .flowOn(Dispatchers.Default)
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = AnalyticsState()
+    )
 
     fun selectPeriod(period: TimePeriod) {
         _selectedPeriod.value = period
     }
 
-    private suspend fun computeAnalytics(
+    private suspend fun computeAnalyticsInternal(
         allExpenses: List<Expense>,
         categories: List<Category>,
         period: TimePeriod
-    ) {
+    ): AnalyticsState {
         val purchases = allExpenses.filter { it.transactionType == TransactionType.PURCHASE }
         val now = timeProvider.now()
         val categoryMap = categories.associateBy { it.id }
@@ -176,21 +178,19 @@ class AnalyticsViewModel @Inject constructor(
             )
         }
 
-        _state.update {
-            it.copy(
-                selectedPeriod = period,
-                currentTotal = currentTotal,
-                previousTotal = if (previousTotal > 0) previousTotal else null,
-                changePercent = changePercent,
-                transactionCount = currentExpenses.size,
-                categoryBreakdown = categoryBreakdown,
-                merchantBreakdown = merchantBreakdown,
-                dailyTotals = dailyTotals,
-                insights = insights,
-                recurring = recurring,
-                isLoading = false
-            )
-        }
+        return AnalyticsState(
+            selectedPeriod = period,
+            currentTotal = currentTotal,
+            previousTotal = if (previousTotal > 0) previousTotal else null,
+            changePercent = changePercent,
+            transactionCount = currentExpenses.size,
+            categoryBreakdown = categoryBreakdown,
+            merchantBreakdown = merchantBreakdown,
+            dailyTotals = dailyTotals,
+            insights = insights,
+            recurring = recurring,
+            isLoading = false
+        )
     }
 
     private fun getPeriodRange(period: TimePeriod, now: Long): Pair<Long, Long> {
