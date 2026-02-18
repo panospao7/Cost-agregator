@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.AmountUtils
 import javax.inject.Inject
 
 enum class ScanStep {
@@ -251,7 +252,7 @@ class ReceiptScanViewModel @Inject constructor(
             return
         }
 
-        val amount = currentState.editAmount.replace(",", ".").toDoubleOrNull()
+        val amount = AmountUtils.parseAmount(currentState.editAmount)
         if (amount == null || amount <= 0) {
             _state.update {
                 it.copy(errorMessage = "Enter a valid amount")

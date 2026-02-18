@@ -43,6 +43,7 @@ import java.io.File
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
 import com.yourname.expensetracker.ui.screens.debug.DebugViewerScreen
+import com.yourname.expensetracker.domain.util.AmountUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -695,7 +696,7 @@ fun EditReviewDialog(
             Button(
                 onClick = {
                     haptic(HapticType.Success)
-                    val parsedAmount = amount.replace(",", ".").toDoubleOrNull()
+                    val parsedAmount = AmountUtils.parseAmount(amount)
                     val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - review.suggestedAmount) > 0.001) parsedAmount else null
                     val editedMerchant = merchant.takeIf { it != review.suggestedMerchant }
                     val editedCategory = selectedCategoryId.takeIf { it != review.suggestedCategoryId }

@@ -33,6 +33,7 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
+import com.yourname.expensetracker.domain.util.AmountUtils
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -234,7 +235,7 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     val regex = Regex("""(?:€|$|EUR)?\s*(\d{1,6}[\.,]\d{2})\s*(?:€|$|EUR)?""")
                     val match = regex.find(text)
                     if (match != null) {
-                        val value = match.groupValues[1].replace(",", ".").toDoubleOrNull()
+                        val value = AmountUtils.parseAmount(match.groupValues[1])
                         if (value != null && value in 0.01..100000.0) {
                             initialAmount = match.groupValues[1]
                         }
@@ -294,7 +295,7 @@ fun SmartFAB(
                 val regex = Regex("""(?:€|$|EUR)?\s*(\d{1,6}[\.,]\d{2})\s*(?:€|$|EUR)?""")
                 val match = regex.find(text)
                 if (match != null) {
-                    val value = match.groupValues[1].replace(",", ".").toDoubleOrNull()
+                    val value = AmountUtils.parseAmount(match.groupValues[1])
                     if (value != null && value in 0.01..100000.0) {
                         clipboardAmount = match.groupValues[1]
                     } else {

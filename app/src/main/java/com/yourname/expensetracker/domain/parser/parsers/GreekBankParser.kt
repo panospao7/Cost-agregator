@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.parser.parsers
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import java.util.regex.Pattern
@@ -99,7 +100,7 @@ class GreekBankParser @Inject constructor(
         }
 
 
-        val amount = amountStr?.replace(",", ".")?.toDoubleOrNull() ?: return null
+        val amount = amountStr?.let { AmountUtils.parseAmount(it) } ?: return null
         if (amount < 0.01 || amount > 50000) return null
 
         return ParsedTransaction(
