@@ -6,6 +6,7 @@ import java.util.regex.Pattern
 import java.util.Calendar
 import java.util.Locale
 import java.text.SimpleDateFormat
+import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
@@ -227,10 +228,8 @@ class BankStatementParser @Inject constructor(
             
             // Check if it's European format (comma as decimal separator)
             if (cleaned.contains(",")) {
-                // European: 1.602,57 -> remove dots, replace comma with dot
-                cleaned.replace(".", "").replace(",", ".").toDoubleOrNull()
+                AmountUtils.parseEuropeanAmount(cleaned)
             } else {
-                // US format or integer
                 cleaned.toDoubleOrNull()
             }
         } catch (e: Exception) {

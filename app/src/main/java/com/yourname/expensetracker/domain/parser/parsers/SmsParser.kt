@@ -10,6 +10,7 @@ import java.util.regex.Pattern
  * These are forwarded notifications from SMS — needs very careful filtering
  * because messaging apps send ALL messages.
  */
+import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
@@ -73,8 +74,8 @@ class SmsParser @Inject constructor(
         val matcher = amountPattern.matcher(body)
         if (!matcher.find()) return null
 
-        val amountStr = (matcher.group(1) ?: matcher.group(4))?.replace(",", ".") ?: return null
-        val amount = amountStr.toDoubleOrNull() ?: return null
+        val amountStr = (matcher.group(1) ?: matcher.group(4)) ?: return null
+        val amount = AmountUtils.parseAmount(amountStr) ?: return null
         val currency = currencyNormalizer.normalize(matcher.group(2) ?: matcher.group(3))
 
         if (amount < 0.10 || amount > 50000) return null

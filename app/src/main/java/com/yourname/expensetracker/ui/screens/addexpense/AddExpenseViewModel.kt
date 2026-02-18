@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlinx.coroutines.isActive
+import com.yourname.expensetracker.domain.util.AmountUtils
 
 data class AddExpenseState(
     val merchant: String = "",
@@ -177,8 +178,7 @@ class AddExpenseViewModel @Inject constructor(
             return
         }
 
-        val amountStr = currentState.amount.replace(",", ".")
-        val amount = amountStr.toDoubleOrNull()
+        val amount = AmountUtils.parseAmount(currentState.amount)
         if (amount == null || amount <= 0) {
             _state.update { it.copy(amountError = "Enter a valid amount") }
             return

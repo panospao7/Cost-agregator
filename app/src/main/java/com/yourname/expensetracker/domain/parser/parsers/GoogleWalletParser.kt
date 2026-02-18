@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import java.util.regex.Pattern
 
+import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
@@ -67,8 +68,8 @@ class GoogleWalletParser @Inject constructor(
         val matcher = amountPattern.matcher(text)
         if (matcher.find()) {
             val prefixCurrency = matcher.group(1) ?: matcher.group(4)
-            val amountStr = (matcher.group(2) ?: matcher.group(3))?.replace(",", ".") ?: return null
-            val amount = amountStr.toDoubleOrNull() ?: return null
+            val amountStr = (matcher.group(2) ?: matcher.group(3)) ?: return null
+            val amount = AmountUtils.parseAmount(amountStr) ?: return null
             // Filter unrealistic amounts
             if (amount < 0.01 || amount > 50000) return null
             return Pair(amount, currencyNormalizer.normalize(prefixCurrency))

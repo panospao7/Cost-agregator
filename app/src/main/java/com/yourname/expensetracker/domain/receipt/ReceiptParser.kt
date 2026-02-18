@@ -10,6 +10,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import com.yourname.expensetracker.domain.util.AmountUtils
 
 @Singleton
 class ReceiptParser @Inject constructor(
@@ -514,7 +515,7 @@ class ReceiptParser @Inject constructor(
         for (pattern in subtotalPatterns) {
             val matcher = pattern.matcher(text)
             if (matcher.find()) {
-                return matcher.group(1)?.replace(",", ".")?.toDoubleOrNull()
+                return matcher.group(1)?.let { AmountUtils.parseAmount(it) }
             }
         }
         return null
@@ -538,7 +539,7 @@ class ReceiptParser @Inject constructor(
         for (pattern in taxPatterns) {
             val match = pattern.find(text)
             if (match != null) {
-                return match.groupValues[1].replace(",", ".").toDoubleOrNull()
+                return match.groupValues[1].let { AmountUtils.parseAmount(it) }
             }
         }
         return null
@@ -585,7 +586,7 @@ class ReceiptParser @Inject constructor(
         val matcher1 = lineItemPatterns[0].matcher(text)
         while (matcher1.find()) {
             val desc = matcher1.group(1)?.trim() ?: continue
-            val price = matcher1.group(2)?.replace(",", ".")?.toDoubleOrNull() ?: continue
+            val price = matcher1.group(2)?.let { AmountUtils.parseAmount(it) } ?: continue
             if (skipLinePattern.containsMatchIn(desc)) continue
             if (price <= 0 || price > 10000) continue
 
@@ -604,7 +605,7 @@ class ReceiptParser @Inject constructor(
         while (matcher2.find()) {
             val qty = matcher2.group(1)?.toDoubleOrNull() ?: continue
             val desc = matcher2.group(2)?.trim() ?: continue
-            val price = matcher2.group(3)?.replace(",", ".")?.toDoubleOrNull() ?: continue
+            val price = matcher2.group(3)?.let { AmountUtils.parseAmount(it) } ?: continue
             if (skipLinePattern.containsMatchIn(desc)) continue
             if (price <= 0 || price > 10000) continue
 
