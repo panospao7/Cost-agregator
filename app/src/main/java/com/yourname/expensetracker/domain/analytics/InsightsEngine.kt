@@ -584,16 +584,6 @@ class InsightsEngine @Inject constructor(
         return result
     }
 
-    // Make detectRecurring available for ViewModel compatibility if needed
-    // But it's better to use the snapshot.
-    // We already have findRecurringExpenses internally.
-    
-    // Legacy helper for detections from list - RE-ADDED FOR UI COMPATIBILITY
-    // Legacy helper for detections from list - REMOVED (Use RecurringExpenseEngine)
-    // fun detectRecurring(expenses: List<Expense>): List<RecurringCandidate> { ... }
-    
-
-
     private fun calculateMedian(values: List<Double>): Double {
         if (values.isEmpty()) return 0.0
         val sorted = values.sorted()

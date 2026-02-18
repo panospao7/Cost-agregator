@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
 import javax.inject.Singleton
 import com.yourname.expensetracker.BuildConfig
+import timber.log.Timber
 
 @Singleton
 class BankStatementParser @Inject constructor(
@@ -346,7 +347,9 @@ class BankStatementParser @Inject constructor(
                 if (yearInt in 2015..2035) {
                     try {
                         return sdf.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year")?.time
-                    } catch (e: Exception) {}
+                    } catch (e: Exception) {
+                        Timber.d("Failed to parse date: $d/$m/$year")
+                    }
                 }
             }
         }

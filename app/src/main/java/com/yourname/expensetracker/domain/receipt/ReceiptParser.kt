@@ -11,6 +11,7 @@ import javax.inject.Singleton
 
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 import com.yourname.expensetracker.domain.util.AmountUtils
+import timber.log.Timber
 
 @Singleton
 class ReceiptParser @Inject constructor(
@@ -567,7 +568,9 @@ class ReceiptParser @Inject constructor(
                 if (yearInt in (currentYear - 10)..(currentYear + 1)) { 
                     try {
                         return sdf.parse("$d/$m/$year")?.time
-                    } catch (e: Exception) { }
+                    } catch (e: Exception) {
+                        Timber.d("Failed to parse date: $d/$m/$year")
+                    }
                 }
             }
         }
