@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import org.junit.Assert.*
 import org.junit.Before
@@ -16,11 +17,11 @@ class InsightsEngineTest {
 
     @Before
     fun setup() {
-        val expenseDao = mockk<com.yourname.expensetracker.data.database.dao.ExpenseDao>(relaxed = true)
+        val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
         val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
         every { timeProvider.now() } returns System.currentTimeMillis()
-        engine = InsightsEngine(expenseDao, recurringEngine, timeProvider)
+        engine = InsightsEngine(expenseRepository, recurringEngine, timeProvider)
     }
 
     private val dayMs = 86_400_000L

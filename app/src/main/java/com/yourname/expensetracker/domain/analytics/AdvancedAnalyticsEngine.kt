@@ -1,11 +1,11 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.dao.BudgetDao
 import timber.log.Timber
-import com.yourname.expensetracker.data.database.dao.CategoryDao
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -28,9 +28,9 @@ import kotlin.math.sqrt
  */
 @Singleton
 class AdvancedAnalyticsEngine @Inject constructor(
-    private val expenseDao: ExpenseDao,
-    private val categoryDao: CategoryDao,
-    private val budgetDao: BudgetDao,
+    private val expenseRepository: ExpenseRepository,
+    private val categoryRepository: CategoryRepository,
+    private val budgetRepository: BudgetRepository,
     private val timeProvider: TimeProvider
 ) {
     companion object {
@@ -143,15 +143,15 @@ class AdvancedAnalyticsEngine @Inject constructor(
         coroutineScope {
         // Fetch all required data in parallel
         val currentExpensesDeferred = async { 
-            expenseDao.getExpensesBetween(period.startMs, period.endMs) 
+            expenseRepository.getExpensesBetween(period.startMs, period.endMs) 
         }
         val previousExpensesDeferred = async { 
             period.comparisonRange?.let { 
-                expenseDao.getExpensesBetween(it.startMs, it.endMs) 
+                expenseRepository.getExpensesBetween(it.startMs, it.endMs) 
             } ?: emptyList()
         }
-        val categoriesDeferred = async { categoryDao.getAll() }
-        val budgetsDeferred = async { budgetDao.getActiveBudgets() }
+        val categoriesDeferred = async { categoryRepository.getAll() }
+        val budgetsDeferred = async { budgetRepository.getActiveBudgets() }
         
         val currentExpenses = currentExpensesDeferred.await()
         val previousExpenses = previousExpensesDeferred.await()
@@ -238,13 +238,13 @@ class AdvancedAnalyticsEngine @Inject constructor(
     ): List<EnhancedMerchantAnalytics> = withContext(Dispatchers.Default) {
         coroutineScope {
         val currentExpensesDeferred = async { 
-            expenseDao.getExpensesBetween(period.startMs, period.endMs) 
+            expenseRepository.getExpensesBetween(period.startMs, period.endMs) 
         }
         
         // Get historical data for price trends (6 months back)
         val historicalStart = period.startMs - (180L * MILLIS_PER_DAY)
         val historicalExpensesDeferred = async { 
-            expenseDao.getExpensesSince(historicalStart) 
+            expenseRepository.getExpensesSince(historicalStart) 
         }
         
         val currentExpenses = currentExpensesDeferred.await()
@@ -321,7 +321,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
      */
     suspend fun getSpendingPatterns(period: PeriodRange): SpendingPatternAnalysis = withContext(Dispatchers.Default) {
         coroutineScope {
-            val expenses = expenseDao.getExpensesBetween(period.startMs, period.endMs)
+            val expenses = expenseRepository.getExpensesBetween(period.startMs, period.endMs)
         val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
         
         if (purchases.isEmpty()) {
@@ -419,7 +419,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
      */
     suspend fun getStatisticalInsights(period: PeriodRange): StatisticalInsights = withContext(Dispatchers.Default) {
         coroutineScope {
-        val expenses = expenseDao.getExpensesBetween(period.startMs, period.endMs)
+        val expenses = expenseRepository.getExpensesBetween(period.startMs, period.endMs)
         val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
         
         if (purchases.isEmpty()) {

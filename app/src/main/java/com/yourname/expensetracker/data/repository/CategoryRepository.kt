@@ -21,6 +21,8 @@ class CategoryRepository @Inject constructor(
 
     val allCategories: Flow<List<Category>> = categoryDao.getAllFlow()
 
+    suspend fun getAll(): List<Category> = categoryDao.getAll()
+
     suspend fun ensureDefaultCategories() = withContext(Dispatchers.IO) {
         try {
             if (categoryDao.getCount() == 0) {

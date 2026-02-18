@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.dao.BudgetDao
-import com.yourname.expensetracker.data.database.dao.CategoryDao
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -22,18 +22,18 @@ import java.util.Calendar
 class AdvancedAnalyticsEngineTest {
 
     private lateinit var engine: AdvancedAnalyticsEngine
-    private lateinit var expenseDao: ExpenseDao
-    private lateinit var categoryDao: CategoryDao
-    private lateinit var budgetDao: BudgetDao
+    private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var categoryRepository: CategoryRepository
+    private lateinit var budgetRepository: BudgetRepository
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
 
     @Before
     fun setup() {
-        expenseDao = mockk()
-        categoryDao = mockk()
-        budgetDao = mockk()
+        expenseRepository = mockk()
+        categoryRepository = mockk()
+        budgetRepository = mockk()
         every { timeProvider.now() } returns 1705320000000L // Jan 15, 2024
-        engine = AdvancedAnalyticsEngine(expenseDao, categoryDao, budgetDao, timeProvider)
+        engine = AdvancedAnalyticsEngine(expenseRepository, categoryRepository, budgetRepository, timeProvider)
     }
 
     @Test
@@ -69,7 +69,7 @@ class AdvancedAnalyticsEngineTest {
             Expense(id = 3, amount = 50.0, date = monDate, merchant = "MonShop", categoryId = 1, transactionType = TransactionType.PURCHASE)
         )
         
-        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns expenses
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
         
         val period = PeriodRange(AnalyticsPeriod.WEEK, 0, 0, "Test", null)
         val analysis = engine.getSpendingPatterns(period)
@@ -87,7 +87,7 @@ class AdvancedAnalyticsEngineTest {
             Expense(id = 3, amount = 30.0, date = 1000 + 2 * 86400000, merchant = "C", categoryId = 1, transactionType = TransactionType.PURCHASE)
         )
         
-        coEvery { expenseDao.getExpensesBetween(any(), any()) } returns expenses
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
         
         val period = PeriodRange(AnalyticsPeriod.WEEK, 0, 0, "Test", null)
         val stats = engine.getStatisticalInsights(period)

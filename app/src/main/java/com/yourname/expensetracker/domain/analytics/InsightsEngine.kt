@@ -1,9 +1,11 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.DayOfWeekTotal
+import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -17,7 +19,7 @@ import kotlin.math.sqrt
 
 @Singleton
 class InsightsEngine @Inject constructor(
-    private val expenseDao: ExpenseDao,
+    private val expenseRepository: ExpenseRepository,
     private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine,
     private val timeProvider: TimeProvider
 ) {
@@ -48,7 +50,7 @@ class InsightsEngine @Inject constructor(
         val threeMonthsAgo = getMonthPeriod(now, -2)
         val dayOfWeekPatternDeferred = async { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs) }
         val largestTransactionDeferred = async { 
-            expenseDao.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) 
+            expenseRepository.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) 
         }
 
         // Await all results
@@ -212,10 +214,10 @@ class InsightsEngine @Inject constructor(
         current: MonthPeriod,
         previous: MonthPeriod
     ): MonthlyComparison = coroutineScope {
-        val currentTotalDeferred = async { expenseDao.getTotalForPeriod(current.startMs, current.endMs) }
-        val currentCountDeferred = async { expenseDao.getCountForPeriod(current.startMs, current.endMs) }
-        val previousTotalDeferred = async { expenseDao.getTotalForPeriod(previous.startMs, previous.endMs) }
-        val previousCountDeferred = async { expenseDao.getCountForPeriod(previous.startMs, previous.endMs) }
+        val currentTotalDeferred = async { expenseRepository.getTotalForPeriod(current.startMs, current.endMs) }
+        val currentCountDeferred = async { expenseRepository.getCountForPeriod(current.startMs, current.endMs) }
+        val previousTotalDeferred = async { expenseRepository.getTotalForPeriod(previous.startMs, previous.endMs) }
+        val previousCountDeferred = async { expenseRepository.getCountForPeriod(previous.startMs, previous.endMs) }
 
         val currentTotal = currentTotalDeferred.await()
         val currentCount = currentCountDeferred.await()
@@ -247,8 +249,8 @@ class InsightsEngine @Inject constructor(
         categoryMap: Map<Long, Category>,
         allExpenses: List<Expense>
     ): List<CategoryInsight> = coroutineScope {
-        val currentTotalsDeferred = async { expenseDao.getCategoryTotalsForPeriod(current.startMs, current.endMs) }
-        val previousTotalsDeferred = async { expenseDao.getCategoryTotalsForPeriod(previous.startMs, previous.endMs) }
+        val currentTotalsDeferred = async { expenseRepository.getCategoryTotalsForPeriod(current.startMs, current.endMs) }
+        val previousTotalsDeferred = async { expenseRepository.getCategoryTotalsForPeriod(previous.startMs, previous.endMs) }
 
         val currentTotals = currentTotalsDeferred.await()
         val previousTotals = previousTotalsDeferred.await()
@@ -326,7 +328,7 @@ class InsightsEngine @Inject constructor(
     private suspend fun buildMerchantInsights(
         allExpenses: List<Expense>
     ): List<MerchantInsight> {
-        val stats = expenseDao.getAllMerchantStats()
+        val stats = expenseRepository.getAllMerchantStats()
 
         // For std deviation, compute from raw data grouped by merchant
         val purchasesByMerchant = allExpenses
@@ -362,9 +364,9 @@ class InsightsEngine @Inject constructor(
     ): SpendingPace = coroutineScope {
         val now = timeProvider.now()
         
-        val currentSpentDeferred = async { expenseDao.getTotalForPeriod(currentMonth.startMs, currentMonth.endMs) }
-        val previousTotalDeferred = async { expenseDao.getTotalForPeriod(previousMonth.startMs, previousMonth.endMs) }
-        val previousCountDeferred = async { expenseDao.getCountForPeriod(previousMonth.startMs, previousMonth.endMs) }
+        val currentSpentDeferred = async { expenseRepository.getTotalForPeriod(currentMonth.startMs, currentMonth.endMs) }
+        val previousTotalDeferred = async { expenseRepository.getTotalForPeriod(previousMonth.startMs, previousMonth.endMs) }
+        val previousCountDeferred = async { expenseRepository.getCountForPeriod(previousMonth.startMs, previousMonth.endMs) }
 
         val currentSpent = currentSpentDeferred.await()
         val previousTotal = previousTotalDeferred.await()
@@ -442,30 +444,24 @@ class InsightsEngine @Inject constructor(
         currentMonth: MonthPeriod,
         categoryMap: Map<Long, Category>
     ): List<AnomalyTransaction> = coroutineScope {
-        val merchantStats = expenseDao.getMerchantStats() // only merchants with 2+ tx
-        val statsMap = merchantStats.associateBy { it.merchantName }
+        val merchantStats = expenseRepository.getMerchantStats()
+        val statsMap: Map<String, MerchantStats> = merchantStats.associateBy { it.merchantName }
 
-        // Check top merchants this month for outliers
-        val topMerchants = expenseDao.getTopMerchantsForPeriod(
+        val topMerchants = expenseRepository.getTopMerchantsForPeriod(
             currentMonth.startMs, currentMonth.endMs, 100
         )
 
-        // 1. Identify and score candidates in memory using existing aggregate data
-        // This avoids N+1 queries for merchants that won't make the top 5 cutoff
-        val candidates = topMerchants.mapNotNull { merchantStat ->
-            val historicalStats = statsMap[merchantStat.merchantName] ?: return@mapNotNull null
-            if (historicalStats.transactionCount < 3) return@mapNotNull null
+        val candidates: List<AnomalyCandidate?> = topMerchants.mapNotNull { merchantStat: MerchantStats ->
+            val historicalStats: MerchantStats? = statsMap[merchantStat.merchantName]
+            if (historicalStats == null || historicalStats.transactionCount < 3) return@mapNotNull null
 
-            // Dynamic threshold based on sample size
             val multiplier = when {
                 historicalStats.transactionCount < 5 -> 5.0
                 historicalStats.transactionCount < 10 -> 4.0
                 else -> 3.0
             }
 
-            // Check if potential anomaly
             if (merchantStat.maxAmount > historicalStats.averageAmount * multiplier) {
-                // Return candidate with score
                 AnomalyCandidate(
                     merchantName = merchantStat.merchantName,
                     maxAmount = merchantStat.maxAmount,
@@ -475,15 +471,14 @@ class InsightsEngine @Inject constructor(
             } else null
         }
 
-        // 2. Sort by severity and take top 5
-        val topCandidates = candidates
+        val topCandidates: List<AnomalyCandidate> = candidates
+            .filterNotNull()
             .sortedByDescending { it.deviationMultiple }
             .take(5)
 
-        // 3. Fetch details only for the top 5
-        val deferredAnomalies = topCandidates.map { candidate ->
+        val deferredAnomalies = topCandidates.map { candidate: AnomalyCandidate ->
             async {
-                expenseDao.getLargestExpenseForMerchant(
+                expenseRepository.getLargestExpenseForMerchant(
                     candidate.merchantName, currentMonth.startMs, currentMonth.endMs
                 )?.let { expense ->
                     AnomalyTransaction(
@@ -544,12 +539,11 @@ class InsightsEngine @Inject constructor(
         endMs: Long
     ): List<DayOfWeekInsight> {
         val timeZoneOffset = java.util.TimeZone.getDefault().getOffset(timeProvider.now())
-        val data = expenseDao.getDayOfWeekPattern(startMs, endMs, timeZoneOffset)
+        val data = expenseRepository.getDayOfWeekPattern(startMs, endMs, timeZoneOffset)
 
-        // Fill in missing days with zeros
-        val dayMap = data.associateBy { it.dayOfWeek }
-        return (0..6).map { dayIndex ->
-            val d = dayMap[dayIndex]
+        val dayMap: Map<Int, DayOfWeekTotal> = data.associateBy { it.dayOfWeek }
+        return (0..6).map { dayIndex: Int ->
+            val d: DayOfWeekTotal? = dayMap[dayIndex]
             DayOfWeekInsight(
                 dayName = DAY_NAMES[dayIndex],
                 dayIndex = dayIndex,
@@ -634,7 +628,7 @@ class InsightsEngine @Inject constructor(
         // Use provided expenses or fetch from DB if null
         val recentExpenses = expenses ?: run {
             val sixMonthsAgo = getMonthPeriod(now, -6).startMs
-            expenseDao.getExpensesBetween(sixMonthsAgo, now)
+            expenseRepository.getExpensesBetween(sixMonthsAgo, now)
         }
         
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses)

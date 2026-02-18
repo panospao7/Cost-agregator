@@ -25,6 +25,8 @@ class BudgetRepository @Inject constructor(
     val allBudgets: Flow<List<Budget>> = budgetDao.getAllFlow()
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
 
+    suspend fun getActiveBudgets(): List<Budget> = budgetDao.getActiveBudgets()
+
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
         // We fetch the last 13 months to cover yearly budgets + rollover
         val thirteenMonthsAgo = java.util.Calendar.getInstance().apply {

@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -14,7 +14,7 @@ import java.util.Calendar
 
 class InsightsEngineEdgeCaseTest {
     
-    private val expenseDao = mockk<ExpenseDao>(relaxed = true)
+    private val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
     private val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var engine: InsightsEngine
@@ -23,16 +23,16 @@ class InsightsEngineEdgeCaseTest {
     fun setup() {
         every { timeProvider.now() } returns System.currentTimeMillis()
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
-        engine = InsightsEngine(expenseDao, recurringEngine, timeProvider)
-        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
-        coEvery { expenseDao.getCountForPeriod(any(), any()) } returns 0
-        coEvery { expenseDao.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
-        coEvery { expenseDao.getAllMerchantStats() } returns emptyList()
-        coEvery { expenseDao.getMerchantStats() } returns emptyList()
-        coEvery { expenseDao.getRecurringCandidates() } returns emptyList()
-        coEvery { expenseDao.getDayOfWeekPattern(any(), any(), any()) } returns emptyList()
-        coEvery { expenseDao.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
-        coEvery { expenseDao.getLargestExpenseForPeriod(any(), any()) } returns null
+        engine = InsightsEngine(expenseRepository, recurringEngine, timeProvider)
+        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
+        coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
+        coEvery { expenseRepository.getMerchantStats() } returns emptyList()
+        coEvery { expenseRepository.getRecurringCandidates() } returns emptyList()
+        coEvery { expenseRepository.getDayOfWeekPattern(any(), any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getLargestExpenseForPeriod(any(), any()) } returns null
     }
 
     @Test

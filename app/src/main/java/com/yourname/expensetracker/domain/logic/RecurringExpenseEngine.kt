@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.logic
 
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
+import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -13,8 +13,8 @@ import kotlin.math.sqrt
 
 @Singleton
 class RecurringExpenseEngine @Inject constructor(
-    private val expenseDao: ExpenseDao,
-    private val recurringExpenseDao: RecurringExpenseDao,
+    private val expenseRepository: ExpenseRepository,
+    private val recurringExpenseRepository: RecurringExpenseRepository,
     private val timeProvider: TimeProvider
 ) {
 
@@ -25,7 +25,7 @@ class RecurringExpenseEngine @Inject constructor(
     suspend fun getPatterns(): List<RecurringPattern> {
         // Limit to last 12 months for performance - INS-009
         val twelveMonthsAgo = timeProvider.now() - (365L * 24 * 60 * 60 * 1000)
-        val allExpenses = expenseDao.getExpensesSince(twelveMonthsAgo)
+        val allExpenses = expenseRepository.getExpensesSince(twelveMonthsAgo)
         return getPatterns(allExpenses)
     }
 
@@ -34,7 +34,7 @@ class RecurringExpenseEngine @Inject constructor(
      */
     suspend fun getPatterns(allExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<RecurringPattern> {
         // 1. Fetch Manual Overrides
-        val manualExpenses = recurringExpenseDao.getAll()
+        val manualExpenses = recurringExpenseRepository.getAll()
         val manualMap = manualExpenses.associateBy { it.merchant.lowercase() }
         
 
