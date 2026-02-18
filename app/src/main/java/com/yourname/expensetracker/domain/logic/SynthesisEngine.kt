@@ -186,16 +186,22 @@ class SynthesisEngine @Inject constructor(
         val currentMonth = calendar.get(Calendar.MONTH)
         val currentYear = calendar.get(Calendar.YEAR)
         
+        calendar.set(Calendar.DAY_OF_MONTH, 1)
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        val startOfMonth = calendar.timeInMillis
+        calendar.set(Calendar.DAY_OF_MONTH, calendar.getActualMaximum(Calendar.DAY_OF_MONTH))
+        val endOfMonth = calendar.timeInMillis
+        
         val components = forecast.components
         
         // 1. Calculate Monthly Totals for pro-rating
         val totalMonthlyRecurring = components.recurringExpenses.sumOf { it.averageAmount }
         
-        // Filter planned expenses for this month only
-        val thisMonthPlanned = components.plannedExpenses.filter { 
-            val pCal = Calendar.getInstance().apply { timeInMillis = it.date }
-            pCal.get(Calendar.MONTH) == currentMonth && pCal.get(Calendar.YEAR) == currentYear
-        }
+        // Filter planned expenses for this month only using timestamp range
+        val thisMonthPlanned = components.plannedExpenses.filter { it.date in startOfMonth..endOfMonth }
         val totalMonthlyPlanned = thisMonthPlanned.sumOf { it.amount }
         
         // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
@@ -205,19 +211,15 @@ class SynthesisEngine @Inject constructor(
         val discretionaryTotal = (budgetLimit - totalMonthlyRecurring - totalMonthlyPlanned - goalReserves).coerceAtLeast(0.0)
         val baseDiscretionaryRate = if (budgetLimit > 0) discretionaryTotal / daysInMonth else 0.0
 
-        // Optimization: Group raw expenses by day once O(N)
-        val expensesByDay = expenses.filter { 
-            val eCal = Calendar.getInstance().apply { timeInMillis = it.date }
-            eCal.get(Calendar.MONTH) == currentMonth && eCal.get(Calendar.YEAR) == currentYear
-        }.groupBy { 
-            val resCal = Calendar.getInstance().apply { timeInMillis = it.date }
-            resCal.get(Calendar.DAY_OF_MONTH)
-        }
+        // Optimization: Group raw expenses by day once O(N) - use timestamp range filter
+        val expensesByDay = expenses.filter { it.date in startOfMonth..endOfMonth }
+            .groupBy { expense ->
+                ((expense.date - startOfMonth) / (24 * 60 * 60 * 1000)).toInt() + 1
+            }
 
-        // Optimization: Group planned expenses by day
-        val plannedByDay = thisMonthPlanned.groupBy { 
-            val resCal = Calendar.getInstance().apply { timeInMillis = it.date }
-            resCal.get(Calendar.DAY_OF_MONTH)
+        // Optimization: Group planned expenses by day - use timestamp range filter
+        val plannedByDay = thisMonthPlanned.groupBy { expense ->
+            ((expense.date - startOfMonth) / (24 * 60 * 60 * 1000)).toInt() + 1
         }
 
         val dateCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }

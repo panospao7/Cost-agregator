@@ -33,6 +33,7 @@ open class TransactionClassifier @Inject constructor(
     fun cleanup() {
         saveJob?.cancel()
         retrainJob?.cancel()
+        scope.cancel()
     }
 
     companion object {

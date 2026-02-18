@@ -193,10 +193,7 @@ class ReviewQueueRepository @Inject constructor(
 
     @Transaction
     suspend fun approveAllReview() {
-        val pending = pendingReviewDao.getPending()
-        pending.forEach { item ->
-            approveReview(item.review.id)
-        }
+        pendingReviewDao.approveAllPending()
     }
 
     @Transaction

@@ -817,13 +817,13 @@ catch (e: Exception) {
 
 | Phase | Task | Status | Dependencies |
 |-------|------|--------|--------------|
-| 1.1 | Fix DAO injection (6 files) | ⬜ | None |
-| 1.2 | Fix budget validation bug | ⬜ | None |
-| 1.3 | Break circular deps | ⬜ | 1.1 |
-| 2.1 | Fix ThreadLocal leaks | ⬜ | None |
-| 2.2 | Fix coroutine scopes | ⬜ | None |
-| 2.3 | Fix N+1 query | ⬜ | None |
-| 2.4 | Fix Calendar loops | ⬜ | None |
+| 1.1 | Fix DAO injection (6 files) | ✅ | None |
+| 1.2 | Fix budget validation bug | ✅ | None |
+| 1.3 | Break circular deps | ✅ | 1.1 |
+| 2.1 | Fix ThreadLocal leaks | ✅ | None |
+| 2.2 | Fix coroutine scopes | ✅ | None |
+| 2.3 | Fix N+1 query | ✅ | None |
+| 2.4 | Fix Calendar loops | ✅ | None |
 | 3.1 | Create AmountUtils | ⬜ | 1.1, 1.3 |
 | 3.2 | Create DateFormatterUtils | ⬜ | 1.1, 1.3 |
 | 3.3 | Consolidate analytics | ⬜ | 1.1, 1.3 |
@@ -857,16 +857,16 @@ catch (e: Exception) {
 
 > **See DETAILED IMPLEMENTATION PLAN below for full breakdown**
 
-### Phase 1: Foundation (Week 1-2) - DO FIRST
+### Phase 1: Foundation (Week 1-2) - ✅ COMPLETED
 1. Fix DAO injection in Domain layer (6 files) ⚠️ CRITICAL ARCHITECTURE
 2. Fix Budget validation bug (1 line) 🐛 BUG FIX
 3. Break circular dependencies (52 instances) ⚠️ CRITICAL ARCHITECTURE
 
-### Phase 2: Runtime Safety (Week 2-3) - DO SOON
-4. Fix ThreadLocal memory leaks (2 files) 💥 CRASH RISK
-5. Fix uncancelled coroutine scopes (3 singletons) 💥 MEMORY LEAK
-6. Fix N+1 query in approveAllReview() ⚡ PERFORMANCE
-7. Fix Calendar creation in loops ⚡ PERFORMANCE
+### Phase 2: Runtime Safety (Week 2-3) - ✅ COMPLETED
+4. Fix ThreadLocal memory leaks (2 files) - Fixed: Replaced with java.time API
+5. Fix uncancelled coroutine scopes (3 singletons) - Fixed: Added lifecycle cleanup via ProcessLifecycleOwner
+6. Fix N+1 query in approveAllReview() - Fixed: Added batch SQL method
+7. Fix Calendar creation in loops - Fixed: Replaced with millisecond range comparisons
 
 ### Phase 3: Deduplication (Week 3-4) - DO TOGETHER
 8. Create AmountUtils (13 locations) 📋 CENTRALIZE

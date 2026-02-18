@@ -4,8 +4,9 @@ import androidx.room.Embedded
 import androidx.room.Relation
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
-import java.text.SimpleDateFormat
-import java.util.*
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * Optimized Room model for displaying transactions. 
@@ -22,9 +23,18 @@ data class ExpenseWithCategory(
     )
     val category: Category?
 ) {
-    // Pre-computed formatting for UI efficiency
+    private companion object {
+        private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM dd, HH:mm")
+    }
+
     val formattedDate: String by lazy {
-        FORMATTER.get()?.format(Date(expense.date)) ?: ""
+        try {
+            Instant.ofEpochMilli(expense.date)
+                .atZone(ZoneId.systemDefault())
+                .format(DATE_FORMATTER)
+        } catch (e: Exception) {
+            ""
+        }
     }
 
     val formattedAmount: String by lazy {
@@ -37,15 +47,6 @@ data class ExpenseWithCategory(
         } catch (e: Exception) {
             android.util.Log.e("ExpenseWithCategory", "Error parsing category color: ${category?.color}", e)
             android.graphics.Color.GRAY.toLong()
-        }
-    }
-
-
-    companion object {
-        private val FORMATTER = object : ThreadLocal<SimpleDateFormat>() {
-            override fun initialValue(): SimpleDateFormat {
-                return SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
-            }
         }
     }
 }

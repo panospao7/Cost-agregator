@@ -127,4 +127,22 @@ class PendingReviewDaoTest {
         assertEquals(1, all.size)
         assertEquals("PENDING", all[0].status)
     }
+
+    @Test
+    fun approveAllPendingApprovesAllPending() = runBlocking {
+        val rawId1 = insertRawNotification()
+        val rawId2 = insertRawNotification()
+        pendingReviewDao.insert(makeReview(rawId1))
+        pendingReviewDao.insert(makeReview(rawId2))
+
+        pendingReviewDao.approveAllPending()
+
+        val pending = pendingReviewDao.getPending()
+        assertEquals(0, pending.size)
+
+        val all = pendingReviewDao.getAllFlow().first()
+        assertEquals(2, all.size)
+        assertEquals("APPROVED", all[0].status)
+        assertEquals("APPROVED", all[1].status)
+    }
 }

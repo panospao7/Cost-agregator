@@ -51,4 +51,7 @@ interface PendingReviewDao {
 
     @Query("DELETE FROM pending_reviews")
     suspend fun deleteAll()
+
+    @Query("UPDATE pending_reviews SET status = 'APPROVED' WHERE status = 'PENDING'")
+    suspend fun approveAllPending()
 }
