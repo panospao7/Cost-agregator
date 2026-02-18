@@ -17,8 +17,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
@@ -40,45 +42,77 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 @HiltViewModel
 class RecurringExpensesViewModel @Inject constructor(
     private val repository: FinancialWeatherRepository,
-    private val recurringExpenseDao: RecurringExpenseDao,
-    private val plannedExpenseDao: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+    private val recurringExpenseRepository: RecurringExpenseRepository,
+    private val plannedExpenseRepository: PlannedExpenseRepository
 ) : ViewModel() {
 
     // Helper flow to trigger updates
     private val refreshTrigger = MutableStateFlow(0)
 
-    val patterns: StateFlow<List<RecurringPattern>> = combine(
-        repository.getFinancialWeather(), // This already emits on db changes if set up correctly, but let's see
-        refreshTrigger
-    ) { weather, _ ->
-        // We actually need the full list, not just upcomingBills from weather.
-        // But repository exposes upcomingBills via weather. 
-        // Ideally we expose all patterns separately.
-        // For now, let's assume we add a method to Repo or use Engine directly if needed.
-        // To be simpler, let's expose patterns from Repo.
-        emptyList<RecurringPattern>() // Placeholder until Repo updated
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    
-    // Better approach: Expose patterns flow from Repository
-    val allPatterns = repository.getAllRecurringPatterns()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val allPatterns = recurringExpenseRepository.getAllFlow()
+        .map { list ->
+            list.map { entity ->
+                RecurringPattern(
+                    id = entity.id,
+                    merchantName = entity.merchant,
+                    averageAmount = entity.amount,
+                    currency = entity.currency,
+                    frequency = entity.frequency,
+                    nextExpectedDate = entity.nextDate,
+                    confidence = 1.0f,
+                    periodVarianceDays = 0,
+                    amountVariancePercent = 0.0,
+                    previousDates = emptyList()
+                )
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList<RecurringPattern>()
+        )
 
-    val plannedExpenses = repository.getAllPlannedExpenses()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val plannedExpenses = plannedExpenseRepository.getAllPlannedExpenses()
+        .map { list ->
+            list.map { entity ->
+                com.yourname.expensetracker.domain.model.PlannedExpense(
+                    id = entity.id,
+                    description = entity.description,
+                    amount = entity.amount,
+                    date = entity.date,
+                    categoryId = entity.categoryId,
+                    isRecurring = entity.isRecurring,
+                    priority = when(entity.priority) {
+                        com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST -> com.yourname.expensetracker.domain.model.PlannedExpensePriority.MUST
+                        com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.LIKELY -> com.yourname.expensetracker.domain.model.PlannedExpensePriority.LIKELY
+                        com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.OPTIONAL -> com.yourname.expensetracker.domain.model.PlannedExpensePriority.OPTIONAL
+                    }
+                )
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList<com.yourname.expensetracker.domain.model.PlannedExpense>()
+        )
 
     fun deleteManualRule(pattern: RecurringPattern) {
         viewModelScope.launch {
-            if (pattern.id != null) {
-                recurringExpenseDao.deleteById(pattern.id)
-                refreshTrigger.value += 1
-            } else {
-                // Legacy fallback: Delete by merchant name if ID is missing (e.g. old local data)
-                val rules = recurringExpenseDao.getAll()
-                val rule = rules.find { it.merchant == pattern.merchantName }
-                if (rule != null) {
-                    recurringExpenseDao.delete(rule)
+            try {
+                if (pattern.id != null) {
+                    recurringExpenseRepository.deleteById(pattern.id)
                     refreshTrigger.value += 1
+                } else {
+                    // Legacy fallback: Delete by merchant name if ID is missing (e.g. old local data)
+                    val rules = recurringExpenseRepository.getAll()
+                    val rule = rules.find { it.merchant == pattern.merchantName }
+                    if (rule != null) {
+                        recurringExpenseRepository.delete(rule)
+                        refreshTrigger.value += 1
+                    }
                 }
+            } catch (e: Exception) {
+                android.util.Log.e("RecurringExpensesVM", "Failed to delete rule", e)
             }
         }
     }
@@ -93,7 +127,7 @@ class RecurringExpensesViewModel @Inject constructor(
                 nextDate = pattern.nextExpectedDate,
                 note = "Detected and confirmed by user"
             )
-            recurringExpenseDao.insert(manual)
+            recurringExpenseRepository.insert(manual)
             refreshTrigger.value += 1
         }
     }
@@ -101,7 +135,7 @@ class RecurringExpensesViewModel @Inject constructor(
 
     fun deletePlannedExpense(planned: com.yourname.expensetracker.domain.model.PlannedExpense) {
         viewModelScope.launch {
-            plannedExpenseDao.deletePlannedExpenseById(planned.id)
+            plannedExpenseRepository.deletePlannedExpenseById(planned.id)
             refreshTrigger.value += 1
         }
     }

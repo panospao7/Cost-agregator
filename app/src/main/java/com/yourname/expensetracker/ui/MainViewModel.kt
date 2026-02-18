@@ -2,7 +2,7 @@ package com.yourname.expensetracker.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -14,14 +14,14 @@ import kotlinx.coroutines.launch
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
-    private val repository: NotificationRepository,
+    private val reviewQueueRepository: ReviewQueueRepository,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
 ) : ViewModel() {
 
     private val _navigationRequest = kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.BUFFERED)
     val navigationRequest = _navigationRequest.receiveAsFlow()
 
-    val pendingReviewCount: StateFlow<Int> = repository
+    val pendingReviewCount: StateFlow<Int> = reviewQueueRepository
         .getPendingReviewCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 

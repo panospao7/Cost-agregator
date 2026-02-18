@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.domain.model.Result
 // ...
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,6 +24,7 @@ import javax.inject.Inject
 @HiltViewModel
 class ReviewViewModel @Inject constructor(
     private val repository: NotificationRepository,
+    private val reviewQueueRepository: ReviewQueueRepository,
     private val categoryRepository: CategoryRepository,
     private val receiptRepository: com.yourname.expensetracker.data.repository.ReceiptRepository,
     private val debugDataStorage: com.yourname.expensetracker.ui.screens.debug.DebugDataStorage
@@ -49,11 +51,11 @@ class ReviewViewModel @Inject constructor(
 
     private var batchJob: Job? = null
 
-    val pendingReviews: StateFlow<List<PendingReviewWithReceipt>> = repository
+    val pendingReviews: StateFlow<List<PendingReviewWithReceipt>> = reviewQueueRepository
         .getPendingReviews()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val pendingCount: StateFlow<Int> = repository
+    val pendingCount: StateFlow<Int> = reviewQueueRepository
         .getPendingReviewCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
@@ -62,7 +64,7 @@ class ReviewViewModel @Inject constructor(
 
     fun approveReview(reviewId: Long) {
         viewModelScope.launch {
-            val result = repository.approveReview(reviewId)
+            val result = reviewQueueRepository.approveReview(reviewId)
             handleResult(result, "Failed to approve")
         }
     }
@@ -79,7 +81,7 @@ class ReviewViewModel @Inject constructor(
 
     fun rejectReview(reviewId: Long) {
         viewModelScope.launch {
-            repository.rejectReview(reviewId)
+            reviewQueueRepository.rejectReview(reviewId)
         }
     }
 
@@ -90,7 +92,7 @@ class ReviewViewModel @Inject constructor(
         finalCategoryId: Long?
     ) {
         viewModelScope.launch {
-            val result = repository.approveReview(
+            val result = reviewQueueRepository.approveReview(
                 reviewId = reviewId,
                 finalAmount = finalAmount,
                 finalMerchant = finalMerchant,
@@ -108,7 +110,7 @@ class ReviewViewModel @Inject constructor(
     fun approveAll() {
         viewModelScope.launch {
             try {
-                repository.approveAllReview()
+                reviewQueueRepository.approveAllReview()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to approve all: ${e.message}"
             }

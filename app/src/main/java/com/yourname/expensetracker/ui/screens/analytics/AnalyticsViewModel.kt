@@ -34,6 +34,7 @@ data class AnalyticsState(
 @HiltViewModel
 class AnalyticsViewModel @Inject constructor(
     private val repository: NotificationRepository,
+    private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val insightsEngine: InsightsEngine,
     private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine,
@@ -45,7 +46,7 @@ class AnalyticsViewModel @Inject constructor(
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val state: StateFlow<AnalyticsState> = combine(
-        repository.getAllExpenses(),
+        expenseRepository.getAllExpenses(),
         categoryRepository.allCategories,
         _selectedPeriod
     ) { expenses, categories, period ->

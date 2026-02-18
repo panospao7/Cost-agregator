@@ -521,11 +521,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     private fun hourToTimeSlot(hour: Int): TimeSlot {
         return when (hour) {
-            in 6..9 -> TimeSlot.EARLY_MORNING
-            in 9..12 -> TimeSlot.MORNING
-            in 12..17 -> TimeSlot.AFTERNOON
-            in 17..21 -> TimeSlot.EVENING
-            in 21..24 -> TimeSlot.NIGHT
+            in 6 until 9 -> TimeSlot.EARLY_MORNING
+            in 9 until 12 -> TimeSlot.MORNING
+            in 12 until 17 -> TimeSlot.AFTERNOON
+            in 17 until 21 -> TimeSlot.EVENING
+            in 21..23 -> TimeSlot.NIGHT
             else -> TimeSlot.LATE_NIGHT
         }
     }

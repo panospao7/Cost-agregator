@@ -152,10 +152,7 @@ class RecurringExpenseEngine @Inject constructor(
             cal1.timeInMillis = dates[i]
             cal2.timeInMillis = dates[i + 1]
             
-            val days = ((dates[i + 1] - dates[i]) / 86400000.0).roundToInt()
-            // Validating logic: If the simple division is close to an integer, it's usually fine, 
-            // but for extreme edge cases (DST), we coerced results already.
-            // A more robust way in Android/Java is to clear time fields.
+            // Clear time fields for accurate day calculation (handles DST edge cases)
             cal1.set(java.util.Calendar.HOUR_OF_DAY, 0)
             cal1.set(java.util.Calendar.MINUTE, 0)
             cal1.set(java.util.Calendar.SECOND, 0)

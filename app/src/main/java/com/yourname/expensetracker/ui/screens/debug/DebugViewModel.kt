@@ -15,6 +15,8 @@ import javax.inject.Inject
 @HiltViewModel
 class DebugViewModel @Inject constructor(
     private val repository: NotificationRepository,
+    private val reviewQueueRepository: com.yourname.expensetracker.data.repository.ReviewQueueRepository,
+    private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val notificationSeeder: com.yourname.expensetracker.domain.debug.NotificationSeeder,
@@ -37,7 +39,7 @@ class DebugViewModel @Inject constructor(
         .getBlockedPackages()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
         
-    val totalSpent: StateFlow<Double> = repository
+    val totalSpent: StateFlow<Double> = expenseRepository
         .getTotalSpent()
         .map { it ?: 0.0 }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
@@ -73,7 +75,7 @@ class DebugViewModel @Inject constructor(
 
     fun resetExpenses() {
         viewModelScope.launch {
-            repository.deleteAllExpenses()
+            expenseRepository.deleteAllExpenses()
         }
     }
 
@@ -85,7 +87,7 @@ class DebugViewModel @Inject constructor(
     
     fun markAsRelevant(id: Long, isRelevant: Boolean) {
         viewModelScope.launch {
-            repository.markAsRelevant(id, isRelevant)
+            reviewQueueRepository.markAsRelevant(id, isRelevant)
         }
     }
     

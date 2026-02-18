@@ -7,7 +7,6 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
-import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.DashboardRepository
 import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
@@ -22,6 +21,9 @@ import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.data.repository.SpendingSummary
+import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
+import kotlin.Triple
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -102,7 +104,8 @@ data class DashboardState(
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    private val notificationRepository: NotificationRepository,
+    private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
+    private val reviewQueueRepository: com.yourname.expensetracker.data.repository.ReviewQueueRepository,
     private val categoryRepository: CategoryRepository,
     private val budgetRepository: BudgetRepository,
     private val dashboardRepository: DashboardRepository,
@@ -120,13 +123,17 @@ class HomeViewModel @Inject constructor(
     init {
         // Recover from destructive migration items if needed
         viewModelScope.launch {
-            categoryRepository.ensureDefaultCategories()
+            try {
+                categoryRepository.ensureDefaultCategories()
+            } catch (e: Exception) {
+                android.util.Log.e("HomeViewModel", "Failed to ensure default categories", e)
+            }
         }
     }
 
     // Split flows to avoid 5-arg limit
     private val baseDataFlow = combine(
-        notificationRepository.getAllExpenses().catch { emit(emptyList()) },
+        expenseRepository.getAllExpenses().catch { emit(emptyList()) },
         categoryRepository.allCategories.catch { emit(emptyList()) },
         budgetRepository.getBudgetStatuses().catch { emit(emptyList()) }
     ) { expenses, categories, budgetStatuses ->
@@ -134,7 +141,7 @@ class HomeViewModel @Inject constructor(
     }
 
     private val planningDataFlow = combine(
-        notificationRepository.getPendingReviewCount().catch { emit(0) },
+        reviewQueueRepository.getPendingReviewCount().catch { emit(0) },
         financialWeatherRepository.getFinancialWeather().catch { 
              emit(FinancialWeather(
                 state = WeatherState.UNKNOWN,
@@ -148,9 +155,44 @@ class HomeViewModel @Inject constructor(
                 discretionaryBudget = 0.0
             ))
         },
-        financialWeatherRepository.getAllRecurringPatterns().catch { emit(emptyList()) },
-        financialWeatherRepository.getAllPlannedExpenses().catch { emit(emptyList()) }
-    ) { pendingCount, weather, recurring, planned ->
+        financialWeatherRepository.getAllRecurringPatterns()
+            .map { list -> 
+                list.map { entity -> 
+                    com.yourname.expensetracker.domain.model.RecurringPattern(
+                        id = entity.id,
+                        merchantName = entity.merchant,
+                        averageAmount = entity.amount,
+                        currency = entity.currency,
+                        frequency = entity.frequency,
+                        nextExpectedDate = entity.nextDate,
+                        confidence = 1.0f,
+                        periodVarianceDays = 0,
+                        amountVariancePercent = 0.0,
+                        previousDates = emptyList()
+                    )
+                }
+            }
+            .catch { emit(emptyList<com.yourname.expensetracker.domain.model.RecurringPattern>()) },
+        financialWeatherRepository.getAllPlannedExpenses()
+            .map { list -> 
+                list.map { entity -> 
+                    com.yourname.expensetracker.domain.model.PlannedExpense(
+                        id = entity.id,
+                        description = entity.description,
+                        amount = entity.amount,
+                        date = entity.date,
+                        categoryId = entity.categoryId,
+                        isRecurring = entity.isRecurring,
+                        priority = when(entity.priority) {
+                             com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST -> com.yourname.expensetracker.domain.model.PlannedExpensePriority.MUST
+                             com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.LIKELY -> com.yourname.expensetracker.domain.model.PlannedExpensePriority.LIKELY
+                             com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.OPTIONAL -> com.yourname.expensetracker.domain.model.PlannedExpensePriority.OPTIONAL
+                        }
+                    ) 
+                } 
+            }
+            .catch { emit(emptyList<com.yourname.expensetracker.domain.model.PlannedExpense>()) }
+    ) { pendingCount: Int, weather: FinancialWeather, recurring: List<com.yourname.expensetracker.domain.model.RecurringPattern>, planned: List<com.yourname.expensetracker.domain.model.PlannedExpense> ->
         Quadruple(pendingCount, weather, recurring, planned)
     }
 
@@ -188,17 +230,25 @@ class HomeViewModel @Inject constructor(
     .debounce(300)
 
     // Optimized: Process heavy data via AnalyticsRepository
-    private val processedDataFlow = combine(
+    private val processedDataFlow: Flow<CompiledDashboardData> = combine(
         dataFlow,
         analyticsRepository.getSpendingSummary(
              com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()),
              com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(timeProvider.now())
-        ),
+        )
+    ) { data, summary -> Pair(data, summary) }
+    .combine(
         analyticsRepository.getCategoryBreakdown(
              com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(timeProvider.now()),
              com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(timeProvider.now())
         )
-    ) { data, summary, categoryBreakdown ->
+    ) { (data, summary), categoryBreakdown -> 
+         Triple(data, summary, categoryBreakdown)
+    }.map { triple: Triple<EightData, SpendingSummary, List<CategoryBreakdown>> ->
+        val data = triple.first
+        val summary = triple.second
+        val categoryBreakdown = triple.third
+        
         val (expenses, categories, budgetStatuses, pendingCount, weather, recurringPatterns, plannedExpenses, goals) = data
         
         val now = timeProvider.now()

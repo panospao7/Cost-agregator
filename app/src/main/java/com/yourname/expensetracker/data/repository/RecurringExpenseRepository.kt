@@ -41,6 +41,8 @@ class RecurringExpenseRepository @Inject constructor(
         return dao.insert(expense)
     }
 
+    suspend fun insert(expense: ManualRecurringExpense) = dao.insert(expense)
+
     suspend fun delete(expense: ManualRecurringExpense) = dao.delete(expense)
     
     suspend fun deleteById(id: Long) = dao.deleteById(id)

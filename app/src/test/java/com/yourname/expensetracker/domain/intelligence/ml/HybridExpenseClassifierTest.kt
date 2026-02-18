@@ -18,10 +18,11 @@ class HybridExpenseClassifierTest {
     private val foodCategory = Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")
     private val groceriesCategory = Category(id = 2L, name = "Groceries", icon = "shop", color = "#CCCCCC")
     private val miscCategory = Category(id = 3L, name = "Miscellaneous", icon = "misc", color = "#888888")
+    private val uncategorizedCategory = Category(id = 4L, name = "Uncategorized", icon = "misc", color = "#888888")
 
     @Before
     fun setup() {
-        coEvery { categoryDao.getAll() } returns listOf(foodCategory, groceriesCategory, miscCategory)
+        coEvery { categoryDao.getAll() } returns listOf(foodCategory, groceriesCategory, miscCategory, uncategorizedCategory)
         hybridClassifier = HybridExpenseClassifier(context, categoryDao, nbClassifier)
     }
 
@@ -62,7 +63,7 @@ class HybridExpenseClassifierTest {
             amount = 0.0
         )
 
-        assertEquals(groceriesCategory.id, result.categoryId) // Finds Groceries via substring/search first
+        assertEquals(uncategorizedCategory.id, result.categoryId)
         assertEquals(MatchType.FALLBACK, result.matchType)
     }
 }

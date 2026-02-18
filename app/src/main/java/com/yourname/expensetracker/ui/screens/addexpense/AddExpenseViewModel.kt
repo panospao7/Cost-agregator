@@ -9,7 +9,7 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
-import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
@@ -54,7 +54,8 @@ sealed class SaveResult {
 
 @HiltViewModel
 class AddExpenseViewModel @Inject constructor(
-    private val repository: NotificationRepository,
+    private val manualExpenseRepository: ManualExpenseRepository,
+    private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val recurringExpenseRepository: RecurringExpenseRepository,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
@@ -85,7 +86,7 @@ class AddExpenseViewModel @Inject constructor(
                 delay(300)
                 if (!isActive) return@launch
                 
-                val suggestions = repository.searchMerchants(sanitized)
+                val suggestions = expenseRepository.searchMerchants(sanitized)
                 
                 if (!isActive) return@launch
                 
@@ -198,7 +199,7 @@ class AddExpenseViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 // 1. Save the actual transaction
-                val result = repository.addManualExpense(
+                val result = manualExpenseRepository.addManualExpense(
                     merchant = merchantTrimmed,
                     amount = normalizedAmount,
                     currency = "EUR",

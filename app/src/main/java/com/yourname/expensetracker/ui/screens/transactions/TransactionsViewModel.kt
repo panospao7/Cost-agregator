@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 @HiltViewModel
 class TransactionsViewModel @Inject constructor(
     private val repository: com.yourname.expensetracker.data.repository.NotificationRepository,
+    private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val recurringExpenseRepository: com.yourname.expensetracker.data.repository.RecurringExpenseRepository,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
@@ -109,7 +110,7 @@ class TransactionsViewModel @Inject constructor(
                 // FILTER MODE: Optimized SQL-level filtering
                 val (start, end) = filter.dateRange ?: Pair(0L, timeProvider.now())
                 
-                repository.getExpensesWithCategoryFiltered(
+                expenseRepository.getExpensesWithCategoryFiltered(
                     startMs = start,
                     endMs = end,
                     type = TransactionType.PURCHASE,
@@ -128,7 +129,7 @@ class TransactionsViewModel @Inject constructor(
             } else {
                 // For other tabs, use time-based filtering
                 val range = getTimeRangeForTab(tab)
-                repository.getExpensesWithCategoryInPeriod(range.first, range.second)
+                expenseRepository.getExpensesWithCategoryInPeriod(range.first, range.second)
                     .map { expenses ->
                         if (query.isBlank()) expenses
                         else expenses.filter { matchesSearch(it, query) }
@@ -167,7 +168,7 @@ class TransactionsViewModel @Inject constructor(
                 TransactionTab.values().forEach { tab ->
                     if (tab != TransactionTab.ALL) {
                         val range = getTimeRangeForTab(tab)
-                        val count = repository.getExpenseCountForPeriod(range.first, range.second)
+                        val count = expenseRepository.getExpenseCountForPeriod(range.first, range.second)
                         counts[tab] = count
                     }
                 }
@@ -240,7 +241,7 @@ class TransactionsViewModel @Inject constructor(
                 val offset = nextPage * PAGE_SIZE
                 
                 val nextItems = withContext(Dispatchers.IO) {
-                    repository.getExpensesPaged(PAGE_SIZE, offset)
+                    expenseRepository.getExpensesPaged(PAGE_SIZE, offset)
                 }
                 
                 if (nextItems.isNotEmpty()) {
@@ -263,10 +264,8 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                repository.deleteExpense(expense)
+                expenseRepository.deleteExpense(expense)
                 _successMessage.emit("Transaction deleted")
-                
-                // Refresh data
                 refresh()
             } catch (e: Exception) {
                 _error.emit("Failed to delete transaction: ${e.message}")
@@ -280,7 +279,7 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                repository.updateExpenseCategory(expense, categoryId)
+                expenseRepository.updateExpenseCategory(expense, categoryId)
                 _successMessage.emit("Category updated")
             } catch (e: Exception) {
                 _error.emit("Failed to update category: ${e.message}")
@@ -300,7 +299,7 @@ class TransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                repository.updateExpenseMerchant(expense, trimmedName)
+                expenseRepository.updateExpenseMerchant(expense, trimmedName)
                 _successMessage.emit("Merchant renamed to $trimmedName")
             } catch (e: Exception) {
                 _error.emit("Failed to update merchant: ${e.message}")
@@ -342,7 +341,7 @@ class TransactionsViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 val initial = withContext(Dispatchers.IO) {
-                    repository.getExpensesPaged(PAGE_SIZE, 0)
+                    expenseRepository.getExpensesPaged(PAGE_SIZE, 0)
                 }
                 _pagedExpenses.value = initial
                 _currentPage.value = 0

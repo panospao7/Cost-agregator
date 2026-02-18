@@ -4,11 +4,8 @@ import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
-import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
-import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
-import com.yourname.expensetracker.data.database.dao.SavingsGoalDao
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedPriority
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel as EntityGoalProtection
@@ -57,22 +54,17 @@ data class FinancialWeather(
 @Singleton
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 class FinancialWeatherRepository @Inject constructor(
-    private val notificationRepository: NotificationRepository,
+    private val expenseRepository: ExpenseRepository,
     private val insightsEngine: InsightsEngine,
     private val budgetRepository: BudgetRepository,
-    private val recurringExpenseEngine: RecurringExpenseEngine,
-    private val recurringExpenseDao: com.yourname.expensetracker.data.database.dao.RecurringExpenseDao,
-    private val plannedExpenseDao: PlannedExpenseDao,
-    private val savingsGoalDao: SavingsGoalDao,
+    private val recurringExpenseRepository: RecurringExpenseRepository,
+    private val plannedExpenseRepository: PlannedExpenseRepository,
+    private val savingsGoalRepository: SavingsGoalRepository,
     private val synthesisEngine: SynthesisEngine,
     private val narrativeGenerator: NarrativeGenerator,
     private val analyticsRepository: AnalyticsRepository,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
-    private val weatherScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
-
-    // private val calendar = Calendar.getInstance() // Removed unused field
-
     private fun com.yourname.expensetracker.data.database.entity.PlannedExpense.toDomain(): PlannedExpense {
         return PlannedExpense(
             id = this.id,
@@ -90,14 +82,29 @@ class FinancialWeatherRepository @Inject constructor(
     }
 
     fun getFinancialWeather(): Flow<FinancialWeather> = combine(
-        notificationRepository.getAllExpenses(),
+        expenseRepository.getAllExpenses(),
         budgetRepository.getBudgetStatuses(),
-        getAllRecurringPatterns(),
-        plannedExpenseDao.getAllPlannedExpenses(),
-        savingsGoalDao.getAllGoals()
-    ) { expenses, budgetStatuses, recurringPatterns, plannedEntities, goalEntities ->
+        recurringExpenseRepository.getAllFlow(),
+        plannedExpenseRepository.getAllPlannedExpenses(),
+        savingsGoalRepository.getAllGoals()
+    ) { expenses, budgetStatuses, recurringEntities, plannedEntities, goalEntities ->
         
         val plannedExpenses = plannedEntities.map { it.toDomain() }
+        
+        val recurringPatterns = recurringEntities.map { entity ->
+            com.yourname.expensetracker.domain.model.RecurringPattern(
+                id = entity.id,
+                merchantName = entity.merchant,
+                averageAmount = entity.amount,
+                currency = entity.currency,
+                frequency = entity.frequency,
+                nextExpectedDate = entity.nextDate,
+                confidence = 1.0f,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                previousDates = emptyList()
+            )
+        }
         
         val savingsGoals = goalEntities.map { entity ->
             SavingsGoal(
@@ -215,35 +222,11 @@ class FinancialWeatherRepository @Inject constructor(
         return items.sortedBy { it.date }
     }
 
-    fun getAllPlannedExpenses(): Flow<List<PlannedExpense>> = plannedExpenseDao.getAllPlannedExpenses()
-        .map { entities -> entities.map { it.toDomain() } }
-
-    // Optimized flow for recurring patterns:
-    // 1. Triggered by expense changes (to detect new patterns) OR manual rule changes
-    // 2. Throttled to prevent thrashing on bulk updates
-    // 3. Executed on Default dispatcher
-    // 4. Cached with stateIn
-    private val recurringPatternsFlow: Flow<List<RecurringPattern>> = combine(
-        recurringExpenseDao.getAllFlow(),
-        notificationRepository.getAllExpenses() 
-    ) { _, expenses -> 
-        // We re-run detection whenever expenses change significantly
-        // Note: recurrence engine might use internal logic, but we pass nothing here?
-        // If getPatterns() is args-less, it relies on something else.
-        // Assuming it fetches expenses internally or we should pass them.
-        // Given InsightsEngine usage: recurringExpenseEngine.getPatterns(allExpenses)
-        // We should probably update this to pass expenses if the engine supports it.
-        // IF NOT, we just trigger it.
-        recurringExpenseEngine.getPatterns(expenses)
+    fun getAllRecurringPatterns(): Flow<List<com.yourname.expensetracker.data.database.entity.ManualRecurringExpense>> {
+        return recurringExpenseRepository.getAllFlow()
     }
-    .flowOn(kotlinx.coroutines.Dispatchers.Default)
-    // Debounce to avoid running on every single transaction during sync/import
-    .debounce(1000L) 
-    .stateIn(
-        scope = weatherScope,
-        started = kotlinx.coroutines.flow.SharingStarted.Lazily,
-        initialValue = emptyList()
-    )
 
-    fun getAllRecurringPatterns(): Flow<List<RecurringPattern>> = recurringPatternsFlow
+    fun getAllPlannedExpenses(): Flow<List<com.yourname.expensetracker.data.database.entity.PlannedExpense>> {
+        return plannedExpenseRepository.getAllPlannedExpenses()
+    }
 }

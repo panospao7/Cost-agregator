@@ -1,15 +1,11 @@
 package com.yourname.expensetracker.data.repository
 
-import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
-import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
-import com.yourname.expensetracker.data.database.dao.SavingsGoalDao
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
-import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -23,38 +19,31 @@ import org.junit.Assert.assertEquals
 @OptIn(ExperimentalCoroutinesApi::class)
 class FinancialWeatherRepositoryTest {
 
-    private val notificationRepository = mockk<NotificationRepository>()
-    private val insightsEngine = mockk<InsightsEngine>()
-    private val budgetRepository = mockk<BudgetRepository>()
-    private val recurringExpenseEngine = mockk<RecurringExpenseEngine>()
-    private val recurringExpenseDao = mockk<RecurringExpenseDao>()
-    private val plannedExpenseDao = mockk<PlannedExpenseDao>()
-    private val savingsGoalDao = mockk<SavingsGoalDao>()
-    private val synthesisEngine = mockk<SynthesisEngine>()
-    private val narrativeGenerator = mockk<NarrativeGenerator>()
-    private val analyticsRepository = mockk<AnalyticsRepository>()
-    private val timeProvider = mockk<TimeProvider>()
+    private val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
+    private val insightsEngine = mockk<InsightsEngine>(relaxed = true)
+    private val budgetRepository = mockk<BudgetRepository>(relaxed = true)
+    private val recurringExpenseRepository = mockk<RecurringExpenseRepository>(relaxed = true)
+    private val plannedExpenseRepository = mockk<PlannedExpenseRepository>(relaxed = true)
+    private val savingsGoalRepository = mockk<SavingsGoalRepository>(relaxed = true)
+    private val synthesisEngine = mockk<SynthesisEngine>(relaxed = true)
+    private val narrativeGenerator = mockk<NarrativeGenerator>(relaxed = true)
+    private val analyticsRepository = mockk<AnalyticsRepository>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
 
     private lateinit var repository: FinancialWeatherRepository
     private val testDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {
-        // Mock shared data - must be set up BEFORE repository construction
-        // because recurringPatternsFlow is initialized at construction time
         every { timeProvider.now() } returns 1705320000000L // Jan 15, 2024
-        every { notificationRepository.getAllExpenses() } returns flowOf(emptyList())
-        every { recurringExpenseDao.getAllFlow() } returns flowOf(emptyList())
-        coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
-
+        
         repository = FinancialWeatherRepository(
-            notificationRepository,
+            expenseRepository,
             insightsEngine,
             budgetRepository,
-            recurringExpenseEngine,
-            recurringExpenseDao,
-            plannedExpenseDao,
-            savingsGoalDao,
+            recurringExpenseRepository,
+            plannedExpenseRepository,
+            savingsGoalRepository,
             synthesisEngine,
             narrativeGenerator,
             analyticsRepository,
@@ -79,10 +68,11 @@ class FinancialWeatherRepositoryTest {
             createExpense(amount = 5.0, date = now, type = TransactionType.PURCHASE) // Today (Day 14)
         )
 
-        every { notificationRepository.getAllExpenses() } returns flowOf(expenses)
+        every { expenseRepository.getAllExpenses() } returns flowOf(expenses)
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
-        every { plannedExpenseDao.getAllPlannedExpenses() } returns flowOf(emptyList())
-        every { savingsGoalDao.getAllGoals() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
 
         val spendingPace = SpendingPace(
             currentMonthSpent = 35.0,

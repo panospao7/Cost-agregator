@@ -23,14 +23,12 @@ class BudgetCalculator @Inject constructor(
     }
 
     fun calculatePeriodWindowForTime(period: BudgetPeriod, anchorDate: Long, evaluationTime: Long): PeriodRange {
-        val anchorCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        anchorCal.timeInMillis = anchorDate
+        val anchorCal = Calendar.getInstance().apply { timeInMillis = anchorDate }
 
         // Use TimePeriodUtils for consistent start-of-day logic
         val startOfDay = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(evaluationTime)
         
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        cal.timeInMillis = startOfDay
+        val cal = Calendar.getInstance().apply { timeInMillis = startOfDay }
 
         return when (period) {
             BudgetPeriod.DAILY -> {

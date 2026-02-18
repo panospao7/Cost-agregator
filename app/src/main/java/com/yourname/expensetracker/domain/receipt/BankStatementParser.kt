@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.yourname.expensetracker.BuildConfig
 
 @Singleton
 class BankStatementParser @Inject constructor(
@@ -164,7 +165,9 @@ class BankStatementParser @Inject constructor(
             } + 2
             
             if (merchantStartIndex < 2 || merchantStartIndex >= typeIndex) {
-                android.util.Log.w("BankStatementParser", "Could not find merchant in: $cleanRow")
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.w("BankStatementParser", "Could not find merchant in: $cleanRow")
+                }
                 return null
             }
             
@@ -173,14 +176,18 @@ class BankStatementParser @Inject constructor(
             val merchant = merchantParts.joinToString(" ").trim()
             
             if (merchant.isBlank()) {
-                android.util.Log.w("BankStatementParser", "Empty merchant in: $cleanRow")
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.w("BankStatementParser", "Empty merchant in: $cleanRow")
+                }
                 return null
             }
             
             // Clean merchant name
             val cleanedMerchant = merchantCleaner.clean(merchant)
             
-            android.util.Log.d("BankStatementParser", "Parsed NBG: $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
+            if (BuildConfig.DEBUG) {
+                android.util.Log.d("BankStatementParser", "Parsed NBG: $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
+            }
             
             return ParsedTransaction(
                 amount = kotlin.math.abs(amount),

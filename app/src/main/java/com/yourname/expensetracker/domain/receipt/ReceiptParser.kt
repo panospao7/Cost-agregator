@@ -205,8 +205,8 @@ class ReceiptParser @Inject constructor(
         normalized = normalized.replace(Regex(boundary + "ΜΕΤΡΗΤΑ" + endBoundary), " CASH_KEY ")
         normalized = normalized.replace(Regex(boundary + "METPHTA" + endBoundary), " CASH_KEY ")
 
-        // VAT/Tax keywords - ΦΠΑ and OCR corruptions
-        normalized = normalized.replace(Regex(boundary + "Φ\\.?Π\\.?Α\\.?" + endBoundary), " VAT_KEY ")
+        // VAT/Tax keywords - ΦΠΑ and OCR corruptions (including bilingual)
+        normalized = normalized.replace(Regex(boundary + "(?:VAT\\s*/\\s*ΦΠΑ|ΦΠΑ\\s*/\\s*VAT|Φ\\.?Π\\.?Α\\.?)" + endBoundary), " VAT_KEY ")
         normalized = normalized.replace(Regex(boundary + "0\\.?n\\.?A\\.?" + endBoundary), " VAT_KEY ")
         normalized = normalized.replace(Regex(boundary + "0\\.?Π\\.?Α" + endBoundary), " VAT_KEY ")
         normalized = normalized.replace(Regex(boundary + "O\\.?n\\.?A" + endBoundary), " VAT_KEY ")
@@ -524,13 +524,13 @@ class ReceiptParser @Inject constructor(
         // Multiple tax patterns to handle Greek ΦΠΑ OCR variations
         val taxPatterns = listOf(
             // Normalized VAT_KEY pattern
-            Regex("""VAT_KEY\s*[:\s]*(\d+[.,]\d{2})"""),
-            // Greek with percentage: "ΦΠΑ 24%: 4,14"
-            Regex("""(?:Φ\.?Π\.?Α\.?|VAT|TAX)\s*\d*[.,]?\d*%?\s*:?\s*(\d+[.,]\d{2})"""),
+            Regex("""VAT_KEY\s*[:\s]*[€$]?\s*(\d+[.,]\d{2})"""),
+            // Greek/English with percentage and bilingual: "VAT / ΦΠΑ: €2.76" or "ΦΠΑ 24%: 4,14"
+            Regex("""(?:Φ\.?Π\.?Α\.?|VAT|TAX)(?:\s*/\s*(?:Φ\.?Π\.?Α\.?|VAT|TAX))?\s*\d*[.,]?\d*%?\s*:?\s*[€$]?\s*(\d+[.,]\d{2})"""),
             // OCR corrupted: "0.n.A 24,00%" or "O.n.A"
-            Regex("""0\.?n\.?A\.?\s*\d*[.,]?\d*%?\s*(\d+[.,]\d{2})"""),
-            Regex("""O\.?n\.?A\s*\d*[.,]?\d*%?\s*(\d+[.,]\d{2})"""),
-            Regex("""0\.?Π\.?Α\s*\d*[.,]?\d*%?\s*(\d+[.,]\d{2})"""),
+            Regex("""0\.?n\.?A\.?\s*\d*[.,]?\d*%?\s*[€$]?\s*(\d+[.,]\d{2})"""),
+            Regex("""O\.?n\.?A\s*\d*[.,]?\d*%?\s*[€$]?\s*(\d+[.,]\d{2})"""),
+            Regex("""0\.?Π\.?Α\s*\d*[.,]?\d*%?\s*[€$]?\s*(\d+[.,]\d{2})"""),
             // Line with tax percentage: "4,14 24%"
             Regex("""(\d+[.,]\d{2})\s*\d{1,3}[.,]?\d{0,2}%""")
         )
