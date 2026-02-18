@@ -27,6 +27,9 @@ class InsightsEngine @Inject constructor(
 
     companion object {
         private val DAY_NAMES = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+        
+        private const val PACE_UNDER_THRESHOLD = 90f
+        private const val PACE_OVER_THRESHOLD = 110f
     }
 
     suspend fun generateInsights(
@@ -182,29 +185,19 @@ class InsightsEngine @Inject constructor(
     }
 
     // === Month Period Helpers ===
-
-    // === Month Period Helpers ===
     
     fun getMonthPeriod(timeMs: Long, monthOffset: Int = 0): MonthPeriod {
-        // Use TimePeriodUtils for start/end
         val range = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(timeMs, monthOffset)
         
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        cal.timeInMillis = range.first
+        val cal = Calendar.getInstance().apply { timeInMillis = range.first }
         val year = cal.get(Calendar.YEAR)
         val month = cal.get(Calendar.MONTH)
         
-        return MonthPeriod(year, month, range.first, range.second + 1) // +1 because Utils gives inclusive end, MonthPeriod likely uses exclusive end or similar. 
-        // Logic check: PeriodRange is usually inclusive. ExpenseDao queries are simpler with inclusive/exclusive.
-        // Let's standardise. MonthPeriod seems to store start/end.
-        // Existing implementation: endMs is start of *next* month (exclusive).
-        // TimePeriodUtils.getMonthRange returns (start, end) inclusive (last millisecond).
-        // So endMs = utils.end + 1
+        return MonthPeriod(year, month, range.first, range.second + 1)
     }
 
     private fun getPreviousMonthPeriod(current: MonthPeriod): MonthPeriod {
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        cal.timeInMillis = current.startMs
+        val cal = Calendar.getInstance().apply { timeInMillis = current.startMs }
         cal.add(Calendar.MONTH, -1)
         return getMonthPeriod(cal.timeInMillis)
     }
@@ -310,7 +303,7 @@ class InsightsEngine @Inject constructor(
         for (expense in purchases) {
             val catId = expense.categoryId ?: continue
             cal.timeInMillis = expense.date
-            val monthKey = "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}"
+            val monthKey = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
             categoryMonthTotals
                 .getOrPut(catId) { mutableMapOf() }
                 .merge(monthKey, expense.amount) { a, b -> a + b }
@@ -373,8 +366,7 @@ class InsightsEngine @Inject constructor(
         val previousTotal = previousTotalDeferred.await()
         val previousCount = previousCountDeferred.await()
 
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        cal.timeInMillis = now
+        val cal = Calendar.getInstance().apply { timeInMillis = now }
         val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
         val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
 
@@ -401,8 +393,8 @@ class InsightsEngine @Inject constructor(
 
         val paceStatus = when {
             baseline == null || baseline == 0.0 -> PaceStatus.NO_BASELINE
-            pacePercentage < 90f -> PaceStatus.UNDER_PACE
-            pacePercentage > 110f -> PaceStatus.OVER_PACE
+            pacePercentage < PACE_UNDER_THRESHOLD -> PaceStatus.UNDER_PACE
+            pacePercentage > PACE_OVER_THRESHOLD -> PaceStatus.OVER_PACE
             else -> PaceStatus.ON_PACE
         }
 
@@ -428,11 +420,11 @@ class InsightsEngine @Inject constructor(
         }
         if (purchases.isEmpty()) return null
 
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
+        val cal = Calendar.getInstance()
         val monthTotals = mutableMapOf<String, Double>()
         for (p in purchases) {
             cal.timeInMillis = p.date
-            val key = "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}"
+            val key = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
             monthTotals.merge(key, p.amount) { a, b -> a + b }
         }
 
@@ -501,8 +493,6 @@ class InsightsEngine @Inject constructor(
         val historicalAvg: Double,
         val deviationMultiple: Float
     )
-
-    // === Recurring Expenses ===
 
     // === Recurring Expenses ===
 
@@ -601,10 +591,9 @@ class InsightsEngine @Inject constructor(
 
     private fun countDistinctMonths(expenses: List<Expense>): Int {
         if (expenses.isEmpty()) return 0
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         return expenses.map { expense ->
-            cal.timeInMillis = expense.date
-            "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}"
+            val cal = Calendar.getInstance().apply { timeInMillis = expense.date }
+            String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
         }.distinct().size
     }
 
