@@ -35,6 +35,9 @@ class NotificationCaptureService : NotificationListenerService() {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     
+    @Volatile
+    private var pendingRefresh = false
+    
     // Thread-safe, bounded deduplication cache (INS-005)
     private val processedNotifications = java.util.Collections.synchronizedMap(
         object : LinkedHashMap<String, Long>(100, 0.75f, true) {
@@ -121,7 +124,7 @@ class NotificationCaptureService : NotificationListenerService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundWithNotification()
         if (intent?.action == ACTION_REFRESH_NOTIFICATIONS) {
-            refreshActiveNotifications()
+            pendingRefresh = true
         }
         return super.onStartCommand(intent, flags, startId)
     }
@@ -130,6 +133,11 @@ class NotificationCaptureService : NotificationListenerService() {
         super.onListenerConnected()
         Log.d(TAG, "NotificationListener connected! Starting foreground service.")
         startForegroundWithNotification()
+        // Refresh active notifications after connection is established
+        if (pendingRefresh) {
+            pendingRefresh = false
+            refreshActiveNotifications()
+        }
     }
     
     private fun startForegroundWithNotification() {
@@ -297,12 +305,18 @@ class NotificationCaptureService : NotificationListenerService() {
         return try {
             val json = org.json.JSONObject()
             val sensitiveKeys = setOf(
+                // Android system keys that contain personal data
                 "android.largeIcon", "android.picture", "android.icon",
                 "android.wearable.EXTENSIONS", "android.people.list",
-                "account_number", "card_number", "card_last_four", "balance"
+                // Financial/personal data keys
+                "account_number", "account", "card_number", "card_last_four", 
+                "balance", "amount", "cvv", "pin", "password",
+                "iban", "transaction_id", "reference_number",
+                "full_name", "email", "phone", "address"
             )
             for (key in extras.keySet()) {
                 if (sensitiveKeys.any { key.equals(it, ignoreCase = true) }) continue
+                @Suppress("DEPRECATION")
                 val value = extras.get(key)
                 if (value != null) {
                     val valueStr = value.toString()

@@ -68,8 +68,8 @@ class GreekBankParser @Inject constructor(
         title: String?,
         text: String?,
         bigText: String?,
-        subText: String?,
-        packageName: String
+        @Suppress("UNUSED_PARAMETER") subText: String?,
+        @Suppress("UNUSED_PARAMETER") packageName: String
     ): ParsedTransaction? {
         val fields = listOfNotNull(title, text, bigText)
         

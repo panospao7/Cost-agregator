@@ -28,6 +28,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 @Singleton
 class ReceiptRepository @Inject constructor(
@@ -60,7 +61,7 @@ class ReceiptRepository @Inject constructor(
         val ocrResult = try {
             ocrService.processUri(imageUri)
         } catch (e: Exception) {
-            android.util.Log.e("ReceiptRepository", "OCR Failed for $imageUri", e)
+            Timber.e(e, "OCR Failed for $imageUri")
             // Fallback: Try to save the image using manual record logic
             return saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
                 val failedReceipt = receipt.copy(
@@ -123,7 +124,7 @@ class ReceiptRepository @Inject constructor(
         } catch (e: Exception) {
             // Parsing Logic Failed, but we HAVE the OCR text!
             // Save it so user can manually edit without losing the text.
-            android.util.Log.e("ReceiptRepository", "Parsing Failed for $imageUri", e)
+            Timber.e(e, "Parsing Failed for $imageUri")
             
             val failedReceipt = ScannedReceipt(
                 imagePath = ocrResult.savedImagePath,
@@ -262,7 +263,7 @@ class ReceiptRepository @Inject constructor(
                         amount = amount
                     )
                 } catch (e: Exception) {
-                    android.util.Log.e("ReceiptRepo", "Failed to learn categorization", e)
+                    Timber.e(e, "Failed to learn categorization")
                 }
                 merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
             }
@@ -302,7 +303,7 @@ class ReceiptRepository @Inject constructor(
         // Deduplicate URIs to avoid processing the same file twice
         val uniqueUris = uris.distinctBy { it.toString() }
         if (uniqueUris.size < uris.size) {
-            android.util.Log.d("ReceiptRepository", "Removed ${uris.size - uniqueUris.size} duplicate URIs")
+            Timber.d("Removed ${uris.size - uniqueUris.size} duplicate URIs")
         }
 
         val semaphore = Semaphore(3) // Limit to 3 concurrent OCR tasks

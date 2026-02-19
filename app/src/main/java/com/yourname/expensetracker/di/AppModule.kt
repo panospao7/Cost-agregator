@@ -17,6 +17,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import timber.log.Timber
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -48,11 +49,10 @@ object AppModule {
             .addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                     super.onOpen(db)
-                    android.util.Log.d("AppDatabase", "Database opened successfully. Version: ${db.version}")
+                    Timber.d("Database opened successfully. Version: ${db.version}")
                 }
             })
             .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5)
-            .fallbackToDestructiveMigration()
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()
     }
@@ -129,4 +129,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideMerchantNormalizationDao(database: AppDatabase): MerchantNormalizationDao = database.merchantNormalizationDao()
+
+    @Provides
+    @Singleton
+    fun provideNotificationService(
+        service: com.yourname.expensetracker.data.service.AndroidNotificationService
+    ): com.yourname.expensetracker.domain.service.NotificationService = service
 }

@@ -2,7 +2,12 @@ package com.yourname.expensetracker.domain.intelligence.ml
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -23,61 +28,76 @@ class ExpenseCategoryClassifier @Inject constructor(
         private const val MODEL_FILE = "expense_category_model.json"
         private const val SMOOTHING = 1.0
         private const val MIN_SAMPLES = 20
+        private const val BATCH_SAVE_THRESHOLD = 100
     }
 
+    private val mutex = Mutex()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    
     private var categoryCounts = mutableMapOf<Long, Int>()
     private var totalSamples = 0
     private var wordCounts = mutableMapOf<Long, MutableMap<String, Int>>()
     private var wordTotals = mutableMapOf<Long, Int>()
     private var vocabulary = mutableSetOf<String>()
     private var isLoaded = false
+    
+    private var unsavedChanges = 0
 
     suspend fun classify(features: ExpenseFeatures): List<CategoryScore> {
         if (!isLoaded) loadModel()
         
-        if (totalSamples < MIN_SAMPLES || categoryCounts.isEmpty()) {
-            return emptyList()
-        }
+        return mutex.withLock {
+            if (totalSamples < MIN_SAMPLES || categoryCounts.isEmpty()) {
+                emptyList()
+            } else {
+                val scores = mutableMapOf<Long, Double>()
+                categoryCounts.keys.forEach { categoryId ->
+                    scores[categoryId] = calculateLogProbabilityInternal(features, categoryId)
+                }
 
-        val scores = mutableMapOf<Long, Double>()
-        categoryCounts.keys.forEach { categoryId ->
-            scores[categoryId] = calculateLogProbability(features, categoryId)
-        }
-
-        // Softmax normalization
-        val maxLog = scores.values.maxOrNull() ?: 0.0
-        val expScores = scores.mapValues { Math.exp(it.value - maxLog).coerceAtLeast(1e-10) }
-        val sumExp = expScores.values.sum()
-        
-        return expScores
-            .map { (categoryId, expVal) ->
-                CategoryScore(
-                    categoryId = categoryId,
-                    categoryName = "Category_$categoryId", // Resolved by HybridClassifier
-                    score = (expVal / sumExp).toFloat()
-                )
+                val maxLog = scores.values.maxOrNull() ?: 0.0
+                val expScores = scores.mapValues { Math.exp(it.value - maxLog).coerceAtLeast(1e-10) }
+                val sumExp = expScores.values.sum()
+                
+                expScores
+                    .map { (categoryId, expVal) ->
+                        CategoryScore(
+                            categoryId = categoryId,
+                            categoryName = "Category_$categoryId",
+                            score = (expVal / sumExp).toFloat()
+                        )
+                    }
+                    .filter { it.score > 0.01f }
+                    .sortedByDescending { it.score }
             }
-            .filter { it.score > 0.01f }
-            .sortedByDescending { it.score }
+        }
     }
 
     suspend fun train(features: ExpenseFeatures, categoryId: Long) {
         if (!isLoaded) loadModel()
         
-        categoryCounts[categoryId] = (categoryCounts[categoryId] ?: 0) + 1
-        totalSamples++
+        mutex.withLock {
+            categoryCounts[categoryId] = (categoryCounts[categoryId] ?: 0) + 1
+            totalSamples++
 
-        val catWordCounts = wordCounts.getOrPut(categoryId) { mutableMapOf() }
-        features.merchantTokens.forEach { token ->
-            catWordCounts[token] = (catWordCounts[token] ?: 0) + 1
-            vocabulary.add(token)
+            val catWordCounts = wordCounts.getOrPut(categoryId) { mutableMapOf() }
+            features.merchantTokens.forEach { token ->
+                catWordCounts[token] = (catWordCounts[token] ?: 0) + 1
+                vocabulary.add(token)
+            }
+            
+            wordTotals[categoryId] = (wordTotals[categoryId] ?: 0) + features.merchantTokens.size
+            
+            unsavedChanges++
+            
+            if (unsavedChanges >= BATCH_SAVE_THRESHOLD) {
+                saveModelInternal()
+                unsavedChanges = 0
+            }
         }
-        
-        wordTotals[categoryId] = (wordTotals[categoryId] ?: 0) + features.merchantTokens.size
-        saveModel()
     }
 
-    private fun calculateLogProbability(features: ExpenseFeatures, categoryId: Long): Double {
+    private fun calculateLogProbabilityInternal(features: ExpenseFeatures, categoryId: Long): Double {
         var logProb = Math.log(
             (categoryCounts[categoryId] ?: 1).toDouble() / 
             totalSamples.coerceAtLeast(1)
@@ -107,7 +127,14 @@ class ExpenseCategoryClassifier @Inject constructor(
         )
     }
 
-    private suspend fun saveModel() = withContext(Dispatchers.IO) {
+    suspend fun saveModel() {
+        mutex.withLock {
+            saveModelInternal()
+            unsavedChanges = 0
+        }
+    }
+
+    private fun saveModelInternal() {
         try {
             val json = JSONObject().apply {
                 put("totalSamples", totalSamples)
@@ -125,47 +152,52 @@ class ExpenseCategoryClassifier @Inject constructor(
                 }
                 put("wordCounts", wordCountsJson)
             }
-            File(context.filesDir, MODEL_FILE).writeText(json.toString())
+            scope.launch {
+                File(context.filesDir, MODEL_FILE).writeText(json.toString())
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save model", e)
         }
     }
 
     private suspend fun loadModel() = withContext(Dispatchers.IO) {
-        try {
-            val file = File(context.filesDir, MODEL_FILE)
-            if (!file.exists()) {
+        mutex.withLock {
+            try {
+                val file = File(context.filesDir, MODEL_FILE)
+                if (!file.exists()) {
+                    isLoaded = true
+                    return@withContext
+                }
+                
+                val json = JSONObject(file.readText())
+                totalSamples = json.getInt("totalSamples")
+                
+                categoryCounts.clear()
+                val catCounts = json.getJSONObject("categoryCounts")
+                catCounts.keys().forEach { key -> categoryCounts[key.toLong()] = catCounts.getInt(key) }
+                
+                vocabulary.clear()
+                val vocab = json.getJSONObject("vocabulary")
+                vocab.keys().forEach { vocabulary.add(it) }
+                
+                wordCounts.clear()
+                val wc = json.getJSONObject("wordCounts")
+                wc.keys().forEach { catId ->
+                    val wordsJson = wc.getJSONObject(catId)
+                    val words = mutableMapOf<String, Int>()
+                    wordsJson.keys().forEach { word -> words[word] = wordsJson.getInt(word) }
+                    wordCounts[catId.toLong()] = words
+                }
+                
+                wordTotals.clear()
+                wordCounts.forEach { (catId, words) -> wordTotals[catId] = words.values.sum() }
+                
                 isLoaded = true
-                return@withContext
+                unsavedChanges = 0
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load model", e)
+                isLoaded = true
             }
-            
-            val json = JSONObject(file.readText())
-            totalSamples = json.getInt("totalSamples")
-            
-            categoryCounts.clear()
-            val catCounts = json.getJSONObject("categoryCounts")
-            catCounts.keys().forEach { key -> categoryCounts[key.toLong()] = catCounts.getInt(key) }
-            
-            vocabulary.clear()
-            val vocab = json.getJSONObject("vocabulary")
-            vocab.keys().forEach { vocabulary.add(it) }
-            
-            wordCounts.clear()
-            val wc = json.getJSONObject("wordCounts")
-            wc.keys().forEach { catId ->
-                val wordsJson = wc.getJSONObject(catId)
-                val words = mutableMapOf<String, Int>()
-                wordsJson.keys().forEach { word -> words[word] = wordsJson.getInt(word) }
-                wordCounts[catId.toLong()] = words
-            }
-            
-            wordTotals.clear()
-            wordCounts.forEach { (catId, words) -> wordTotals[catId] = words.values.sum() }
-            
-            isLoaded = true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load model", e)
-            isLoaded = true
         }
     }
 }

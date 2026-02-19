@@ -16,6 +16,7 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.suspendCancellableCoroutine
+import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -124,12 +125,12 @@ class ReceiptOcrService @Inject constructor(
         
         // If we got substantial text (>100 chars), use it
         if (extractedText.length > 100) {
-            android.util.Log.d("ReceiptOcrService", "Using direct PDF text extraction (${extractedText.length} chars)")
+            Timber.d("Using direct PDF text extraction (${extractedText.length} chars)")
             return processPdfWithTextExtraction(pdfUri, extractedText)
         }
         
         // Otherwise, fall back to OCR
-        android.util.Log.d("ReceiptOcrService", "PDF has minimal text, falling back to OCR")
+        Timber.d("PDF has minimal text, falling back to OCR")
         return processPdfWithOcr(pdfUri)
     }
     
@@ -158,11 +159,11 @@ class ReceiptOcrService @Inject constructor(
             stripper.endPage = pageLimit
             
             val text = stripper.getText(document)
-            android.util.Log.d("ReceiptOcrService", "Extracted ${text.length} chars from $pageLimit pages")
+            Timber.d("Extracted ${text.length} chars from $pageLimit pages")
             
             return@withContext text
         } catch (e: Exception) {
-            android.util.Log.w("ReceiptOcrService", "PDF text extraction failed: ${e.message}")
+            Timber.w("PDF text extraction failed: ${e.message}")
             return@withContext ""
         } finally {
             try { document?.close() } catch (_: Exception) {}
@@ -233,7 +234,7 @@ class ReceiptOcrService @Inject constructor(
             
             return@withContext savedPath
         } catch (e: Exception) {
-            android.util.Log.w("ReceiptOcrService", "Thumbnail rendering failed: ${e.message}")
+            Timber.w("Thumbnail rendering failed: ${e.message}")
             return@withContext ""
         } finally {
             try { renderer?.close() } catch (_: Exception) {}
@@ -325,7 +326,7 @@ class ReceiptOcrService @Inject constructor(
             )
             
         } catch (e: Exception) {
-            android.util.Log.e("ReceiptOcrService", "PDF processing failed for $pdfUri", e)
+            Timber.e(e, "PDF processing failed for $pdfUri")
             throw IllegalStateException("Failed to scan PDF: ${e.message}", e)
         } finally {
             try { renderer?.close() } catch (_: Exception) {}
@@ -419,18 +420,18 @@ class ReceiptOcrService @Inject constructor(
                 try {
                     val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
                     if (rotated != bitmap) {
-                        bitmap.recycle() // Clean up original if rotated
+                        bitmap.recycle()
                     }
                     return rotated
                 } catch (e: Exception) {
-                    bitmap.recycle() // CRITICAL: Recycle original if rotation fails (OOM similar)
-                    throw e
+                    Timber.e(e, "Rotation failed, using original")
+                    return bitmap
                 }
             } else {
                 return bitmap
             }
         } catch (e: Exception) {
-            android.util.Log.e("ReceiptOcrService", "Error loading bitmap from $uri", e)
+            Timber.e(e, "Error loading bitmap from $uri")
             if (decodedBitmap?.isRecycled == false) {
                 decodedBitmap?.recycle()
             }

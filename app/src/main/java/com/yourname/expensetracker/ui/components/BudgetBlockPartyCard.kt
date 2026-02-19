@@ -51,9 +51,9 @@ fun BudgetBlockPartyCard(
 ) {
     var selectedDay by remember { mutableStateOf<DayBudgetStatus?>(null) }
 
-    if (selectedDay != null) {
+    selectedDay?.let { day ->
         DayAtAGlanceDialog(
-            day = selectedDay!!,
+            day = day,
             onDismiss = { selectedDay = null }
         )
     }

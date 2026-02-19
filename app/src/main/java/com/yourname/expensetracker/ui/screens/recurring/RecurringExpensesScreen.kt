@@ -38,6 +38,7 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import timber.log.Timber
 
 @HiltViewModel
 class RecurringExpensesViewModel @Inject constructor(
@@ -112,7 +113,7 @@ class RecurringExpensesViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("RecurringExpensesVM", "Failed to delete rule", e)
+                Timber.e(e, "Failed to delete rule")
             }
         }
     }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 @Singleton
 class CategoryRepository @Inject constructor(
@@ -62,7 +63,7 @@ class CategoryRepository @Inject constructor(
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("CategoryRepository", "Failed to seed default categories", e)
+            Timber.e(e, "Failed to seed default categories")
         }
     }
 

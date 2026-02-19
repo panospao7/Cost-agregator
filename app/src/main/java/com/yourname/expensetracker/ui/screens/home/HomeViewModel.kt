@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import javax.inject.Inject
+import timber.log.Timber
 
 // === State Widget sealed class for Bento Grid ===
 sealed class DashboardWidget {
@@ -144,7 +145,7 @@ class HomeViewModel @Inject constructor(
             try {
                 categoryRepository.ensureDefaultCategories()
             } catch (e: Exception) {
-                android.util.Log.e("HomeViewModel", "Failed to ensure default categories", e)
+                Timber.e(e, "Failed to ensure default categories")
             }
         }
     }
@@ -299,7 +300,21 @@ class HomeViewModel @Inject constructor(
         val monthStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
         val currentDayIdx = ((now - monthStart) / 86400000L).toInt().coerceAtLeast(0)
         
-        val currentPace = insightsEngine.getSpendingPaceSuspend(expenses)
+        val currentPace = try {
+            insightsEngine.getSpendingPaceSuspend(expenses)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to calculate spending pace")
+            SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = currentDayIdx,
+                daysInMonth = daysInMonth,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0f,
+                paceStatus = PaceStatus.NO_BASELINE
+            )
+        }
         
         val purchasesThisMonth = expenses.filter { 
             it.transactionType == TransactionType.PURCHASE && it.date >= monthStart
@@ -501,7 +516,7 @@ class HomeViewModel @Inject constructor(
         )
     }
     .catch { e ->
-        android.util.Log.e("HomeViewModel", "Error processing dashboard data", e)
+        Timber.e(e, "Error processing dashboard data")
         emit(CompiledDashboardData(emptyList(), 0.0, 0))
     }
     .flowOn(Dispatchers.Default) 

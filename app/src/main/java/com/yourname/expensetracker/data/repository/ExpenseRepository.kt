@@ -10,7 +10,6 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
-import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
@@ -26,8 +25,7 @@ class ExpenseRepository @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
-    private val merchantNormalizer: MerchantNormalizer,
-    private val budgetMonitor: BudgetMonitor
+    private val merchantNormalizer: MerchantNormalizer
 ) {
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -65,11 +63,8 @@ class ExpenseRepository @Inject constructor(
     suspend fun getExpensesPaged(limit: Int, offset: Int): List<ExpenseWithCategory> =
         expenseDao.getExpensesWithCategoryPaged(limit, offset)
 
-    suspend fun getExpenseCountForPeriod(startMs: Long, endMs: Long): Int =
-        expenseDao.getCountForPeriod(startMs, endMs)
-
     suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int =
-        getExpenseCountForPeriod(startMs, endMs)
+        expenseDao.getCountForPeriod(startMs, endMs)
 
     suspend fun deleteExpense(expense: Expense) = expenseDao.delete(expense)
 

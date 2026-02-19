@@ -39,6 +39,9 @@ class ManualExpenseRepository @Inject constructor(
         date: Long = timeProvider.now(),
         notes: String? = null
     ): Result<Long> {
+        if (amount <= 0) {
+            return Result.Error(message = "Amount must be greater than zero")
+        }
         if (amount > 1000000.0) {
             return Result.Error(message = "Amount exceeds limit")
         }

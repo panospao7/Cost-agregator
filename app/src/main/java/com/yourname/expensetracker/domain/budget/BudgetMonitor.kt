@@ -1,45 +1,56 @@
 package com.yourname.expensetracker.domain.budget
 
-import android.app.NotificationManager
-import android.content.Context
-import androidx.core.app.NotificationCompat
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.TimeProvider
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import timber.log.Timber
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class BudgetMonitor @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val budgetRepository: BudgetRepository,
     private val timeProvider: TimeProvider,
+    private val notificationService: NotificationService,
     @com.yourname.expensetracker.di.IoDispatcher private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher
 ) {
     private val serviceScope = CoroutineScope(SupervisorJob() + ioDispatcher)
-    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    companion object {
+        private const val MAX_RETRIES = 3
+        private const val RETRY_DELAY_MS = 1000L
+    }
 
     fun checkBudgets() {
         serviceScope.launch {
-            try {
-                // Use Repository to get calculated statuses (includes rollover logic)
-                val budgetStatuses = budgetRepository.getBudgetStatuses().first()
-                if (budgetStatuses.isEmpty()) return@launch
+            var lastException: Exception? = null
+            repeat(MAX_RETRIES) { attempt ->
+                try {
+                    val budgetStatuses = budgetRepository.getBudgetStatuses().first()
+                    if (budgetStatuses.isEmpty()) return@launch
 
-                val now = timeProvider.now()
+                    val now = timeProvider.now()
 
-                for (status in budgetStatuses) {
-                    processBudgetStatus(status, now)
+                    for (status in budgetStatuses) {
+                        processBudgetStatus(status, now)
+                    }
+                    return@launch // Success - exit
+                } catch (e: Exception) {
+                    lastException = e
+                    Timber.w(e, "checkBudgets attempt ${attempt + 1} failed")
+                    if (attempt < MAX_RETRIES - 1) {
+                        kotlinx.coroutines.delay(RETRY_DELAY_MS)
+                    }
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("BudgetMonitor", "Error in checkBudgets: ${e.message}", e)
             }
+            Timber.e(lastException, "checkBudgets failed after $MAX_RETRIES attempts")
         }
     }
 
@@ -59,19 +70,19 @@ class BudgetMonitor @Inject constructor(
         when {
             percent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart)) {
-                    sendNotificationDirect(budget, spent, "Budget Exceeded!", categoryName)
+                    sendNotification(budget.id.toInt(), budget, spent, "Budget Exceeded!", categoryName)
                     budgetRepository.updateExceededNotification(budget.id, now)
                 }
             }
-            percent >= budget.notifyAtCritical -> {
+            percent >= budget.notifyAtCritical && percent < 1.0f -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart)) {
-                    sendNotificationDirect(budget, spent, "Critical Budget Warning", categoryName)
+                    sendNotification(budget.id.toInt(), budget, spent, "Critical Budget Warning", categoryName)
                     budgetRepository.updateCriticalNotification(budget.id, now)
                 }
             }
-            percent >= budget.notifyAtWarning -> {
+            percent >= budget.notifyAtWarning && percent < budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart)) {
-                    sendNotificationDirect(budget, spent, "Budget Warning", categoryName)
+                    sendNotification(budget.id.toInt(), budget, spent, "Budget Warning", categoryName)
                     budgetRepository.updateWarningNotification(budget.id, now)
                 }
             }
@@ -81,25 +92,28 @@ class BudgetMonitor @Inject constructor(
     private fun shouldNotify(lastNotified: Long?, now: Long, periodStart: Long): Boolean {
         if (lastNotified == null) return true
         
-        // Reset cooldown if we entered a new period (BUG-7 Fix)
         if (lastNotified < periodStart) return true
         
-        // Cooldown: only notify once every 12 hours for the same budget level
         val cooldown = 12 * 60 * 60 * 1000L
         return now - lastNotified > cooldown
     }
 
-    private fun sendNotificationDirect(budget: Budget, spent: Double, title: String, categoryName: String) {
+    private fun sendNotification(
+        notificationId: Int,
+        budget: Budget,
+        spent: Double,
+        title: String,
+        categoryName: String
+    ) {
         val percent = (spent / budget.amount * 100).toInt()
-        val content = "You've spent €${String.format(java.util.Locale.US, "%.2f", spent)} ($percent%) of your $categoryName budget."
+        val content = String.format(
+            Locale.US,
+            "You've spent €%.2f (%d%%) of your %s budget.",
+            spent,
+            percent,
+            categoryName
+        )
 
-        val builder = NotificationCompat.Builder(context, "budget_alerts")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(title)
-            .setContentText(content)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-
-        notificationManager.notify(budget.id.toInt(), builder.build())
+        notificationService.sendBudgetAlert(notificationId, title, content)
     }
 }

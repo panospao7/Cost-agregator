@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.parser
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.AppConstants
 import java.util.regex.Pattern
 
 /**
@@ -22,7 +23,6 @@ class GenericTransactionParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
     private val merchantCleaner: MerchantCleaner
 ) {
-
     // Strong signals that this is a REAL transaction notification
     private val strongTransactionSignals by lazy {
         listOf(
@@ -95,7 +95,7 @@ class GenericTransactionParser @Inject constructor(
         val amountResult = extractAmount(fullText) ?: return null
 
         // 5. Sanity check amount
-        if (amountResult.first < 0.10 || amountResult.first > 25000) return null
+        if (amountResult.first < AppConstants.Parser.MIN_VALID_AMOUNT || amountResult.first > AppConstants.Parser.MAX_GENERIC_PARSER_AMOUNT) return null
 
         // 6. Extract merchant
         val merchant = extractMerchant(fullText, title)

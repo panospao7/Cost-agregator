@@ -5,6 +5,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 /**
  * Handles persistence of debug data to file storage.
@@ -23,9 +24,9 @@ class DebugDataStorage @Inject constructor(
     fun save(debugData: DebugData) {
         try {
             file.writeText(debugData.toJson())
-            android.util.Log.d("DebugDataStorage", "Saved debug data to ${file.absolutePath}")
+            Timber.d("Saved debug data to ${file.absolutePath}")
         } catch (e: Exception) {
-            android.util.Log.e("DebugDataStorage", "Failed to save debug data: ${e.message}")
+            Timber.e(e, "Failed to save debug data: ${e.message}")
         }
     }
     
@@ -34,7 +35,7 @@ class DebugDataStorage @Inject constructor(
      */
     fun load(): DebugData? {
         if (!file.exists()) {
-            android.util.Log.d("DebugDataStorage", "No saved debug data found")
+            Timber.d("No saved debug data found")
             return null
         }
         
@@ -42,7 +43,7 @@ class DebugDataStorage @Inject constructor(
             val json = file.readText()
             parseDebugDataFromJson(json)
         } catch (e: Exception) {
-            android.util.Log.e("DebugDataStorage", "Failed to load debug data: ${e.message}")
+            Timber.e(e, "Failed to load debug data: ${e.message}")
             null
         }
     }
@@ -53,7 +54,7 @@ class DebugDataStorage @Inject constructor(
     fun clear() {
         if (file.exists()) {
             file.delete()
-            android.util.Log.d("DebugDataStorage", "Cleared debug data")
+            Timber.d("Cleared debug data")
         }
     }
     
@@ -122,7 +123,7 @@ class DebugDataStorage @Inject constructor(
                 issues = issues
             )
         } catch (e: Exception) {
-            android.util.Log.e("DebugDataStorage", "Failed to parse JSON: ${e.message}")
+            Timber.e(e, "Failed to parse JSON: ${e.message}")
             null
         }
     }

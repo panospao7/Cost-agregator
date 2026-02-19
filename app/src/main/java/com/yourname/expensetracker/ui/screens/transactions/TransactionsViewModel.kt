@@ -169,7 +169,7 @@ class TransactionsViewModel @Inject constructor(
                 TransactionTab.values().forEach { tab ->
                     if (tab != TransactionTab.ALL) {
                         val range = getTimeRangeForTab(tab)
-                        val count = expenseRepository.getExpenseCountForPeriod(range.first, range.second)
+                        val count = expenseRepository.getCountForPeriod(range.first, range.second)
                         counts[tab] = count
                     }
                 }

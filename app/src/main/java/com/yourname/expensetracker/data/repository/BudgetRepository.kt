@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 @Singleton
 class BudgetRepository @Inject constructor(
@@ -109,7 +110,7 @@ class BudgetRepository @Inject constructor(
             // budgetMonitor.checkBudgets() // Removed to avoid circular dependency. Monitor should observe flow.
             com.yourname.expensetracker.domain.model.Result.Success(id)
         } catch (e: Exception) {
-            android.util.Log.e("BudgetRepository", "Failed to add budget", e)
+            Timber.e(e, "Failed to add budget")
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to add budget")
         }
     }
@@ -127,7 +128,7 @@ class BudgetRepository @Inject constructor(
             // budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
-            android.util.Log.e("BudgetRepository", "Failed to update budget ${budget.id}", e)
+            Timber.e(e, "Failed to update budget ${budget.id}")
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to update budget")
         }
     }
@@ -137,7 +138,7 @@ class BudgetRepository @Inject constructor(
             budgetDao.delete(budget)
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
-            android.util.Log.e("BudgetRepository", "Failed to delete budget ${budget.id}", e)
+            Timber.e(e, "Failed to delete budget ${budget.id}")
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete budget")
         }
     }
@@ -148,7 +149,7 @@ class BudgetRepository @Inject constructor(
             // budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
-            android.util.Log.e("BudgetRepository", "Failed to toggle budget $id", e)
+            Timber.e(e, "Failed to toggle budget $id")
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to toggle budget")
         }
     }
@@ -158,7 +159,7 @@ class BudgetRepository @Inject constructor(
             budgetDao.deleteAll()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
-            android.util.Log.e("BudgetRepository", "Failed to delete all budgets", e)
+            Timber.e(e, "Failed to delete all budgets")
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete all budgets")
         }
     }

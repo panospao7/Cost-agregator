@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import timber.log.Timber
 
 /**
  * Optimized Room model for displaying transactions. 
@@ -45,7 +46,7 @@ data class ExpenseWithCategory(
         try {
             category?.color?.let { android.graphics.Color.parseColor(it).toLong() } ?: android.graphics.Color.GRAY.toLong()
         } catch (e: Exception) {
-            android.util.Log.e("ExpenseWithCategory", "Error parsing category color: ${category?.color}", e)
+            Timber.e(e, "Error parsing category color: ${category?.color}")
             android.graphics.Color.GRAY.toLong()
         }
     }

@@ -47,6 +47,9 @@ fun ForecastTimeline(
             return
         }
 
+        // Guard against invalid budget limit
+        val safeBudgetLimit = if (budgetLimit <= 0) 1.0 else budgetLimit
+
         // Vico model creation - Connect past to projected (no gap)
         val chartEntryModel: ChartEntryModel = remember(pastPoints, projectedPoints, budgetLimit) {
             val pastEntries = pastPoints.mapIndexed { index, value -> 
@@ -70,8 +73,8 @@ fun ForecastTimeline(
             }
             
             val budgetLimitEntries = listOf(
-                FloatEntry(0f, budgetLimit.toFloat()),
-                FloatEntry((pastPoints.size + projectionEntries.size).toFloat(), budgetLimit.toFloat())
+                FloatEntry(0f, safeBudgetLimit.toFloat()),
+                FloatEntry((pastPoints.size + projectionEntries.size).toFloat(), safeBudgetLimit.toFloat())
             )
             entryModelOf(pastEntries, projectionEntries, budgetLimitEntries)
         }

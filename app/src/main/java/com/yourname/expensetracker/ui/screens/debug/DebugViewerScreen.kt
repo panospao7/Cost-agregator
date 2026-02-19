@@ -403,21 +403,21 @@ private fun LogsTab(debugData: DebugData) {
         }
         
         if (debugData.parsingLogs.isEmpty()) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    Icons.Default.CheckCircle,
-                    null,
-                    modifier = Modifier.size(48.dp),
-                    tint = Color(0xFF4CAF50)
-                )
-                Spacer(Modifier.height(8.dp))
-                Text("No parsing errors", style = MaterialTheme.typography.titleMedium)
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        null,
+                        modifier = Modifier.size(48.dp),
+                        tint = Color(0xFF4CAF50)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("No parsing errors", style = MaterialTheme.typography.titleMedium)
+                }
             }
-        }
             return
         }
         

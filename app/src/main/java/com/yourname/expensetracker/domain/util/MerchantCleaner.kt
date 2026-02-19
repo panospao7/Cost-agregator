@@ -43,7 +43,7 @@ class MerchantCleaner @Inject constructor() {
             .replace(Regex("""\s{2,}"""), " ") // Standardize whitespace
             .replace(Regex("""[.!;]$"""), "") // Remove trailing punctuation
             .trim()
-            .take(40)
+            .take(AppConstants.Parser.MAX_MERCHANT_LENGTH)
             .let { if (it.isEmpty()) "Unknown" else it }
     }
 }

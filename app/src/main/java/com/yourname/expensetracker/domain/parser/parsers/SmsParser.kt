@@ -60,7 +60,7 @@ class SmsParser @Inject constructor(
         title: String?,
         text: String?,
         bigText: String?,
-        subText: String?,
+        @Suppress("UNUSED_PARAMETER") subText: String?,
         packageName: String
     ): ParsedTransaction? {
         // Fix (BUG-011): Handle null title by looking for sender in body or skipping if body looks like bank SMS

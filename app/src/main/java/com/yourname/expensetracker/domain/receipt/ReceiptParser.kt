@@ -134,8 +134,13 @@ class ReceiptParser @Inject constructor(
         val finalSubtotal = subtotal
             ?: if (finalTotal != null && tax != null) finalTotal - tax else null
 
-        // 10. Confidence
-        val confidence = calculateConfidence(merchant, finalTotal, date, lineItems, tax)
+        // 10. Confidence - set to 0 if critical fields are missing
+        val hasCriticalData = merchant != null || finalTotal != null || date != null
+        val confidence = if (!hasCriticalData) {
+            0f
+        } else {
+            calculateConfidence(merchant, finalTotal, date, lineItems, tax)
+        }
 
         return ParsedReceipt(
             merchantName = merchant,
@@ -415,8 +420,8 @@ class ReceiptParser @Inject constructor(
         // Reject zero or near-zero
         if (amount < 0.01) return false
 
-        // Reject unreasonably large amounts
-        if (amount > 5000.0) return false
+        // Reject unreasonably large amounts (increased to 50000 for B2B)
+        if (amount > 50000.0) return false
 
         // Reject year-like numbers (allow decimal years only if not whole)
         if (amount >= 2015.0 && amount <= 2035.0 && amount % 1.0 == 0.0) return false

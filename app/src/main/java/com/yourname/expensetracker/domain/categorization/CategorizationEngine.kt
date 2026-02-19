@@ -1,10 +1,8 @@
 package com.yourname.expensetracker.domain.categorization
 
-import android.content.Context
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
-import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
@@ -12,48 +10,51 @@ import kotlinx.coroutines.sync.withLock
 
 @Singleton
 class CategorizationEngine @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val merchantCategoryDao: MerchantCategoryDao,
     private val merchantNormalizer: MerchantNormalizer
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
-    private var cachedMappingsMap: Map<String, MerchantCategory>? = null
+    private var cachedPatternsSet: Set<String>? = null
     private var lastCacheTime = 0L
     private val CACHE_EXPIRY_MS = 300_000 // 5 minutes
-    
-    // Regex moved to MerchantNormalizer
+
+    companion object {
+        private val STOP_WORDS = setOf("the", "and", "for", "inc", "ltd", "com")
+    }
 
     suspend fun categorize(merchant: String): Long? {
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = false)
         val normalized = lookupResult.canonical.normalizedName.lowercase()
 
-        // Ensure cache is loaded
-        val (sortedMappings, mappingsMap) = getCache()
+        val sortedMappings = getCache()
+        val patternsSet = getPatternsSet()
 
-        // 1. Exact match (from cache)
-        mappingsMap[normalized]?.let { return it.categoryId }
+        // 1. Exact match - check against normalized patterns set
+        if (normalized in patternsSet) {
+            return sortedMappings.find { it.merchantPattern.equals(normalized, ignoreCase = true) }?.categoryId
+        }
 
-        // 2. Substring match
+        // 2. Substring match - padded search
         val paddedNormalized = " $normalized "
         
         for (mapping in sortedMappings) {
             if (mapping.merchantPattern.length >= 5) {
-                if (paddedNormalized.contains(mapping.merchantPattern)) {
+                val paddedPattern = " ${mapping.merchantPattern} "
+                if (paddedNormalized.contains(paddedPattern)) {
                     return mapping.categoryId
                 }
             }
         }
 
-        // 3. Word-level match
+        // 3. Word-level match - check each word
         val words = normalized.split(" ")
             .filter { it.length >= 2 }
-            .filter { it !in listOf("the", "and", "for", "inc", "ltd", "com") }
+            .filter { it !in STOP_WORDS }
             
-        if (words.isNotEmpty()) {
-            for (word in words) {
-                val match = mappingsMap[word]
-                if (match != null) return match.categoryId
+        for (word in words) {
+            if (word in patternsSet) {
+                return sortedMappings.find { it.merchantPattern.equals(word, ignoreCase = true) }?.categoryId
             }
         }
 
@@ -64,19 +65,26 @@ class CategorizationEngine @Inject constructor(
         return merchantNormalizer.normalize(merchant, autoCreate = false).canonical.normalizedName
     }
 
-    private suspend fun getCache(): Pair<List<MerchantCategory>, Map<String, MerchantCategory>> {
+    private suspend fun getCache(): List<MerchantCategory> {
         cacheMutex.withLock {
             val now = System.currentTimeMillis()
-            if (cachedMappings == null || cachedMappingsMap == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
+            if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
                 val all = merchantCategoryDao.getAll()
-                cachedMappings = all.map { it.copy(merchantPattern = " ${it.merchantPattern} ") }
-                    .sortedByDescending { it.merchantPattern.length }
-                
-                cachedMappingsMap = all.associateBy { it.merchantPattern }
+                cachedMappings = all.sortedByDescending { it.merchantPattern.length }
                 lastCacheTime = now
             }
         }
-        return Pair(cachedMappings!!, cachedMappingsMap!!)
+        return cachedMappings!!
+    }
+
+    private suspend fun getPatternsSet(): Set<String> {
+        cacheMutex.withLock {
+            if (cachedPatternsSet == null || lastCacheTime == 0L) {
+                val all = merchantCategoryDao.getAll()
+                cachedPatternsSet = all.map { it.merchantPattern.lowercase() }.toSet()
+            }
+        }
+        return cachedPatternsSet!!
     }
 
     suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) {
@@ -89,7 +97,7 @@ class CategorizationEngine @Inject constructor(
     suspend fun invalidateCache() {
         cacheMutex.withLock {
             cachedMappings = null
-            cachedMappingsMap = null
+            cachedPatternsSet = null
             lastCacheTime = 0
         }
     }

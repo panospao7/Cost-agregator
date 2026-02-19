@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import javax.inject.Inject
 import javax.inject.Singleton
 import java.util.Calendar
+import timber.log.Timber
 
 enum class WeatherState {
     CLEAR_SKIES,      // 🌤️ Comfortable buffer
@@ -189,7 +190,7 @@ class FinancialWeatherRepository @Inject constructor(
             details = narrative.details
         )
     }.catch { e ->
-        android.util.Log.e("FinancialWeatherRepo", "Error generating weather", e)
+        Timber.e(e, "Error generating weather")
         emit(FinancialWeather(
             state = WeatherState.UNKNOWN,
             headline = "Weather Unavailable",

@@ -174,14 +174,16 @@ class RecurringExpenseEngine @Inject constructor(
             
         val mode = modeEntry.key
         
-        // Map mode to known frequencies with expanded ranges (BUG-012, LOGIC-003)
+        // Map mode to known frequencies with non-overlapping ranges
+        // Uses midpoints to avoid gaps between categories
         val frequency = when (mode) {
-             in 5..10 -> RecurrenceFrequency.WEEKLY
-             in 11..23 -> RecurrenceFrequency.BIWEEKLY // Expanded from 11..18 to bridge gap
-             in 24..37 -> RecurrenceFrequency.MONTHLY // Covers month length variations and weekend shifts
-             in 80..110 -> RecurrenceFrequency.QUARTERLY
-             in 150..240 -> RecurrenceFrequency.SEMI_ANNUALLY
-             in 340..390 -> RecurrenceFrequency.ANNUALLY
+             in 3..11 -> RecurrenceFrequency.WEEKLY          // ~7 days (weekly)
+             in 12..22 -> RecurrenceFrequency.BIWEEKLY      // ~14 days (bi-weekly)
+             in 23..45 -> RecurrenceFrequency.MONTHLY       // ~30 days (monthly)
+             in 46..75 -> RecurrenceFrequency.QUARTERLY      // ~90 days (quarterly)
+             in 76..120 -> RecurrenceFrequency.QUARTERLY     // Extended quarterly
+             in 121..270 -> RecurrenceFrequency.SEMI_ANNUALLY // ~180 days
+             in 271..400 -> RecurrenceFrequency.ANNUALLY     // ~365 days
              else -> RecurrenceFrequency.IRREGULAR
         }
 

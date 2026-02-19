@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.util.TimeProvider
+import timber.log.Timber
 import java.time.Instant
 import java.util.*
 import javax.inject.Inject
@@ -31,7 +32,7 @@ class SynthesisEngine @Inject constructor(
         return try {
             synthesizeInternal(pastSumDaily, recurringPatterns, plannedExpenses, savingsGoals, budgetStatuses, spendingPace)
         } catch (e: Exception) {
-            android.util.Log.e(TAG, "Error in synthesize", e)
+            Timber.e(e, "Error in synthesize")
             FinancialForecast(
                 horizon = ForecastHorizon.REST_OF_MONTH,
                 generatedAt = Instant.now(),

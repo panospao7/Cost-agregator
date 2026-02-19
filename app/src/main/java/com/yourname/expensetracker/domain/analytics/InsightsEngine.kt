@@ -15,6 +15,7 @@ import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.sqrt
+import timber.log.Timber
 
 // === Engine ===
 
@@ -258,7 +259,7 @@ class InsightsEngine @Inject constructor(
         currentTotals.mapNotNull { ct ->
             val category = categoryMap[ct.categoryId]
             if (category == null) {
-                android.util.Log.w("InsightsEngine", "Category ${ct.categoryId} not found for expense integration")
+                Timber.tag("InsightsEngine").w("Category ${ct.categoryId} not found for expense integration")
                 return@mapNotNull null
             }
             val prev = previousMap[ct.categoryId]
@@ -373,7 +374,6 @@ class InsightsEngine @Inject constructor(
         // Calculate average monthly total (excluding current month)
         val avgMonthly = calculateAverageMonthlySpend(allExpenses, currentMonth)
 
-        // Project: if we've spent X in D days, we'll spend X * (totalDays/D) by month end
         // Project: if we've spent X in D days, we'll spend X * (totalDays/D) by month end
         val projectedTotal = if (dayOfMonth >= 4) {
             currentSpent * daysInMonth.toDouble() / dayOfMonth
@@ -613,7 +613,7 @@ class InsightsEngine @Inject constructor(
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
     }
 
-    private fun fmt(amount: Double): String = String.format(java.util.Locale.US, "%.2f", amount)
+    private fun fmt(amount: Double): String = String.format(java.util.Locale.getDefault(), "%.2f", amount)
     
     private fun formatDate(dateMs: Long): String {
          return DateFormatterUtils.monthDay().format(java.util.Date(dateMs))

@@ -21,18 +21,6 @@ class BankStatementParser @Inject constructor(
     private val merchantCleaner: MerchantCleaner
 ) {
     companion object {
-        // Greek National Bank transaction line pattern
-        // Format: DD/MM/YYYYHH:MM:SS Valeur Branch Merchant Χ/Π Amount Balance
-        private val GREEK_NBG_TRANSACTION = Regex(
-            """(\d{2}/\d{2}/\d{4})(\d{2}:\d{2}:\d{2})\s+""" +  // DateTime (concatenated)
-            """(\d{2}/\d{2}/\d{4})\s+""" +                      // Valeur Date
-            """(\d{3}\s+\d{3})\s+""" +                          // Branch Code
-            """(.+?)\s+""" +                                     // Merchant (non-greedy)
-            """([ΧΠ])\s+""" +                                   // Type indicator (Χ=Debit, Π=Credit)
-            """(-?[\d.,]+)\s+""" +                             // Amount
-            """([\d.,]+)"""                                     // Balance
-        )
-        
         // Header patterns for Greek National Bank
         private val ACCOUNT_NUMBER_PATTERN = Regex("""Κίνηση Λογαριασμού\s+(\d+)""")
         private val IBAN_PATTERN = Regex("""ΙΒΑΝ\s*Λογαριασμού[:\s]+(GR\d+)""")
@@ -56,7 +44,7 @@ class BankStatementParser @Inject constructor(
         
         // If we got good results from Greek NBG parser, use those
         if (greekNbgTransactions.isNotEmpty()) {
-            android.util.Log.d("BankStatementParser", "Parsed ${greekNbgTransactions.size} Greek NBG transactions")
+            Timber.d("Parsed ${greekNbgTransactions.size} Greek NBG transactions")
             return greekNbgTransactions
         }
 
@@ -168,9 +156,7 @@ class BankStatementParser @Inject constructor(
             } + 2
             
             if (merchantStartIndex < 2 || merchantStartIndex >= typeIndex) {
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("BankStatementParser", "Could not find merchant in: $cleanRow")
-                }
+                Timber.tag("BankStatementParser").w("Could not find merchant in: $cleanRow")
                 return null
             }
             
@@ -179,18 +165,14 @@ class BankStatementParser @Inject constructor(
             val merchant = merchantParts.joinToString(" ").trim()
             
             if (merchant.isBlank()) {
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("BankStatementParser", "Empty merchant in: $cleanRow")
-                }
+                Timber.tag("BankStatementParser").w("Empty merchant in: $cleanRow")
                 return null
             }
             
             // Clean merchant name
             val cleanedMerchant = merchantCleaner.clean(merchant)
             
-            if (BuildConfig.DEBUG) {
-                android.util.Log.d("BankStatementParser", "Parsed NBG: $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
-            }
+            Timber.tag("BankStatementParser").d("Parsed NBG: $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
             
             return ParsedTransaction(
                 amount = kotlin.math.abs(amount),
@@ -201,7 +183,7 @@ class BankStatementParser @Inject constructor(
                 date = timestamp
             )
         } catch (e: Exception) {
-            android.util.Log.w("BankStatementParser", "Failed to parse NBG transaction: ${e.message} | Row: $cleanRow")
+            Timber.tag("BankStatementParser").w("Failed to parse NBG transaction: ${e.message} | Row: $cleanRow")
             return null
         }
     }
@@ -228,12 +210,8 @@ class BankStatementParser @Inject constructor(
             // Remove spaces, convert European format to US format
             val cleaned = numStr.trim().replace(" ", "")
             
-            // Check if it's European format (comma as decimal separator)
-            if (cleaned.contains(",")) {
-                AmountUtils.parseEuropeanAmount(cleaned)
-            } else {
-                cleaned.toDoubleOrNull()
-            }
+            // Use parseAmount which handles both European and US formats
+            AmountUtils.parseAmount(cleaned)
         } catch (e: Exception) {
             null
         }
@@ -338,13 +316,16 @@ class BankStatementParser @Inject constructor(
         val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
         sdf.isLenient = false
 
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val minYear = currentYear - 20 // Allow up to 20 years of historical data
+
         for (pattern in datePatterns) {
             pattern.find(text)?.let { match ->
                 val (d, m, y) = match.destructured
                 val year = if (y.length == 2) "20$y" else y
                 val yearInt = year.toIntOrNull() ?: 0
                 
-                if (yearInt in 2015..2035) {
+                if (yearInt in minYear..currentYear) {
                     try {
                         return sdf.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year")?.time
                     } catch (e: Exception) {

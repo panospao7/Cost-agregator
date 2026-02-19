@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.ln
@@ -71,32 +72,32 @@ open class TransactionClassifier @Inject constructor(
     )
     val stats: StateFlow<ClassifierStats> = _stats.asStateFlow()
 
-    @Volatile
-    private var isLoaded = false
+    private val isLoaded = AtomicBoolean(false)
     private var lastTrainingCount = 0
 
     suspend fun initialize() {
-        if (isLoaded) return
+        if (isLoaded.get()) return
         mutex.withLock {
-            if (isLoaded) return
+            if (!isLoaded.get()) {
 
-            if (loadFromDisk()) {
-                isLoaded = true
-                _stats.value = getStatsInternal()
-                Log.d(TAG, "Loaded model from disk: +$totalPositive/-$totalNegative samples")
+                if (loadFromDisk()) {
+                    isLoaded.set(true)
+                    _stats.value = getStatsInternal()
+                    Log.d(TAG, "Loaded model from disk: +$totalPositive/-$totalNegative samples")
+                }
+
+                val correctionCount = userCorrectionRepository.getCount()
+                if (correctionCount > lastTrainingCount && correctionCount >= MIN_TRAINING_SAMPLES) {
+                    retrainFromCorrectionsInternal()
+                }
+
+                isLoaded.set(true)
             }
-
-            val correctionCount = userCorrectionRepository.getCount()
-            if (correctionCount > lastTrainingCount && correctionCount >= MIN_TRAINING_SAMPLES) {
-                retrainFromCorrectionsInternal()
-            }
-
-            isLoaded = true
         }
     }
 
     open suspend fun predict(text: String): Float {
-        if (!isLoaded) initialize()
+        if (!isLoaded.get()) initialize()
 
         if (totalPositive + totalNegative < MIN_TRAINING_SAMPLES) {
             return 0.5f 
@@ -109,11 +110,15 @@ open class TransactionClassifier @Inject constructor(
     }
 
     suspend fun train(text: String, isTransaction: Boolean) {
+        val newStats: ClassifierStats
         mutex.withLock {
             val features = extractFeatures(text)
             addTrainingSample(features, isTransaction)
+            newStats = getStatsInternal()
             scheduleSave()
         }
+        // Emit outside lock to prevent potential deadlock
+        _stats.value = newStats
     }
 
     fun retrainFromCorrections() {
@@ -215,7 +220,6 @@ open class TransactionClassifier @Inject constructor(
             }
         }
         vocabularySize = vocabulary.size
-        _stats.value = getStatsInternal()
     }
 
     private fun calculateProbability(features: FeatureSet): Float {

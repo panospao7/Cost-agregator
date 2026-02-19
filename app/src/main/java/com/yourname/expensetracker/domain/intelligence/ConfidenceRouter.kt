@@ -34,6 +34,7 @@ class ConfidenceRouter @Inject constructor(
         const val AUTO_ACCEPT_THRESHOLD = 0.85f
         const val REVIEW_THRESHOLD = 0.50f
         const val CACHE_TTL = 60_000L // 1 minute
+        private const val MAX_CACHE_SIZE = 1000
         
         // ML Thresholds
         private const val ML_CONFIDENT_THRESHOLD = 0.8f
@@ -73,8 +74,6 @@ class ConfidenceRouter @Inject constructor(
     private val merchantRejectionCache = ConcurrentHashMap<String, Pair<Float, Long>>()
     private val packageRejectionCache = ConcurrentHashMap<String, Pair<Float, Long>>()
     private val approvalCache = ConcurrentHashMap<String, Pair<Boolean, Long>>()
-    
-    private val MAX_CACHE_SIZE = 1000
 
     private fun checkCacheSize() {
         if (sourceStatsCache.size > MAX_CACHE_SIZE) sourceStatsCache.clear()

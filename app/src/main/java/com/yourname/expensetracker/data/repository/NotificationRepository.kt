@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.*
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 @Singleton
 class NotificationRepository @Inject constructor(
@@ -64,6 +65,14 @@ class NotificationRepository @Inject constructor(
 
     // === Core Processing Pipeline ===
     suspend fun processAndSave(notification: RawNotification) {
+        try {
+            processAndSaveInternal(notification)
+        } catch (e: Exception) {
+            Timber.e(e, "Error processing notification: ${notification.packageName}")
+        }
+    }
+    
+    private suspend fun processAndSaveInternal(notification: RawNotification) {
         // 1. Initial existence check (fast, non-transactional)
         if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return
 
@@ -109,7 +118,7 @@ class NotificationRepository @Inject constructor(
 
         // Fix 4.12: Large amount validation -> Force Needs Review
         if (parsed.amount > 1000000.0 && routingResult.decision == RoutingDecision.AUTO_ACCEPT) {
-            android.util.Log.w("NotificationRepo", "Auto-accept suppressed due to large amount (validation limit)")
+            Timber.w("Auto-accept suppressed due to large amount (validation limit)")
             routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
         }
 

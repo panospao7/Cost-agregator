@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 @Singleton
 class ReviewQueueRepository @Inject constructor(
@@ -130,7 +131,7 @@ class ReviewQueueRepository @Inject constructor(
                     userCorrectionDao.insert(correction)
 
                     try { classifier.retrainFromCorrections() } catch (e: Exception) {
-                        android.util.Log.e("ReviewQueueRepo", "Failed to retrain classifier", e)
+                        Timber.e(e, "Failed to retrain classifier")
                     }
 
                     if (categoryId != null) {
@@ -193,7 +194,7 @@ class ReviewQueueRepository @Inject constructor(
         userCorrectionDao.insert(correction)
 
         try { classifier.retrainFromCorrections() } catch (e: Exception) {
-            android.util.Log.e("ReviewQueueRepo", "Failed to retrain classifier", e)
+            Timber.e(e, "Failed to retrain classifier")
         }
     }
 
@@ -265,7 +266,7 @@ class ReviewQueueRepository @Inject constructor(
                         budgetMonitor.checkBudgets()
                         classifier.train(fullNotificationText, isTransaction = true)
                     } catch (e: Exception) {
-                        android.util.Log.e("ReviewQueueRepo", "Failed to insert recovered expense", e)
+                    Timber.e(e, "Failed to insert recovered expense")
                     }
                 }
             } else {
@@ -305,7 +306,7 @@ class ReviewQueueRepository @Inject constructor(
         userCorrectionDao.insert(correction)
 
         try { classifier.retrainFromCorrections() } catch (e: Exception) {
-            android.util.Log.e("ReviewQueueRepo", "Failed to retrain classifier", e)
+            Timber.e(e, "Failed to retrain classifier")
         }
     }
 }

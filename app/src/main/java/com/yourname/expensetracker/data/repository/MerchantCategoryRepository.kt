@@ -19,17 +19,22 @@ class MerchantCategoryRepository @Inject constructor(
     /**
      * Learns a merchant -> category mapping.
      * Normalizes the merchant name before saving.
+     * Checks for existing entry to avoid duplicates.
      */
     suspend fun learnPattern(merchantName: String, categoryId: Long) {
         val pattern = categorizationEngine.normalize(merchantName)
         if (pattern.isNotEmpty()) {
-            dao.insert(
-                MerchantCategory(
-                    merchantPattern = pattern,
-                    categoryId = categoryId,
-                    confidence = 1.0f
+            // Check if already exists to avoid duplicate
+            val existing = dao.getCategoryForMerchant(pattern)
+            if (existing == null) {
+                dao.insert(
+                    MerchantCategory(
+                        merchantPattern = pattern,
+                        categoryId = categoryId,
+                        confidence = 1.0f
+                    )
                 )
-            )
+            }
         }
     }
     
