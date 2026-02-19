@@ -79,6 +79,13 @@ class CategorizationEngine @Inject constructor(
         return Pair(cachedMappings!!, cachedMappingsMap!!)
     }
 
+    suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) {
+        val normalized = merchantNormalizer.normalize(merchantName, autoCreate = false).canonical.normalizedName
+        val mapping = MerchantCategory(merchantPattern = normalized, categoryId = categoryId)
+        merchantCategoryDao.insert(mapping)
+        invalidateCache()
+    }
+
     suspend fun invalidateCache() {
         cacheMutex.withLock {
             cachedMappings = null

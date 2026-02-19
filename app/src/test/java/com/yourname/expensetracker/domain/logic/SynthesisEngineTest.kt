@@ -60,8 +60,8 @@ class SynthesisEngineTest {
         // Assert
         // 100 (committed recurring) + 200 (must planned) = 300
         assertEquals(300.0, forecast.components.totalCommitted, 0.01)
-        // 50 (likely recurring) + 75 (likely planned) = 125
-        assertEquals(125.0, forecast.components.totalLikely, 0.01)
+        // 50 (likely recurring) + 75 * 0.7 (likely planned weight) = 50 + 52.5 = 102.5
+        assertEquals(102.5, forecast.components.totalLikely, 0.01)
     }
 
     @Test
@@ -160,7 +160,8 @@ class SynthesisEngineTest {
         )
 
         // Assert
-        assertEquals(575.0, forecast.components.discretionaryBudget, 1.0)
+        // budget: 2000 - spent: 500 - committed: 300 - likely: 102.5 (50 + 52.5) - goals: 500 = 597.5
+        assertEquals(597.5, forecast.components.discretionaryBudget, 1.0)
     }
 
     private fun createRecurringPattern(amount: Double, confidence: Float, date: Long) = RecurringPattern(

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.intelligence.ml
 
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -11,6 +12,7 @@ import android.content.Context
 
 class HybridExpenseClassifierTest {
     private val categoryRepository = mockk<CategoryRepository>(relaxed = true)
+    private val categorizationEngine = mockk<CategorizationEngine>(relaxed = true)
     private val nbClassifier = mockk<ExpenseCategoryClassifier>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
     private lateinit var hybridClassifier: HybridExpenseClassifier
@@ -23,11 +25,14 @@ class HybridExpenseClassifierTest {
     @Before
     fun setup() {
         coEvery { categoryRepository.getAll() } returns listOf(foodCategory, groceriesCategory, miscCategory, uncategorizedCategory)
-        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, nbClassifier)
+        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier)
     }
 
     @Test
-    fun `rule-based matching takes priority`() = runBlocking {
+    fun `merchant dictionary matching takes priority`() = runBlocking {
+        // Mock CategorizationEngine to return Food for Starbucks
+        coEvery { categorizationEngine.categorize("Starbucks") } returns foodCategory.id
+
         val result = hybridClassifier.classify(
             merchantName = "Starbucks",
             amount = 15.0
@@ -38,8 +43,9 @@ class HybridExpenseClassifierTest {
     }
 
     @Test
-    fun `ml-based matching used when rules fail`() = runBlocking {
-        // No rule for "StrangeMerchant"
+    fun `ml-based matching used when dictionary fails`() = runBlocking {
+        // Dictionary returns null, ML should kick in
+        coEvery { categorizationEngine.categorize(any()) } returns null
         coEvery { nbClassifier.isReady() } returns true
         coEvery { nbClassifier.classify(any()) } returns listOf(
             CategoryScore(groceriesCategory.id, "Groceries", 0.9f)
@@ -56,6 +62,8 @@ class HybridExpenseClassifierTest {
 
     @Test
     fun `fallback used when everything fails`() = runBlocking {
+        // Dictionary returns null, ML not ready
+        coEvery { categorizationEngine.categorize(any()) } returns null
         coEvery { nbClassifier.isReady() } returns false
         
         val result = hybridClassifier.classify(

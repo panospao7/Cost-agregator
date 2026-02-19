@@ -86,6 +86,8 @@ class ExpenseRepository @Inject constructor(
             correctedAmount = null,
             originalCategoryId = expense.categoryId,
             correctedCategoryId = newCategoryId,
+            originalType = expense.transactionType.name,
+            correctedType = null,
             wasRejected = false,
             wasApproved = true,
             notificationTitle = null,
@@ -106,6 +108,11 @@ class ExpenseRepository @Inject constructor(
         expense.categoryId?.let { 
             merchantCategoryRepository.learnPattern(newMerchant, it)
         }
+    }
+
+    suspend fun updateExpenseType(expense: Expense, newType: TransactionType) {
+        if (expense.transactionType == newType) return
+        expenseDao.updateTransactionType(expense.id, newType.name)
     }
 
     suspend fun searchMerchants(query: String): List<MerchantSuggestion> {
@@ -161,4 +168,21 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long, timeZoneOffset: Int): List<DayOfWeekTotal> =
         expenseDao.getDayOfWeekPattern(startMs, endMs, timeZoneOffset)
+
+    // === Deposit/Income Methods ===
+
+    suspend fun getDepositsBetween(startDate: Long, endDate: Long): List<Expense> =
+        expenseDao.getDepositsBetween(startDate, endDate)
+
+    fun getDepositsBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>> =
+        expenseDao.getDepositsBetweenFlow(startDate, endDate)
+
+    suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double =
+        expenseDao.getTotalDepositsForPeriod(startMs, endMs)
+
+    suspend fun getMonthlyDeposits(): List<com.yourname.expensetracker.data.database.dao.MonthlyDepositTotal> =
+        expenseDao.getMonthlyDeposits()
+
+    suspend fun getTotalDeposits(): Double =
+        expenseDao.getTotalDeposits()
 }

@@ -84,6 +84,24 @@ sealed class DashboardWidget {
     data class FinancialWeatherWidget(
         val weather: FinancialWeather
     ) : DashboardWidget()
+
+    data class FinancialRunway(
+        val daysRemaining: Int,
+        val totalBudget: Double,
+        val discretionaryRemaining: Double,
+        val averageDailyDiscretionarySpend: Double,
+        val monthlyIncome: Double,
+        val committedExpenses: Double,   // Recurring bills
+        val likelyExpenses: Double,     // Planned expenses
+        val status: RunwayStatus
+    ) : DashboardWidget()
+
+    enum class RunwayStatus {
+        HEALTHY,      // 14+ days
+        CAUTION,     // 7-13 days
+        CRITICAL,    // < 7 days
+        NO_INCOME    // No deposits detected
+    }
 }
 
 data class CategorySpending(
@@ -256,11 +274,12 @@ class HomeViewModel @Inject constructor(
         val weekStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
 
         val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        val deposits = expenses.filter { it.transactionType == TransactionType.DEPOSIT }
         val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
         val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
 
         val totalSpent = summary.totalSpent
-        val monthSpent = totalSpent 
+        val monthSpent = totalSpent
         val txCount = summary.transactionCount
         val previousMonthTotal = summary.previousTotalSpent ?: 0.0
 
@@ -275,14 +294,13 @@ class HomeViewModel @Inject constructor(
         
         val totalBudgetAmount = overallBudget?.budget?.amount ?: 0.0
 
-        // === Budget Block Party Logic (Refactored to SynthesisEngine) ===
+        // === Financial Runway Calculation ===
+        // First, calculate the forecast (needed for accurate discretionary spend)
         val monthStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
         val currentDayIdx = ((now - monthStart) / 86400000L).toInt().coerceAtLeast(0)
         
-        // RE-CALCULATE FORECAST FOR BLOCK PARTY (Centralized Logic)
         val currentPace = insightsEngine.getSpendingPaceSuspend(expenses)
         
-        // We need pastSumDaily for the forecast
         val purchasesThisMonth = expenses.filter { 
             it.transactionType == TransactionType.PURCHASE && it.date >= monthStart
         }
@@ -301,6 +319,51 @@ class HomeViewModel @Inject constructor(
             savingsGoals = goals,
             budgetStatuses = budgetStatuses,
             spendingPace = currentPace
+        )
+        
+        // Get forecast components including upcoming committed and likely expenses
+        val totalCommitted = forecast.components?.totalCommitted ?: 0.0
+        val totalLikely = forecast.components?.totalLikely ?: 0.0
+        
+        // Use forecast's projected total at end of month (includes committed + likely + discretionary)
+        // This accounts for known bills that haven't hit yet
+        val projectedSpendingPoints = forecast.components?.projectedSpendingPoints ?: emptyList()
+        val projectedMonthlyTotal = projectedSpendingPoints.lastOrNull() ?: monthSpent
+        
+        // Average daily burn based on PROJECTED total (more accurate - includes future obligations)
+        val averageDailyBurn = if (dayOfMonth > 0) projectedMonthlyTotal / dayOfMonth else 0.0
+        
+        // Monthly income from deposits
+        val monthlyIncome = deposits
+            .filter { it.date >= monthStart }
+            .sumOf { it.amount }
+        
+        // Total remaining budget (discretionary pool)
+        val totalRemaining = weather.discretionaryBudget.coerceAtLeast(0.0)
+        
+        // Calculate runway: total remaining / projected daily burn
+        val runwayDays = if (averageDailyBurn > 0 && totalRemaining > 0) {
+            (totalRemaining / averageDailyBurn).toInt().coerceAtLeast(0)
+        } else {
+            0
+        }
+        
+        val runwayStatus = when {
+            monthlyIncome == 0.0 -> DashboardWidget.RunwayStatus.NO_INCOME
+            runwayDays >= 14 -> DashboardWidget.RunwayStatus.HEALTHY
+            runwayDays >= 7 -> DashboardWidget.RunwayStatus.CAUTION
+            else -> DashboardWidget.RunwayStatus.CRITICAL
+        }
+        
+        val financialRunway = DashboardWidget.FinancialRunway(
+            daysRemaining = runwayDays,
+            totalBudget = totalBudgetAmount,
+            discretionaryRemaining = totalRemaining,
+            averageDailyDiscretionarySpend = averageDailyBurn,
+            monthlyIncome = monthlyIncome,
+            committedExpenses = totalCommitted,
+            likelyExpenses = totalLikely,
+            status = runwayStatus
         )
         
         // Call centralized Block Party logic
@@ -405,6 +468,11 @@ class HomeViewModel @Inject constructor(
                 daysRemaining = daysRemaining
             )
         )
+
+        // Financial Runway - show based on budget availability, not income
+        if (totalRemaining > 0 || totalBudgetAmount > 0) {
+            widgets.add(financialRunway)
+        }
         
         // Block Party (New)
         if (blockPartyDays.isNotEmpty()) {
@@ -431,6 +499,10 @@ class HomeViewModel @Inject constructor(
             totalSpent = totalSpent,
             txCount = txCount
         )
+    }
+    .catch { e ->
+        android.util.Log.e("HomeViewModel", "Error processing dashboard data", e)
+        emit(CompiledDashboardData(emptyList(), 0.0, 0))
     }
     .flowOn(Dispatchers.Default) 
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompiledDashboardData(emptyList(), 0.0, 0))
@@ -551,6 +623,7 @@ class HomeViewModel @Inject constructor(
             is DashboardWidget.RecentTransactions -> "recent_transactions"
             is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
             is DashboardWidget.BudgetBlockParty -> "budget_block_party"
+            is DashboardWidget.FinancialRunway -> "financial_runway"
         }
     }
 }

@@ -75,15 +75,16 @@ class DashboardRepository @Inject constructor(
         return listOf(
             DashboardWidgetConfig("financial_weather", 0),
             DashboardWidgetConfig("safe_to_spend", 1),
-            DashboardWidgetConfig("spending_pace", 2),
-            DashboardWidgetConfig("review_alert", 3),
-            DashboardWidgetConfig("spending_trend", 4),
-            DashboardWidgetConfig("insight", 5),
-            DashboardWidgetConfig("period_summary", 6),
-            DashboardWidgetConfig("budget_health", 7),
-            DashboardWidgetConfig("top_categories", 8),
-            DashboardWidgetConfig("recent_transactions", 9),
-            DashboardWidgetConfig("budget_block_party", 10)
+            DashboardWidgetConfig("financial_runway", 2),
+            DashboardWidgetConfig("spending_pace", 3),
+            DashboardWidgetConfig("review_alert", 4),
+            DashboardWidgetConfig("spending_trend", 5),
+            DashboardWidgetConfig("insight", 6),
+            DashboardWidgetConfig("period_summary", 7),
+            DashboardWidgetConfig("budget_health", 8),
+            DashboardWidgetConfig("top_categories", 9),
+            DashboardWidgetConfig("recent_transactions", 10),
+            DashboardWidgetConfig("budget_block_party", 11)
         )
     }
 }

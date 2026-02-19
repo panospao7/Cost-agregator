@@ -163,6 +163,29 @@ class DebugViewModel @Inject constructor(
         }
     }
 
+    fun simulateDepositNotification() {
+        viewModelScope.launch {
+            val depositTemplates = listOf(
+                Triple("com.revolut", "Revolut", "deposit €500.00 from EMPLOYER"),
+                Triple("gr.nbg.mobilebanking", "NBG", "Κατάθεση €500,00 από EMPLOYER"),
+                Triple("com.eurobank.mobile", "Eurobank", "Πίστωση €500,00 μισθός"),
+                Triple("com.revolut", "Revolut", "received €750.00 salary"),
+                Triple("com.revolut", "Revolut", "€1000 credited from TRANSFER")
+            )
+            val template = depositTemplates.random()
+            
+            val fakeNotification = RawNotification(
+                packageName = template.first,
+                appName = template.second,
+                title = "Deposit Received",
+                text = template.third,
+                timestamp = timeProvider.now(),
+                capturedAt = timeProvider.now()
+            )
+            repository.processAndSave(fakeNotification)
+        }
+    }
+
     fun triggerManualSync(context: android.content.Context) {
         val intent = android.content.Intent(context, com.yourname.expensetracker.service.NotificationCaptureService::class.java).apply {
             action = com.yourname.expensetracker.service.NotificationCaptureService.ACTION_REFRESH_NOTIFICATIONS

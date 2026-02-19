@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
@@ -89,14 +90,16 @@ class ReviewViewModel @Inject constructor(
         reviewId: Long,
         finalAmount: Double?,
         finalMerchant: String?,
-        finalCategoryId: Long?
+        finalCategoryId: Long?,
+        finalType: TransactionType?
     ) {
         viewModelScope.launch {
             val result = reviewQueueRepository.approveReview(
                 reviewId = reviewId,
                 finalAmount = finalAmount,
                 finalMerchant = finalMerchant,
-                finalCategoryId = finalCategoryId
+                finalCategoryId = finalCategoryId,
+                finalType = finalType
             )
             handleResult(result, "Failed to approve edits")
         }

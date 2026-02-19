@@ -41,9 +41,19 @@ class SmsParser @Inject constructor(
     }
 
     private val TRANSACTION_KEYWORDS = listOf(
+        // Purchase keywords
         "αγορ", "πληρωμ", "χρέωσ", "συναλλαγ",
         "purchase", "payment", "charged", "debit",
         "agora", "pliromi", "plirwmi", "hreosi", "xreosi", "synallagi"
+    )
+
+    private val DEPOSIT_KEYWORDS = listOf(
+        // Greek deposit keywords
+        "κατάθεση", "πίστωση", "μισθοδοσία", "καταθέσεις", "πιστώσεις",
+        // English deposit keywords
+        "deposit", "credited", "received", "incoming", "transfer received",
+        // Greek salary/income
+        "μισθός", " salary", "wages", "επιστροφή", "refund"
     )
 
     override fun parse(
@@ -66,9 +76,18 @@ class SmsParser @Inject constructor(
         if (!isBankSms) return null
 
 
-        // Must contain transaction keywords
-        val hasKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) }
-        if (!hasKeyword) return null
+        // Must contain transaction keywords (purchase OR deposit)
+        val hasPurchaseKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) }
+        val hasDepositKeyword = DEPOSIT_KEYWORDS.any { lowerBody.contains(it) }
+        
+        if (!hasPurchaseKeyword && !hasDepositKeyword) return null
+
+        // Determine transaction type based on keywords
+        val transactionType = if (hasDepositKeyword && !hasPurchaseKeyword) {
+            TransactionType.DEPOSIT
+        } else {
+            TransactionType.PURCHASE
+        }
 
         // Extract amount
         val matcher = amountPattern.matcher(body)
@@ -87,7 +106,7 @@ class SmsParser @Inject constructor(
             amount = amount,
             currency = currency,
             merchant = merchant,
-            type = TransactionType.PURCHASE,
+            type = transactionType,
             confidence = 0.85f
         )
     }

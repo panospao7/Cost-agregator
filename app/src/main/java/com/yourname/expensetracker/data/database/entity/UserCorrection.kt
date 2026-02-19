@@ -32,6 +32,8 @@ data class UserCorrection(
     val correctedAmount: Double?,
     val originalCategoryId: Long?,
     val correctedCategoryId: Long?,
+    val originalType: String?,           // TransactionType name (e.g., "PURCHASE")
+    val correctedType: String?,          // User corrected TransactionType
     val wasRejected: Boolean = false,    // User said "this isn't a transaction"
     val wasApproved: Boolean = false,    // User confirmed it was correct
     val notificationTitle: String?,

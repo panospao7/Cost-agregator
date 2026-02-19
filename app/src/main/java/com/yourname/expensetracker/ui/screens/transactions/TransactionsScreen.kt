@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.transactions
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.*
@@ -43,6 +44,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.formattedAmount
 import com.yourname.expensetracker.data.database.model.formattedDate
@@ -90,6 +92,7 @@ fun TransactionsScreen(
     var expenseToCategorize by remember { mutableStateOf<Expense?>(null) }
     var expenseToRecurring by remember { mutableStateOf<Expense?>(null) }
     var expenseToRename by remember { mutableStateOf<Expense?>(null) }
+    var expenseToChangeType by remember { mutableStateOf<Expense?>(null) }
     var showSearch by remember { mutableStateOf(false) }
     
     // Pull-to-refresh state
@@ -365,7 +368,8 @@ fun TransactionsScreen(
                                     onDelete = { expenseToDelete = item.expense },
                                     onEditCategory = { expenseToCategorize = item.expense },
                                     onMarkRecurring = { expenseToRecurring = item.expense },
-                                    onRename = { expenseToRename = item.expense }
+                                    onRename = { expenseToRename = item.expense },
+                                    onChangeType = { expenseToChangeType = item.expense }
                                 )
                             }
                         }
@@ -440,6 +444,18 @@ fun TransactionsScreen(
                 onConfirm = { newName ->
                     expenseToRename?.let { viewModel.updateMerchant(it, newName) }
                     expenseToRename = null
+                }
+            )
+        }
+
+        // Change type dialog
+        if (expenseToChangeType != null) {
+            ChangeTypeDialog(
+                currentType = expenseToChangeType?.transactionType ?: TransactionType.PURCHASE,
+                onDismiss = { expenseToChangeType = null },
+                onConfirm = { newType ->
+                    expenseToChangeType?.let { viewModel.updateExpenseType(it, newType) }
+                    expenseToChangeType = null
                 }
             )
         }
@@ -573,7 +589,8 @@ private fun TransactionItem(
     onDelete: () -> Unit,
     onEditCategory: () -> Unit,
     onMarkRecurring: () -> Unit,
-    onRename: () -> Unit
+    onRename: () -> Unit,
+    onChangeType: () -> Unit
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -727,6 +744,24 @@ private fun TransactionItem(
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
+                    // Change type action
+                    IconButton(
+                        onClick = onChangeType,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        val typeIcon = when (expense.transactionType) {
+                            TransactionType.PURCHASE -> "💸"
+                            TransactionType.DEPOSIT -> "💰"
+                            TransactionType.WITHDRAWAL -> "🏧"
+                            TransactionType.TRANSFER -> "🔄"
+                            else -> "❓"
+                        }
+                        Text(
+                            text = typeIcon,
+                            fontSize = 16.sp
+                        )
+                    }
+
                     // Recurring action
                     IconButton(
                         onClick = onMarkRecurring,
@@ -1029,6 +1064,110 @@ fun RenameMerchantDialog(
                 )
             ) {
                 Text("Update")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun ChangeTypeDialog(
+    currentType: TransactionType,
+    onDismiss: () -> Unit,
+    onConfirm: (TransactionType) -> Unit
+) {
+    var selectedType by remember { mutableStateOf(currentType) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.SwapHoriz, contentDescription = null) },
+        title = { Text("Change Transaction Type") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Incorrectly categorized? Change the type here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                TransactionType.values().filter { it != TransactionType.UNKNOWN }.forEach { type ->
+                    val isSelected = selectedType == type
+                    val typeColor = when (type) {
+                        TransactionType.PURCHASE -> SemanticColors.DangerRed
+                        TransactionType.DEPOSIT -> SemanticColors.SuccessGreen
+                        TransactionType.WITHDRAWAL -> SemanticColors.WarningOrange
+                        TransactionType.TRANSFER -> SemanticColors.PrimaryIndigo
+                        else -> SemanticColors.TextSecondary
+                    }
+                    val typeIcon = when (type) {
+                        TransactionType.PURCHASE -> "💸"
+                        TransactionType.DEPOSIT -> "💰"
+                        TransactionType.WITHDRAWAL -> "🏧"
+                        TransactionType.TRANSFER -> "🔄"
+                        else -> "❓"
+                    }
+                    val typeDescription = when (type) {
+                        TransactionType.PURCHASE -> "Money spent on purchases"
+                        TransactionType.DEPOSIT -> "Money received (salary, transfer in)"
+                        TransactionType.WITHDRAWAL -> "Cash withdrawn from ATM"
+                        TransactionType.TRANSFER -> "Money transferred between accounts"
+                        else -> ""
+                    }
+
+                    Surface(
+                        onClick = { selectedType = type },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) typeColor.copy(alpha = 0.15f) else Color.Transparent,
+                        border = BorderStroke(1.dp, if (isSelected) typeColor else SemanticColors.GlassBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(typeIcon, fontSize = 24.sp)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    type.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) typeColor else SemanticColors.TextPrimary
+                                )
+                                Text(
+                                    typeDescription,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = SemanticColors.TextSecondary
+                                )
+                            }
+                            if (isSelected) {
+                                Icon(
+                                    Icons.Rounded.CheckCircle,
+                                    contentDescription = null,
+                                    tint = typeColor
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(selectedType) },
+                enabled = selectedType != currentType,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = SemanticColors.PrimaryIndigo
+                )
+            ) {
+                Text("Update Type")
             }
         },
         dismissButton = {

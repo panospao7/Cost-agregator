@@ -335,6 +335,17 @@ fun HomeScreen(
                                     onPlanClick = { showAddPlannedExpenseDialog = true }
                                 )
                             }
+                            is DashboardWidget.FinancialRunway -> {
+                                FinancialRunwayCard(
+                                    daysRemaining = widget.daysRemaining,
+                                    discretionaryRemaining = widget.discretionaryRemaining,
+                                    averageDailyDiscretionarySpend = widget.averageDailyDiscretionarySpend,
+                                    monthlyIncome = widget.monthlyIncome,
+                                    committedExpenses = widget.committedExpenses,
+                                    likelyExpenses = widget.likelyExpenses,
+                                    status = widget.status
+                                )
+                            }
                         }
                     }
                 }

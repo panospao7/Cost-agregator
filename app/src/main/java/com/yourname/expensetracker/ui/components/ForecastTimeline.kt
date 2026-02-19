@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -46,14 +47,28 @@ fun ForecastTimeline(
             return
         }
 
-        // Vico model creation - Optimized: wrap in remember to avoid allocation spikes
+        // Vico model creation - Connect past to projected (no gap)
         val chartEntryModel: ChartEntryModel = remember(pastPoints, projectedPoints, budgetLimit) {
             val pastEntries = pastPoints.mapIndexed { index, value -> 
                 FloatEntry(index.toFloat(), value.toFloat()) 
             }
-            val projectionEntries = projectedPoints.mapIndexed { index, value -> 
-                FloatEntry((pastPoints.size + index).toFloat(), value.toFloat()) 
+            
+            // Connect: projected starts from last past point (seamless connection)
+            val projectionEntries = if (pastPoints.isNotEmpty() && projectedPoints.isNotEmpty()) {
+                val lastPastX = (pastPoints.size - 1).toFloat()
+                val lastPastY = pastPoints.last().toFloat()
+                
+                // Add connector point then projected points
+                listOf(FloatEntry(lastPastX, lastPastY)) + 
+                projectedPoints.mapIndexed { index, value -> 
+                    FloatEntry((lastPastX + 1 + index).toFloat(), value.toFloat()) 
+                }
+            } else {
+                projectedPoints.mapIndexed { index, value -> 
+                    FloatEntry((pastPoints.size + index).toFloat(), value.toFloat()) 
+                }
             }
+            
             val budgetLimitEntries = listOf(
                 FloatEntry(0f, budgetLimit.toFloat()),
                 FloatEntry((pastPoints.size + projectionEntries.size).toFloat(), budgetLimit.toFloat())
@@ -105,7 +120,7 @@ fun ForecastTimeline(
 @Composable
 private fun LegendItem(label: String, color: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        androidx.compose.foundation.Canvas(modifier = Modifier.size(8.dp)) {
+        Canvas(modifier = Modifier.size(8.dp)) {
             drawCircle(color)
         }
         Spacer(modifier = Modifier.width(6.dp))

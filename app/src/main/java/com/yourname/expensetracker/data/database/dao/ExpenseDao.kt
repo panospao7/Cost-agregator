@@ -72,6 +72,9 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET merchant = :merchant WHERE id = :expenseId")
     suspend fun updateMerchant(expenseId: Long, merchant: String)
 
+    @Query("UPDATE expenses SET transactionType = :type WHERE id = :expenseId")
+    suspend fun updateTransactionType(expenseId: Long, type: String)
+
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses 
@@ -328,6 +331,31 @@ interface ExpenseDao {
         ORDER BY dayOfWeek ASC
     """)
     suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long, timeZoneOffset: Int): List<DayOfWeekTotal>
+
+    // === Deposit/Income Queries ===
+
+    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    suspend fun getDepositsBetween(startDate: Long, endDate: Long): List<Expense>
+
+    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    fun getDepositsBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
+
+    @Query("SELECT COALESCE(SUM(amount), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs")
+    suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double
+
+    @Query("""
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch') as month, 
+               SUM(amount) as total, COUNT(*) as count
+        FROM expenses 
+        WHERE transactionType = 'DEPOSIT'
+        GROUP BY month
+        ORDER BY month DESC
+        LIMIT 12
+    """)
+    suspend fun getMonthlyDeposits(): List<MonthlyDepositTotal>
+
+    @Query("SELECT COALESCE(SUM(amount), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT'")
+    suspend fun getTotalDeposits(): Double
 }
 
 data class MerchantSuggestion(
@@ -371,5 +399,11 @@ data class DayOfWeekTotal(
     val total: Double,
     val txCount: Int,
     val avgAmount: Double
+)
+
+data class MonthlyDepositTotal(
+    val month: String,
+    val total: Double,
+    val count: Int
 )
 

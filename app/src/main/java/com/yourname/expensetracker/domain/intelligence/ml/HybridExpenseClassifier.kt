@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -12,29 +13,20 @@ import javax.inject.Singleton
 
 /**
  * Hybrid Expense Classifier for CATEGORIZATION.
- * Strategy priority: Rule-based -> History (TBD) -> ML prediction.
+ * Strategy priority: Merchant Dictionary -> ML prediction -> Fallback.
+ * Uses CategorizationEngine as single source of truth for merchant->category mapping.
  */
 @Singleton
 class HybridExpenseClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
     private val categoryRepository: CategoryRepository,
+    private val categorizationEngine: CategorizationEngine,
     private val nbClassifier: ExpenseCategoryClassifier
 ) {
     companion object {
         private const val TAG = "HybridClassifier"
         val RULE_CONFIDENCE = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RULE_BASED
         val ML_THRESHOLD = com.yourname.expensetracker.domain.util.AppConstants.Confidence.ML_PREDICTION
-        
-        private val CATEGORY_KEYWORDS: Map<String, String> = mapOf(
-            "mcdonalds" to "Food", "starbucks" to "Food", "pizza" to "Food",
-            "restaurant" to "Food", "cafe" to "Food", "coffee" to "Food",
-            "supermarket" to "Groceries", "lidl" to "Groceries", "sklavenitis" to "Groceries",
-            "βασιλόπουλος" to "Groceries", "σκλαβενίτης" to "Groceries", "μασούτης" to "Groceries",
-            "γαλαξίας" to "Groceries", "κρητικός" to "Groceries", "φούρνος" to "Groceries",
-            "uber" to "Transport", "taxi" to "Transport", "bolt" to "Transport",
-            "fuel" to "Transport", "gas" to "Transport", "shell" to "Transport", "bp" to "Transport",
-            "amazon" to "Shopping", "netflix" to "Entertainment", "spotify" to "Entertainment"
-        )
     }
 
     private val featureExtractor = FeatureExtractor()
@@ -64,10 +56,10 @@ class HybridExpenseClassifier @Inject constructor(
             merchant = merchantName
         )
 
-        // 1. Rules
-        val ruleResult = classifyWithRules(features)
-        if (ruleResult != null && ruleResult.confidence >= RULE_CONFIDENCE) {
-            return@withContext ruleResult
+        // 1. Merchant Dictionary (single source of truth)
+        val dictionaryResult = classifyWithMerchantDictionary(merchantName)
+        if (dictionaryResult != null) {
+            return@withContext dictionaryResult
         }
 
         // 2. ML Prediction
@@ -90,7 +82,7 @@ class HybridExpenseClassifier @Inject constructor(
             }
         }
 
-        // 3. Fallback (Improved for BUG-012)
+        // 3. Fallback
         val defaultCategory = categories.find { it.name.equals("Uncategorized", ignoreCase = true) }
             ?: categories.find { it.name.contains("Other", ignoreCase = true) }
             ?: categories.firstOrNull()
@@ -103,23 +95,30 @@ class HybridExpenseClassifier @Inject constructor(
         )
     }
 
-    private fun classifyWithRules(features: ExpenseFeatures): ClassificationResult? {
-        val tokens = features.merchantTokens.map { it.lowercase() }
-        for (token in tokens) {
-            val catName = CATEGORY_KEYWORDS[token]
-            if (catName != null) {
-                val category = categoryMap[catName.lowercase()]
-                if (category != null) {
-                    return ClassificationResult(
-                        categoryId = category.id,
-                        categoryName = category.name,
-                        confidence = 0.98f,
-                        matchType = MatchType.RULE_MATCH
-                    )
-                }
+    /**
+     * Uses CategorizationEngine (merchant dictionary) for categorization.
+     * This is the single source of truth for merchant->category mapping.
+     */
+    private suspend fun classifyWithMerchantDictionary(merchantName: String): ClassificationResult? {
+        val categoryId = categorizationEngine.categorize(merchantName)
+        
+        if (categoryId != null) {
+            val category = categories.find { it.id == categoryId }
+            if (category != null) {
+                return ClassificationResult(
+                    categoryId = category.id,
+                    categoryName = category.name,
+                    confidence = 0.98f,
+                    matchType = MatchType.RULE_MATCH
+                )
             }
         }
         return null
+    }
+    
+    // Keep for backward compatibility during migration
+    private fun classifyWithRules(features: ExpenseFeatures): ClassificationResult? {
+        return null // No longer used - replaced by classifyWithMerchantDictionary
     }
 
     suspend fun learnFromCorrection(
@@ -136,5 +135,8 @@ class HybridExpenseClassifier @Inject constructor(
             merchant = merchantName
         )
         nbClassifier.train(features, correctCategoryId)
+        
+        // Also learn in CategorizationEngine for future dictionary lookups
+        categorizationEngine.learnMerchantCategory(merchantName, correctCategoryId)
     }
 }

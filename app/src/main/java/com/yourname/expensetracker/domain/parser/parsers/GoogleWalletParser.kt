@@ -37,6 +37,12 @@ class GoogleWalletParser @Inject constructor(
         "reward", "cashback available", "nearby", "suggest"
     )
 
+    // Deposit keywords for Google Pay
+    private val DEPOSIT_KEYWORDS = listOf(
+        "received", "credited", "deposit", "incoming transfer",
+        "sent to you", "paid you", "money received"
+    )
+
     override fun parse(
         title: String?,
         text: String?,
@@ -49,17 +55,20 @@ class GoogleWalletParser @Inject constructor(
 
         if (REJECT_PATTERNS.any { lowerFull.contains(it) }) return null
 
+        // Determine if this is a deposit or purchase
+        val isDeposit = DEPOSIT_KEYWORDS.any { lowerFull.contains(it) }
+
         // Extract amount from anywhere in the notification
         val amount = extractAmount(fullText) ?: return null
 
         // Extract merchant: usually the title IS the merchant, or text contains "at MERCHANT"
-        val merchant = extractMerchant(title, text, bigText)
+        val merchant = extractMerchant(title, text, bigText, isDeposit)
 
         return ParsedTransaction(
             amount = amount.first,
             currency = amount.second,
             merchant = merchant,
-            type = TransactionType.PURCHASE,
+            type = if (isDeposit) TransactionType.DEPOSIT else TransactionType.PURCHASE,
             confidence = 0.90f
         )
     }
@@ -77,7 +86,20 @@ class GoogleWalletParser @Inject constructor(
         return null
     }
 
-    private fun extractMerchant(title: String?, text: String?, bigText: String?): String {
+    private fun extractMerchant(title: String?, text: String?, bigText: String?, isDeposit: Boolean): String {
+        // For deposits, extract sender instead of merchant
+        if (isDeposit) {
+            val combinedText = listOfNotNull(title, text, bigText).joinToString(" ")
+            // Look for "from SENDER" pattern
+            val fromPattern = Pattern.compile("""(?:from|απ[όο])\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{3,30})""", Pattern.CASE_INSENSITIVE)
+            val fromMatcher = fromPattern.matcher(combinedText)
+            if (fromMatcher.find()) {
+                return merchantCleaner.clean(fromMatcher.group(1))
+            }
+            // Default to "Google Pay" for deposits
+            return "Google Pay"
+        }
+
         // Check for "at MERCHANT" pattern in text
         val combinedText = listOfNotNull(text, bigText).joinToString(" ")
         val atMatcher = atPattern.matcher(combinedText)

@@ -310,6 +310,20 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
+    fun updateExpenseType(expense: Expense, newType: TransactionType) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                expenseRepository.updateExpenseType(expense, newType)
+                _successMessage.emit("Type changed to ${newType.name}")
+            } catch (e: Exception) {
+                _error.emit("Failed to update type: ${e.message}")
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
     fun markAsRecurring(
         expense: Expense, 
         frequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency

@@ -148,6 +148,18 @@ fun DebugScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Button(
+                        onClick = { viewModel.simulateDepositNotification() },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Text("Simulate Single Deposit (€500)")
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
                         onClick = { viewModel.triggerManualSync(context) },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(

@@ -41,6 +41,18 @@ class GenericTransactionParser @Inject constructor(
         )
     }
 
+    // Deposit/Income signals - HIGH PRIORITY (checked first)
+    private val depositSignals by lazy {
+        listOf(
+            // English deposit patterns
+            Pattern.compile("""(?:deposit|credited|received|incoming|transfer\s*received)[\p{L}]*\s*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE),
+            // Greek deposit patterns
+            Pattern.compile("""(?:κατάθεση|πίστωση|μισθοδοσία|επιστροφή)[\p{L}]*\s*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+            // Salary patterns
+            Pattern.compile("""(?:salary|wages|μισθ[όό]ς)[\p{L}]*\s*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+        )
+    }
+
     // NEGATIVE signals — if present, this is NOT a transaction
     // Using Regex to enforce word boundaries for English words to avoid "Coffee" matching "offer"
     private val negativeSignalsPattern by lazy {
@@ -70,24 +82,29 @@ class GenericTransactionParser @Inject constructor(
         // 1. Check negative signals first
         if (negativeSignalsPattern.matcher(lowerFull).find()) return null
 
-        // 2. Require at least one STRONG transaction signal
-        val hasStrongSignal = strongTransactionSignals.any { it.matcher(lowerFull).find() }
-        if (!hasStrongSignal) return null
+        // 2. Check for DEPOSIT signals FIRST (high priority)
+        val hasDepositSignal = depositSignals.any { it.matcher(lowerFull).find() }
 
-        // 3. Extract amount
+        // 3. If not deposit, require at least one STRONG transaction signal
+        if (!hasDepositSignal) {
+            val hasStrongSignal = strongTransactionSignals.any { it.matcher(lowerFull).find() }
+            if (!hasStrongSignal) return null
+        }
+
+        // 4. Extract amount
         val amountResult = extractAmount(fullText) ?: return null
 
-        // 4. Sanity check amount
+        // 5. Sanity check amount
         if (amountResult.first < 0.10 || amountResult.first > 25000) return null
 
-        // 5. Extract merchant
+        // 6. Extract merchant
         val merchant = extractMerchant(fullText, title)
 
         return ParsedTransaction(
             amount = amountResult.first,
             currency = amountResult.second,
             merchant = merchant,
-            type = TransactionType.PURCHASE,
+            type = if (hasDepositSignal) TransactionType.DEPOSIT else TransactionType.PURCHASE,
             confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.ML_PREDICTION // LOGIC-004
         )
     }

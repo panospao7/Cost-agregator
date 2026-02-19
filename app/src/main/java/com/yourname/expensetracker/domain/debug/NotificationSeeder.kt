@@ -39,11 +39,54 @@ class NotificationSeeder @Inject constructor() {
                 type < 5 -> generateSpam(now, twoMonthsMs) // 5% Spam
                 type < 10 -> generateUnknown(now, twoMonthsMs) // 5% Unknown
                 type < 15 -> generateRecurring(i, now) // 5% Recurring candidates
-                else -> generateTransaction(now, twoMonthsMs) // 85% Normal Transactions
+                type < 20 -> generateDeposit(now, twoMonthsMs) // 5% Deposits (salary, transfers)
+                else -> generateTransaction(now, twoMonthsMs) // 80% Normal Transactions (PURCHASE)
             }
             notifications.add(notification)
         }
         return notifications
+    }
+
+    private val depositTemplates = listOf(
+        // Greek deposits
+        Pair("Κατάθεση €{amount} από EMPLOYER", "gr.nbg.mobilebanking"),
+        Pair("Πίστωση €{amount} μισθός", "gr.nbg.mobilebanking"),
+        Pair("Κατάθεση €{amount} από COMPANY", "com.eurobank.mobile"),
+        Pair("Μισθοδοσία €{amount}", "gr.alpha.mobile"),
+        // English deposits
+        Pair("deposit €{amount} from EMPLOYER", "com.revolut"),
+        Pair("received €{amount} salary", "com.revolut"),
+        Pair("€{amount} credited from TRANSFER", "com.revolut"),
+        Pair("incoming transfer €{amount} from JOHN", "com.revolut"),
+        // Generic bank
+        Pair("Salary €{amount} deposited", "com.revolut"),
+        Pair("Refund €{amount} from STORE", "com.revolut")
+    )
+
+    private fun generateDeposit(now: Long, rangeMs: Long): RawNotification {
+        val template = depositTemplates.random()
+        val amount = Random.nextDouble(200.0, 3000.0) // Deposits are larger
+        val date = now - Random.nextLong(rangeMs)
+        
+        val text = template.first.replace("{amount}", "%.2f".format(amount))
+        val packageName = template.second
+
+        val source = when (packageName) {
+            "com.revolut" -> "Revolut"
+            "gr.nbg.mobilebanking" -> "NBG"
+            "com.eurobank.mobile" -> "Eurobank"
+            "gr.alpha.mobile" -> "Alpha Bank"
+            else -> "Bank"
+        }
+
+        return RawNotification(
+            packageName = packageName,
+            appName = source,
+            title = "Deposit Received",
+            text = text,
+            timestamp = date,
+            capturedAt = System.currentTimeMillis()
+        )
     }
 
     private fun generateTransaction(now: Long, rangeMs: Long): RawNotification {

@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.ui.components.AmountText
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
@@ -305,12 +306,13 @@ fun ReviewScreen(
                 review = review,
                 categories = categories,
                 onDismiss = { editingReview = null },
-                onSave = { amount, merchant, categoryId ->
+                onSave = { amount, merchant, categoryId, type ->
                     viewModel.approveReviewWithEdits(
                         reviewId = review.id,
                         finalAmount = amount,
                         finalMerchant = merchant,
-                        finalCategoryId = categoryId
+                        finalCategoryId = categoryId,
+                        finalType = type
                     )
                     editingReview = null
                 }
@@ -616,11 +618,18 @@ fun EditReviewDialog(
     review: PendingReview,
     categories: List<Category>,
     onDismiss: () -> Unit,
-    onSave: (Double?, String?, Long?) -> Unit
+    onSave: (Double?, String?, Long?, TransactionType?) -> Unit
 ) {
     var amount by remember { mutableStateOf(String.format("%.2f", review.suggestedAmount)) }
     var merchant by remember { mutableStateOf(review.suggestedMerchant) }
     var selectedCategoryId by remember { mutableStateOf(review.suggestedCategoryId) }
+    var selectedType by remember { 
+        mutableStateOf(
+            try { TransactionType.valueOf(review.suggestedType) } 
+            catch (e: Exception) { TransactionType.PURCHASE }
+        )
+    }
+    var typeExpanded by remember { mutableStateOf(false) }
     val haptic = rememberHapticFeedback()
 
     AlertDialog(
@@ -628,6 +637,56 @@ fun EditReviewDialog(
         title = { Text("Fix Extraction Details") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Transaction Type Selector
+                Text(
+                    "Transaction Type",
+                    style = MaterialTheme.typography.labelMedium
+                )
+                
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TransactionType.values().filter { it != TransactionType.UNKNOWN }.forEach { type ->
+                        val isSelected = selectedType == type
+                        val typeColor = when (type) {
+                            TransactionType.PURCHASE -> SemanticColors.DangerRed
+                            TransactionType.DEPOSIT -> SemanticColors.SuccessGreen
+                            TransactionType.WITHDRAWAL -> SemanticColors.WarningOrange
+                            TransactionType.TRANSFER -> SemanticColors.PrimaryIndigo
+                            else -> SemanticColors.TextSecondary
+                        }
+                        val typeIcon = when (type) {
+                            TransactionType.PURCHASE -> "💸"
+                            TransactionType.DEPOSIT -> "💰"
+                            TransactionType.WITHDRAWAL -> "🏧"
+                            TransactionType.TRANSFER -> "🔄"
+                            else -> "❓"
+                        }
+                        Surface(
+                            onClick = { 
+                                haptic(HapticType.Standard)
+                                selectedType = type
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) typeColor.copy(alpha = 0.2f) else Color.Transparent,
+                            border = BorderStroke(1.dp, if (isSelected) typeColor else SemanticColors.GlassBorder)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(typeIcon)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    type.name,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (isSelected) typeColor else SemanticColors.TextSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = merchant,
                     onValueChange = { merchant = it },
@@ -700,7 +759,11 @@ fun EditReviewDialog(
                     val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - review.suggestedAmount) > 0.001) parsedAmount else null
                     val editedMerchant = merchant.takeIf { it != review.suggestedMerchant }
                     val editedCategory = selectedCategoryId.takeIf { it != review.suggestedCategoryId }
-                    onSave(editedAmount, editedMerchant, editedCategory)
+                    val editedType = selectedType.takeIf { 
+                        try { TransactionType.valueOf(review.suggestedType) != it }
+                        catch (e: Exception) { true }
+                    }
+                    onSave(editedAmount, editedMerchant, editedCategory, editedType)
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {

@@ -43,7 +43,8 @@ class ReviewQueueRepository @Inject constructor(
         reviewId: Long,
         finalAmount: Double? = null,
         finalMerchant: String? = null,
-        finalCategoryId: Long? = null
+        finalCategoryId: Long? = null,
+        finalType: TransactionType? = null
     ): Result<Long> {
         val review = pendingReviewDao.getById(reviewId) ?: return Result.Error(message = "Review not found")
 
@@ -60,7 +61,7 @@ class ReviewQueueRepository @Inject constructor(
             return Result.Error(message = "Amount exceeds limit")
         }
 
-        val type: TransactionType = try {
+        val type: TransactionType = finalType ?: try {
             TransactionType.valueOf(review.suggestedType)
         } catch (e: Exception) {
             TransactionType.PURCHASE
@@ -118,6 +119,9 @@ class ReviewQueueRepository @Inject constructor(
                         originalCategoryId = review.suggestedCategoryId,
                         correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
                             finalCategoryId else null,
+                        originalType = review.suggestedType,
+                        correctedType = if (finalType != null && finalType.name != review.suggestedType)
+                            finalType.name else null,
                         wasRejected = false,
                         wasApproved = true,
                         notificationTitle = review.notificationTitle,
@@ -179,6 +183,8 @@ class ReviewQueueRepository @Inject constructor(
             correctedAmount = null,
             originalCategoryId = review.suggestedCategoryId,
             correctedCategoryId = null,
+            originalType = review.suggestedType,
+            correctedType = null,
             wasRejected = true,
             wasApproved = false,
             notificationTitle = review.notificationTitle,
@@ -289,6 +295,8 @@ class ReviewQueueRepository @Inject constructor(
             correctedAmount = null,
             originalCategoryId = null,
             correctedCategoryId = null,
+            originalType = null,
+            correctedType = null,
             wasRejected = !isRelevant,
             wasApproved = isRelevant,
             notificationTitle = notification.title,
