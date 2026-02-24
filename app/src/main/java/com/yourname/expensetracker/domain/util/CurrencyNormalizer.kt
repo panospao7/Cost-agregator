@@ -18,7 +18,7 @@ class CurrencyNormalizer @Inject constructor() {
         val cleaned = raw.trim().uppercase(Locale.getDefault())
 
         return when (cleaned) {
-            "€", "EUR", "EURO" -> "EUR"
+            "€", "EUR", "EURO", "E" -> "EUR"
             "$", "USD", "DOLLAR" -> "USD"
             "£", "GBP", "POUND" -> "GBP"
             "CHF", "FRANC" -> "CHF"

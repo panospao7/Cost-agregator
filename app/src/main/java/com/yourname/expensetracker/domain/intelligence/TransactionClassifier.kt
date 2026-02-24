@@ -2,7 +2,6 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import android.content.Context
-import android.util.Log
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
@@ -17,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.ln
+import timber.log.Timber
 
 /**
  * Lightweight on-device text classifier using Naive Bayes.
@@ -38,7 +38,6 @@ open class TransactionClassifier @Inject constructor(
     }
 
     companion object {
-        private const val TAG = "TxClassifier"
         private const val MODEL_FILE = "naive_bayes_model.json"
         private const val MODEL_VERSION = 1
         private const val MIN_TRAINING_SAMPLES = 20
@@ -83,7 +82,7 @@ open class TransactionClassifier @Inject constructor(
                 if (loadFromDisk()) {
                     isLoaded.set(true)
                     _stats.value = getStatsInternal()
-                    Log.d(TAG, "Loaded model from disk: +$totalPositive/-$totalNegative samples")
+                    Timber.d("Loaded ML model")
                 }
 
                 val correctionCount = userCorrectionRepository.getCount()
@@ -134,7 +133,7 @@ open class TransactionClassifier @Inject constructor(
     private suspend fun retrainFromCorrectionsInternal() {
         val corrections = userCorrectionRepository.getAll()
         if (corrections.size < MIN_TRAINING_SAMPLES) {
-            Log.d(TAG, "Not enough corrections to train: ${corrections.size}/$MIN_TRAINING_SAMPLES")
+            Timber.d("Not enough corrections to train")
             return
         }
 
@@ -171,7 +170,7 @@ open class TransactionClassifier @Inject constructor(
         lastTrainingCount = corrections.size
 
         scheduleSave()
-        Log.d(TAG, "Retrained from ${corrections.size} corrections: +$totalPositive/-$totalNegative")
+        Timber.d("Retrained ML model")
     }
 
     private fun scheduleSave() {
@@ -344,7 +343,7 @@ open class TransactionClassifier @Inject constructor(
 
                 File(context.filesDir, MODEL_FILE).writeText(json.toString())
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to save model", e)
+                Timber.e("Failed to save ML model")
             }
         }
     }
@@ -357,7 +356,7 @@ open class TransactionClassifier @Inject constructor(
             val json = JSONObject(file.readText())
             val version = json.optInt("version", 0)
             if (version != MODEL_VERSION) {
-                Log.w(TAG, "Model version mismatch. Current: $MODEL_VERSION, Found: $version.")
+                Timber.w("ML model version mismatch")
                 return false
             }
 
@@ -398,7 +397,7 @@ open class TransactionClassifier @Inject constructor(
             vocabularySize = vocabulary.size
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load model", e)
+            Timber.e("Failed to load ML model")
             false
         }
     }

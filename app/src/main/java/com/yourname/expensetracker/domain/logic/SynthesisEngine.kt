@@ -154,33 +154,46 @@ class SynthesisEngine @Inject constructor(
 
         // Collect planned expenses with their dates (MUST=100%, LIKELY=70%)
         val plannedExpensesInRange = plannedExpenses.filter { it.date >= startOfToday && it.date <= endOfMonth }
+        
+        // Reuse single Calendar instance for grouping
+        val dayCalendar = Calendar.getInstance()
         val mustExpensesByDay = plannedExpensesInRange
             .filter { it.priority == PlannedExpensePriority.MUST }
             .groupBy { expense ->
-                Calendar.getInstance().apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
+                dayCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
             }
             .mapValues { it.value.sumOf { exp -> exp.amount } }
         
         val likelyExpensesByDay = plannedExpensesInRange
             .filter { it.priority == PlannedExpensePriority.LIKELY }
             .groupBy { expense ->
-                Calendar.getInstance().apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
+                dayCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
             }
             .mapValues { it.value.sumOf { exp -> exp.amount } * LIKELY_EXPENSE_WEIGHT }
 
+        // Pre-compute running totals for O(n) projection instead of O(n²)
+        val mustDays = mustExpensesByDay.keys.sorted()
+        val likelyDays = likelyExpensesByDay.keys.sorted()
+        var mustCumulative = 0.0
+        var likelyCumulative = 0.0
+        var mustIndex = 0
+        var likelyIndex = 0
+        
         val projectedPoints = (dayOfMonth..daysInMonth).map { targetDay ->
-            val daysFromNow = targetDay - dayOfMonth
+            // Add any expenses that occur on or before this day to running total
+            while (mustIndex < mustDays.size && mustDays[mustIndex] <= targetDay) {
+                mustCumulative += mustExpensesByDay[mustDays[mustIndex]] ?: 0.0
+                mustIndex++
+            }
+            while (likelyIndex < likelyDays.size && likelyDays[likelyIndex] <= targetDay) {
+                likelyCumulative += likelyExpensesByDay[likelyDays[likelyIndex]] ?: 0.0
+                likelyIndex++
+            }
             
-            // Add discretionary spending linearly
+            val daysFromNow = targetDay - dayOfMonth
             val discretionarySpending = typicalDailyDiscretionary * daysFromNow
             
-            // Add MUST expenses that have passed (100% on their day)
-            val mustSpikes = mustExpensesByDay.filter { it.key <= targetDay }.values.sum()
-            
-            // Add LIKELY expenses that have passed (70% on their day)
-            val likelySpikes = likelyExpensesByDay.filter { it.key <= targetDay }.values.sum()
-            
-            lastKnownTotal + discretionarySpending + mustSpikes + likelySpikes
+            lastKnownTotal + discretionarySpending + mustCumulative + likelyCumulative
         }
         
         // 5. Calculate Discretionary (Available)

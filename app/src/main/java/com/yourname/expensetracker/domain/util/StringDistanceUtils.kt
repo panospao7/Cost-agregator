@@ -110,4 +110,20 @@ object StringDistanceUtils {
         
         return 0.7 * jaroWinkler + 0.3 * levenshtein
     }
+
+    /**
+     * Checks if two strings are similar within a maximum allowed distance/tolerance.
+     * Handles nulls safely. Useful for OCR fallback where 1 or 2 characters might be hallucinated.
+     */
+    fun isFuzzyMatch(ocrString: String?, targetAnchor: String, maxDistance: Int = 2): Boolean {
+        if (ocrString == null) return false
+        if (ocrString.contains(targetAnchor, ignoreCase = true)) return true
+        
+        // Strip out non-alphabetic noise before checking distance to prevent geometric shapes 
+        // from instantly failing the distance threshold.
+        val cleanedOcr = ocrString.replace(Regex("[^\\p{L}0-9]"), "").trim().uppercase()
+        val cleanedTarget = targetAnchor.replace(Regex("[^\\p{L}0-9]"), "").trim().uppercase()
+        
+        return levenshteinDistance(cleanedOcr, cleanedTarget) <= maxDistance
+    }
 }

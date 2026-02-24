@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
+import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
@@ -33,6 +34,7 @@ class ReviewQueueRepositoryTest {
     private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
     private val parserRegistry = mockk<AppParserRegistry>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
 
     private lateinit var repository: ReviewQueueRepository
 
@@ -53,7 +55,8 @@ class ReviewQueueRepositoryTest {
             classifier,
             budgetMonitor,
             parserRegistry,
-            timeProvider
+            timeProvider,
+            confidenceRouter
         )
     }
 

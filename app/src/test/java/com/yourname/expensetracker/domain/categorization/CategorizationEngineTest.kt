@@ -29,7 +29,7 @@ class CategorizationEngineTest {
                 matchType = MatchType.EXACT_MATCH
             )
         }
-        engine = CategorizationEngine(context, merchantCategoryDao, merchantNormalizer)
+        engine = CategorizationEngine(merchantCategoryDao, merchantNormalizer)
     }
 
     @Test

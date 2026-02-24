@@ -83,7 +83,7 @@ class ManualExpenseRepository @Inject constructor(
             budgetMonitor.checkBudgets()
 
             // 5. Learn the merchant→category mapping
-            merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
+            finalCategoryId?.let { merchantCategoryRepository.learnPattern(normalizedMerchant, it) }
 
             Result.Success(id)
         }

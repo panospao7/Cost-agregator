@@ -14,7 +14,15 @@ class GoogleWalletParserTest {
     @Before
     fun setup() {
         currencyNormalizer = io.mockk.mockk {
-            io.mockk.every { normalize(any()) } answers { firstArg() ?: "EUR" }
+            io.mockk.every { normalize(any()) } answers { 
+                val arg = firstArg<String?>()
+                when (arg?.uppercase()) {
+                    "€", "E", "EUR" -> "EUR"
+                    "$", "USD" -> "USD"
+                    "£", "GBP" -> "GBP"
+                    else -> arg ?: "EUR"
+                }
+            }
         }
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }
@@ -119,5 +127,33 @@ class GoogleWalletParserTest {
     fun `supports both wallet package variants`() {
         assertTrue(parser.supportedPackages.contains("com.google.android.apps.walletnfcrel"))
         assertTrue(parser.supportedPackages.contains("com.google.android.apps.nbu.paisa.user"))
+    }
+
+    @Test
+    fun `parse amount with E prefix - corrupted euro symbol`() {
+        // This replicates the issue where € becomes E in notifications
+        val result = parser.parse(
+            title = "K POLIANIDIS A TZANI O",
+            text = "E8.00 with Mastercard ••1554",
+            bigText = null, subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+        assertNotNull(result)
+        assertEquals(8.00, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
+        assertEquals("K POLIANIDIS A TZANI O", result.merchant)
+    }
+
+    @Test
+    fun `parse amount with euro symbol - normal case`() {
+        val result = parser.parse(
+            title = "K POLIANIDIS A TZANI O",
+            text = "€8.00 with Mastercard ••1554",
+            bigText = null, subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+        assertNotNull(result)
+        assertEquals(8.00, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
     }
 }

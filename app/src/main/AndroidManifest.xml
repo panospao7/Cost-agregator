@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     
     <!-- NEW: Camera permission for receipt scanning -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -51,6 +52,12 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- Service restart receiver for periodic keep-alive -->
+        <receiver
+            android:name=".receiver.ServiceRestartReceiver"
+            android:enabled="true"
+            android:exported="false" />
 
         <!-- NEW: FileProvider for camera photos -->
         <provider

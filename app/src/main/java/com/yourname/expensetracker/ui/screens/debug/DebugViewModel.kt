@@ -20,7 +20,8 @@ class DebugViewModel @Inject constructor(
     private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val notificationSeeder: com.yourname.expensetracker.domain.debug.NotificationSeeder,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val diagnostics: com.yourname.expensetracker.domain.debug.ServiceDiagnostics
 ) : ViewModel() {
     
     val notifications: StateFlow<List<RawNotification>> = repository
@@ -51,6 +52,14 @@ class DebugViewModel @Inject constructor(
     val classifierStats: StateFlow<com.yourname.expensetracker.domain.intelligence.ClassifierStats> = repository
         .getClassifierStatsFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.yourname.expensetracker.domain.intelligence.ClassifierStats(0, 0, 0, false))
+
+    fun getServiceDiagnostics(): com.yourname.expensetracker.domain.debug.ServiceDiagnostics.Stats {
+        return diagnostics.getStats()
+    }
+
+    fun resetServiceDiagnostics() {
+        diagnostics.resetStats()
+    }
     
     private val _selectedPackageFilter = MutableStateFlow<String?>(null)
     val selectedPackageFilter: StateFlow<String?> = _selectedPackageFilter

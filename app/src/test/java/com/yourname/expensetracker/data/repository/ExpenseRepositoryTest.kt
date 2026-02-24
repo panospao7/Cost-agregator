@@ -5,7 +5,6 @@ import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.UserCorrection
-import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import io.mockk.*
@@ -24,7 +23,6 @@ class ExpenseRepositoryTest {
     private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
     private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
-    private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
 
     private lateinit var repository: ExpenseRepository
 
@@ -32,13 +30,12 @@ class ExpenseRepositoryTest {
     fun setup() {
         // Mock internal flow to avoid lateinit issues
         every { expenseDao.getAllFlow(any()) } returns flowOf(emptyList())
-        
+
         repository = ExpenseRepository(
             expenseDao,
             userCorrectionDao,
             merchantCategoryRepository,
-            merchantNormalizer,
-            budgetMonitor
+            merchantNormalizer
         )
     }
 

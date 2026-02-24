@@ -1,12 +1,10 @@
 package com.yourname.expensetracker.domain.budget
 
-import android.app.NotificationManager
-import android.content.Context
-import androidx.core.app.NotificationCompat
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
@@ -23,9 +21,9 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class BudgetMonitorTest {
 
-    private val context = mockk<Context>(relaxed = true)
     private val budgetRepository = mockk<BudgetRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val notificationService = mockk<NotificationService>(relaxed = true)
     
     private lateinit var monitor: BudgetMonitor
     private val testDispatcher = StandardTestDispatcher()
@@ -34,23 +32,9 @@ class BudgetMonitorTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         
-        // Mock NotificationManager to avoid ClassCastException
-        val notificationManager = mockk<android.app.NotificationManager>(relaxed = true)
-        every { context.getSystemService(Context.NOTIFICATION_SERVICE) } returns notificationManager
         every { timeProvider.now() } returns System.currentTimeMillis()
         
-        // Mock NotificationCompat.Builder to prevent it from throwing in unit tests
-        // (it tries to access Android resources which aren't available in unit tests)
-        mockkConstructor(NotificationCompat.Builder::class)
-        val mockNotification = mockk<android.app.Notification>(relaxed = true)
-        every { anyConstructed<NotificationCompat.Builder>().setSmallIcon(any<Int>()) } returns mockk(relaxed = true)
-        every { anyConstructed<NotificationCompat.Builder>().setContentTitle(any()) } returns mockk(relaxed = true)
-        every { anyConstructed<NotificationCompat.Builder>().setContentText(any()) } returns mockk(relaxed = true)
-        every { anyConstructed<NotificationCompat.Builder>().setPriority(any()) } returns mockk(relaxed = true)
-        every { anyConstructed<NotificationCompat.Builder>().setAutoCancel(any()) } returns mockk(relaxed = true)
-        every { anyConstructed<NotificationCompat.Builder>().build() } returns mockNotification
-        
-        monitor = BudgetMonitor(context, budgetRepository, timeProvider, testDispatcher)
+        monitor = BudgetMonitor(budgetRepository, timeProvider, notificationService, testDispatcher)
     }
 
     @After

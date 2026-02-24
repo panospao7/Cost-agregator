@@ -46,6 +46,7 @@ fun DebugScreen(
     val selectedFilter by viewModel.selectedPackageFilter.collectAsState()
     
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
+    var diagnosticsStats by remember { mutableStateOf(viewModel.getServiceDiagnostics()) }
 
     Scaffold(
         topBar = {
@@ -82,6 +83,114 @@ fun DebugScreen(
                         .padding(16.dp)
                 ) {
                     Text("Open Notification Access Settings")
+                }
+            }
+
+            // 1.5 Service Diagnostics
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "📡 Service Diagnostics",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Row {
+                                TextButton(
+                                    onClick = { diagnosticsStats = viewModel.getServiceDiagnostics() }
+                                ) {
+                                    Text("↻", fontSize = 14.sp)
+                                }
+                                TextButton(
+                                    onClick = { 
+                                        viewModel.resetServiceDiagnostics()
+                                        diagnosticsStats = viewModel.getServiceDiagnostics()
+                                    }
+                                ) {
+                                    Text("Reset", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    "${diagnosticsStats.startCount}",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF4CAF50)
+                                )
+                                Text("Starts", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    "${diagnosticsStats.disconnectCount}",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFFFC107)
+                                )
+                                Text("Disconnects", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    "${diagnosticsStats.killedCount}",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFF44336)
+                                )
+                                Text("Killed", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        
+                        if (diagnosticsStats.lastRestartTime > 0 || diagnosticsStats.lastKillTime > 0) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HorizontalDivider()
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Last start: ${
+                                        if (diagnosticsStats.lastRestartTime > 0) 
+                                            SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                                                .format(Date(diagnosticsStats.lastRestartTime))
+                                        else "Never"
+                                    }",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 10.sp
+                                )
+                                Text(
+                                    "Last kill: ${
+                                        if (diagnosticsStats.lastKillTime > 0) 
+                                            SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                                                .format(Date(diagnosticsStats.lastKillTime))
+                                        else "Never"
+                                    }",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 10.sp,
+                                    color = if (diagnosticsStats.lastKillTime > diagnosticsStats.lastRestartTime) 
+                                        Color(0xFFF44336) else Color.Unspecified
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

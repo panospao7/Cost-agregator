@@ -11,6 +11,7 @@ import javax.inject.Singleton
 
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import timber.log.Timber
 
 @Singleton
@@ -157,6 +158,42 @@ class ReceiptParser @Inject constructor(
     private fun normalizeGreekOcr(text: String): String {
         var normalized = text.uppercase()
 
+        // --- PRE-PROCESSING: GEOMETRY STRIPPING & LATIN INTRUSION ---
+        // Strip out random geometric artifacts that ML Kit hallucinates from receipts (e.g., ">", "<", "}", "|", "▶")
+        normalized = normalized.replace(Regex("""[><\}|▶]"""), " ")
+        // Fix Latin Intrusion: ΠΟSΟ -> ΠΟΣΟ
+        normalized = normalized.replace("ΠΟSΟ", "ΠΟΣΟ")
+
+        // Exact Map based on OCR test document output
+        val exactHallucinationMap = mapOf(
+            // Common full-word failures from receipts
+            "ZYNOAO" to "ΣΥΝΟΛΟ",
+            "EYNONO" to "ΣΥΝΟΛΟ",
+            "2YNONO" to "ΣΥΝΟΛΟ",
+            "ZYNOIO" to "ΣΥΝΟΛΟ",
+            "ZYN0/\\0" to "ΣΥΝΟΛΟ",
+            "NAHPQTEO" to "ΠΛΗΡΩΤΕΟ",
+            "NODO" to "ΠΟΣΟ",
+            "NOZA" to "ΠΟΣΟ",
+            "NOZO" to "ΠΟΣΟ",
+            "NOZOTHTA" to "ΠΟΣΟΤΗΤΑ",
+            "METEHTA" to "ΜΕΤΡΗΤΑ",
+            "NETPETA" to "ΜΕΤΡΗΤΑ",
+            "METFHTA" to "ΜΕΤΡΗΤΑ",
+            "EYP9" to "ΕΥΡΩ",
+            "EYP2" to "ΕΥΡΩ",
+            "EXFQ" to "ΕΥΡΩ",
+            "EYO"  to "ΕΥΡΩ",
+            "EYPQ" to "ΕΥΡΩ",
+            "KAAAPH ABIA" to "ΚΑΘΑΡΗ ΑΞΙΑ",
+            "ERITORH" to "ΕΚΠΤΩΣΗ"
+        )
+
+        // Apply exact word replacements first
+        for ((badStr, goodStr) in exactHallucinationMap) {
+            normalized = normalized.replace(badStr, goodStr)
+        }
+
         // Fix numbers FIRST - Remove spaces in numbers like "4 5 . 5 0"
         normalized = normalized.replace(Regex("""(?<=\d)[ \t\u00A0]+(?=[.,\d])"""), "")
         // Fix spaces AROUND separators like "45 , 50" or "45, 50"
@@ -235,6 +272,26 @@ class ReceiptParser @Inject constructor(
         normalized = normalized.replace(Regex("""(\d{1,2})[-/][DO0](\d{1,2})[-/](\d{2,4})"""), "$1-0$2-$3")
         // Fix double zero if above resulted in 16-004
         normalized = normalized.replace("-00", "-0")
+
+        // --- FUZZY MATCHING FALLBACK ---
+        // If exact matches and regex failed, run a fuzzy pass on each word (Preserving all whitespace/newlines)
+        normalized = normalized.replace(Regex("""\S+""")) { match ->
+            val word = match.value
+            val cleanWord = word.replace(Regex("""[^A-ZΑ-Ω0-9]"""), "")
+            if (cleanWord.length > 3) {
+                when {
+                    StringDistanceUtils.isFuzzyMatch(cleanWord, "ΣΥΝΟΛΟ", 2) -> word.replace(cleanWord, "TOTAL_KEY")
+                    StringDistanceUtils.isFuzzyMatch(cleanWord, "ΤΕΛΙΚΟ", 2) -> word.replace(cleanWord, "TOTAL_KEY")
+                    StringDistanceUtils.isFuzzyMatch(cleanWord, "ΠΛΗΡΩΤΕΟ", 2) -> word.replace(cleanWord, "TOTAL_KEY")
+                    StringDistanceUtils.isFuzzyMatch(cleanWord, "ΜΕΤΡΗΤΑ", 2) -> word.replace(cleanWord, "CASH_KEY")
+                    StringDistanceUtils.isFuzzyMatch(cleanWord, "ΠΟΣΟ", 1) -> word.replace(cleanWord, "AMOUNT_KEY")
+                    StringDistanceUtils.isFuzzyMatch(cleanWord, "ΕΥΡΩ", 1) -> word.replace(cleanWord, "EUR")
+                    else -> word
+                }
+            } else {
+                word
+            }
+        }
 
         return normalized
     }
@@ -439,34 +496,7 @@ class ReceiptParser @Inject constructor(
     }
 
     private fun parseAmount(rawAmount: String): Double {
-        if (rawAmount.isBlank()) return 0.0
-
-        var cleaned = rawAmount
-
-        // NEW: Handle E-prefixed amounts (E0,13 -> try to extract 0.13)
-        if (cleaned.startsWith("E") || cleaned.startsWith("e")) {
-            val rest = cleaned.substring(1)
-            // Use simple check if rest looks like number start
-            if (rest.isNotEmpty() && rest[0].isDigit()) {
-                 cleaned = rest
-            }
-        }
-
-        // Remove all spaces
-        cleaned = cleaned.replace(" ", "")
-
-        // Find last separator
-        val lastComma = cleaned.lastIndexOf(',')
-        val lastDot = cleaned.lastIndexOf('.')
-        val lastSepIndex = kotlin.math.max(lastComma, lastDot)
-
-        return if (lastSepIndex >= 0) {
-            val integerPart = cleaned.substring(0, lastSepIndex).replace(".", "").replace(",", "")
-            val decimalPart = cleaned.substring(lastSepIndex + 1)
-            "$integerPart.$decimalPart".toDoubleOrNull() ?: 0.0
-        } else {
-            cleaned.toDoubleOrNull() ?: 0.0
-        }
+        return AmountUtils.parseAmount(rawAmount) ?: 0.0
     }
 
     private fun extractAmountFromLine(line: String, regex: Regex): Double? {

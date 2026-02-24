@@ -14,7 +14,6 @@ import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.sqrt
 import timber.log.Timber
 
 // === Engine ===

@@ -1,19 +1,24 @@
 package com.yourname.expensetracker.service
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.receiver.ServiceRestartReceiver
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,11 +37,20 @@ class NotificationCaptureService : NotificationListenerService() {
     @Inject
     lateinit var timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 
+    @Inject
+    lateinit var diagnostics: com.yourname.expensetracker.domain.debug.ServiceDiagnostics
+
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     
     @Volatile
     private var pendingRefresh = false
+    
+    @Volatile
+    private var isRunning = false
+    
+    @Volatile
+    private var isListenerConnected = false
     
     // Thread-safe, bounded deduplication cache (INS-005)
     private val processedNotifications = java.util.Collections.synchronizedMap(
@@ -51,11 +65,13 @@ class NotificationCaptureService : NotificationListenerService() {
     companion object {
         private const val TAG = "NotificationCapture"
         const val ACTION_REFRESH_NOTIFICATIONS = "com.yourname.expensetracker.REFRESH_NOTIFICATIONS"
+        const val ACTION_RESTART_SERVICE = "com.yourname.expensetracker.RESTART_SERVICE"
         private const val FOREGROUND_ID = 1001
         private const val CHANNEL_ID = "expense_tracker_service"
         private const val DEDUP_WINDOW_MS = 5000L
         private const val CACHE_CLEANUP_THRESHOLD = 50
         private const val CACHE_MAX_AGE_MS = 60_000L
+        private const val RESTART_INTERVAL_MS = 60_000L // Restart every minute to keep service alive
         
         // Packages filtering logic...
         private val MONITORED_PACKAGES = setOf(
@@ -103,7 +119,34 @@ class NotificationCaptureService : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
+        diagnostics.recordServiceStart()
         createNotificationChannel()
+        scheduleRestartAlarm()
+    }
+
+    private fun scheduleRestartAlarm() {
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(this, ServiceRestartReceiver::class.java).apply {
+                action = ACTION_RESTART_SERVICE
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                this,
+                0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.setRepeating(
+                AlarmManager.ELAPSED_REALTIME,
+                SystemClock.elapsedRealtime() + RESTART_INTERVAL_MS,
+                RESTART_INTERVAL_MS,
+                pendingIntent
+            )
+            Log.d(TAG, "Scheduled restart alarm every ${RESTART_INTERVAL_MS}ms")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to schedule restart alarm", e)
+        }
     }
 
     private fun createNotificationChannel() {
@@ -124,13 +167,20 @@ class NotificationCaptureService : NotificationListenerService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundWithNotification()
         if (intent?.action == ACTION_REFRESH_NOTIFICATIONS) {
-            pendingRefresh = true
+            Log.d(TAG, "Refresh action received")
+            // If already connected, refresh immediately, otherwise set flag for onListenerConnected
+            if (isListenerConnected) {
+                refreshActiveNotifications()
+            } else {
+                pendingRefresh = true
+            }
         }
-        return super.onStartCommand(intent, flags, startId)
+        return START_STICKY
     }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        isListenerConnected = true
         Log.d(TAG, "NotificationListener connected! Starting foreground service.")
         startForegroundWithNotification()
         // Refresh active notifications after connection is established
@@ -169,10 +219,18 @@ class NotificationCaptureService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        isListenerConnected = false
+        diagnostics.recordListenerDisconnected()
         Log.w(TAG, "NotificationListener disconnected - attempting rebind")
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             requestRebind(ComponentName(this, NotificationCaptureService::class.java))
+        }
+        
+        // Restart foreground service to ensure we stay alive while waiting for rebind
+        if (isRunning) {
+            Log.d(TAG, "Restarting foreground service after disconnect")
+            startForegroundWithNotification()
         }
     }
 
@@ -279,11 +337,33 @@ class NotificationCaptureService : NotificationListenerService() {
         Log.d(TAG, "Manual refresh triggered")
         try {
             val activeNotifications = activeNotifications
+            Log.d(TAG, "Found ${activeNotifications.size} active notifications")
             activeNotifications.forEach { sbn ->
-                onNotificationPosted(sbn)
+                // Bypass deduplication cache for manual refresh
+                processNotificationBypassDedupe(sbn)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error refreshing active notifications", e)
+        }
+    }
+
+    private fun processNotificationBypassDedupe(sbn: StatusBarNotification) {
+        val packageName = sbn.packageName
+        
+        val extras = sbn.notification.extras
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+
+        if (!shouldCapture(packageName, title, text, bigText)) {
+            Log.d(TAG, "Skipping (shouldCapture=false): $packageName")
+            return
+        }
+        
+        Log.d(TAG, "Processing notification from: $packageName, title: $title")
+
+        serviceScope.launch {
+            processNotification(sbn, packageName, title, text, bigText, extras)
         }
     }
 
@@ -335,6 +415,9 @@ class NotificationCaptureService : NotificationListenerService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
+        cancelRestartAlarm()
+        diagnostics.recordServiceKilled()
         Log.d(TAG, "Service destroyed")
         serviceJob.cancel() // Stop all active coroutines
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -342,6 +425,25 @@ class NotificationCaptureService : NotificationListenerService() {
         } else {
             @Suppress("DEPRECATION")
             stopForeground(true)
+        }
+    }
+
+    private fun cancelRestartAlarm() {
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(this, ServiceRestartReceiver::class.java).apply {
+                action = ACTION_RESTART_SERVICE
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                this,
+                0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(pendingIntent)
+            Log.d(TAG, "Cancelled restart alarm")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to cancel restart alarm", e)
         }
     }
 }

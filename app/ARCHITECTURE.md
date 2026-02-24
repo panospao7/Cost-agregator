@@ -54,6 +54,7 @@ app/src/main/java/com/yourname/expensetracker/
 │   │   ├── model/             # Composite Models
 │   │   └── converter/         # Type Converters
 │   ├── repository/            # Repository Implementations
+│   ├── service/               # Android Services (implementations)
 │   └── provider/              # Data Providers
 ├── di/                        # Dependency Injection Modules
 ├── domain/                    # Domain Layer
@@ -68,6 +69,7 @@ app/src/main/java/com/yourname/expensetracker/
 │   ├── parser/               # Notification/SMS Parsers
 │   │   └── parsers/          # Specific Parsers
 │   ├── receipt/              # Receipt Processing
+│   ├── service/              # Domain Services (interfaces)
 │   └── util/                 # Utilities
 ├── service/                  # Android Services
 ├── receiver/                 # Broadcast Receivers
@@ -176,11 +178,11 @@ app/src/main/java/com/yourname/expensetracker/
 | `ManualExpenseRepository` | Manual expense entry |
 | `MerchantCategoryRepository` | Merchant category provider |
 
-### Data Providers
+### Data Services
 
-| Provider | Purpose |
-|----------|---------|
-| `MerchantCategoryProvider` | Static merchant-category mappings |
+| Service | Purpose |
+|---------|---------|
+| `AndroidNotificationService` | Android notification implementation (implements `NotificationService` interface) |
 
 ### Database Models (Composite)
 
@@ -228,7 +230,7 @@ Notification → AppParserRegistry → [SmsParser | GreekBankParser | RevolutPar
 |--------|---------|
 | `InsightsEngine` | Generates spending insights |
 | `AdvancedAnalyticsEngine` | Advanced analytics and trends |
-| `BudgetMonitor` | Budget tracking and alerts |
+| `BudgetMonitor` | Budget tracking and alerts (uses `NotificationService` interface) |
 | `BudgetCalculator` | Budget calculations |
 
 ### Logic Engines
@@ -358,7 +360,8 @@ Notification → AppParserRegistry → [SmsParser | GreekBankParser | RevolutPar
 AppModule
 ├── AppDatabase (Room)
 ├── All DAOs
-└── Parser Registry (SmsParser, GreekBankParser, RevolutParser, GoogleWalletParser, GenericTransactionParser)
+├── Parser Registry (SmsParser, GreekBankParser, RevolutParser, GoogleWalletParser, GenericTransactionParser)
+└── NotificationService (AndroidNotificationService implementation)
 
 DispatchersModule
 ├── IoDispatcher
@@ -369,6 +372,12 @@ DispatchersModule
 TimeModule
 └── TimeProvider (SystemTimeProvider)
 ```
+
+### Domain Services (Interfaces)
+
+| Service | Purpose |
+|---------|---------|
+| `NotificationService` | Interface for sending notifications (implemented by AndroidNotificationService) |
 
 ---
 
@@ -488,7 +497,7 @@ Tab 0: HomeScreen (Dashboard)
     ├── Recent Transactions
     └── Spending Summary
 
-Tab 1: TransactionsScreen
+Tab 1: TransactionsScreen (Activity)
     ├── Filter Bar
     ├── Transaction List
     └── Advanced Analytics → Tab 4
@@ -498,7 +507,7 @@ Tab 2: ReviewScreen
     ├── Approve/Reject Actions
     └── FAB → Approve All
 
-Tab 3: BudgetScreen
+Tab 3: BudgetScreen (Plan)
     ├── Budget List
     ├── Savings Goals
     └── Planned Expenses
@@ -703,6 +712,7 @@ Tab 3: BudgetScreen
 - Edge-to-edge display support
 - Write-ahead logging journal mode for database
 - Migration strategy: Destructive fallback from v1-v5, named migrations v6+
+- **Note**: `AnalyticsScreen` exists but is unused; `AdvancedAnalyticsScreen` is the active Tab 4
 
 ### Recent Architecture Changes (2026)
 
@@ -720,3 +730,95 @@ Tab 3: BudgetScreen
 - **Solution**: `HybridExpenseClassifier` now uses `CategorizationEngine` as single source of truth
 - **Result**: Consistent categorization across all entry points (notifications, review, receipts, manual)
 - **Learning**: User corrections now persist to both ML model AND merchant dictionary
+
+---
+
+## Recent Fixes & Improvements (February 2026)
+
+### Sprint 1-2: Critical Bugs & Architecture
+
+#### Notification Capture Fixes
+| Issue | Fix |
+|-------|-----|
+| `NotificationCaptureService` timing issue | Refresh now happens in `onListenerConnected()` after listener binds |
+| Silent failures in processing | Added try-catch with error logging in `NotificationRepository` |
+
+#### Amount Parsing Improvements (`AmountUtils.kt`)
+- Enhanced European format handling (e.g., "1.602,57")
+- Proper US format with thousands separator (e.g., "1,602.57")
+- Added null/blank validation with logging
+
+#### Day Grouping Bug (`AdvancedAnalyticsEngine.kt`)
+- **Issue**: Used `DAY_OF_YEAR` (1-365) - all Jan 1sts grouped together
+- **Fix**: Changed to `YEAR-MONTH-DAY` format for correct daily grouping
+
+#### Database Migration Safety (`AppModule.kt`)
+- **Issue**: Redundant `fallbackToDestructiveMigration()` after specific fallbacks
+- **Fix**: Removed redundant call to prevent accidental data loss
+
+#### Division by Zero Guards
+- `ForecastTimeline`: Added guard for `budgetLimit <= 0`
+- `ManualExpenseRepository`: Added zero/negative amount validation
+
+#### Architecture: Clean Domain Layer
+
+**NotificationService Interface** - Clean Architecture pattern:
+```
+domain/service/NotificationService.kt     (interface - no Android deps)
+data/service/AndroidNotificationService.kt (implementation)
+```
+- Domain layer no longer imports Android Context/NotificationManager
+- Easier to test (mock interface)
+- Follows dependency inversion principle
+
+**Updated Files**:
+- `BudgetMonitor` now uses `NotificationService` interface
+- `SynthesisEngine` uses Timber instead of android.util.Log
+
+#### Dead Code Cleanup
+- Added `@Suppress("UNUSED_PARAMETER")` for intentionally unused params in parsers
+- `SmsParser`: unused `subText`
+- `GreekBankParser`: unused `subText`, `packageName`
+
+---
+
+### Sprint 4-5: Code Quality
+
+#### Input Validation
+- `ManualExpenseRepository`: Zero/negative amount check
+- `ReceiptParser`: Increased max amount from 5000 to 50000 for B2B
+- `GenericTransactionParser`: Extracted magic numbers to constants
+
+#### UI State Improvements
+- `BudgetBlockPartyCard`: Improved null handling for `selectedDay` (removed `!!`)
+
+#### Null Safety
+- Fixed potential NPE in parsers with proper null checks
+
+### Build & Test Status
+- ✅ All compilations passing
+- ✅ All unit tests passing
+
+### Additional Fixes (February 2026)
+
+#### Thread Safety Improvements
+- **DateFormatterUtils**: ThreadLocal for SimpleDateFormat, ConcurrentHashMap for DateTimeFormatter
+- **TransactionClassifier**: Moved StateFlow emission outside mutex to prevent potential deadlock
+- **CurrencyFormatter**: Added ConcurrentHashMap cache for currency formatters
+
+#### Dead Code & Cleanup
+- Removed unused `budgetMonitor` injection from `ExpenseRepository`
+- Added duplicate check in `MerchantCategoryRepository.learnPattern()`
+
+#### Resource Management
+- Fixed ExifInterface handling in ReceiptOcrService
+
+#### Code Quality Improvements (February 2026)
+- Removed dead code `classifyWithRules()` from `HybridExpenseClassifier`
+- Removed unused import `kotlin.math.sqrt` from `InsightsEngine`
+
+#### Performance Fixes (February 2026)
+- **Amount Parsing**: Centralized in `AmountUtils.parseAmount()`, added E-prefix and space handling
+- **ReceiptParser**: Now delegates to `AmountUtils.parseAmount()` for consistency
+- **SynthesisEngine**: Fixed Calendar instance creation in loop - now reuses single instance
+- **SynthesisEngine**: Fixed O(n²) projection loop - now uses running totals for O(n) complexity
