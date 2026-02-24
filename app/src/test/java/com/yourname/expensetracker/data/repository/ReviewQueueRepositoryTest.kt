@@ -77,8 +77,7 @@ class ReviewQueueRepositoryTest {
         
         coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
         coEvery { pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING") } returns 1
-        coEvery { expenseDao.isDuplicate(any(), any(), any(), any()) } returns false
-        coEvery { expenseDao.insert(any()) } returns 100L
+        coEvery { expenseDao.insertAtomic(any()) } returns 100L
 
         // Act
         val result = repository.approveReview(reviewId)
@@ -87,7 +86,7 @@ class ReviewQueueRepositoryTest {
         assertTrue(result is Result.Success)
         assertEquals(100L, (result as Result.Success).data)
         
-        coVerify { expenseDao.insert(match { it.merchant == "Test Merchant" && it.amount == 50.0 }) }
+        coVerify { expenseDao.insertAtomic(match { it.merchant == "Test Merchant" && it.amount == 50.0 }) }
         coVerify { pendingReviewDao.updateStatus(reviewId, "APPROVED") }
         coVerify { userCorrectionDao.insert(any()) }
         coVerify { classifier.retrainFromCorrections() }
@@ -113,7 +112,8 @@ class ReviewQueueRepositoryTest {
         
         coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
         coEvery { pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING") } returns 1
-        coEvery { expenseDao.isDuplicate(any(), any(), any(), any()) } returns true
+        // Atomic insert returns -1 when duplicate constraint is triggered
+        coEvery { expenseDao.insertAtomic(any()) } returns -1L
 
         // Act
         val result = repository.approveReview(reviewId)

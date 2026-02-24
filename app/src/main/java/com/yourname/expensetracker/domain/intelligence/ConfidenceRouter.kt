@@ -82,6 +82,23 @@ class ConfidenceRouter @Inject constructor(
         if (approvalCache.size > MAX_CACHE_SIZE) approvalCache.clear()
     }
 
+    fun invalidateSourceStatsCache(packageName: String) {
+        sourceStatsCache.remove(packageName)
+        packageRejectionCache.remove(packageName)
+    }
+
+    fun invalidateMerchantCache(merchant: String) {
+        merchantRejectionCache.remove(merchant.lowercase())
+        approvalCache.remove(merchant.lowercase())
+    }
+
+    fun invalidateAllCaches() {
+        sourceStatsCache.clear()
+        merchantRejectionCache.clear()
+        packageRejectionCache.clear()
+        approvalCache.clear()
+    }
+
     suspend fun route(
         parsed: ParsedTransaction,
         packageName: String,

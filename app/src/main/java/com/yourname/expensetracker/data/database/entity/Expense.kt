@@ -23,12 +23,13 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["rawNotificationId"]),
-        Index(value = ["transactionType", "date"]), // Replaces (date, transactionType) for better filtering
-        Index(value = ["transactionType", "categoryId", "date"]), // Covers (categoryId, date) if filtered by type
-        Index(value = ["categoryId", "date"]),      // For category breakdown and FK constraint
-        Index(value = ["amount", "merchant", "date"]), // High specificity for duplicate check
-        Index(value = ["merchant", "date"]), // Necessary for merchant-specific time searches
-        Index(value = ["transactionType", "merchant", "date"]) // Restored by Migration 19->20
+        Index(value = ["transactionType", "date"]),
+        Index(value = ["transactionType", "categoryId", "date"]),
+        Index(value = ["categoryId", "date"]),
+        Index(value = ["amount", "merchant", "date"]),
+        Index(value = ["merchant", "date"]),
+        Index(value = ["transactionType", "merchant", "date"]),
+        Index(value = ["dedupeKey"], unique = true) // Atomic duplicate prevention
     ]
 )
 data class Expense(
@@ -36,26 +37,40 @@ data class Expense(
     val id: Long = 0,
     
     val amount: Double,
-    val currency: String = "EUR", // ISO 4217 Code
+    val currency: String = "EUR",
     
-    val merchant: String, // Extracted merchant name
+    val merchant: String,
     
-    val transactionType: TransactionType, // PURCHASE, WITHDRAWAL, etc.
+    val transactionType: TransactionType,
     
-    val date: Long, // Transaction date (best guess)
+    val date: Long,
     
-    val rawNotificationId: Long? = null, // Link to source
+    val rawNotificationId: Long? = null,
     
     
-    val categoryId: Long? = null, // Link to category
+    val categoryId: Long? = null,
     
     val createdAt: Long = System.currentTimeMillis(),
 
-    // New fields
     val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN,
     val isManualEntry: Boolean = false,
-    val notes: String? = null
-)
+    val notes: String? = null,
+
+    val dedupeKey: String? = null // For atomic duplicate prevention
+) {
+    companion object {
+        private const val DUPLICATE_WINDOW_MS = 300_000L // 5 minutes
+
+        fun generateDedupeKey(amount: Double, merchant: String, date: Long): String {
+            val normalizedMerchant = merchant.lowercase()
+                .replace(Regex("[^a-z0-9]"), "")
+                .take(20)
+            val roundedAmount = "%.2f".format(amount) // Keep decimal format to match SQL
+            val dateBucket = date / DUPLICATE_WINDOW_MS
+            return "${roundedAmount}_${normalizedMerchant}_$dateBucket"
+        }
+    }
+}
 
 enum class TransactionType {
     PURCHASE,

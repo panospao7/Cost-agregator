@@ -57,16 +57,7 @@ class ManualExpenseRepository @Inject constructor(
                 amount = amount
             ).categoryId.takeIf { it > 0 }
 
-            // 3. Dedup check with tighter window for manual entries (1 minute)
-            val isDuplicate = expenseDao.isDuplicate(
-                amount = amount,
-                merchant = normalizedMerchant,
-                date = date,
-                windowMs = 60000
-            )
-            if (isDuplicate) return@withTransaction Result.Duplicate
-
-            // 4. Create expense
+            // 3. Atomic insert with dedupe key
             val expense = Expense(
                 amount = amount,
                 currency = currency,
@@ -75,20 +66,24 @@ class ManualExpenseRepository @Inject constructor(
                 date = date,
                 rawNotificationId = null,
                 categoryId = finalCategoryId,
+                createdAt = System.currentTimeMillis(),
                 paymentMethod = paymentMethod,
                 isManualEntry = true,
-                notes = notes
+                notes = notes,
+                dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date)
             )
 
-            val id = expenseDao.insert(expense)
+            val id = expenseDao.insertAtomic(expense)
 
-            // 5. Check budgets
+            if (id <= 0) {
+                return@withTransaction Result.Duplicate
+            }
+
+            // 4. Check budgets
             budgetMonitor.checkBudgets()
 
-            // 6. Learn the merchant→category mapping
-            if (finalCategoryId != null && id > 0) {
-                merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
-            }
+            // 5. Learn the merchant→category mapping
+            merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
 
             Result.Success(id)
         }

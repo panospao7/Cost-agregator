@@ -20,7 +20,10 @@ import androidx.room.*
     ],
     indices = [
         Index("originalCategoryId"),
-        Index("correctedCategoryId")
+        Index("correctedCategoryId"),
+        Index("packageName"),
+        Index("wasApproved"),
+        Index("wasRejected")
     ]
 )
 data class UserCorrection(

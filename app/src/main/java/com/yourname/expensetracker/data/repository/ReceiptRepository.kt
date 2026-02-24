@@ -222,16 +222,7 @@ class ReceiptRepository @Inject constructor(
             amount = amount
         ).categoryId.takeIf { it > 0 }
 
-        // 3. Check for duplicates
-        val isDuplicate = expenseDao.isDuplicate(
-            amount = amount,
-            merchant = normalizedMerchant,
-            date = date,
-            windowMs = com.yourname.expensetracker.domain.util.AppConstants.Windows.DUPLICATE_DETECTION
-        )
-        if (isDuplicate) return com.yourname.expensetracker.domain.model.Result.Duplicate
-
-        // 4. Create expense
+        // 3. Atomic insert with dedupe key
         val expense = Expense(
             amount = amount,
             currency = currency,
@@ -240,33 +231,37 @@ class ReceiptRepository @Inject constructor(
             date = date,
             rawNotificationId = null,
             categoryId = finalCategoryId,
+            createdAt = System.currentTimeMillis(),
             paymentMethod = paymentMethod,
-            isManualEntry = true, // Scanned receipts are treated as manual entries
-            notes = notes ?: "Scanned from receipt"
+            isManualEntry = true,
+            notes = notes ?: "Scanned from receipt",
+            dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date)
         )
 
-        val expenseId = expenseDao.insert(expense)
+        val expenseId = expenseDao.insertAtomic(expense)
 
-        // 5. Link receipt to expense
-        if (expenseId > 0) {
-            scannedReceiptDao.linkToExpense(receiptId, expenseId)
+        if (expenseId <= 0) {
+            return com.yourname.expensetracker.domain.model.Result.Duplicate
+        }
 
-            // 6. Check budgets
-            budgetMonitor.checkBudgets()
+        // 4. Link receipt to expense
+        scannedReceiptDao.linkToExpense(receiptId, expenseId)
 
-            // 7. Learn merchant → category mapping
-            if (finalCategoryId != null) {
-                try {
-                    hybridClassifier.learnFromCorrection(
-                        merchantName = normalizedMerchant,
-                        correctCategoryId = finalCategoryId,
-                        amount = amount
-                    )
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to learn categorization")
-                }
-                merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
+        // 5. Check budgets
+        budgetMonitor.checkBudgets()
+
+        // 6. Learn merchant → category mapping
+        if (finalCategoryId != null) {
+            try {
+                hybridClassifier.learnFromCorrection(
+                    merchantName = normalizedMerchant,
+                    correctCategoryId = finalCategoryId,
+                    amount = amount
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to learn categorization")
             }
+            merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
         }
 
         return com.yourname.expensetracker.domain.model.Result.Success(expenseId)

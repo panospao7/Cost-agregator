@@ -74,4 +74,40 @@ interface SourceStatsDao {
 
     @Query("DELETE FROM source_stats")
     suspend fun deleteAll()
+
+    @Query("""
+        UPDATE source_stats 
+        SET totalNotifications = totalNotifications + 1,
+            acceptedAsExpense = acceptedAsExpense + 1,
+            lastSeen = :now 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementTotalAndAccepted(packageName: String, now: Long)
+
+    @Query("""
+        UPDATE source_stats 
+        SET totalNotifications = totalNotifications + 1,
+            duplicates = duplicates + 1,
+            lastSeen = :now 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementTotalAndDuplicate(packageName: String, now: Long)
+
+    @Query("""
+        UPDATE source_stats 
+        SET totalNotifications = totalNotifications + 1,
+            pendingReview = pendingReview + 1,
+            lastSeen = :now 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementTotalAndPending(packageName: String, now: Long)
+
+    @Query("""
+        UPDATE source_stats 
+        SET totalNotifications = totalNotifications + 1,
+            autoRejected = autoRejected + 1,
+            lastSeen = :now 
+        WHERE packageName = :packageName
+    """)
+    suspend fun incrementTotalAndAutoRejected(packageName: String, now: Long)
 }

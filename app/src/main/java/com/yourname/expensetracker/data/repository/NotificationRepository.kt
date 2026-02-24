@@ -95,10 +95,10 @@ class NotificationRepository @Inject constructor(
                 if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return@withTransaction
                 
                 val rawId = try { dao.insert(notification) } catch (e: Exception) { return@withTransaction }
-                sourceStatsDao.incrementTotal(notification.packageName, timeProvider.now())
-                sourceStatsDao.incrementAutoRejected(notification.packageName)
+                sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
                 dao.markRelevance(rawId, false)
             }
+            confidenceRouter.invalidateSourceStatsCache(notification.packageName)
             return
         }
 
@@ -138,9 +138,8 @@ class NotificationRepository @Inject constructor(
                 return@withTransaction
             }
 
-            // Update stats
+            // Update stats - use atomic methods in each branch
             confidenceRouter.ensureSourceStats(notification.packageName)
-            sourceStatsDao.incrementTotal(notification.packageName, timeProvider.now())
 
             when (routingResult.decision) {
                 RoutingDecision.AUTO_ACCEPT -> {
@@ -154,7 +153,7 @@ class NotificationRepository @Inject constructor(
                     
                     if (isDuplicate) {
                         dao.markRelevance(rawId, false)
-                        sourceStatsDao.incrementDuplicate(notification.packageName)
+                        sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
                         
                         // Train ML classifier: duplicates are still valid transactions
                         classifier.train(fullNotificationText, isTransaction = true)
@@ -180,20 +179,22 @@ class NotificationRepository @Inject constructor(
                         rawNotificationId = rawId,
                         categoryId = categoryId,
                         paymentMethod = PaymentMethod.CARD,
-                        isManualEntry = false
+                        isManualEntry = false,
+                        dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp)
                     )
-                    try {
-                        expenseDao.insert(expense)
+
+                    val expenseId = expenseDao.insertAtomic(expense)
+
+                    if (expenseId > 0) {
                         dao.markRelevance(rawId, true)
-                        sourceStatsDao.incrementAccepted(notification.packageName)
+                        sourceStatsDao.incrementTotalAndAccepted(notification.packageName, timeProvider.now())
                         
-                        // Check budgets (Note: potentially heavy, but standard for accept flow)
                         budgetMonitor.checkBudgets()
-        
-                        // Train classifier: auto-accepted = positive example
                         classifier.train(fullNotificationText, isTransaction = true)
-                    } catch (e: android.database.sqlite.SQLiteConstraintException) {
+                    } else {
                         dao.markRelevance(rawId, false)
+                        sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+                        classifier.train(fullNotificationText, isTransaction = true)
                     }
                 }
 
@@ -207,7 +208,7 @@ class NotificationRepository @Inject constructor(
                     )
                     if (isDuplicate) {
                         dao.markRelevance(rawId, false)
-                        sourceStatsDao.incrementDuplicate(notification.packageName)
+                        sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
                         
                         // Train ML classifier: duplicates are still valid transactions
                         classifier.train(fullNotificationText, isTransaction = true)
@@ -238,14 +239,16 @@ class NotificationRepository @Inject constructor(
                         suggestedDate = parsed.date
                     )
                     pendingReviewDao.insert(review)
-                    sourceStatsDao.incrementPending(notification.packageName)
+                    sourceStatsDao.incrementTotalAndPending(notification.packageName, timeProvider.now())
                 }
 
                 RoutingDecision.AUTO_REJECT -> {
                     dao.markRelevance(rawId, false)
-                    sourceStatsDao.incrementAutoRejected(notification.packageName)
+                    sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
                 }
             }
+
+            confidenceRouter.invalidateSourceStatsCache(notification.packageName)
         }
     }
 

@@ -15,6 +15,12 @@ interface ExpenseDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(expense: Expense): Long
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAtomic(expense: Expense): Long
+
+    @Query("SELECT changes()")
+    suspend fun getChanges(): Int
+
     @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
     fun getAllFlow(limit: Int = 500): Flow<List<Expense>>
 

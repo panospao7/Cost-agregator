@@ -22,7 +22,7 @@ import androidx.room.*
         MerchantCanonical::class,
         MerchantAlias::class
     ],
-    version = 20,
+        version = 23,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -410,6 +410,58 @@ abstract class AppDatabase : RoomDatabase() {
                 // Restore index lost in MIGRATION_15_16
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_merchant_date ON expenses (transactionType, merchant, date)")
             }
+        }
+
+        val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Add dedupeKey column for atomic duplicate prevention
+                database.execSQL("ALTER TABLE expenses ADD COLUMN dedupeKey TEXT DEFAULT NULL")
+                
+                // Generate dedupe keys for existing data
+                database.execSQL("""
+                    UPDATE expenses SET dedupeKey = 
+                        printf('%.2f', amount) || '_' || 
+                        LOWER(REPLACE(REPLACE(REPLACE(merchant, ' ', ''), CHAR(9), ''), CHAR(10), '')) || '_' ||
+                        (date / 300000)
+                """)
+                
+                // Set dedupeKey to NULL for any duplicates (keep one copy)
+                database.execSQL("""
+                    UPDATE expenses SET dedupeKey = NULL WHERE id NOT IN (
+                        SELECT MIN(id) FROM expenses 
+                        GROUP BY dedupeKey 
+                        HAVING dedupeKey IS NOT NULL
+                    )
+                """)
+                
+                // Create unique index
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_expenses_dedupeKey ON expenses(dedupeKey)")
+            }
+        }
+
+        val MIGRATION_21_22 = object : androidx.room.migration.Migration(21, 22) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Add unique index for raw_notifications to prevent duplicates
+                database.execSQL("""
+                    DELETE FROM raw_notifications WHERE id NOT IN (
+                        SELECT MIN(id) FROM raw_notifications 
+                        GROUP BY packageName, timestamp, title, text
+                    )
+                """)
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp_title_text ON raw_notifications(packageName, timestamp, title, text)")
+            }
+        }
+
+        val MIGRATION_22_23 = object : androidx.room.migration.Migration(22, 23) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Add indices for user_corrections for faster lookups
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_packageName ON user_corrections(packageName)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_wasApproved ON user_corrections(wasApproved)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_wasRejected ON user_corrections(wasRejected)")
+            }
+        }
+    }
+}
         }
     }
 }
