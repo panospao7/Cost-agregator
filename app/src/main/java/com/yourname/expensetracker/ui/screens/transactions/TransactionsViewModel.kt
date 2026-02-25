@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -334,6 +335,55 @@ class TransactionsViewModel @Inject constructor(
                 _error.emit("Failed to update type: ${e.message}")
             } finally {
                 _isLoading.value = false
+            }
+        }
+    }
+
+    fun updateTransferDetails(
+        expense: Expense,
+        transferDirection: TransferDirection?,
+        transferAccountName: String
+    ) {
+        viewModelScope.launch {
+            try {
+                expenseRepository.updateTransferDetails(expense, transferDirection, transferAccountName.takeIf { it.isNotBlank() })
+                _successMessage.emit("Transfer details updated")
+            } catch (e: Exception) {
+                _error.emit("Failed to update: ${e.message}")
+            }
+        }
+    }
+
+    fun updateNotMineDetails(expense: Expense, isNotMine: Boolean, ownerName: String) {
+        viewModelScope.launch {
+            try {
+                expenseRepository.updateNotMineDetails(expense, isNotMine, ownerName.takeIf { it.isNotBlank() })
+                _successMessage.emit(if (isNotMine) "Marked as not mine" else "Marked as mine")
+            } catch (e: Exception) {
+                _error.emit("Failed to update: ${e.message}")
+            }
+        }
+    }
+
+    fun updateSharedExpenseDetails(
+        expense: Expense,
+        isSharedExpense: Boolean,
+        sharedWithName: String,
+        mySharePercentage: String,
+        myShareAmount: String
+    ) {
+        viewModelScope.launch {
+            try {
+                expenseRepository.updateSharedExpenseDetails(
+                    expense = expense,
+                    isSharedExpense = isSharedExpense,
+                    sharedWithName = sharedWithName.takeIf { it.isNotBlank() },
+                    mySharePercentage = mySharePercentage.toIntOrNull(),
+                    myShareAmount = myShareAmount.toDoubleOrNull()
+                )
+                _successMessage.emit(if (isSharedExpense) "Marked as shared expense" else "Unmarked shared expense")
+            } catch (e: Exception) {
+                _error.emit("Failed to update: ${e.message}")
             }
         }
     }

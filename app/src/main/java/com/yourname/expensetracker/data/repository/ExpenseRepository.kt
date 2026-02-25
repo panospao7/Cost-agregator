@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
@@ -108,6 +109,37 @@ class ExpenseRepository @Inject constructor(
     suspend fun updateExpenseType(expense: Expense, newType: TransactionType) {
         if (expense.transactionType == newType) return
         expenseDao.updateTransactionType(expense.id, newType.name)
+    }
+
+    suspend fun updateTransferDetails(
+        expense: Expense,
+        transferDirection: TransferDirection?,
+        transferAccountName: String?
+    ) {
+        expenseDao.updateTransferDirection(expense.id, transferDirection?.name)
+        expenseDao.updateTransferAccountName(expense.id, transferAccountName)
+    }
+
+    suspend fun updateNotMineDetails(
+        expense: Expense,
+        isNotMine: Boolean,
+        ownerName: String?
+    ) {
+        expenseDao.updateIsNotMine(expense.id, isNotMine)
+        expenseDao.updateOwnerName(expense.id, ownerName)
+    }
+
+    suspend fun updateSharedExpenseDetails(
+        expense: Expense,
+        isSharedExpense: Boolean,
+        sharedWithName: String?,
+        mySharePercentage: Int?,
+        myShareAmount: Double?
+    ) {
+        expenseDao.updateIsSharedExpense(expense.id, isSharedExpense)
+        expenseDao.updateSharedWithName(expense.id, sharedWithName)
+        expenseDao.updateMySharePercentage(expense.id, mySharePercentage)
+        expenseDao.updateMyShareAmount(expense.id, myShareAmount)
     }
 
     suspend fun searchMerchants(query: String): List<MerchantSuggestion> {

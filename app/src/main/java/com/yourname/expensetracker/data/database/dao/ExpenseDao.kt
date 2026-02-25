@@ -81,6 +81,30 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET transactionType = :type WHERE id = :expenseId")
     suspend fun updateTransactionType(expenseId: Long, type: String)
 
+    @Query("UPDATE expenses SET transferDirection = :direction WHERE id = :expenseId")
+    suspend fun updateTransferDirection(expenseId: Long, direction: String?)
+
+    @Query("UPDATE expenses SET transferAccountName = :name WHERE id = :expenseId")
+    suspend fun updateTransferAccountName(expenseId: Long, name: String?)
+
+    @Query("UPDATE expenses SET isNotMine = :isNotMine WHERE id = :expenseId")
+    suspend fun updateIsNotMine(expenseId: Long, isNotMine: Boolean)
+
+    @Query("UPDATE expenses SET ownerName = :name WHERE id = :expenseId")
+    suspend fun updateOwnerName(expenseId: Long, name: String?)
+
+    @Query("UPDATE expenses SET isSharedExpense = :isShared WHERE id = :expenseId")
+    suspend fun updateIsSharedExpense(expenseId: Long, isShared: Boolean)
+
+    @Query("UPDATE expenses SET sharedWithName = :name WHERE id = :expenseId")
+    suspend fun updateSharedWithName(expenseId: Long, name: String?)
+
+    @Query("UPDATE expenses SET mySharePercentage = :percentage WHERE id = :expenseId")
+    suspend fun updateMySharePercentage(expenseId: Long, percentage: Int?)
+
+    @Query("UPDATE expenses SET myShareAmount = :amount WHERE id = :expenseId")
+    suspend fun updateMyShareAmount(expenseId: Long, amount: Double?)
+
     @Query("""
         SELECT EXISTS(
             SELECT 1 FROM expenses 

@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +47,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.formattedAmount
 import com.yourname.expensetracker.data.database.model.formattedDate
@@ -95,6 +98,7 @@ fun TransactionsScreen(
     var expenseToRecurring by remember { mutableStateOf<Expense?>(null) }
     var expenseToRename by remember { mutableStateOf<Expense?>(null) }
     var expenseToChangeType by remember { mutableStateOf<Expense?>(null) }
+    var expenseToEditOwnership by remember { mutableStateOf<Expense?>(null) }
     var showSearch by remember { mutableStateOf(false) }
     
     // Pull-to-refresh state
@@ -387,7 +391,8 @@ fun TransactionsScreen(
                                     onEditCategory = { expenseToCategorize = item.expense },
                                     onMarkRecurring = { expenseToRecurring = item.expense },
                                     onRename = { expenseToRename = item.expense },
-                                    onChangeType = { expenseToChangeType = item.expense }
+                                    onChangeType = { expenseToChangeType = item.expense },
+                                    onEditOwnership = { expenseToEditOwnership = item.expense }
                                 )
                             }
                         }
@@ -474,6 +479,21 @@ fun TransactionsScreen(
                 onConfirm = { newType ->
                     expenseToChangeType?.let { viewModel.updateExpenseType(it, newType) }
                     expenseToChangeType = null
+                }
+            )
+        }
+
+        // Edit ownership/not-mine/shared dialog
+        if (expenseToEditOwnership != null) {
+            EditOwnershipDialog(
+                expense = expenseToEditOwnership!!,
+                onDismiss = { expenseToEditOwnership = null },
+                onSave = { isNotMine, ownerName, isShared, sharedWith, sharePercent, shareAmount ->
+                    expenseToEditOwnership?.let { expense ->
+                        viewModel.updateNotMineDetails(expense, isNotMine, ownerName)
+                        viewModel.updateSharedExpenseDetails(expense, isShared, sharedWith, sharePercent, shareAmount)
+                    }
+                    expenseToEditOwnership = null
                 }
             )
         }
@@ -608,7 +628,8 @@ private fun TransactionItem(
     onEditCategory: () -> Unit,
     onMarkRecurring: () -> Unit,
     onRename: () -> Unit,
-    onChangeType: () -> Unit
+    onChangeType: () -> Unit,
+    onEditOwnership: () -> Unit
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -776,6 +797,23 @@ private fun TransactionItem(
                         }
                         Text(
                             text = typeIcon,
+                            fontSize = 16.sp
+                        )
+                    }
+
+                    // Edit ownership/not-mine/shared action
+                    IconButton(
+                        onClick = onEditOwnership,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        val ownershipIcon = when {
+                            expense.isNotMine -> "👤"
+                            expense.isSharedExpense -> "🤝"
+                            expense.transactionType == TransactionType.TRANSFER -> "🔄"
+                            else -> "⚙️"
+                        }
+                        Text(
+                            text = ownershipIcon,
                             fontSize = 16.sp
                         )
                     }
@@ -1186,6 +1224,134 @@ fun ChangeTypeDialog(
                 )
             ) {
                 Text("Update Type")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun EditOwnershipDialog(
+    expense: Expense,
+    onDismiss: () -> Unit,
+    onSave: (isNotMine: Boolean, ownerName: String, isShared: Boolean, sharedWithName: String, sharePercentage: String, shareAmount: String) -> Unit
+) {
+    var isNotMine by remember { mutableStateOf(expense.isNotMine) }
+    var ownerName by remember { mutableStateOf(expense.ownerName ?: "") }
+    var isSharedExpense by remember { mutableStateOf(expense.isSharedExpense) }
+    var sharedWithName by remember { mutableStateOf(expense.sharedWithName ?: "") }
+    var mySharePercentage by remember { mutableStateOf(expense.mySharePercentage?.toString() ?: "") }
+    var myShareAmount by remember { mutableStateOf(expense.myShareAmount?.toString() ?: "") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.PersonAdd, contentDescription = null) },
+        title = { Text("Edit Expense Details") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "Ownership",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Not mine (belongs to someone else)")
+                    Switch(
+                        checked = isNotMine,
+                        onCheckedChange = { isNotMine = it }
+                    )
+                }
+                if (isNotMine) {
+                    OutlinedTextField(
+                        value = ownerName,
+                        onValueChange = { ownerName = it },
+                        label = { Text("Owner name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("e.g., Partner, Roommate") }
+                    )
+                }
+
+                HorizontalDivider()
+
+                Text(
+                    "Shared Expense",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Split with someone")
+                    Switch(
+                        checked = isSharedExpense,
+                        onCheckedChange = { isSharedExpense = it }
+                    )
+                }
+                if (isSharedExpense) {
+                    OutlinedTextField(
+                        value = sharedWithName,
+                        onValueChange = { sharedWithName = it },
+                        label = { Text("Shared with") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = mySharePercentage,
+                            onValueChange = { mySharePercentage = it.filter { c -> c.isDigit() } },
+                            label = { Text("My %") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = myShareAmount,
+                            onValueChange = { myShareAmount = it.filter { c -> c.isDigit() || c == '.' } },
+                            label = { Text("Or amount") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                    }
+                }
+
+                if (expense.transactionType == TransactionType.TRANSFER) {
+                    HorizontalDivider()
+                    Text(
+                        "Transfer Direction",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Transfer type can be changed in the type dialog",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.TextSecondary
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(isNotMine, ownerName, isSharedExpense, sharedWithName, mySharePercentage, myShareAmount)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = SemanticColors.PrimaryIndigo
+                )
+            ) {
+                Text("Save")
             }
         },
         dismissButton = {
