@@ -56,7 +56,9 @@ class AnalyticsViewModel @Inject constructor(
     .flatMapLatest { (expenses, categories, period) ->
         flow {
             emit(AnalyticsState(isLoading = true, selectedPeriod = period))
-            val result = computeAnalyticsInternal(expenses, categories, period)
+            // Filter out isNotMine expenses from analytics
+            val filteredExpenses = expenses.filter { !it.isNotMine }
+            val result = computeAnalyticsInternal(filteredExpenses, categories, period)
             emit(result)
         }
     }

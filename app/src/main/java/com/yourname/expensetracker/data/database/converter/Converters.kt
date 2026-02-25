@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import androidx.room.TypeConverter
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 
 class Converters {
     @TypeConverter
@@ -45,6 +46,22 @@ class Converters {
             com.yourname.expensetracker.data.database.entity.BudgetPeriod.valueOf(value)
         } catch (e: IllegalArgumentException) {
             com.yourname.expensetracker.data.database.entity.BudgetPeriod.MONTHLY
+        }
+    }
+
+    @TypeConverter
+    fun fromTransferDirection(value: TransferDirection?): String? {
+        return value?.name
+    }
+
+    @TypeConverter
+    fun toTransferDirection(value: String?): TransferDirection? {
+        return value?.let {
+            try {
+                TransferDirection.valueOf(it)
+            } catch (e: IllegalArgumentException) {
+                null
+            }
         }
     }
 }

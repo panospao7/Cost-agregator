@@ -274,7 +274,7 @@ class HomeViewModel @Inject constructor(
         val todayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
         val weekStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfWeek(now)
 
-        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
         val deposits = expenses.filter { it.transactionType == TransactionType.DEPOSIT }
         val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
         val todaySpent = purchases.filter { it.date >= todayStart }.sumOf { it.amount }
@@ -317,7 +317,9 @@ class HomeViewModel @Inject constructor(
         }
         
         val purchasesThisMonth = expenses.filter { 
-            it.transactionType == TransactionType.PURCHASE && it.date >= monthStart
+            it.transactionType == TransactionType.PURCHASE && 
+            it.date >= monthStart &&
+            !it.isNotMine
         }
         val amountByDay = DoubleArray(currentDayIdx + 1)
         purchasesThisMonth.forEach { exp ->
@@ -561,18 +563,14 @@ class HomeViewModel @Inject constructor(
         currentConfig[index] = currentConfig[newIndex].copy(order = index)
         currentConfig[newIndex] = temp.copy(order = newIndex)
         
-        dashboardRepository.saveDashboardConfig(currentConfig.sortedBy { it.order })
-        // Trigger recomposition by refreshing dashboard flow (implicitly via combining with a triggered state if needed)
-        // Here we can just nudge the isEditMode or use a dedicated Refresh trigger
-        // isEditMode.value = isEditMode.value 
+        dashboardRepository.saveDashboardConfigSync(currentConfig.sortedBy { it.order })
     }
 
     fun toggleWidgetVisibility(widgetId: String) {
         val currentConfig = dashboardRepository.getDashboardConfig().map {
             if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
         }
-        dashboardRepository.saveDashboardConfig(currentConfig)
-        // isEditMode.value = isEditMode.value
+        dashboardRepository.saveDashboardConfigSync(currentConfig)
     }
 
 

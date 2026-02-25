@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
@@ -44,7 +45,15 @@ data class AddExpenseState(
     val isSaving: Boolean = false,
     val saveResult: SaveResult? = null,
     val merchantError: String? = null,
-    val amountError: String? = null
+    val amountError: String? = null,
+    val transferDirection: TransferDirection? = null,
+    val transferAccountName: String = "",
+    val isNotMine: Boolean = false,
+    val ownerName: String = "",
+    val isSharedExpense: Boolean = false,
+    val sharedWithName: String = "",
+    val mySharePercentage: String = "",
+    val myShareAmount: String = ""
 )
 
 sealed class SaveResult {
@@ -168,6 +177,39 @@ class AddExpenseViewModel @Inject constructor(
         _state.update { it.copy(recurrenceFrequency = frequency) }
     }
 
+    fun setTransferDirection(direction: TransferDirection?) {
+        _state.update { it.copy(transferDirection = direction) }
+    }
+
+    fun updateTransferAccountName(name: String) {
+        _state.update { it.copy(transferAccountName = name.take(100)) }
+    }
+
+    fun setIsNotMine(value: Boolean) {
+        _state.update { it.copy(isNotMine = value) }
+    }
+
+    fun updateOwnerName(name: String) {
+        _state.update { it.copy(ownerName = name.take(100)) }
+    }
+
+    fun setIsSharedExpense(value: Boolean) {
+        _state.update { it.copy(isSharedExpense = value) }
+    }
+
+    fun updateSharedWithName(name: String) {
+        _state.update { it.copy(sharedWithName = name.take(100)) }
+    }
+
+    fun updateMySharePercentage(value: String) {
+        _state.update { it.copy(mySharePercentage = value.filter { it.isDigit() }.take(3)) }
+    }
+
+    fun updateMyShareAmount(value: String) {
+        val filtered = value.filter { it.isDigit() || it == '.' || it == ',' }
+        _state.update { it.copy(myShareAmount = filtered.take(10)) }
+    }
+
     fun save() {
         val currentState = _state.value
 
@@ -198,6 +240,9 @@ class AddExpenseViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
+                val sharePercentage = currentState.mySharePercentage.toIntOrNull()
+                val shareAmount = currentState.myShareAmount.toDoubleOrNull()
+
                 // 1. Save the actual transaction
                 val result = manualExpenseRepository.addManualExpense(
                     merchant = merchantTrimmed,
@@ -207,7 +252,15 @@ class AddExpenseViewModel @Inject constructor(
                     transactionType = currentState.transactionType,
                     paymentMethod = currentState.paymentMethod,
                     date = currentState.date,
-                    notes = currentState.notes.takeIf { it.isNotBlank() }
+                    notes = currentState.notes.takeIf { it.isNotBlank() },
+                    transferDirection = currentState.transferDirection,
+                    transferAccountName = currentState.transferAccountName.takeIf { it.isNotBlank() },
+                    isNotMine = currentState.isNotMine,
+                    ownerName = currentState.ownerName.takeIf { it.isNotBlank() },
+                    isSharedExpense = currentState.isSharedExpense,
+                    sharedWithName = currentState.sharedWithName.takeIf { it.isNotBlank() },
+                    mySharePercentage = sharePercentage,
+                    myShareAmount = shareAmount
                 )
 
                 when (result) {

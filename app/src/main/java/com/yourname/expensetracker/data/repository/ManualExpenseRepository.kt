@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -37,7 +38,15 @@ class ManualExpenseRepository @Inject constructor(
         transactionType: TransactionType = TransactionType.PURCHASE,
         paymentMethod: PaymentMethod = PaymentMethod.CASH,
         date: Long = timeProvider.now(),
-        notes: String? = null
+        notes: String? = null,
+        transferDirection: TransferDirection? = null,
+        transferAccountName: String? = null,
+        isNotMine: Boolean = false,
+        ownerName: String? = null,
+        isSharedExpense: Boolean = false,
+        sharedWithName: String? = null,
+        mySharePercentage: Int? = null,
+        myShareAmount: Double? = null
     ): Result<Long> {
         if (amount <= 0) {
             return Result.Error(message = "Amount must be greater than zero")
@@ -70,7 +79,15 @@ class ManualExpenseRepository @Inject constructor(
                 paymentMethod = paymentMethod,
                 isManualEntry = true,
                 notes = notes,
-                dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date)
+                dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date),
+                transferDirection = transferDirection,
+                transferAccountName = transferAccountName,
+                isNotMine = isNotMine,
+                ownerName = ownerName,
+                isSharedExpense = isSharedExpense,
+                sharedWithName = sharedWithName,
+                mySharePercentage = mySharePercentage,
+                myShareAmount = myShareAmount
             )
 
             val id = expenseDao.insertAtomic(expense)

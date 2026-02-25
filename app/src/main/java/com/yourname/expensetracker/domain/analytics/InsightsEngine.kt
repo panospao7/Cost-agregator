@@ -72,6 +72,7 @@ class InsightsEngine @Inject constructor(
             it.transactionType == TransactionType.PURCHASE
                     && it.date >= currentMonth.startMs
                     && it.date < currentMonth.endMs
+                    && !it.isNotMine
         }
         val avgTxSize = if (currentMonthPurchases.isNotEmpty())
             currentMonthPurchases.map { it.amount }.average() else 0.0

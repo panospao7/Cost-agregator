@@ -35,6 +35,7 @@ import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import java.time.format.DateTimeFormatter
 import java.time.Instant
 import java.time.ZoneId
@@ -316,6 +317,123 @@ fun AddExpenseSheet(
                                     )
                                 }
                         }
+                    }
+                }
+
+                // === Not Mine Expense ===
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "Not mine (belongs to someone else)",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Switch(
+                        checked = state.isNotMine,
+                        onCheckedChange = { viewModel.setIsNotMine(it) }
+                    )
+                }
+
+                AnimatedVisibility(visible = state.isNotMine) {
+                    OutlinedTextField(
+                        value = state.ownerName,
+                        onValueChange = { viewModel.updateOwnerName(it) },
+                        label = { Text("Owner name (e.g., Partner, Roommate)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // === Shared Expense ===
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "Shared expense (split with someone)",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Switch(
+                        checked = state.isSharedExpense,
+                        onCheckedChange = { viewModel.setIsSharedExpense(it) }
+                    )
+                }
+
+                AnimatedVisibility(visible = state.isSharedExpense) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = state.sharedWithName,
+                            onValueChange = { viewModel.updateSharedWithName(it) },
+                            label = { Text("Shared with (name)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = state.mySharePercentage,
+                                onValueChange = { viewModel.updateMySharePercentage(it) },
+                                label = { Text("My share %") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                placeholder = { Text("e.g., 50") }
+                            )
+                            OutlinedTextField(
+                                value = state.myShareAmount,
+                                onValueChange = { viewModel.updateMyShareAmount(it) },
+                                label = { Text("Or amount") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                placeholder = { Text("e.g., 25.00") }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // === Transfer Direction (show when TRANSFER selected) ===
+                AnimatedVisibility(visible = state.transactionType == TransactionType.TRANSFER) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Transfer direction",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = state.transferDirection == TransferDirection.INCOMING,
+                                onClick = { viewModel.setTransferDirection(TransferDirection.INCOMING) },
+                                label = { Text("Incoming (to me)") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = state.transferDirection == TransferDirection.OUTGOING,
+                                onClick = { viewModel.setTransferDirection(TransferDirection.OUTGOING) },
+                                label = { Text("Outgoing (from me)") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        OutlinedTextField(
+                            value = state.transferAccountName,
+                            onValueChange = { viewModel.updateTransferAccountName(it) },
+                            label = { Text("Account/Person name") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            placeholder = { Text("e.g., Savings account, John, Bank transfer") }
+                        )
                     }
                 }
 

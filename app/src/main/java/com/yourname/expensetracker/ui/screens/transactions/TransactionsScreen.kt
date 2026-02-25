@@ -48,6 +48,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.formattedAmount
 import com.yourname.expensetracker.data.database.model.formattedDate
+import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -75,6 +76,7 @@ fun TransactionsScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val isLoadingMore by viewModel.isLoadingMoreState.collectAsState()
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
+    val ownershipFilter by viewModel.ownershipFilter.collectAsState()
     
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -315,6 +317,22 @@ fun TransactionsScreen(
             },
             modifier = Modifier.padding(padding)
         ) {
+            // Ownership Filter Chips
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OwnershipFilter.values().forEach { filter ->
+                    FilterChip(
+                        selected = ownershipFilter == filter,
+                        onClick = { viewModel.setOwnershipFilter(filter) },
+                        label = { Text(filter.label, style = MaterialTheme.typography.labelMedium) }
+                    )
+                }
+            }
+
             when {
                 isLoading && transactions.isEmpty() -> {
                     // Initial loading state

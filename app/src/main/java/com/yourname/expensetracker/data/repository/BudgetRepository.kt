@@ -29,18 +29,21 @@ class BudgetRepository @Inject constructor(
     suspend fun getActiveBudgets(): List<Budget> = budgetDao.getActiveBudgets()
 
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
-        // We fetch the last 13 months to cover yearly budgets + rollover
-        val thirteenMonthsAgo = java.util.Calendar.getInstance().apply {
+        // We fetch the last 25 months to cover yearly budgets + rollover (need 24 months for full yearly history)
+        val twentyFiveMonthsAgo = java.util.Calendar.getInstance().apply {
             timeInMillis = timeProvider.now()
-            add(java.util.Calendar.MONTH, -13)
+            add(java.util.Calendar.MONTH, -25)
         }.timeInMillis
         
         return combine(
             budgetDao.getActiveBudgetsFlow(),
             categoryDao.getAllFlow(),
-            expenseDao.getExpensesBetweenFlow(thirteenMonthsAgo, timeProvider.now() + 86400000) // +1 day for safety
+            expenseDao.getExpensesBetweenFlow(twentyFiveMonthsAgo, timeProvider.now() + 86400000) // +1 day for safety
         ) { budgets, categories, allExpenses ->
-            val purchases = allExpenses.filter { it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE }
+            val purchases = allExpenses.filter { 
+                it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE &&
+                !it.isNotMine 
+            }
             val categoryMap = categories.associateBy { it.id }
             
             budgets.map { budget ->

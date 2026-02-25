@@ -153,9 +153,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val categories = categoriesDeferred.await()
         val budgets = budgetsDeferred.await()
         
-        // Filter to purchases only
-        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE }
-        val previousPurchases = previousExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+        // Filter to purchases only, excluding "not mine" expenses
+        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+        val previousPurchases = previousExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
         
         // Build lookup maps
         val categoryMap = categories.associateBy { it.id }
@@ -245,7 +245,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val currentExpenses = currentExpensesDeferred.await()
         val historicalExpenses = historicalExpensesDeferred.await()
         
-        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE }
+        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
         
         currentPurchases
             .groupBy { it.merchant }
@@ -317,7 +317,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     suspend fun getSpendingPatterns(period: PeriodRange): SpendingPatternAnalysis = withContext(Dispatchers.Default) {
         coroutineScope {
             val expenses = expenseRepository.getExpensesBetween(period.startMs, period.endMs)
-        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
         
         if (purchases.isEmpty()) {
             return@coroutineScope createEmptyPatternAnalysis(period)
@@ -414,8 +414,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
      */
     suspend fun getStatisticalInsights(period: PeriodRange): StatisticalInsights = withContext(Dispatchers.Default) {
         coroutineScope {
-        val expenses = expenseRepository.getExpensesBetween(period.startMs, period.endMs)
-        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+            val expenses = expenseRepository.getExpensesBetween(period.startMs, period.endMs)
+            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
         
         if (purchases.isEmpty()) {
             return@coroutineScope createEmptyStatisticalInsights(period)
@@ -611,10 +611,13 @@ class AdvancedAnalyticsEngine @Inject constructor(
         if (expenses.size < 2) return 0.0
         
         val sorted = expenses.sortedBy { it.date }
-        val midPoint = sorted.size / 2
+        val midpoint = sorted.size / 2
         
-        val firstHalfTotal = sorted.take(midPoint).sumOf { it.amount }
-        val secondHalfTotal = sorted.takeLast(midPoint).sumOf { it.amount }
+        val firstHalf = sorted.subList(0, midpoint)
+        val secondHalf = sorted.subList(midpoint, sorted.size)
+        
+        val firstHalfTotal = firstHalf.sumOf { it.amount }
+        val secondHalfTotal = secondHalf.sumOf { it.amount }
         
         return secondHalfTotal - firstHalfTotal
     }
@@ -690,7 +693,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val avg = amounts.average()
         val stdDev = if (amounts.size > 1) {
             sqrt(amounts.sumOf { (it - avg) * (it - avg) } / amounts.size)
-        } else avg
+        } else 0.0  // Single element has zero variance
         
         val cv = if (avg > 0) stdDev / avg else 1.0
         val safeCv = if (cv.isNaN() || cv.isInfinite()) 1.0 else cv
@@ -734,9 +737,10 @@ class AdvancedAnalyticsEngine @Inject constructor(
         if (historicalExpenses.isEmpty()) return 0
         
         val cal = Calendar.getInstance()
+        // Use zero-padded months for proper string sorting: "2024-01", "2024-02", etc.
         val months = historicalExpenses.map { expense ->
             cal.timeInMillis = expense.date
-            "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}"
+            "%d-%02d".format(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
         }.distinct().sorted()
         
         if (months.size < 2) return 1

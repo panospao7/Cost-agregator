@@ -56,7 +56,16 @@ data class Expense(
     val isManualEntry: Boolean = false,
     val notes: String? = null,
 
-    val dedupeKey: String? = null // For atomic duplicate prevention
+    val dedupeKey: String? = null,
+
+    val transferDirection: TransferDirection? = null,
+    val transferAccountName: String? = null,
+    val isNotMine: Boolean = false,
+    val ownerName: String? = null,
+    val isSharedExpense: Boolean = false,
+    val sharedWithName: String? = null,
+    val mySharePercentage: Int? = null,
+    val myShareAmount: Double? = null
 ) {
     companion object {
         private const val DUPLICATE_WINDOW_MS = 300_000L // 5 minutes
@@ -78,6 +87,11 @@ enum class TransactionType {
     TRANSFER,
     DEPOSIT,
     UNKNOWN
+}
+
+enum class TransferDirection {
+    INCOMING,
+    OUTGOING
 }
 
 enum class PaymentMethod {

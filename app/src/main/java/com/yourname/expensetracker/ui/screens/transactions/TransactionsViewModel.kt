@@ -50,6 +50,14 @@ class TransactionsViewModel @Inject constructor(
         ALL("All", null)
     }
 
+    enum class OwnershipFilter(val label: String) {
+        ALL("All"),
+        MINE("Mine only"),
+        NOT_MINE("Not mine"),
+        SHARED("Shared"),
+        TRANSFER("Transfers")
+    }
+
     // Categories
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -61,6 +69,10 @@ class TransactionsViewModel @Inject constructor(
     // Search query state
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    // Ownership filter state
+    private val _ownershipFilter = MutableStateFlow(OwnershipFilter.ALL)
+    val ownershipFilter: StateFlow<OwnershipFilter> = _ownershipFilter.asStateFlow()
 
     // Pagination state for ALL tab
     private val _currentPage = MutableStateFlow(0)
@@ -87,54 +99,49 @@ class TransactionsViewModel @Inject constructor(
     // Refresh trigger for pull-to-refresh
     private val _refreshTrigger = MutableStateFlow(0)
 
-    /**
-     * Main transactions flow with reactive filtering.
-     * Combines tab selection, search query, and refresh triggers.
-     */
     // Filter state for drill-down
     private val _filter = MutableStateFlow<TransactionFilter?>(null)
     val filter: StateFlow<TransactionFilter?> = _filter.asStateFlow()
 
     /**
      * Main transactions flow with reactive filtering.
-     * Combines tab selection, search query, filter, and refresh triggers.
+     * Combines tab selection, search query, filter, ownership filter, and refresh triggers.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     val transactions: StateFlow<List<ExpenseWithCategory>> = combine(
         _selectedTab,
         _searchQuery,
         _filter,
+        _ownershipFilter,
         _refreshTrigger
-    ) { tab, query, filter, _ -> Triple(tab, query, filter) }
-        .flatMapLatest { (tab, query, filter) ->
-            if (filter != null) {
-                // FILTER MODE: Optimized SQL-level filtering
-                val (start, end) = filter.dateRange ?: Pair(0L, timeProvider.now())
+    ) { tab, query, filter, ownership, _ -> 
+        FilterParams(tab, query, filter, ownership) 
+    }
+        .flatMapLatest { params ->
+            val baseExpenses = if (params.filter != null) {
+                val (start, end) = params.filter.dateRange ?: Pair(0L, timeProvider.now())
                 
                 expenseRepository.getExpensesWithCategoryFiltered(
                     startMs = start,
                     endMs = end,
                     type = TransactionType.PURCHASE,
-                    categoryId = filter.categoryId,
-                    merchant = filter.merchantName
-                ).map { expenses ->
-                    if (query.isBlank()) expenses
-                    else expenses.filter { matchesSearch(it, query) }
-                }
-            } else if (tab == TransactionTab.ALL) {
-                // For ALL tab, use paged data with optional search filter
-                _pagedExpenses.map { expenses ->
-                    if (query.isBlank()) expenses
-                    else expenses.filter { matchesSearch(it, query) }
-                }
+                    categoryId = params.filter.categoryId,
+                    merchant = params.filter.merchantName
+                )
+            } else if (params.tab == TransactionTab.ALL) {
+                _pagedExpenses
             } else {
-                // For other tabs, use time-based filtering
-                val range = getTimeRangeForTab(tab)
+                val range = getTimeRangeForTab(params.tab)
                 expenseRepository.getExpensesWithCategoryInPeriod(range.first, range.second)
-                    .map { expenses ->
-                        if (query.isBlank()) expenses
-                        else expenses.filter { matchesSearch(it, query) }
-                    }
+            }
+
+            baseExpenses.map { expenses ->
+                var filtered = expenses
+                if (params.query.isNotBlank()) {
+                    filtered = filtered.filter { matchesSearch(it, params.query) }
+                }
+                filtered = filterByOwnership(filtered, params.ownership)
+                filtered
             }
         }
         .flowOn(Dispatchers.Default)
@@ -143,6 +150,13 @@ class TransactionsViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
+
+    private data class FilterParams(
+        val tab: TransactionTab,
+        val query: String,
+        val filter: TransactionFilter?,
+        val ownership: OwnershipFilter
+    )
 
     /**
      * Grouped transactions by date for UI display.
@@ -397,14 +411,33 @@ class TransactionsViewModel @Inject constructor(
      * Search matching with null-safety and performance optimization.
      */
     private fun matchesSearch(item: ExpenseWithCategory, query: String): Boolean {
-        // Use the extension property we defined (or compute it here if extension not visible)
-        // Since we are in ViewModel, we can just access properties directly
         val lowerQuery = query.lowercase()
         
         return item.expense.merchant.lowercase().contains(lowerQuery) ||
                 item.category?.name?.lowercase()?.contains(lowerQuery) == true
-                // Note: formattedAmount logic is in UI/Extension, duplicating basic check here:
-                // item.expense.amount.toString().contains(lowerQuery) 
+    }
+
+    /**
+     * Filter expenses by ownership type.
+     */
+    private fun filterByOwnership(
+        expenses: List<ExpenseWithCategory>,
+        filter: OwnershipFilter
+    ): List<ExpenseWithCategory> {
+        return when (filter) {
+            OwnershipFilter.ALL -> expenses
+            OwnershipFilter.MINE -> expenses.filter { !it.expense.isNotMine }
+            OwnershipFilter.NOT_MINE -> expenses.filter { it.expense.isNotMine }
+            OwnershipFilter.SHARED -> expenses.filter { it.expense.isSharedExpense }
+            OwnershipFilter.TRANSFER -> expenses.filter { it.expense.transactionType == TransactionType.TRANSFER }
+        }
+    }
+
+    /**
+     * Set the ownership filter.
+     */
+    fun setOwnershipFilter(filter: OwnershipFilter) {
+        _ownershipFilter.value = filter
     }
 
     /**

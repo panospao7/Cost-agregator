@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
+import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedPriority
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel as EntityGoalProtection
@@ -59,6 +60,7 @@ class FinancialWeatherRepository @Inject constructor(
     private val insightsEngine: InsightsEngine,
     private val budgetRepository: BudgetRepository,
     private val recurringExpenseRepository: RecurringExpenseRepository,
+    private val recurringExpenseEngine: RecurringExpenseEngine,
     private val plannedExpenseRepository: PlannedExpenseRepository,
     private val savingsGoalRepository: SavingsGoalRepository,
     private val synthesisEngine: SynthesisEngine,
@@ -92,20 +94,39 @@ class FinancialWeatherRepository @Inject constructor(
         
         val plannedExpenses = plannedEntities.map { it.toDomain() }
         
-        val recurringPatterns = recurringEntities.map { entity ->
-            com.yourname.expensetracker.domain.model.RecurringPattern(
+        // Use RecurringExpenseEngine to get patterns with ACTUAL confidence scores
+        // This properly detects recurring expenses from transaction history with
+        // confidence values based on detection consistency
+        val recurringPatterns = recurringExpenseEngine.getPatterns(expenses)
+        
+        // Also include manual recurring expenses that may not have been detected
+        // These have 100% confidence since they're user-defined
+        val manualPatterns = recurringEntities.map { entity ->
+            RecurringPattern(
                 id = entity.id,
                 merchantName = entity.merchant,
                 averageAmount = entity.amount,
                 currency = entity.currency,
                 frequency = entity.frequency,
                 nextExpectedDate = entity.nextDate,
-                confidence = 1.0f,
+                confidence = 1.0f, // Manual entries are 100% confident
                 periodVarianceDays = 0,
                 amountVariancePercent = 0.0,
                 previousDates = emptyList()
             )
         }
+        
+        // Merge detected patterns with manual patterns, removing duplicates by merchant
+        // Manual patterns take precedence (higher confidence)
+        val merchantToPattern = mutableMapOf<String, RecurringPattern>()
+        (recurringPatterns + manualPatterns).forEach { pattern ->
+            val key = pattern.merchantName.lowercase()
+            val existing = merchantToPattern[key]
+            if (existing == null || pattern.confidence > existing.confidence) {
+                merchantToPattern[key] = pattern
+            }
+        }
+        val allRecurringPatterns = merchantToPattern.values.toList()
         
         val savingsGoals = goalEntities.map { entity ->
             SavingsGoal(
@@ -129,7 +150,9 @@ class FinancialWeatherRepository @Inject constructor(
         val currentDay = ((now - monthStart) / 86400000L).toInt()
 
         val purchases = expenses.filter { 
-            it.transactionType == TransactionType.PURCHASE && it.date >= monthStart
+            it.transactionType == TransactionType.PURCHASE && 
+            it.date >= monthStart &&
+            !it.isNotMine
         }
         
         val amountByDay = DoubleArray(currentDay + 1)
@@ -149,12 +172,14 @@ class FinancialWeatherRepository @Inject constructor(
         }
 
         // 2. Get Engines data - Reusing already fetched expenses to avoid redundant DB queries
-        val pace = insightsEngine.getSpendingPaceSuspend(expenses)
+        // Filter out isNotMine expenses
+        val expensesForPace = expenses.filter { !it.isNotMine }
+        val pace = insightsEngine.getSpendingPaceSuspend(expensesForPace)
         
         // 3. Synthesize Forecast
         val forecast = synthesisEngine.synthesize(
             pastSumDaily = pastSumDaily,
-            recurringPatterns = recurringPatterns,
+            recurringPatterns = allRecurringPatterns,
             plannedExpenses = plannedExpenses,
             savingsGoals = savingsGoals,
             budgetStatuses = budgetStatuses,
@@ -186,7 +211,7 @@ class FinancialWeatherRepository @Inject constructor(
                 forecast.components.recurringExpenses,
                 forecast.components.plannedExpenses
             ),
-            totalRecurringCount = recurringPatterns.size,
+            totalRecurringCount = allRecurringPatterns.size,
             details = narrative.details
         )
     }.catch { e ->
