@@ -400,6 +400,14 @@ TimeModule
 | notes | TEXT | User notes |
 | rawNotificationId | INTEGER FK | Source notification |
 | createdAt | INTEGER | Record creation time |
+| transferDirection | TEXT | INCOMING/OUTGOING (for transfers) |
+| transferAccountName | TEXT | Account/person name for transfers |
+| isNotMine | INTEGER | Expense belongs to someone else |
+| ownerName | TEXT | Owner name (e.g., Partner, Roommate) |
+| isSharedExpense | INTEGER | Expense is split with someone |
+| sharedWithName | TEXT | Person shared with |
+| mySharePercentage | INTEGER | My share percentage |
+| myShareAmount | REAL | My share amount |
 
 #### TransactionType Enum
 
@@ -410,6 +418,13 @@ TimeModule
 | `TRANSFER` | Money transfer |
 | `DEPOSIT` | Money deposit |
 | `REFUND` | Refund/credit |
+
+#### TransferDirection Enum
+
+| Type | Description |
+|------|-------------|
+| `INCOMING` | Money coming to me (received transfer, borrowed money returned) |
+| `OUTGOING` | Money going from me (sent transfer, lent money) |
 
 #### budgets
 | Column | Type | Description |
