@@ -452,6 +452,15 @@ index_raw_notifications_packageName_timestamp_title_text UNIQUE
 | OCR issues | ReceiptOcrService, ReceiptParser, ML Kit config |
 | Category wrong | CategorizationEngine, MerchantNormalizer, HybridExpenseClassifier |
 | Recurring missed | RecurringExpenseEngine, RecurringExpenseRepository |
+
+### Recent Critical Fixes (2026)
+| Issue | Fix |
+|-------|-----|
+| ExpenseRepository memory leak | Removed local CoroutineScope, uses direct flow |
+| InsightsEngine God Object | Split into 6 focused engines |
+| Input validation | Added max 200 char limit to MerchantNormalizer |
+| Flow error handling | Added catch + emit empty in FinancialWeatherRepository |
+| Category learning race | Added Mutex to updateExpenseCategory |
 | Analytics slow | InsightsEngine, AdvancedAnalyticsEngine, AnalyticsRepository |
 
 ---
