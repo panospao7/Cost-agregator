@@ -123,8 +123,15 @@ domain/
 │   ├── NarrativeGenerator.kt   # Weather narratives
 │   └── RecurringExpenseEngine.kt # Recurring pattern detection
 ├── analytics/                   # Analytics engines
-│   ├── InsightsEngine.kt        # Spending insights
-│   └── AdvancedAnalyticsEngine.kt # Advanced patterns
+│   ├── InsightsEngine.kt        # Spending insights (coordinator)
+│   ├── SpendingPaceCalculator.kt      # Spending pace (NEW)
+│   ├── AnomalyDetector.kt             # Unusual transactions (NEW)
+│   ├── MonthlyComparisonCalculator.kt # Month comparison (NEW)
+│   ├── CategoryInsightEngine.kt       # Category analysis (NEW)
+│   ├── MerchantInsightEngine.kt      # Merchant patterns (NEW)
+│   ├── DayOfWeekAnalyzer.kt         # Day-of-week patterns (NEW)
+│   ├── AdvancedAnalyticsEngine.kt # Advanced patterns
+│   └── AnalyticsModels.kt        # Insight data classes
 ├── budget/                      # Budget management
 │   ├── BudgetCalculator.kt      # Budget calculations
 │   ├── BudgetMonitor.kt         # Budget monitoring & alerts
@@ -157,9 +164,14 @@ domain/
 │   ├── receipt/
 │   │   └── ProcessReceiptUseCase.kt
 │   ├── expense/
-│   │   └── CategorizeExpenseUseCase.kt
-│   └── budget/
-│       └── CalculateBudgetStatusUseCase.kt
+│   │   ├── CategorizeExpenseUseCase.kt
+│   │   └── DetectDuplicateExpenseUseCase.kt  # NEW
+│   ├── budget/
+│   │   └── CalculateBudgetStatusUseCase.kt
+│   ├── dashboard/
+│   │   └── DashboardDataProvider.kt
+│   └── forecast/
+│       └── CalculateFinancialForecastUseCase.kt  # NEW
 ├── model/                       # Domain models
 │   ├── FinancialForecast.kt
 │   ├── Budget.kt
@@ -284,7 +296,13 @@ FinancialWeatherRepository
 | Budget | `domain/budget/BudgetMonitor.kt` | Budget alerts |
 | Categorization | `domain/categorization/CategorizationEngine.kt` | Auto-categorization |
 | Recurring | `domain/logic/RecurringExpenseEngine.kt` | Pattern detection |
-| Insights | `domain/analytics/InsightsEngine.kt` | Spending insights |
+| Insights | `domain/analytics/InsightsEngine.kt` | Spending insights (coordinator) |
+| Spending Pace | `domain/analytics/SpendingPaceCalculator.kt` | Pace calculation (NEW) |
+| Anomaly Detection | `domain/analytics/AnomalyDetector.kt` | Unusual transactions (NEW) |
+| Month Comparison | `domain/analytics/MonthlyComparisonCalculator.kt` | Month vs month (NEW) |
+| Category Insights | `domain/analytics/CategoryInsightEngine.kt` | Category analysis (NEW) |
+| Merchant Insights | `domain/analytics/MerchantInsightEngine.kt` | Merchant patterns (NEW) |
+| Day of Week | `domain/analytics/DayOfWeekAnalyzer.kt` | Day patterns (NEW) |
 
 ### Parsers (Notification Processing)
 | Parser | File | Handles |
@@ -634,11 +652,13 @@ expensetracker://analytics  → Tab 4
 | 4: OCR/Receipt | ~8 | ReceiptOcrService, ReceiptParser, ReceiptRepository |
 | 5: Categorization | ~15 | CategorizationEngine, MerchantNormalizer, CategoryRepository |
 | 6: Recurring | ~5 | RecurringExpenseEngine, RecurringExpenseRepository |
-| 7: Analytics | ~15 | InsightsEngine, AdvancedAnalyticsEngine, AnalyticsRepository |
+| 7: Analytics | ~15 | InsightsEngine (+6 new engines), AdvancedAnalyticsEngine |
 | 8: Core Expense | ~20 | ExpenseRepository, TransactionsScreen, AddExpenseSheet |
 | 9: Dashboard | ~10 | MainActivity, DashboardRepository, HomeViewModel |
 | 10: Notifications | ~3 | AndroidNotificationService, NotificationService |
 | 11: Debug | ~8 | DebugScreen, DebugViewModel, ServiceDiagnostics |
-| 12: DI | ~3 | AppModule, TimeModule, DispatchersModule |
+| 12: DI | ~6 | AppModule, DatabaseModule, DaoModule, ServiceModule |
 | 13: Utilities | ~20 | AmountUtils, DateFormatterUtils, TimeProvider |
-| 14: Database | ~1 | AppDatabase |
+| 14: Use Cases | ~6 | ProcessReceiptUseCase, CategorizeExpenseUseCase, etc. |
+| 15: Performance | ~2 | ImageCache, ReceiptOcrService optimizations |
+| 16: Configuration | ~1 | AppConfig |

@@ -289,15 +289,18 @@ When analyzing a specific feature, check files in this order:
 | `ui/components/SpendingPaceGauge.kt` | Spending pace gauge |
 | `ui/components/ChartMarker.kt` | Chart markers |
 
-### Domain Layer
+### Domain Layer (NEW - Focused Analytics Engines)
 | File | Purpose |
 |------|---------|
-| `domain/analytics/InsightsEngine.kt` | **MAIN ENGINE** - Generates spending insights |
-| `domain/analytics/AdvancedAnalyticsEngine.kt` | **MAIN ENGINE** - Advanced pattern analysis |
+| `domain/analytics/InsightsEngine.kt` | **COORDINATOR** - Orchestrates all insight calculations |
+| `domain/analytics/SpendingPaceCalculator.kt` | Calculates spending pace vs typical |
+| `domain/analytics/AnomalyDetector.kt` | Detects unusual transactions |
+| `domain/analytics/MonthlyComparisonCalculator.kt` | Compares current vs previous month |
+| `domain/analytics/CategoryInsightEngine.kt` | Analyzes category spending |
+| `domain/analytics/MerchantInsightEngine.kt` | Analyzes merchant patterns |
+| `domain/analytics/DayOfWeekAnalyzer.kt` | Analyzes day-of-week patterns |
+| `domain/analytics/AdvancedAnalyticsEngine.kt` | Advanced pattern analysis |
 | `domain/analytics/AnalyticsModels.kt` | Analytics data models |
-| `domain/analytics/AdvancedAnalyticsModels.kt` | Advanced analytics models |
-| `domain/util/StringDistanceUtils.kt` | String similarity (Jaro-Winkler) |
-| `domain/util/BKTree.kt` | BK-tree for fuzzy matching |
 
 ### Data Layer
 | File | Purpose |
@@ -521,8 +524,10 @@ When analyzing a specific feature, check files in this order:
 |------|---------|
 | `domain/usecase/receipt/ProcessReceiptUseCase.kt` | Orchestrates OCR + parsing + categorization |
 | `domain/usecase/expense/CategorizeExpenseUseCase.kt` | Merchant categorization with learning |
+| `domain/usecase/expense/DetectDuplicateExpenseUseCase.kt` | Detects duplicate expenses (NEW) |
 | `domain/usecase/budget/CalculateBudgetStatusUseCase.kt` | Budget health calculations |
-| `domain/usecase/dashboard/DashboardDataProvider.kt` | Aggregates all dashboard data (NEW) |
+| `domain/usecase/dashboard/DashboardDataProvider.kt` | Aggregates all dashboard data |
+| `domain/usecase/forecast/CalculateFinancialForecastUseCase.kt` | Financial forecast calculations (NEW) |
 
 ---
 
