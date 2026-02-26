@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
@@ -26,6 +27,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
@@ -34,7 +36,7 @@ import timber.log.Timber
 class ReceiptRepository @Inject constructor(
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
-    private val merchantCategoryRepository: MerchantCategoryRepository, // <-- Replaces DAO
+    private val merchantCategoryRepository: MerchantCategoryRepository,
     private val pendingReviewDao: PendingReviewDao,
     private val ocrService: ReceiptOcrService,
     private val receiptParser: ReceiptParser,
@@ -43,6 +45,7 @@ class ReceiptRepository @Inject constructor(
     private val merchantNormalizer: NewMerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val budgetMonitor: BudgetMonitor,
+    private val crossSourceDeduplication: CrossSourceDeduplication,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
     val allReceipts: Flow<List<ScannedReceipt>> = scannedReceiptDao.getAllFlow()
@@ -140,7 +143,7 @@ class ReceiptRepository @Inject constructor(
             val receiptId = scannedReceiptDao.insert(failedReceipt)
             
             if (autoCreateReview) {
-                 val review = PendingReview(
+                val review = PendingReview(
                     rawNotificationId = null,
                     scannedReceiptId = receiptId,
                     suggestedAmount = 0.0,
@@ -377,6 +380,40 @@ class ReceiptRepository @Inject constructor(
                     merchantName = normalizedMerchant,
                     amount = tx.amount
                 )
+
+                // Check for cross-source duplicates (from notifications)
+                val existingExpenses = expenseDao.getAllFlow(1000).first()
+                val transactionDate = tx.date ?: timeProvider.now()
+                val existingSources = mutableListOf<String>()
+                
+                val hasNotificationDuplicate = existingExpenses.any { expense ->
+                    val dateDiff = kotlin.math.abs(expense.date - transactionDate)
+                    expense.rawNotificationId != null && 
+                    dateDiff < 24 * 60 * 60 * 1000 &&
+                    expense.amount == tx.amount && 
+                    expense.merchant == normalizedMerchant
+                }
+                if (hasNotificationDuplicate) {
+                    existingSources.add("notification")
+                }
+                
+                val dedupeResult = crossSourceDeduplication.isCrossSourceDuplicate(
+                    amount = tx.amount,
+                    merchant = normalizedMerchant,
+                    date = transactionDate,
+                    newSource = "statement",
+                    existingSources = existingSources
+                )
+                
+                when (dedupeResult) {
+                    is com.yourname.expensetracker.domain.intelligence.DuplicateCheckResult.CrossSourceDuplicate -> {
+                        parsingLogs.add("SKIP: Duplicate from ${dedupeResult.existingSource} for ${tx.merchant} €${tx.amount}")
+                        return@forEach
+                    }
+                    else -> {
+                        // Continue with creating the review
+                    }
+                }
 
                 val review = PendingReview(
                     rawNotificationId = null,

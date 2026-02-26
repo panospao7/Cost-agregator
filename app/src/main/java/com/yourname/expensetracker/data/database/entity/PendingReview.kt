@@ -50,5 +50,8 @@ data class PendingReview(
     val notificationTitle: String?,
     val notificationText: String?,
     val createdAt: Long = System.currentTimeMillis(),
-    val status: PendingReviewStatus = PendingReviewStatus.PENDING
+    val status: PendingReviewStatus = PendingReviewStatus.PENDING,
+    // Transfer direction fields (v24)
+    val suggestedDirection: String? = null,    // INCOMING, OUTGOING
+    val suggestedAccountName: String? = null   // Account name from/to
 )
