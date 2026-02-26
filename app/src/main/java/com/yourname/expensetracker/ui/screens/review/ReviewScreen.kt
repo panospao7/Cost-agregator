@@ -511,16 +511,17 @@ fun ReviewCard(
                         color = SemanticColors.TextPrimary
                     )
                     
+                    // TODO: Add Transfer Direction Badge when fields added to PendingReview
                     // Transfer Direction Badge (for transfers and deposits)
-                    if (review.suggestedType == TransactionType.TRANSFER.name || 
-                        review.suggestedType == TransactionType.DEPOSIT.name) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        TransferDirectionBadge(
-                            direction = review.transferDirection,
-                            accountName = review.transferAccountName,
-                            compact = true
-                        )
-                    }
+                    // if (review.suggestedType == TransactionType.TRANSFER.name || 
+                    //     review.suggestedType == TransactionType.DEPOSIT.name) {
+                    //     Spacer(modifier = Modifier.height(8.dp))
+                    //     TransferDirectionBadge(
+                    //         direction = review.transferDirection,
+                    //         accountName = review.transferAccountName,
+                    //         compact = true
+                    //     )
+                    // }
                 }
             }
 

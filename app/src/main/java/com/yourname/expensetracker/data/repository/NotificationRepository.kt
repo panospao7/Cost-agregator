@@ -280,9 +280,10 @@ class NotificationRepository @Inject constructor(
                         packageName = notification.packageName,
                         notificationTitle = notification.title,
                         notificationText = notification.text ?: notification.bigText,
-                        suggestedDate = parsed.date,
-                        suggestedDirection = direction?.name,  // NEW: Include direction in review
-                        suggestedAccountName = accountName     // NEW: Include account name
+                        suggestedDate = parsed.date
+                        // TODO: Add suggestedDirection and suggestedAccountName to PendingReview entity
+                        // suggestedDirection = direction?.name,
+                        // suggestedAccountName = accountName
                     )
                     pendingReviewDao.insert(review)
                     sourceStatsDao.incrementTotalAndPending(notification.packageName, timeProvider.now())

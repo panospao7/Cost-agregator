@@ -163,11 +163,11 @@ class TransferDirectionDetector @Inject constructor() {
         
         // Count pattern matches
         val incomingScore = incomingPatterns.count { pattern ->
-            pattern.matcher(fullText).find()
+            pattern.matcher(allText).find()
         }
         
         val outgoingScore = outgoingPatterns.count { pattern ->
-            pattern.matcher(fullText).find()
+            pattern.matcher(allText).find()
         }
         
         return when {

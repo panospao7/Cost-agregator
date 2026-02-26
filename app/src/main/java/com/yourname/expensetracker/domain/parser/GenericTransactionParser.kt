@@ -23,12 +23,6 @@ class GenericTransactionParser @Inject constructor(
     private val directionDetector: TransferDirectionDetector  // NEW: Direction detection
 ) {
 
-@Singleton
-class GenericTransactionParser @Inject constructor(
-    private val currencyNormalizer: CurrencyNormalizer,
-    private val merchantCleaner: MerchantCleaner,
-    private val directionDetector: TransferDirectionDetector  // NEW: Direction detection
-) {
     // Strong signals that this is a REAL transaction notification
     private val strongTransactionSignals by lazy {
         listOf(
