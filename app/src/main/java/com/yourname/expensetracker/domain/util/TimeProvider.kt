@@ -25,9 +25,6 @@ interface TimeProvider {
      * Useful for debugging and logging.
      */
     fun nowFormatted(): String {
-        val cal = java.util.Calendar.getInstance()
-        cal.timeInMillis = now()
-        return "${cal.get(java.util.Calendar.YEAR)}-${cal.get(java.util.Calendar.MONTH)+1}-${cal.get(java.util.Calendar.DAY_OF_MONTH)} " +
-               "${cal.get(java.util.Calendar.HOUR_OF_DAY)}:${cal.get(java.util.Calendar.MINUTE)}"
+        return DateFormatterUtils.formatTimestampJavaTime(now(), "yyyy-MM-dd HH:mm")
     }
 }

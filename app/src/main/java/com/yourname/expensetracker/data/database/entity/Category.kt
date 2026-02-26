@@ -11,4 +11,13 @@ data class Category(
     val icon: String, // Emoji or simple string
     val color: String, // Hex color code
     val isDefault: Boolean = false // If true, cannot be deleted (easily)
-)
+) {
+    init {
+        require(name.isNotBlank()) { "Category name cannot be blank" }
+        require(name.length <= 50) { "Category name too long (max 50 chars)" }
+        require(icon.length <= 10) { "Icon too long (max 10 chars)" }
+        require(color.matches(Regex("^#[0-9A-Fa-f]{6}$"))) { 
+            "Color must be valid hex code (e.g., #FF5733)" 
+        }
+    }
+}

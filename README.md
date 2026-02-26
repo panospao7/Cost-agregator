@@ -4,59 +4,125 @@ Personal expense aggregator that captures transaction notifications from multipl
 
 ## Setup
 
-1. Open this project in Android Studio
-2. Sync Gradle
-3. Build and run on your device
-4. Grant notification access permission when prompted
-5. Watch notifications appear in the Debug screen
+1. Open this project in Android Studio (Arctic Fox or later)
+2. Sync Gradle wrapper: `./gradlew wrapper`
+3. Build: `./gradlew assembleDebug`
+4. Install the APK on your device
+5. Grant notification access permission when prompted
+6. Grant "Usage Access" for enhanced notification capture (optional)
 
-## Project Structure
+## Build Commands
+
+```bash
+# Debug build
+./gradlew assembleDebug
+
+# Release build
+./gradlew assembleRelease
+
+# Run tests
+./gradlew test
+
+# Run unit tests only
+./gradlew testDebugUnitTest
+```
+
+## Project Architecture
+
+The app follows Clean Architecture with MVVM:
+
 ```
 app/src/main/java/com/yourname/expensetracker/
 ├── ExpenseTrackerApp.kt              # Hilt Application
-├── di/AppModule.kt                   # Hilt Module
+├── di/                               # Dependency Injection
+│   ├── DatabaseModule.kt
+│   ├── DaoModule.kt
+│   └── ServiceModule.kt
 ├── data/
 │   ├── database/
-│   │   ├── AppDatabase.kt
-│   │   ├── entity/                   # Realm Entities (RawNotification, BlockedPackage)
-│   │   └── dao/                      # DAOs
-│   └── repository/NotificationRepository.kt
-├── service/NotificationCaptureService.kt  # Capture Service
-└── ui/
-    ├── MainActivity.kt               # Bottom Navigation Host
-    ├── screens/
-    │   ├── home/HomeScreen.kt        # Dashboard
-    │   └── debug/DebugScreen.kt      # Debug & Filtering
-    └── theme/
+│   │   ├── AppDatabase.kt            # Room Database
+│   │   ├── entity/                   # Entity classes
+│   │   ├── dao/                     # Data Access Objects
+│   │   └── converter/                # Type converters
+│   └── repository/                   # Repositories
+├── domain/
+│   ├── model/                        # Domain models
+│   ├── budget/                       # Budget logic
+│   ├── logic/                        # Business logic engines
+│   ├── intelligence/                # ML & classification
+│   ├── usecase/                     # Use cases
+│   ├── util/                        # Utilities
+│   └── config/                      # Configuration
+├── service/
+│   └── NotificationCaptureService.kt  # Notification listener
+├── ui/
+│   ├── MainActivity.kt
+│   ├── components/                   # Reusable composables
+│   ├── screens/                      # Feature screens
+│   └── theme/
+└── receiver/                         # Broadcast receivers
 ```
 
-## Features
+## Key Features
 
 ### 1. Notification Capture
-- Captures notifications from all apps (Discovery Mode).
-- Filter out spam/irrelevant apps permanently using the **Block App** button.
-- Notifications are stored locally in a Room database.
+- Captures notifications from all apps (Discovery Mode)
+- Filters spam/irrelevant apps using Block App feature
+- Stores notifications locally in Room database
+- Supports multiple notification types (SMS, Banking, Payment apps)
 
-### 2. Dashboard
-- **Home**: View high-level stats (Total captured).
-- **Debug**: real-time feed of captured notifications.
+### 2. Budget Tracking
+- Set budgets by category (Daily, Weekly, Monthly, Yearly)
+- Rollover support for unused budget
+- Alert notifications at Warning (80%) and Critical (95%) thresholds
 
-## Usage Guide
-1. **Grant Permissions**: Allow Notification Access when prompted.
-2. **Collect Data**: Let the app run. It will capture purchase notifications.
-3. **Filter Noise**:
-   - Go to **Debug** tab.
-   - If you see a non-expense app (e.g., Spotify, WhatsApp), click the **Trash Icon** (Block App).
-   - This app will be ignored in the future.
-4. **Identify Expenses**:
-   - Find a real bank notification.
-   - Mark it as "Expense ✓".
-   - (Later: We will use these examples to build parsers).
+### 3. Receipt Scanning
+- OCR-powered receipt parsing
+- Auto-extract merchant, amount, date, tax
+- Supports Greek and English receipts
 
-## Next Steps
+### 4. Financial Forecasting
+- Block Party: Daily spending tracking with targets
+- Spending Pace: Track vs previous months
+- Weather: Financial health indicator
 
-After collecting real notification data:
-1. Analyze notification patterns from Revolut, Google Pay, bank SMS
-2. Build specific parsers for each source
-3. Implement deduplication
-4. Add categorization
+### 5. ML Classification
+- Automatic category prediction
+- Merchant normalization
+- Confidence-based routing (Auto-accept, Review, Auto-reject)
+
+## Dependencies
+
+- **Jetpack Compose**: UI framework
+- **Room**: Local database
+- **Hilt**: Dependency injection
+- **ML Kit**: Text recognition (OCR)
+- **Kotlin Coroutines & Flow**: Async operations
+- **Material 3**: Design system
+
+## Permissions Required
+
+- `android.permission.BIND_NOTIFICATION_LISTENER_SERVICE` - Read notifications
+- `android.permission.POST_NOTIFICATIONS` - Send alerts (Android 13+)
+- `android.permission.CAMERA` - Receipt scanning
+- `android.permission.READ_EXTERNAL_STORAGE` - Receipt image access
+
+## Configuration
+
+Thresholds and settings are centralized in:
+`domain/config/AppConfig.kt`
+
+## Testing
+
+The project includes comprehensive unit tests:
+```bash
+# Run all tests
+./gradlew test
+
+# Run specific test class
+./gradlew testDebugUnitTest --tests "com.yourname.expensetracker.domain.util.AmountUtilsTest"
+```
+
+## License
+
+Private - For personal use only

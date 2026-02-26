@@ -10,7 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -30,7 +30,6 @@ import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import java.text.SimpleDateFormat
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,7 +53,7 @@ fun DebugScreen(
                 title = { Text("Debug: Notifications ($count)") },
                 navigationIcon = {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -169,8 +168,7 @@ fun DebugScreen(
                                 Text(
                                     "Last start: ${
                                         if (diagnosticsStats.lastRestartTime > 0) 
-                                            SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-                                                .format(Date(diagnosticsStats.lastRestartTime))
+                                            DateFormatterUtils.timeWithSecondsAndDate().format(Date(diagnosticsStats.lastRestartTime))
                                         else "Never"
                                     }",
                                     style = MaterialTheme.typography.bodySmall,
@@ -179,8 +177,7 @@ fun DebugScreen(
                                 Text(
                                     "Last kill: ${
                                         if (diagnosticsStats.lastKillTime > 0) 
-                                            SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-                                                .format(Date(diagnosticsStats.lastKillTime))
+                                            DateFormatterUtils.timeWithSecondsAndDate().format(Date(diagnosticsStats.lastKillTime))
                                         else "Never"
                                     }",
                                     style = MaterialTheme.typography.bodySmall,

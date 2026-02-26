@@ -293,43 +293,35 @@ class ReceiptRepository @Inject constructor(
 
     /**
      * Process multiple receipts in parallel with a concurrency limit to prevent OOM.
+     * Optimized: Sequential processing with semaphore limits memory usage (Issue 2.16)
      */
-    suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult = coroutineScope {
-        // Deduplicate URIs to avoid processing the same file twice
+    suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult {
         val uniqueUris = uris.distinctBy { it.toString() }
         if (uniqueUris.size < uris.size) {
             Timber.d("Removed ${uris.size - uniqueUris.size} duplicate URIs")
         }
 
-        val semaphore = Semaphore(3) // Limit to 3 concurrent OCR tasks
+        val semaphore = java.util.concurrent.Semaphore(3)
         val total = uniqueUris.size
         var successes = 0
         var failures = 0
         val errors = mutableListOf<String>()
-        val mutex = Mutex()
 
-        val jobs = uniqueUris.map { uri ->
-            async {
-                try {
-                    semaphore.withPermit {
-                        processReceipt(uri, autoCreateReview = true)
-                    }
-                    mutex.withLock {
-                        successes++
-                        onProgress(successes + failures, total)
-                    }
-                } catch (e: Exception) {
-                    mutex.withLock {
-                        failures++
-                        errors.add("Failed to process $uri: ${e.message}")
-                        onProgress(successes + failures, total)
-                    }
-                }
+        for (uri in uniqueUris) {
+            semaphore.acquire()
+            try {
+                processReceipt(uri, autoCreateReview = true)
+                successes++
+            } catch (e: Exception) {
+                failures++
+                errors.add("Failed to process $uri: ${e.message}")
+            } finally {
+                semaphore.release()
             }
+            onProgress(successes + failures, total)
         }
 
-        jobs.awaitAll()
-        BatchResult(successes, failures, errors)
+        return BatchResult(successes, failures, errors)
     }
 
     /**
@@ -443,17 +435,26 @@ class ReceiptRepository @Inject constructor(
     /**
      * Concatenates all raw OCR text from the database for debugging/parsing refinement
      */
-    /**
-     * Concatenates all raw OCR text from the database for debugging/parsing refinement
-     */
     suspend fun exportParserDebugData(): String {
-        val receipts = scannedReceiptDao.getAll()
+        val totalCount = scannedReceiptDao.getCount()
         val sb = StringBuilder()
-        sb.append("=== EXPORTED PARSER DEBUG DATA (${receipts.size} RECEIPTS) ===\n\n")
-        receipts.forEachIndexed { index, receipt ->
-            sb.append("--- RECEIPT #${index + 1} (ID: ${receipt.id}) ---\n")
-            sb.append(formatReceiptDebug(receipt))
-            sb.append("\n\n")
+        sb.append("=== EXPORTED PARSER DEBUG DATA ($totalCount RECEIPTS) ===\n\n")
+        
+        val pageSize = 100
+        var offset = 0
+        var processedCount = 0
+        
+        while (true) {
+            val page = scannedReceiptDao.getReceiptsPaged(pageSize, offset)
+            if (page.isEmpty()) break
+            
+            page.forEachIndexed { index, receipt ->
+                sb.append("--- RECEIPT #${offset + index + 1} (ID: ${receipt.id}) ---\n")
+                sb.append(formatReceiptDebug(receipt))
+                sb.append("\n\n")
+            }
+            processedCount += page.size
+            offset += pageSize
         }
         return sb.toString()
     }

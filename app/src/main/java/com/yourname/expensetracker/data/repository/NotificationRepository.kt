@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as 
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.model.Result
 import kotlinx.coroutines.flow.*
@@ -73,11 +74,7 @@ class NotificationRepository @Inject constructor(
     }
     
     private suspend fun processAndSaveInternal(notification: RawNotification) {
-        // 1. Initial existence check (fast, non-transactional)
-        if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return
-
-        // 2. Heavy CPU/IO Work - MOVE OUTSIDE TRANSACTION
-        // Initialize classifier if needed
+        // Heavy CPU/IO Work - done before transaction
         classifier.initialize()
 
         // Try to parse
@@ -91,10 +88,12 @@ class NotificationRepository @Inject constructor(
 
         if (parsed == null) {
             database.withTransaction {
-                // Secondary check inside transaction to prevent race conditions
-                if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return@withTransaction
-                
-                val rawId = try { dao.insert(notification) } catch (e: Exception) { return@withTransaction }
+                // Use INSERT OR IGNORE for atomic insert
+                val rawId = dao.insertOrIgnore(notification)
+                if (rawId == -1L) {
+                    // Already exists
+                    return@withTransaction
+                }
                 sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
                 dao.markRelevance(rawId, false)
             }
@@ -126,15 +125,12 @@ class NotificationRepository @Inject constructor(
         val lookupResult = merchantNormalizer.normalize(parsed.merchant)
         val correctedMerchant = lookupResult.canonical.normalizedName
 
-        // 3. Database Transaction - ONLY MINIMAL DB WRITES
+        // Database Transaction - ONLY MINIMAL DB WRITES
         database.withTransaction {
-            // Secondary check inside transaction
-            if (dao.exists(notification.packageName, notification.timestamp, notification.title, notification.text)) return@withTransaction
-
-            // Save raw notification
-            val rawId = try {
-                dao.insert(notification)
-            } catch (e: android.database.sqlite.SQLiteConstraintException) {
+            // Use INSERT OR IGNORE for atomic insert
+            val rawId = dao.insertOrIgnore(notification)
+            if (rawId == -1L) {
+                // Already exists - duplicate notification
                 return@withTransaction
             }
 
@@ -248,7 +244,9 @@ class NotificationRepository @Inject constructor(
                 }
             }
 
+            // Invalidate all related caches to ensure fresh data for subsequent notifications
             confidenceRouter.invalidateSourceStatsCache(notification.packageName)
+            confidenceRouter.invalidateMerchantCache(correctedMerchant)
         }
     }
 
@@ -267,7 +265,7 @@ class NotificationRepository @Inject constructor(
     suspend fun delete(notification: RawNotification) {
         // Check if there's a pending review attached to this notification
         val pendingReview = pendingReviewDao.getByRawId(notification.id)
-        if (pendingReview != null && pendingReview.status == "PENDING") {
+        if (pendingReview != null && pendingReview.status == PendingReviewStatus.PENDING) {
             sourceStatsDao.decrementPending(notification.packageName)
         }
         pendingReviewDao.deleteByRawId(notification.id)

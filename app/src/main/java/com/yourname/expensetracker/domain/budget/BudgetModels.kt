@@ -29,9 +29,3 @@ data class BudgetSuggestion(
     val basedOnMonths: Int,
     val reason: String
 )
-
-enum class BudgetAlertLevel {
-    WARNING,
-    CRITICAL,
-    EXCEEDED
-}

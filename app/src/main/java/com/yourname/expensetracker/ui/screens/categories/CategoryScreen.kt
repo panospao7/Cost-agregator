@@ -109,11 +109,13 @@ fun AddCategoryDialog(
     onAdd: (String, String, String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var icon by remember { mutableStateOf("📦") } // Default icon
-    var color by remember { mutableStateOf("#607D8B") } // Default color
+    var icon by remember { mutableStateOf("📦") }
+    var color by remember { mutableStateOf("#607D8B") }
     var isNameError by remember { mutableStateOf(false) }
+    var isColorError by remember { mutableStateOf(false) }
     
-    // Simple list of preset icons/colors could be added here for better UX
+    val isValidName = name.matches(Regex("^[a-zA-Z0-9\\s\\-_'.]*$"))
+    val isValidColor = color.matches(Regex("^#[0-9A-Fa-f]{6}$"))
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -123,19 +125,43 @@ fun AddCategoryDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { 
-                        name = it
+                        if (it.matches(Regex("^[a-zA-Z0-9\\s\\-_'.]*$")) || it.isEmpty()) {
+                            name = it.take(50)
+                        }
                         if (it.isNotBlank()) isNameError = false
                     },
                     label = { Text("Name") },
-                    isError = isNameError,
-                    supportingText = { if (isNameError) Text("Name cannot be empty") },
+                    isError = isNameError || (name.isNotEmpty() && !isValidName),
+                    supportingText = { 
+                        when {
+                            isNameError -> Text("Name cannot be empty")
+                            name.isNotEmpty() && !isValidName -> Text("Invalid characters")
+                        }
+                    },
                     singleLine = true
                 )
-                // In a real app, use a proper picker. For now, text fields or presets.
                 OutlinedTextField(
                     value = icon,
-                    onValueChange = { if (it.length <= 2) icon = it }, // Limit to emoji size
+                    onValueChange = { if (it.length <= 10) icon = it },
                     label = { Text("Icon (Emoji)") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = color,
+                    onValueChange = { 
+                        if (it.matches(Regex("^#?[0-9A-Fa-f]*$")) && it.length <= 7) {
+                            color = if (it.startsWith("#")) it else "#$it"
+                        }
+                        isColorError = false
+                    },
+                    label = { Text("Color (Hex)") },
+                    isError = isColorError || (color.isNotEmpty() && !isValidColor),
+                    supportingText = {
+                        when {
+                            isColorError -> Text("Invalid color format")
+                            color.isNotEmpty() && !isValidColor -> Text("Use #RRGGBB format")
+                        }
+                    },
                     singleLine = true
                 )
             }
@@ -143,10 +169,13 @@ fun AddCategoryDialog(
         confirmButton = {
             Button(
                 onClick = { 
-                    if (name.isNotBlank()) {
-                        onAdd(name, icon, color)
-                    } else {
-                        isNameError = true
+                    val finalName = name.trim()
+                    val finalColor = if (color.startsWith("#")) color else "#$color"
+                    
+                    when {
+                        finalName.isBlank() -> isNameError = true
+                        !isValidColor -> isColorError = true
+                        else -> onAdd(finalName, icon, finalColor)
                     }
                 }
             ) {

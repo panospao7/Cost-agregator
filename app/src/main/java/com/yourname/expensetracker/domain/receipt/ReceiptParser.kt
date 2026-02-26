@@ -18,6 +18,23 @@ import timber.log.Timber
 class ReceiptParser @Inject constructor(
     private val merchantRules: MerchantRulesRepository
 ) {
+    companion object {
+        // Pre-compiled regex patterns for performance (Issue 2.13)
+        private val GEO_STRIP_REGEX = Regex("""[><\}|▶]""")
+        private val NUMBER_SPACE_FIX = Regex("""(?<=\d)[ \t\u00A0]+(?=[.,\d])""")
+        private val SEPARATOR_SPACE_AFTER = Regex("""(?<=\d)[ \t\u00A0]+([.,])""")
+        private val SEPARATOR_SPACE_BEFORE = Regex("""([.,])[ \t\u00A0]+(?=\d])""")
+        private val COMPOUND_TOTAL = Regex("""ΣΥΝΟΛΙΚΗ\s+ΑΞΙΑ""")
+        private val COMPOUND_SUBTOTAL = Regex("""ΚΑΘΑΡΗ\s+ΑΞΙΑ""")
+        private val COMPOUND_GENIKO = Regex("""ΓΕΝΙΚΟ\s+ΣΥΝΟΛΟ""")
+        private val COMPOUND_MERIKO = Regex("""ΜΕΡΙΚΟ\s+ΣΥΝΟΛΟ""")
+        private val COMPOUND_TELIKI = Regex("""ΤΕΛΙΚΗ\s+ΑΞΙΑ""")
+        private val DATE_OCR_FIX = Regex("""(\d{1,2})[-/][DO0](\d{1,2})[-/](\d{2,4})""")
+        private val CLEAN_WORD_REGEX = Regex("""[^A-ZΑ-Ω0-9]""")
+        private val ANY_NONSPACE = Regex("""\S+""")
+        private val TIME_PATTERN = Regex("""\b\d{1,2}:\d{2}(:\d{2})?\b""")
+        private val CHANGE_PATTERN = Regex("""(CHANGE|ΡΕΣΤΑ|RESTA|ΑΛΛΑΓΗ)""")
+    }
 
     data class ParsedReceipt(
         val merchantName: String?,
@@ -159,14 +176,11 @@ class ReceiptParser @Inject constructor(
         var normalized = text.uppercase()
 
         // --- PRE-PROCESSING: GEOMETRY STRIPPING & LATIN INTRUSION ---
-        // Strip out random geometric artifacts that ML Kit hallucinates from receipts (e.g., ">", "<", "}", "|", "▶")
-        normalized = normalized.replace(Regex("""[><\}|▶]"""), " ")
-        // Fix Latin Intrusion: ΠΟSΟ -> ΠΟΣΟ
+        normalized = normalized.replace(GEO_STRIP_REGEX, " ")
         normalized = normalized.replace("ΠΟSΟ", "ΠΟΣΟ")
 
         // Exact Map based on OCR test document output
         val exactHallucinationMap = mapOf(
-            // Common full-word failures from receipts
             "ZYNOAO" to "ΣΥΝΟΛΟ",
             "EYNONO" to "ΣΥΝΟΛΟ",
             "2YNONO" to "ΣΥΝΟΛΟ",
@@ -189,39 +203,32 @@ class ReceiptParser @Inject constructor(
             "ERITORH" to "ΕΚΠΤΩΣΗ"
         )
 
-        // Apply exact word replacements first
         for ((badStr, goodStr) in exactHallucinationMap) {
             normalized = normalized.replace(badStr, goodStr)
         }
 
-        // Fix numbers FIRST - Remove spaces in numbers like "4 5 . 5 0"
-        normalized = normalized.replace(Regex("""(?<=\d)[ \t\u00A0]+(?=[.,\d])"""), "")
-        // Fix spaces AROUND separators like "45 , 50" or "45, 50"
-        normalized = normalized.replace(Regex("""(?<=\d)[ \t\u00A0]+([.,])"""), "$1")
-        normalized = normalized.replace(Regex("""([.,])[ \t\u00A0]+(?=\d)"""), "$1")
+        // Fix numbers FIRST
+        normalized = normalized.replace(NUMBER_SPACE_FIX, "")
+        normalized = normalized.replace(SEPARATOR_SPACE_AFTER, "$1")
+        normalized = normalized.replace(SEPARATOR_SPACE_BEFORE, "$1")
 
-        // Normalize Greek characters to English counterparts for easier matching
-        // Use more robust matching for Greek words without \b if possible
-        
-        // Compound keywords - MUST be before single ones
-        normalized = normalized.replace(Regex("""ΣΥΝΟΛΙΚΗ\s+ΑΞΙΑ"""), "TOTAL_KEY")
-        normalized = normalized.replace(Regex("""ΚΑΘΑΡΗ\s+ΑΞΙΑ"""), "SUBTOTAL_KEY")
-        normalized = normalized.replace(Regex("""ΓΕΝΙΚΟ\s+ΣΥΝΟΛΟ"""), "TOTAL_KEY")
-        normalized = normalized.replace(Regex("""ΜΕΡΙΚΟ\s+ΣΥΝΟΛΟ"""), "SUBTOTAL_KEY")
-        normalized = normalized.replace(Regex("""ΤΕΛΙΚΗ\s+ΑΞΙΑ"""), "TOTAL_KEY")
+        // Compound keywords
+        normalized = normalized.replace(COMPOUND_TOTAL, "TOTAL_KEY")
+        normalized = normalized.replace(COMPOUND_SUBTOTAL, "SUBTOTAL_KEY")
+        normalized = normalized.replace(COMPOUND_GENIKO, "TOTAL_KEY")
+        normalized = normalized.replace(COMPOUND_MERIKO, "SUBTOTAL_KEY")
+        normalized = normalized.replace(COMPOUND_TELIKI, "TOTAL_KEY")
 
-        // Single keywords (Using more flexible boundaries for Greek/Latin mix)
         val boundary = """(?:^|[\s:;.,/-])"""
         val endBoundary = """(?:$|[\s:;.,/-])"""
-        
-        // Total keywords - ΣΥΝΟΛΟ and variations
+
+        // Total keywords
         normalized = normalized.replace(Regex(boundary + "ΣΥΝΟΛΟ" + endBoundary), " TOTAL_KEY ")
         normalized = normalized.replace(Regex(boundary + "ΤΕΛΙΚΟ" + endBoundary), " TOTAL_KEY ")
         normalized = normalized.replace(Regex(boundary + "ΠΛΗΡΩΤΕΟ" + endBoundary), " TOTAL_KEY ")
         
-        // Common OCR errors for ΣΥΝΟΛΟ - Unified boundary check
         val synoloVariations = listOf(
-            "[EZI23][YVUI]N[O0I]?[AΛVLN][O0ΩI]?", // Flexible pattern for ΣΥΝΟΛΟ
+            "[EZI23][YVUI]N[O0I]?[AΛVLN][O0ΩI]?",
             "ZYNOAO", "ZYNOAΩ", "2YNONO", "2YNOAO", 
             "EYNOAO", "EYNONO", "SYNOAO", "ZYNOIO"
         )
@@ -229,55 +236,44 @@ class ReceiptParser @Inject constructor(
             normalized = normalized.replace(Regex(boundary + variant + endBoundary), " TOTAL_KEY ")
         }
         
-        // ΤΕΛΙΚΟ variations
         val telikoVariations = listOf("TEAIKO", "TEΛIKO", "TΕΛΙΚΟ")
         for (variant in telikoVariations) {
             normalized = normalized.replace(Regex(boundary + variant + endBoundary), " TOTAL_KEY ")
         }
         
-        // ΠΛΗΡΩΤΕΟ variations
         val pliroteoVariations = listOf("NAHPΩTEO", "NAHPQTEO", "ΠΛHPΩTEO")
         for (variant in pliroteoVariations) {
             normalized = normalized.replace(Regex(boundary + variant + endBoundary), " TOTAL_KEY ")
         }
         
-        // Amount keywords
         normalized = normalized.replace(Regex(boundary + "ΠΟΣΟ" + endBoundary), " AMOUNT_KEY ")
         normalized = normalized.replace(Regex(boundary + "[NΠn][O0][SZsz][O0]" + endBoundary), " AMOUNT_KEY ")
 
-        // Cash keywords
         normalized = normalized.replace(Regex(boundary + "ΜΕΤΡΗΤΑ" + endBoundary), " CASH_KEY ")
         normalized = normalized.replace(Regex(boundary + "METPHTA" + endBoundary), " CASH_KEY ")
 
-        // VAT/Tax keywords - ΦΠΑ and OCR corruptions (including bilingual)
         normalized = normalized.replace(Regex(boundary + "(?:VAT\\s*/\\s*ΦΠΑ|ΦΠΑ\\s*/\\s*VAT|Φ\\.?Π\\.?Α\\.?)" + endBoundary), " VAT_KEY ")
         normalized = normalized.replace(Regex(boundary + "0\\.?n\\.?A\\.?" + endBoundary), " VAT_KEY ")
         normalized = normalized.replace(Regex(boundary + "0\\.?Π\\.?Α" + endBoundary), " VAT_KEY ")
         normalized = normalized.replace(Regex(boundary + "O\\.?n\\.?A" + endBoundary), " VAT_KEY ")
 
-        // Date keywords
         normalized = normalized.replace(Regex(boundary + "ΗΜΕΡΟΜΗΝΙΑ" + endBoundary), " DATE_KEY ")
         normalized = normalized.replace(Regex(boundary + "HM/NIA" + endBoundary), " DATE_KEY ")
         normalized = normalized.replace(Regex(boundary + "HMEPOMHNIA" + endBoundary), " DATE_KEY ")
 
-        // Value keyword
         normalized = normalized.replace(Regex(boundary + "ΑΞΙΑ" + endBoundary), " VALUE_KEY ")
 
-        // Currency keywords - ΕΥΡΩ and variations
         normalized = normalized.replace(Regex(boundary + "ΕΥΡΩ" + endBoundary), " EUR ")
         normalized = normalized.replace(Regex(boundary + "ΕΥΡΑ" + endBoundary), " EUR ")
         normalized = normalized.replace(Regex(boundary + "[E3]YP[ΩO9]" + endBoundary), " EUR ")
 
-        // Date OCR fixes: 16-D4 -> 16-04
-        normalized = normalized.replace(Regex("""(\d{1,2})[-/][DO0](\d{1,2})[-/](\d{2,4})"""), "$1-0$2-$3")
-        // Fix double zero if above resulted in 16-004
+        normalized = normalized.replace(DATE_OCR_FIX, "$1-0$2-$3")
         normalized = normalized.replace("-00", "-0")
 
-        // --- FUZZY MATCHING FALLBACK ---
-        // If exact matches and regex failed, run a fuzzy pass on each word (Preserving all whitespace/newlines)
-        normalized = normalized.replace(Regex("""\S+""")) { match ->
+        // Fuzzy matching fallback
+        normalized = normalized.replace(ANY_NONSPACE) { match ->
             val word = match.value
-            val cleanWord = word.replace(Regex("""[^A-ZΑ-Ω0-9]"""), "")
+            val cleanWord = word.replace(CLEAN_WORD_REGEX, "")
             if (cleanWord.length > 3) {
                 when {
                     StringDistanceUtils.isFuzzyMatch(cleanWord, "ΣΥΝΟΛΟ", 2) -> word.replace(cleanWord, "TOTAL_KEY")

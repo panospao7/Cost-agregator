@@ -46,8 +46,8 @@ class AnalyticsViewModel @Inject constructor(
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val state: StateFlow<AnalyticsState> = combine(
-        expenseRepository.getAllExpenses(),
-        categoryRepository.allCategories,
+        expenseRepository.getAllExpenses().catch { emit(emptyList()) },
+        categoryRepository.allCategories.catch { emit(emptyList()) },
         _selectedPeriod
     ) { expenses, categories, period ->
         Triple(expenses, categories, period)

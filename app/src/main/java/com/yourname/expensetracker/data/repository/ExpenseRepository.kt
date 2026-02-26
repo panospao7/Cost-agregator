@@ -14,10 +14,9 @@ import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,17 +27,11 @@ class ExpenseRepository @Inject constructor(
     private val merchantCategoryRepository: MerchantCategoryRepository,
     private val merchantNormalizer: MerchantNormalizer
 ) {
-    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // Shared expenses flow to prevent redundant DB queries
-    private val sharedExpenses = expenseDao.getAllFlow(500)
-        .shareIn(
-            scope = repositoryScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            replay = 1
-        )
-
-    fun getAllExpenses(): Flow<List<Expense>> = sharedExpenses
+    // Mutex to prevent race conditions in category learning
+    private val categoryUpdateMutex = Mutex()
+    // Direct flow without sharing - each collector gets its own subscription
+    // This prevents memory leaks from orphaned scopes
+    fun getAllExpenses(): Flow<List<Expense>> = expenseDao.getAllFlow(500)
 
     fun getExpensesWithCategory(limit: Int = 200): Flow<List<ExpenseWithCategory>> =
         expenseDao.getAllWithCategoryFlow(limit)
@@ -70,26 +63,28 @@ class ExpenseRepository @Inject constructor(
     suspend fun deleteExpense(expense: Expense) = expenseDao.delete(expense)
 
     suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long) {
-        expenseDao.updateCategory(expense.id, newCategoryId)
-        merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
+        categoryUpdateMutex.withLock {
+            expenseDao.updateCategory(expense.id, newCategoryId)
+            merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
 
-        // Also record as a correction for learning
-        val correction = UserCorrection(
-            packageName = "manual_edit",
-            originalMerchant = expense.merchant,
-            correctedMerchant = null,
-            originalAmount = expense.amount,
-            correctedAmount = null,
-            originalCategoryId = expense.categoryId,
-            correctedCategoryId = newCategoryId,
-            originalType = expense.transactionType.name,
-            correctedType = null,
-            wasRejected = false,
-            wasApproved = true,
-            notificationTitle = null,
-            notificationText = null
-        )
-        userCorrectionDao.insert(correction)
+            // Also record as a correction for learning
+            val correction = UserCorrection(
+                packageName = "manual_edit",
+                originalMerchant = expense.merchant,
+                correctedMerchant = null,
+                originalAmount = expense.amount,
+                correctedAmount = null,
+                originalCategoryId = expense.categoryId,
+                correctedCategoryId = newCategoryId,
+                originalType = expense.transactionType.name,
+                correctedType = null,
+                wasRejected = false,
+                wasApproved = true,
+                notificationTitle = null,
+                notificationText = null
+            )
+            userCorrectionDao.insert(correction)
+        }
     }
 
     suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String) {

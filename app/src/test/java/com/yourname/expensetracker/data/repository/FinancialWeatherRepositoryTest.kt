@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
@@ -23,6 +24,7 @@ class FinancialWeatherRepositoryTest {
     private val insightsEngine = mockk<InsightsEngine>(relaxed = true)
     private val budgetRepository = mockk<BudgetRepository>(relaxed = true)
     private val recurringExpenseRepository = mockk<RecurringExpenseRepository>(relaxed = true)
+    private val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
     private val plannedExpenseRepository = mockk<PlannedExpenseRepository>(relaxed = true)
     private val savingsGoalRepository = mockk<SavingsGoalRepository>(relaxed = true)
     private val synthesisEngine = mockk<SynthesisEngine>(relaxed = true)
@@ -42,6 +44,7 @@ class FinancialWeatherRepositoryTest {
             insightsEngine,
             budgetRepository,
             recurringExpenseRepository,
+            recurringExpenseEngine,
             plannedExpenseRepository,
             savingsGoalRepository,
             synthesisEngine,

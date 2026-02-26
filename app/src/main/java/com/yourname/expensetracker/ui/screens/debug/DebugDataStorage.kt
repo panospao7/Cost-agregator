@@ -2,6 +2,8 @@ package com.yourname.expensetracker.ui.screens.debug
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,40 +23,46 @@ class DebugDataStorage @Inject constructor(
     /**
      * Save debug data to file
      */
-    fun save(debugData: DebugData) {
-        try {
-            file.writeText(debugData.toJson())
-            Timber.d("Saved debug data to ${file.absolutePath}")
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to save debug data: ${e.message}")
+    suspend fun save(debugData: DebugData) {
+        withContext(Dispatchers.IO) {
+            try {
+                file.writeText(debugData.toJson())
+                Timber.d("Saved debug data to ${file.absolutePath}")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to save debug data: ${e.message}")
+            }
         }
     }
     
     /**
      * Load debug data from file
      */
-    fun load(): DebugData? {
-        if (!file.exists()) {
-            Timber.d("No saved debug data found")
-            return null
-        }
-        
-        return try {
-            val json = file.readText()
-            parseDebugDataFromJson(json)
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to load debug data: ${e.message}")
-            null
+    suspend fun load(): DebugData? {
+        return withContext(Dispatchers.IO) {
+            if (!file.exists()) {
+                Timber.d("No saved debug data found")
+                return@withContext null
+            }
+            
+            return@withContext try {
+                val json = file.readText()
+                parseDebugDataFromJson(json)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to load debug data: ${e.message}")
+                null
+            }
         }
     }
     
     /**
      * Clear saved debug data
      */
-    fun clear() {
-        if (file.exists()) {
-            file.delete()
-            Timber.d("Cleared debug data")
+    suspend fun clear() {
+        withContext(Dispatchers.IO) {
+            if (file.exists()) {
+                file.delete()
+                Timber.d("Cleared debug data")
+            }
         }
     }
     

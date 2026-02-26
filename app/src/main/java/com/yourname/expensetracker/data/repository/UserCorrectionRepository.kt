@@ -36,6 +36,12 @@ class UserCorrectionRepository @Inject constructor(
     suspend fun getMerchantRejectionCount(merchant: String): Int =
         dao.getMerchantRejectionCount(merchant)
 
+    suspend fun getMerchantStats(merchant: String): UserCorrectionDao.MerchantCorrectionStats =
+        dao.getMerchantStats(merchant)
+
+    suspend fun getPackageStats(packageName: String): UserCorrectionDao.PackageCorrectionStats =
+        dao.getPackageStats(packageName)
+
     suspend fun getMostCommonCategoryForMerchant(merchant: String): Long? =
         dao.getMostCommonCategoryForMerchant(merchant)
 

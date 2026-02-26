@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
+import com.yourname.expensetracker.domain.model.PeriodRange
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -63,20 +64,18 @@ class BudgetRepository @Inject constructor(
                 
                 // LOG-002: Implement Compounding Rollover - BUG-2 FIX
                 if (budget.rollover) {
-                    // we compute this by iterating forward from the budget's first period
                     val budgetFirstStart = budget.startDate
-                    var movingWindow = budgetCalculator.calculatePeriodWindow(budget.period, budgetFirstStart)
+                    val periods = mutableListOf<PeriodRange>()
+                    var currentWindow = budgetCalculator.calculatePeriodWindow(budget.period, budgetFirstStart)
+                    while (currentWindow.end <= window.start) {
+                        periods.add(currentWindow)
+                        currentWindow = budgetCalculator.calculatePeriodWindow(budget.period, currentWindow.end)
+                    }
                     var effectiveLimit = budget.amount
-                    
-                    // Iterate forward until we reach the previous period of the current window
-                    while (movingWindow.end <= window.start) {
-                        val spentInPeriod = getSpentInRange(movingWindow.start, movingWindow.end)
+                    for (period in periods) {
+                        val spentInPeriod = getSpentInRange(period.start, period.end)
                         val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
                         effectiveLimit = budget.amount + surplus
-                        
-                        // Move to next period
-                        val nextStart = movingWindow.end
-                        movingWindow = budgetCalculator.calculatePeriodWindow(budget.period, nextStart)
                     }
                     limit = effectiveLimit
                 }

@@ -19,21 +19,22 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.ui.components.AppNavigationBar
+import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
 import com.yourname.expensetracker.ui.screens.home.HomeScreen
 import com.yourname.expensetracker.ui.screens.review.ReviewScreen
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
+import com.yourname.expensetracker.ui.util.ClipboardAmountParser
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
-import com.yourname.expensetracker.domain.util.AmountUtils
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -83,8 +84,11 @@ fun MainScreen(mainViewModel: MainViewModel) {
     
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     
-    // Drill-down filter state
-    var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
+    val context = LocalContext.current
+    
+    val reviewViewModel: com.yourname.expensetracker.ui.screens.review.ReviewViewModel = hiltViewModel()
+    
+    var showNotificationPermissionDialog by rememberSaveable { mutableStateOf(false) }
     
     LaunchedEffect(Unit) {
         mainViewModel.navigationRequest.collect { tabIndex ->
@@ -94,16 +98,19 @@ fun MainScreen(mainViewModel: MainViewModel) {
 
     val snackbarHostState = remember { SnackbarHostState() }
     
-    val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
+    ) { isGranted ->
+        if (!isGranted) {
+            showNotificationPermissionDialog = true
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != 
                 PackageManager.PERMISSION_GRANTED) {
-                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                showNotificationPermissionDialog = true
             }
         }
     }
@@ -114,66 +121,29 @@ fun MainScreen(mainViewModel: MainViewModel) {
     var showScanReceipt by rememberSaveable { mutableStateOf(false) }
     var showRecurringExpenses by rememberSaveable { mutableStateOf(false) }
     var isFabExpanded by rememberSaveable { mutableStateOf(false) }
+    
+    var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
+
+    NotificationPermissionDialog(
+        showDialog = showNotificationPermissionDialog,
+        onDismiss = { showNotificationPermissionDialog = false },
+        onEnable = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+    )
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            // ... (rest of bottomBar)
-            NavigationBar(
-                tonalElevation = 0.dp // Cleaner Bento look
-            ) {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { 
-                        if (selectedTab != 0) haptic(HapticType.Standard)
-                        selectedTab = 0 
-                    },
-                    icon = { Icon(Icons.Rounded.GridView, contentDescription = "Dashboard") },
-                    label = { Text("Dashboard") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { 
-                        if (selectedTab != 1) haptic(HapticType.Standard)
-                        selectedTab = 1 
-                        // Clear drill-down filter when manually navigating to Activity
-                        activeTransactionFilter = null
-                    },
-                    icon = { Icon(Icons.Rounded.History, contentDescription = "Activity") },
-                    label = { Text("Activity") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { 
-                        if (selectedTab != 2) haptic(HapticType.Standard)
-                        selectedTab = 2 
-                    },
-                    icon = { 
-                        BadgedBox(
-                            badge = {
-                                if (pendingCount > 0) {
-                                    Badge { Text("$pendingCount") }
-                                }
-                            }
-                        ) {
-                            Icon(Icons.Rounded.FactCheck, contentDescription = "Review")
-                        }
-                    },
-                    label = { Text("Review") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 3,
-                    onClick = { 
-                        if (selectedTab != 3) haptic(HapticType.Standard)
-                        selectedTab = 3 
-                    },
-                    icon = { Icon(Icons.Rounded.PieChart, contentDescription = "Plan") },
-                    label = { Text("Plan") }
-                )
-            }
+            AppNavigationBar(
+                selectedTab = selectedTab,
+                onTabSelected = { index ->
+                    if (selectedTab != index) haptic(HapticType.Standard)
+                    if (index == 1) activeTransactionFilter = null
+                    selectedTab = index
+                },
+                pendingReviewCount = pendingCount
+            )
         },
         floatingActionButton = {
-            val reviewViewModel: com.yourname.expensetracker.ui.screens.review.ReviewViewModel = hiltViewModel()
             SmartFAB(
                 selectedTab = selectedTab,
                 isExpanded = isFabExpanded,
@@ -226,20 +196,11 @@ fun MainScreen(mainViewModel: MainViewModel) {
             }
 
             if (showAddExpense) {
-                val clipboardManager = LocalClipboardManager.current
                 var initialAmount by remember { mutableStateOf<String?>(null) }
                 
                 LaunchedEffect(Unit) {
-                    val text = clipboardManager.getText()?.text ?: ""
-                    // Match currency symbols or numbers with context to avoid matching years
-                    val regex = Regex("""(?:€|$|EUR)?\s*(\d{1,6}[\.,]\d{2})\s*(?:€|$|EUR)?""")
-                    val match = regex.find(text)
-                    if (match != null) {
-                        val value = AmountUtils.parseAmount(match.groupValues[1])
-                        if (value != null && value in 0.01..100000.0) {
-                            initialAmount = match.groupValues[1]
-                        }
-                    }
+                    val clipboardManager = ClipboardAmountParser.getClipboardManager(context)
+                    initialAmount = ClipboardAmountParser.parseAmountFromClipboard(clipboardManager)
                 }
 
                 com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
@@ -279,46 +240,21 @@ fun SmartFAB(
     onApproveAll: () -> Unit
 ) {
     val haptic = rememberHapticFeedback()
-    // Use native ClipboardManager to listen for changes
     val context = LocalContext.current
-    val clipboardManager = remember {
-        context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-    }
+    
     var clipboardAmount by remember { mutableStateOf<String?>(null) }
 
-    // Helper to check clipboard content
     fun checkClipboard() {
-        try {
-            if (clipboardManager.hasPrimaryClip()) {
-                val item = clipboardManager.primaryClip?.getItemAt(0)
-                val text = item?.text?.toString() ?: ""
-                val regex = Regex("""(?:€|$|EUR)?\s*(\d{1,6}[\.,]\d{2})\s*(?:€|$|EUR)?""")
-                val match = regex.find(text)
-                if (match != null) {
-                    val value = AmountUtils.parseAmount(match.groupValues[1])
-                    if (value != null && value in 0.01..100000.0) {
-                        clipboardAmount = match.groupValues[1]
-                    } else {
-                        clipboardAmount = null
-                    }
-                } else {
-                    clipboardAmount = null
-                }
-            } else {
-                clipboardAmount = null
-            }
-        } catch (e: Exception) {
-            // Ignore clipboard errors
-        }
+        val clipboardManager = ClipboardAmountParser.getClipboardManager(context)
+        clipboardAmount = ClipboardAmountParser.parseAmountFromClipboard(clipboardManager)
     }
 
-    // Listen for clipboard changes while this composable is active
-    DisposableEffect(clipboardManager) {
+    DisposableEffect(Unit) {
+        val clipboardManager = ClipboardAmountParser.getClipboardManager(context)
         val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
             checkClipboard()
         }
         clipboardManager.addPrimaryClipChangedListener(listener)
-        // Initial check
         checkClipboard()
         
         onDispose {
@@ -326,7 +262,6 @@ fun SmartFAB(
         }
     }
     
-    // Also check on resume to handle background changes
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->

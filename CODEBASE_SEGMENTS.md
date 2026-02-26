@@ -6,7 +6,7 @@
 
 ---
 
-## FILES COVERED: 152 Total Kotlin Files
+## FILES COVERED: 165+ Total Kotlin Files
 
 | Segment | Files | Description |
 |---------|-------|-------------|
@@ -21,8 +21,11 @@
 | 9 | ~10 | Dashboard & Widgets |
 | 10 | ~3 | Notifications |
 | 11 | ~8 | Debug & Diagnostics |
-| 12 | ~3 | Dependency Injection |
-| 13 | ~20 | Utilities |
+| 12 | ~6 | Dependency Injection (Updated) |
+| 13 | ~25 | Utilities (Updated) |
+| 14 | ~3 | Use Cases (NEW) |
+| 15 | ~1 | Performance (NEW) |
+| 16 | ~1 | Configuration (NEW) |
 
 ---
 
@@ -363,6 +366,9 @@ When analyzing a specific feature, check files in this order:
 | `ui/theme/Theme.kt` | App theming (colors, typography) |
 | `ui/components/BentoCard.kt` | Bento grid layout card |
 | `ui/components/PulseDot.kt` | Animated pulse indicator |
+| `ui/components/AppNavigationBar.kt` | Navigation bar (NEW) |
+| `ui/components/AppFabMenu.kt` | FAB menu (NEW) |
+| `ui/components/NotificationPermissionDialog.kt` | Permission dialog (NEW) |
 
 ### Domain Layer
 | File | Purpose |
@@ -429,7 +435,10 @@ When analyzing a specific feature, check files in this order:
 
 | File | Purpose |
 |------|---------|
-| `di/AppModule.kt` | Main Hilt module |
+| `di/AppModule.kt` | Legacy module (backwards compatibility) |
+| `di/DatabaseModule.kt` | Room database provider (NEW) |
+| `di/DaoModule.kt` | All DAO providers (NEW) |
+| `di/ServiceModule.kt` | Android service providers (NEW) |
 | `di/TimeModule.kt` | Time provider bindings |
 | `di/DispatchersModule.kt` | Coroutine dispatcher bindings |
 
@@ -449,20 +458,28 @@ When analyzing a specific feature, check files in this order:
 
 **Description:** Shared utilities used across multiple segments.
 
+### Domain Layer
 | File | Purpose |
 |------|---------|
 | `domain/util/TimeProvider.kt` | Time abstraction interface |
 | `domain/util/SystemTimeProvider.kt` | System time implementation |
 | `domain/util/AmountUtils.kt` | Amount parsing (used by parsers) |
+| `domain/util/CurrencyFormatter.kt` | Currency formatting |
+| `domain/util/AmountExtractionUtils.kt` | Regex patterns for extraction |
 | `domain/util/CurrencyNormalizer.kt` | Currency handling |
+| `domain/util/DateFormatterUtils.kt` | Date formatting |
+| `domain/util/TimePeriodUtils.kt` | Date range calculations |
 | `domain/util/CommonPatterns.kt` | Regex patterns |
 | `domain/util/StringDistanceUtils.kt` | String similarity |
 | `domain/util/BKTree.kt` | BK-tree for fuzzy search |
 | `domain/util/StatisticsUtils.kt` | Statistics calculations |
 | `domain/util/MerchantCleaner.kt` | Merchant name cleaning |
 | `domain/util/AppConstants.kt` | App constants |
-| `domain/util/TimePeriodUtils.kt` | Date period utilities |
-| `domain/util/DateFormatterUtils.kt` | Date formatting |
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| `ui/util/ColorExtensions.kt` | Color parsing extensions (NEW) |
 | `ui/util/HapticFeedback.kt` | Haptic feedback utilities |
 
 ---
@@ -492,3 +509,55 @@ When analyzing a specific feature, check files in this order:
 
 ### Check ML Training Issues
 → Files: `TransactionClassifier`, `MerchantNormalizer`, `ExpenseCategoryClassifier`, `UserCorrectionRepository`
+
+---
+
+## SEGMENT 14: USE CASES (Clean Architecture)
+
+**Description:** Business use cases that orchestrate domain logic.
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/usecase/receipt/ProcessReceiptUseCase.kt` | Orchestrates OCR + parsing + categorization |
+| `domain/usecase/expense/CategorizeExpenseUseCase.kt` | Merchant categorization with learning |
+| `domain/usecase/budget/CalculateBudgetStatusUseCase.kt` | Budget health calculations |
+| `domain/usecase/dashboard/DashboardDataProvider.kt` | Aggregates all dashboard data (NEW) |
+
+---
+
+## SEGMENT 15: PERFORMANCE
+
+**Description:** Performance optimization utilities.
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/performance/ImageCache.kt` | Bitmap caching for efficient image loading |
+
+---
+
+## SEGMENT 16: CONFIGURATION
+
+**Description:** Centralized configuration constants.
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/config/AppConfig.kt` | All thresholds, limits, timeouts in one place |
+
+---
+
+## QUICK REFERENCE: Updated Segments
+
+### Check DI Issues
+→ Files: `AppModule`, `DatabaseModule`, `DaoModule`, `ServiceModule`
+
+### Check Use Cases
+→ Files: All `*UseCase.kt` files in `domain/usecase/`
+
+### Check Configuration
+→ Files: `AppConfig.kt`
+
+### Check Performance Issues
+→ Files: `ImageCache.kt`

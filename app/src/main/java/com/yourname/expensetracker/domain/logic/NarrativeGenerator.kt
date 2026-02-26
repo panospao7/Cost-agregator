@@ -23,35 +23,41 @@ class NarrativeGenerator @Inject constructor() {
         val discretionary = components.discretionaryBudget
 
         val basic = when {
+            risk == RiskLevel.CRITICAL -> WeatherNarrative(
+                state = WeatherState.STORMY,
+                icon = "⛈️",
+                headline = "Stormy Weather",
+                summary = "⚠️ Immediate action required. Budgets exceeded and no discretionary buffer remains."
+            )
+            risk == RiskLevel.HIGH && discretionary <= 0 -> WeatherNarrative(
+                state = WeatherState.RAINY,
+                icon = "🌧️",
+                headline = "Rainy Conditions",
+                summary = "Over pace on budgets and high committed costs. Caution is highly advised."
+            )
+            risk == RiskLevel.HIGH -> WeatherNarrative(
+                state = WeatherState.CLOUDY,
+                icon = "☁️",
+                headline = "Cloudy Forecast",
+                summary = "Spending is tight. You only have €${String.format(java.util.Locale.US, "%.2f", discretionary)} remaining for unpredicted expenses."
+            )
             risk == RiskLevel.LOW && discretionary > 100.0 -> WeatherNarrative(
                 state = WeatherState.CLEAR_SKIES,
                 icon = "☀️",
                 headline = "Clear Skies",
                 summary = "You have a comfortable buffer of €${String.format(java.util.Locale.US, "%.2f", discretionary)} for the rest of the month."
             )
-            risk == RiskLevel.LOW || risk == RiskLevel.MEDIUM -> WeatherNarrative(
+            risk == RiskLevel.LOW -> WeatherNarrative(
                 state = WeatherState.PARTLY_CLOUDY,
                 icon = "⛅",
                 headline = "Partly Cloudy",
                 summary = "Everything is on track, though discretionary buffer is moderate (€${String.format(java.util.Locale.US, "%.2f", discretionary)})."
             )
-            risk == RiskLevel.HIGH && discretionary > 0 -> WeatherNarrative(
-                state = WeatherState.CLOUDY,
-                icon = "☁️",
-                headline = "Cloudy Forecast",
-                summary = "Spending is tight. You only have €${String.format(java.util.Locale.US, "%.2f", discretionary)} remaining for unpredicted expenses."
-            )
-            risk == RiskLevel.HIGH -> WeatherNarrative(
-                state = WeatherState.RAINY,
-                icon = "🌧️",
-                headline = "Rainy Conditions",
-                summary = "Over pace on budgets and high committed costs. Caution is highly advised."
-            )
-            risk == RiskLevel.CRITICAL -> WeatherNarrative(
-                state = WeatherState.STORMY,
-                icon = "⛈️",
-                headline = "Stormy Weather",
-                summary = "⚠️ Immediate action required. Budgets exceeded and no discretionary buffer remains."
+            risk == RiskLevel.MEDIUM -> WeatherNarrative(
+                state = WeatherState.PARTLY_CLOUDY,
+                icon = "⛅",
+                headline = "Partly Cloudy",
+                summary = "Everything is on track, though discretionary buffer is moderate (€${String.format(java.util.Locale.US, "%.2f", discretionary)})."
             )
             else -> WeatherNarrative(
                 state = WeatherState.UNKNOWN,

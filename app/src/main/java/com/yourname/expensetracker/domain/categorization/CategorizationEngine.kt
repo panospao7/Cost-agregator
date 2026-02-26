@@ -65,26 +65,30 @@ class CategorizationEngine @Inject constructor(
         return merchantNormalizer.normalize(merchant, autoCreate = false).canonical.normalizedName
     }
 
-    private suspend fun getCache(): List<MerchantCategory> {
-        cacheMutex.withLock {
+    private data class CacheData(
+        val mappings: List<MerchantCategory>,
+        val patternsSet: Set<String>
+    )
+
+    private suspend fun getCacheData(): CacheData {
+        return cacheMutex.withLock {
             val now = System.currentTimeMillis()
             if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
                 val all = merchantCategoryDao.getAll()
                 cachedMappings = all.sortedByDescending { it.merchantPattern.length }
+                cachedPatternsSet = all.map { it.merchantPattern.lowercase() }.toSet()
                 lastCacheTime = now
             }
+            CacheData(cachedMappings!!, cachedPatternsSet!!)
         }
-        return cachedMappings!!
+    }
+
+    private suspend fun getCache(): List<MerchantCategory> {
+        return getCacheData().mappings
     }
 
     private suspend fun getPatternsSet(): Set<String> {
-        cacheMutex.withLock {
-            if (cachedPatternsSet == null || lastCacheTime == 0L) {
-                val all = merchantCategoryDao.getAll()
-                cachedPatternsSet = all.map { it.merchantPattern.lowercase() }.toSet()
-            }
-        }
-        return cachedPatternsSet!!
+        return getCacheData().patternsSet
     }
 
     suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) {

@@ -22,6 +22,9 @@ interface ScannedReceiptDao {
     @Query("SELECT * FROM scanned_receipts ORDER BY createdAt DESC")
     suspend fun getAll(): List<ScannedReceipt>
 
+    @Query("SELECT * FROM scanned_receipts ORDER BY createdAt DESC LIMIT :limit OFFSET :offset")
+    suspend fun getReceiptsPaged(limit: Int, offset: Int): List<ScannedReceipt>
+
     @Query("SELECT * FROM scanned_receipts WHERE id = :id")
     suspend fun getById(id: Long): ScannedReceipt?
 

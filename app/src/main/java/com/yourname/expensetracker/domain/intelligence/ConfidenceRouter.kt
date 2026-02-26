@@ -7,6 +7,10 @@ import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
+import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -74,6 +78,12 @@ class ConfidenceRouter @Inject constructor(
     private val merchantRejectionCache = ConcurrentHashMap<String, Pair<Float, Long>>()
     private val packageRejectionCache = ConcurrentHashMap<String, Pair<Float, Long>>()
     private val approvalCache = ConcurrentHashMap<String, Pair<Boolean, Long>>()
+    
+    // Mutexes to prevent cache stampede (multiple coroutines refreshing same key)
+    private val sourceStatsMutex = Mutex()
+    private val merchantRejectionMutex = Mutex()
+    private val packageRejectionMutex = Mutex()
+    private val approvalMutex = Mutex()
 
     private fun checkCacheSize() {
         if (sourceStatsCache.size > MAX_CACHE_SIZE) sourceStatsCache.clear()
@@ -111,7 +121,12 @@ class ConfidenceRouter @Inject constructor(
         // 1. ML classifier prediction (if ready and needed)
         // Skip ML if parser is extremely confident (e.g. exact template match) to save resources
         if (notificationText != null && parsed.confidence < 1.0f) {
-            val mlPrediction = classifier.predict(notificationText)
+            val mlPrediction = try {
+                withTimeout(5000L) { classifier.predict(notificationText) }
+            } catch (e: Exception) {
+                Timber.w(e, "ML prediction timed out or failed")
+                0.5f // Default to neutral on timeout
+            }
             val classifierStats = classifier.getStats()
 
             if (classifierStats.isReady) {
@@ -226,9 +241,17 @@ class ConfidenceRouter @Inject constructor(
         if (cached != null && now - cached.second < CACHE_TTL) {
             return cached.first
         }
-        val stats = sourceStatsRepository.getByPackage(packageName)
-        sourceStatsCache[packageName] = Pair(stats, now)
-        return stats
+        // Use mutex to prevent cache stampede - only one coroutine refreshes
+        return sourceStatsMutex.withLock {
+            // Double-check after acquiring lock
+            val cachedNow = sourceStatsCache[packageName]
+            if (cachedNow != null && now - cachedNow.second < CACHE_TTL) {
+                return@withLock cachedNow.first
+            }
+            val stats = sourceStatsRepository.getByPackage(packageName)
+            sourceStatsCache[packageName] = Pair(stats, now)
+            stats
+        }
     }
 
     private suspend fun getCachedMerchantRejectionRate(merchant: String): Float {
@@ -239,14 +262,21 @@ class ConfidenceRouter @Inject constructor(
             return cached.first
         }
 
-        val total = userCorrectionRepository.getMerchantTotalCorrections(merchant)
-        val result = if (total < 3) 0f else {
-            val rejections = userCorrectionRepository.getMerchantRejectionCount(merchant)
-            rejections.toFloat() / total
-        }
+        return merchantRejectionMutex.withLock {
+            // Double-check after acquiring lock
+            val cachedNow = merchantRejectionCache[key]
+            if (cachedNow != null && now - cachedNow.second < CACHE_TTL) {
+                return@withLock cachedNow.first
+            }
 
-        merchantRejectionCache[key] = Pair(result, now)
-        return result
+            val stats = userCorrectionRepository.getMerchantStats(merchant)
+            val result = if (stats.total < 3) 0f else {
+                stats.rejections.toFloat() / stats.total
+            }
+
+            merchantRejectionCache[key] = Pair(result, now)
+            result
+        }
     }
 
     private suspend fun getCachedPackageRejectionRate(packageName: String): Float {
@@ -256,14 +286,21 @@ class ConfidenceRouter @Inject constructor(
             return cached.first
         }
 
-        val total = userCorrectionRepository.getTotalCorrections(packageName)
-        val result = if (total < 5) 0f else {
-            val rejections = userCorrectionRepository.getRejectionCount(packageName)
-            rejections.toFloat() / total
-        }
+        return packageRejectionMutex.withLock {
+            // Double-check after acquiring lock
+            val cachedNow = packageRejectionCache[packageName]
+            if (cachedNow != null && now - cachedNow.second < CACHE_TTL) {
+                return@withLock cachedNow.first
+            }
 
-        packageRejectionCache[packageName] = Pair(result, now)
-        return result
+            val stats = userCorrectionRepository.getPackageStats(packageName)
+            val result = if (stats.total < 5) 0f else {
+                stats.rejections.toFloat() / stats.total
+            }
+
+            packageRejectionCache[packageName] = Pair(result, now)
+            result
+        }
     }
 
     private suspend fun getCachedHasPreviousApprovals(merchant: String, packageName: String): Boolean {
@@ -274,9 +311,17 @@ class ConfidenceRouter @Inject constructor(
             return cached.first
         }
 
-        val result = userCorrectionRepository.hasPreviousApprovals(merchant, packageName)
-        approvalCache[key] = Pair(result, now)
-        return result
+        return approvalMutex.withLock {
+            // Double-check after acquiring lock
+            val cachedNow = approvalCache[key]
+            if (cachedNow != null && now - cachedNow.second < CACHE_TTL) {
+                return@withLock cachedNow.first
+            }
+
+            val result = userCorrectionRepository.hasPreviousApprovals(merchant, packageName)
+            approvalCache[key] = Pair(result, now)
+            result
+        }
     }
 
     suspend fun ensureSourceStats(packageName: String) {

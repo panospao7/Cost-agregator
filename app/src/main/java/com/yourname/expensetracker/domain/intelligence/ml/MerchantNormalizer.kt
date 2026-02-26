@@ -56,7 +56,14 @@ class MerchantNormalizer @Inject constructor(
             return@withContext createPlaceholder("Unknown", "unknown", categoryId)
         }
         
-        val cleaned = cleanMerchantName(rawName)
+        // Input validation - prevent memory issues with extremely long names
+        val sanitized = if (rawName.length > 200) {
+            rawName.take(200)
+        } else {
+            rawName
+        }
+        
+        val cleaned = cleanMerchantName(sanitized)
         val normalizedKey = createSearchKey(cleaned)
         
         // 1. Alias match
@@ -82,10 +89,14 @@ class MerchantNormalizer @Inject constructor(
             )
         }
         
-        // 3. Fuzzy matching
+        // 3. Fuzzy matching - use result but don't auto-learn to avoid incorrect aliases
         val fuzzyResult = fuzzyMatch(cleaned, normalizedKey)
-        if (fuzzyResult != null && fuzzyResult.confidence >= 0.80f) {
+        if (fuzzyResult != null && fuzzyResult.confidence >= 0.95f) {
+            // Only auto-learn very high confidence fuzzy matches (95%+)
             repository.linkAliasToCanonical(rawName, fuzzyResult.canonical.id, isUserDefined = false, timestamp = timeProvider.now())
+            return@withContext fuzzyResult
+        } else if (fuzzyResult != null) {
+            // Lower confidence fuzzy matches - use result but don't auto-learn
             return@withContext fuzzyResult
         }
         

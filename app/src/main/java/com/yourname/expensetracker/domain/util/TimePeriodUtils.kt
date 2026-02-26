@@ -196,4 +196,47 @@ object TimePeriodUtils {
         val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
         return daysInMonth - dayOfMonth
     }
+
+    /**
+     * getDayOfMonth - Returns the day of month (1-31) for a given timestamp.
+     */
+    fun getDayOfMonth(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return cal.get(Calendar.DAY_OF_MONTH)
+    }
+
+    /**
+     * getDaysInMonth - Returns the number of days in the month for a given timestamp.
+     */
+    fun getDaysInMonth(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+    }
+
+    /**
+     * getDayIndexFromMonthStart - Returns the day index from start of month (0-based).
+     */
+    fun getDayIndexFromMonthStart(timestamp: Long): Int {
+        val monthStart = getStartOfMonth(timestamp)
+        return ((timestamp - monthStart) / 86400000L).toInt().coerceAtLeast(0)
+    }
+
+    /**
+     * isSameMonth - Checks if two timestamps are in the same month.
+     */
+    fun isSameMonth(timestamp1: Long, timestamp2: Long): Boolean {
+        val cal1 = Calendar.getInstance().apply { timeInMillis = timestamp1 }
+        val cal2 = Calendar.getInstance().apply { timeInMillis = timestamp2 }
+        return cal1.get(Calendar.YEAR) == cal2.get(Calendar.YEAR) &&
+               cal1.get(Calendar.MONTH) == cal2.get(Calendar.MONTH)
+    }
+
+    /**
+     * addMonths - Adds specified months to a timestamp.
+     */
+    fun addMonths(timestamp: Long, months: Int): Long {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        cal.add(Calendar.MONTH, months)
+        return cal.timeInMillis
+    }
 }

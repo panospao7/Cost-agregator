@@ -12,6 +12,34 @@ import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * SynthesisEngine - Core financial forecasting and budgeting logic.
+ * 
+ * ## Block Party Algorithm
+ * 
+ * The Block Party feature provides daily budget tracking with intelligent forecasting:
+ * 
+ * ### Calculation Steps:
+ * 1. **Calculate Monthly Totals**: Sum recurring expenses and planned expenses for the month
+ * 2. **Determine Discretionary Pool**: budgetLimit - recurring - planned - goalReserves
+ * 3. **Calculate Daily Rate**: discretionaryPool / daysInMonth
+ * 4. **Pre-calculate Recurring Days**: Identify which days have recurring bills
+ * 5. **Build Daily Targets**: baseRate + recurringOnDay + plannedOnDay
+ * 6. **Group Expenses by Day**: Filter and group actual expenses for comparison
+ * 
+ * ### Status Types:
+ * - TODAY: Current day
+ * - BILL_DAY: Future day with recurring expense
+ * - FUTURE: Future day without bills
+ * - UNDER_BUDGET: Spent <= target
+ * - OVER_BUDGET: Spent > target
+ * - NO_DATA: No expenses recorded
+ * 
+ * ### Priority Weighting:
+ * - MUST planned expenses: 100%
+ * - LIKELY planned expenses: 70%
+ * - OPTIONAL planned expenses: 0%
+ */
 @Singleton
 class SynthesisEngine @Inject constructor(
     private val timeProvider: TimeProvider
@@ -260,8 +288,6 @@ class SynthesisEngine @Inject constructor(
         val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-        val currentMonth = calendar.get(Calendar.MONTH)
-        val currentYear = calendar.get(Calendar.YEAR)
         
         calendar.set(Calendar.DAY_OF_MONTH, 1)
         calendar.set(Calendar.HOUR_OF_DAY, 0)
@@ -298,9 +324,13 @@ class SynthesisEngine @Inject constructor(
         val baseDiscretionaryRate = if (budgetLimit > 0) discretionaryTotal / daysInMonth else 0.0
 
         // Optimization: Group raw expenses by day once O(N) - use timestamp range filter
+        // Pre-sort expenses by amount within each day for top 3 transactions
         val expensesByDay = expenses.filter { it.date in startOfMonth..endOfMonth }
             .groupBy { expense ->
                 ((expense.date - startOfMonth) / (24 * 60 * 60 * 1000)).toInt() + 1
+            }
+            .mapValues { (_, dayExpenses) -> 
+                dayExpenses.sortedByDescending { it.amount }
             }
 
         // Optimization: Group planned expenses by day - use timestamp range filter
@@ -311,21 +341,41 @@ class SynthesisEngine @Inject constructor(
         val dateCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val anchorCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
 
+        // Pre-calculate which days have recurring expenses (optimization)
+        val recurringByDay = mutableMapOf<Int, List<RecurringPattern>>()
+        for (day in 1..daysInMonth) {
+            dateCal.set(Calendar.DAY_OF_MONTH, day)
+            dateCal.set(Calendar.HOUR_OF_DAY, 12)
+            val recurringOnDay = components.recurringExpenses.filter { 
+                isRecurringExpected(it, dateCal, anchorCal) 
+            }
+            if (recurringOnDay.isNotEmpty()) {
+                recurringByDay[day] = recurringOnDay
+            }
+        }
+
         return (1..daysInMonth).map { day ->
             dateCal.set(Calendar.DAY_OF_MONTH, day)
             dateCal.set(Calendar.HOUR_OF_DAY, 12)
             val dateMs = dateCal.timeInMillis
 
-            // 1. Identify Recurring on this day
-            val recurringItemsOnDay = components.recurringExpenses.filter { 
-                isRecurringExpected(it, dateCal, anchorCal) 
-            }
+            // 1. Use pre-calculated recurring expenses for this day
+            val recurringItemsOnDay = recurringByDay[day] ?: emptyList()
             val recurringOnDay = recurringItemsOnDay.sumOf { it.averageAmount }
             val recurringNames = recurringItemsOnDay.map { it.merchantName }
 
             // 2. Identify Planned on this day
+            // Apply priority weighting: MUST=100%, LIKELY=70%, OPTIONAL=0%
             val plannedItemsOnDay = plannedByDay[day] ?: emptyList()
-            val plannedOnDay = plannedItemsOnDay.sumOf { it.amount }
+            val plannedOnDay = plannedItemsOnDay
+                .filter { it.priority != PlannedExpensePriority.OPTIONAL }
+                .sumOf { expense ->
+                    when (expense.priority) {
+                        PlannedExpensePriority.MUST -> expense.amount
+                        PlannedExpensePriority.LIKELY -> expense.amount * LIKELY_EXPENSE_WEIGHT
+                        PlannedExpensePriority.OPTIONAL -> 0.0
+                    }
+                }
             val plannedNames = plannedItemsOnDay.map { it.description }
 
             val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
@@ -333,7 +383,6 @@ class SynthesisEngine @Inject constructor(
             val actualOrZero = actual ?: 0.0
 
             val dayTransactions = (expensesByDay[day] ?: emptyList())
-                .sortedByDescending { it.amount }
                 .take(3)
 
             val status = when {
@@ -379,18 +428,19 @@ class SynthesisEngine @Inject constructor(
                 dateCal.get(Calendar.DAY_OF_WEEK) == anchorCal.get(Calendar.DAY_OF_WEEK)
             }
             RecurrenceFrequency.BIWEEKLY -> {
-                 val diff = dateCal.timeInMillis - anchor
-                 val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
-                 (daysDiff % 14L == 0L)
+                // Check day-of-week matches (like weekly) and allow ±2 day tolerance
+                val dayOfWeekMatch = dateCal.get(Calendar.DAY_OF_WEEK) == anchorCal.get(Calendar.DAY_OF_WEEK)
+                val diff = dateCal.timeInMillis - anchor
+                val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
+                dayOfWeekMatch && (daysDiff in -2L..16L)
             }
             RecurrenceFrequency.MONTHLY -> {
                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
                 val targetDay = dateCal.get(Calendar.DAY_OF_MONTH)
-                if (anchorDay > 28) {
-                    val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                    targetDay == maxDayInTargetMonth
-                } else {
-                    targetDay == anchorDay
+                val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                when {
+                    anchorDay > maxDayInTargetMonth -> targetDay == maxDayInTargetMonth
+                    else -> targetDay == anchorDay
                 }
             }
             RecurrenceFrequency.QUARTERLY -> {

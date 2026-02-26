@@ -7,15 +7,13 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
-import javax.inject.Inject
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
-    private val reviewQueueRepository: ReviewQueueRepository,
-    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
+    private val reviewQueueRepository: ReviewQueueRepository
 ) : ViewModel() {
 
     private val _navigationRequest = kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.BUFFERED)
@@ -29,15 +27,6 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             _navigationRequest.send(tabIndex)
         }
-    }
-
-    fun isNotificationServiceEnabled(): Boolean {
-        val packageName = context.packageName
-        val flat = android.provider.Settings.Secure.getString(
-            context.contentResolver,
-            "enabled_notification_listeners"
-        )
-        return flat != null && flat.contains(packageName)
     }
 }
 

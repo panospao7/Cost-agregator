@@ -15,6 +15,7 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import timber.log.Timber
 import java.io.File
@@ -52,15 +53,46 @@ class ReceiptOcrService @Inject constructor(
     // Reverting to DEFAULT_OPTIONS as Builder might not be available in current dependency version
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
+    companion object {
+        private val ALLOWED_IMAGE_TYPES = setOf(
+            "image/jpeg",
+            "image/png", 
+            "image/webp",
+            "image/heic"
+        )
+        private const val MAX_FILE_SIZE = 20 * 1024 * 1024  // 20MB
+    }
+
     /**
      * Dispatcher that automatically routes URIs to the correct processor based on MIME type.
      */
     suspend fun processUri(uri: Uri): OcrResult {
         val mimeType = context.contentResolver.getType(uri) ?: ""
-        return if (mimeType == "application/pdf") {
-            processPdf(uri)
+        
+        // Validate file type
+        if (mimeType == "application/pdf") {
+            return processPdf(uri)
+        } else if (mimeType in ALLOWED_IMAGE_TYPES) {
+            // Validate file size
+            validateFileSize(uri)
+            return processImage(uri)
         } else {
-            processImage(uri)
+            throw IllegalArgumentException(
+                "Unsupported file type: $mimeType. " +
+                "Supported types: ${ALLOWED_IMAGE_TYPES.joinToString()}, application/pdf"
+            )
+        }
+    }
+
+    private fun validateFileSize(uri: Uri) {
+        val fileSize = context.contentResolver.openFileDescriptor(uri, "r")?.use {
+            it.statSize
+        } ?: 0
+        
+        if (fileSize > MAX_FILE_SIZE) {
+            throw IllegalArgumentException(
+                "File too large: ${fileSize / 1024 / 1024}MB. Maximum: ${MAX_FILE_SIZE / 1024 / 1024}MB"
+            )
         }
     }
 
@@ -76,9 +108,11 @@ class ReceiptOcrService @Inject constructor(
             // 2. Save compressed copy
             val savedPath = saveReceiptImage(bitmap)
 
-            // 3. Run ML Kit OCR
+            // 3. Run ML Kit OCR with retry
             val inputImage = InputImage.fromBitmap(bitmap, 0)
-            val visionText = recognizeText(inputImage)
+            val visionText = runWithRetry(maxAttempts = 3) {
+                recognizeText(inputImage)
+            }
 
             // 4. Extract blocks with confidence filtering
             val blocks = visionText.textBlocks.mapNotNull { block ->
@@ -355,6 +389,22 @@ class ReceiptOcrService @Inject constructor(
      * Load bitmap from URI with EXIF rotation correction.
      * Copies to a temp file first to ensure reliable multi-read access.
      */
+    private fun calculateOptimalDimension(): Int {
+        val runtime = Runtime.getRuntime()
+        val freeMemory = runtime.freeMemory()
+        val totalMemory = runtime.totalMemory()
+        val maxMemory = runtime.maxMemory()
+        
+        val availableMemory = maxMemory - (totalMemory - freeMemory)
+        
+        return when {
+            availableMemory > 200 * 1024 * 1024 -> 1024  // >200MB available: use 1024
+            availableMemory > 100 * 1024 * 1024 -> 768   // >100MB: use 768
+            availableMemory > 50 * 1024 * 1024 -> 512    // >50MB: use 512
+            else -> 384                                    // Low memory: use 384
+        }
+    }
+
     private fun loadAndCorrectBitmap(uri: Uri): Bitmap? {
         val tempFile = File(context.cacheDir, "temp_ocr_${System.nanoTime()}.jpg")
         var decodedBitmap: Bitmap? = null
@@ -379,8 +429,8 @@ class ReceiptOcrService @Inject constructor(
             }
             BitmapFactory.decodeFile(tempFile.absolutePath, options)
 
-            // Calculate sample size - Optimized: 1024 is plenty for OCR and saves memory/time
-            val maxDimension = 1024
+            // Dynamic dimension based on available memory (Issue 2.10)
+            val maxDimension = calculateOptimalDimension()
             var sampleSize = 1
             if (options.outWidth > 0 && options.outHeight > 0) {
                 while (options.outWidth / sampleSize > maxDimension ||
@@ -482,5 +532,28 @@ class ReceiptOcrService @Inject constructor(
             File(path).delete()
         } catch (_: Exception) {
         }
+    }
+
+    private suspend fun <T> runWithRetry(
+        maxAttempts: Int = 3,
+        initialDelayMs: Long = 500,
+        maxDelayMs: Long = 2000,
+        block: suspend () -> T
+    ): T {
+        var currentDelay = initialDelayMs
+        repeat(maxAttempts) { attempt ->
+            try {
+                return block()
+            } catch (e: Exception) {
+                if (attempt == maxAttempts - 1) {
+                    Timber.e(e, "OCR failed after $maxAttempts attempts")
+                    throw e
+                }
+                Timber.w(e, "OCR attempt ${attempt + 1} failed, retrying in ${currentDelay}ms...")
+                delay(currentDelay)
+                currentDelay = (currentDelay * 2).coerceAtMost(maxDelayMs)
+            }
+        }
+        throw IllegalStateException("Should not reach here")
     }
 }

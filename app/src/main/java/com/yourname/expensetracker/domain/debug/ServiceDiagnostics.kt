@@ -25,23 +25,20 @@ class ServiceDiagnostics @Inject constructor(
         prefs.edit().apply {
             putInt(KEY_SERVICE_START_COUNT, getServiceStartCount() + 1)
             putLong(KEY_LAST_RESTART_TIME, System.currentTimeMillis())
-            apply()
-        }
+        }.commit()
     }
 
     fun recordServiceKilled() {
         prefs.edit().apply {
             putInt(KEY_SERVICE_KILLED_COUNT, getServiceKilledCount() + 1)
             putLong(KEY_LAST_KILL_TIME, System.currentTimeMillis())
-            apply()
-        }
+        }.commit()
     }
 
     fun recordListenerDisconnected() {
         prefs.edit().apply {
             putInt(KEY_LISTENER_DISCONNECT_COUNT, getListenerDisconnectCount() + 1)
-            apply()
-        }
+        }.commit()
     }
 
     fun getServiceStartCount(): Int = prefs.getInt(KEY_SERVICE_START_COUNT, 0)
@@ -51,7 +48,7 @@ class ServiceDiagnostics @Inject constructor(
     fun getLastKillTime(): Long = prefs.getLong(KEY_LAST_KILL_TIME, 0)
 
     fun resetStats() {
-        prefs.edit().clear().apply()
+        prefs.edit().clear().commit()
     }
 
     data class Stats(

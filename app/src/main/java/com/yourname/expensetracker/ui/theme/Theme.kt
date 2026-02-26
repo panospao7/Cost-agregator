@@ -183,12 +183,27 @@ private val DarkColorScheme = darkColorScheme(
     error = SemanticColors.DangerRed
 )
 
-private val LightColorScheme = DarkColorScheme // Focusing on the Midnight Theme as requested
+private val LightColorScheme = lightColorScheme(
+    primary = SemanticColors.PrimaryIndigo,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFE0E7FF),
+    onPrimaryContainer = Color(0xFF1E1B4B),
+    secondary = Color(0xFFF1F5F9),
+    onSecondary = Color(0xFF1E293B),
+    background = Color(0xFFF8FAFC),
+    onBackground = Color(0xFF0F172A),
+    surface = Color.White,
+    onSurface = Color(0xFF0F172A),
+    surfaceVariant = Color(0xFFE2E8F0),
+    onSurfaceVariant = Color(0xFF475569),
+    outline = Color(0xFFCBD5E1),
+    error = SemanticColors.DangerRed
+)
 
 @Composable
 fun ExpenseTrackerTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

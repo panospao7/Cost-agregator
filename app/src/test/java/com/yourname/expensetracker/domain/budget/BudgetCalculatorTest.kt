@@ -155,4 +155,103 @@ class BudgetCalculatorTest {
         assertEquals(2025, endCal.get(Calendar.YEAR))
         assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
     }
+
+    // Critical edge cases from analysis document
+    @Test
+    fun `calculatePeriodWindow MONTHLY anchor Jan 31 leap year`() {
+        // Anchor: Jan 31 2024 (leap year)
+        val anchorCal = Calendar.getInstance()
+        anchorCal.set(2024, Calendar.JANUARY, 31, 0, 0, 0)
+        val anchor = anchorCal.timeInMillis
+        
+        // Eval: Feb 15 2024
+        val evalCal = Calendar.getInstance()
+        evalCal.set(2024, Calendar.FEBRUARY, 15, 0, 0, 0)
+        
+        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
+        
+        val startCal = Calendar.getInstance().apply { timeInMillis = window.start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = window.end }
+        
+        // Jan 31 -> Feb 29 (leap year has Feb 29)
+        assertEquals(31, startCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.JANUARY, startCal.get(Calendar.MONTH))
+        
+        assertEquals(29, endCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
+    }
+
+    @Test
+    fun `calculatePeriodWindow MONTHLY anchor Jan 31 non-leap year`() {
+        // Anchor: Jan 31 2023 (non-leap year)
+        val anchorCal = Calendar.getInstance()
+        anchorCal.set(2023, Calendar.JANUARY, 31, 0, 0, 0)
+        val anchor = anchorCal.timeInMillis
+        
+        // Eval: Feb 15 2023
+        val evalCal = Calendar.getInstance()
+        evalCal.set(2023, Calendar.FEBRUARY, 15, 0, 0, 0)
+        
+        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
+        
+        val startCal = Calendar.getInstance().apply { timeInMillis = window.start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = window.end }
+        
+        // Jan 31 -> Feb 28 (non-leap year)
+        assertEquals(31, startCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.JANUARY, startCal.get(Calendar.MONTH))
+        
+        assertEquals(28, endCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
+    }
+
+    @Test
+    fun `calculatePeriodWindow MONTHLY anchor Dec 31 year boundary`() {
+        // Anchor: Dec 31
+        val anchorCal = Calendar.getInstance()
+        anchorCal.set(2023, Calendar.DECEMBER, 31, 0, 0, 0)
+        val anchor = anchorCal.timeInMillis
+        
+        // Eval: Jan 15 2024
+        val evalCal = Calendar.getInstance()
+        evalCal.set(2024, Calendar.JANUARY, 15, 0, 0, 0)
+        
+        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
+        
+        val startCal = Calendar.getInstance().apply { timeInMillis = window.start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = window.end }
+        
+        // Dec 31 -> Jan 31
+        assertEquals(Calendar.DECEMBER, startCal.get(Calendar.MONTH))
+        assertEquals(2023, startCal.get(Calendar.YEAR))
+        
+        assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
+        assertEquals(31, endCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(2024, endCal.get(Calendar.YEAR))
+    }
+
+    @Test
+    fun `calculatePeriodWindow MONTHLY anchor Mar 31 month coercion`() {
+        // Anchor: Mar 31
+        val anchorCal = Calendar.getInstance()
+        anchorCal.set(2024, Calendar.MARCH, 31, 0, 0, 0)
+        val anchor = anchorCal.timeInMillis
+        
+        // Eval: Apr 15
+        val evalCal = Calendar.getInstance()
+        evalCal.set(2024, Calendar.APRIL, 15, 0, 0, 0)
+        
+        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.MONTHLY, anchor, evalCal.timeInMillis)
+        
+        val startCal = Calendar.getInstance().apply { timeInMillis = window.start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = window.end }
+        
+        // Mar 31 -> Apr 30 (April only has 30 days, should coerce)
+        assertEquals(31, startCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.MARCH, startCal.get(Calendar.MONTH))
+        
+        assertEquals(30, endCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.APRIL, endCal.get(Calendar.MONTH))
+    }
+}
 }

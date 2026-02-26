@@ -7,8 +7,10 @@ import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 
@@ -131,29 +133,27 @@ class DebugViewModel @Inject constructor(
         viewModelScope.launch {
             _isSimulating.value = true
             
-            // 1. Ensure categories exist
-            categoryRepository.ensureDefaultCategories()
-            
-            // 2. Pre-seed mappings so categorization works
-            val cats = categoryRepository.allCategories.first()
-            val catMap = cats.associate { it.name to it.id }
-            
-            notificationSeeder.categories.forEach { (catName, merchants) ->
-                val catId = catMap[catName]
-                if (catId != null) {
-                    merchants.forEach { merchant ->
-                        try {
-                            categoryRepository.learnMerchantCategory(merchant, catId)
-                        } catch (e: Exception) {
-                            // Ignore duplicates
+            withContext(Dispatchers.IO) {
+                categoryRepository.ensureDefaultCategories()
+                
+                val cats = categoryRepository.allCategories.first()
+                val catMap = cats.associate { it.name to it.id }
+                
+                notificationSeeder.categories.forEach { (catName, merchants) ->
+                    val catId = catMap[catName]
+                    if (catId != null) {
+                        merchants.forEach { merchant ->
+                            try {
+                                categoryRepository.learnMerchantCategory(merchant, catId)
+                            } catch (e: Exception) {
+                            }
                         }
                     }
                 }
+                
+                val simulated = notificationSeeder.generate(count)
+                repository.processAndSaveAll(simulated)
             }
-            
-            // 3. Generate data
-            val simulated = notificationSeeder.generate(count)
-            repository.processAndSaveAll(simulated)
             _isSimulating.value = false
         }
     }

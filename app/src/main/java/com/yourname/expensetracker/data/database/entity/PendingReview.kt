@@ -5,6 +5,13 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+enum class PendingReviewStatus {
+    PENDING,
+    APPROVED,
+    REJECTED,
+    MODIFIED
+}
+
 @Entity(
     tableName = "pending_reviews",
     foreignKeys = [
@@ -43,5 +50,5 @@ data class PendingReview(
     val notificationTitle: String?,
     val notificationText: String?,
     val createdAt: Long = System.currentTimeMillis(),
-    val status: String = "PENDING"      // PENDING, APPROVED, REJECTED, MODIFIED
+    val status: PendingReviewStatus = PendingReviewStatus.PENDING
 )

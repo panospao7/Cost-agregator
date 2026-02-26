@@ -17,7 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import com.yourname.expensetracker.ui.util.budgetScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -317,9 +317,20 @@ fun AddEditBudgetDialog(
             ) {
                 OutlinedTextField(
                     value = amount,
-                    onValueChange = { amount = it },
+                    onValueChange = { newValue ->
+                        // Only allow valid decimal numbers
+                        if (newValue.isEmpty() || newValue.matches(Regex("^\\d*\\.?\\d{0,2}$"))) {
+                            amount = newValue
+                        }
+                    },
                     label = { Text("Budget Amount (€)") },
                     modifier = Modifier.fillMaxWidth(),
+                    isError = amount.isNotEmpty() && (amount.toDoubleOrNull() ?: 0.0) <= 0,
+                    supportingText = { 
+                        if (amount.isNotEmpty() && (amount.toDoubleOrNull() ?: 0.0) <= 0) {
+                            Text("Enter a valid amount greater than 0")
+                        }
+                    },
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
                 )
 
@@ -404,7 +415,3 @@ fun CategorySelector(
         }
     }
 }
-
-
-// Helper for UI scaling using graphicsLayer for better performance
-fun Modifier.budgetScale(scale: Float): Modifier = this.then(Modifier.graphicsLayer(scaleX = scale, scaleY = scale))

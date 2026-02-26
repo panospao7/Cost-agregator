@@ -35,10 +35,11 @@ class RecurringExpenseEngine @Inject constructor(
     suspend fun getPatterns(allExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<RecurringPattern> {
         // 1. Fetch Manual Overrides
         val manualExpenses = recurringExpenseRepository.getAll()
-        val manualMap = manualExpenses.associateBy { it.merchant.lowercase() }
+        // Use lowercase().trim() to match how expenses are grouped (normalized merchant names)
+        val manualMap = manualExpenses.associateBy { it.merchant.lowercase().trim() }
         
 
-        // Group by normalized merchant name
+        // Group by normalized merchant name - use same key format as manualMap
         val grouped = allExpenses.groupBy { it.merchant.lowercase().trim() }
 
         val detectedPatterns = mutableListOf<RecurringPattern>()

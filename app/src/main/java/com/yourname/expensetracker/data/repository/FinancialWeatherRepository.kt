@@ -85,11 +85,11 @@ class FinancialWeatherRepository @Inject constructor(
     }
 
     fun getFinancialWeather(): Flow<FinancialWeather> = combine(
-        expenseRepository.getAllExpenses(),
-        budgetRepository.getBudgetStatuses(),
-        recurringExpenseRepository.getAllFlow(),
-        plannedExpenseRepository.getAllPlannedExpenses(),
-        savingsGoalRepository.getAllGoals()
+        expenseRepository.getAllExpenses().catch { emit(emptyList()) },
+        budgetRepository.getBudgetStatuses().catch { emit(emptyList()) },
+        recurringExpenseRepository.getAllFlow().catch { emit(emptyList()) },
+        plannedExpenseRepository.getAllPlannedExpenses().catch { emit(emptyList()) },
+        savingsGoalRepository.getAllGoals().catch { emit(emptyList()) }
     ) { expenses, budgetStatuses, recurringEntities, plannedEntities, goalEntities ->
         
         val plannedExpenses = plannedEntities.map { it.toDomain() }

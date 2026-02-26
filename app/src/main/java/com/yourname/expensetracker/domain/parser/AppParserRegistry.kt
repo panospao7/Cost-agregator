@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import com.yourname.expensetracker.domain.parser.parsers.SmsParser
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -18,7 +19,31 @@ data class ParsedTransaction(
     val type: TransactionType,
     val confidence: Float, // 0.0 to 1.0
     val date: Long? = null
-)
+) {
+    init {
+        require(amount.isFinite() && amount > 0) { 
+            "Amount must be positive and finite: $amount" 
+        }
+        require(amount <= 1_000_000) { 
+            "Amount exceeds maximum: $amount" 
+        }
+        require(confidence in 0f..1f) { 
+            "Confidence must be between 0 and 1: $confidence" 
+        }
+        require(merchant.isNotBlank()) { 
+            "Merchant cannot be blank" 
+        }
+        require(currency.matches(Regex("^[A-Z]{3}$"))) { 
+            "Currency must be ISO 4217 code (e.g., EUR, USD): $currency" 
+        }
+        date?.let {
+            require(it > 0) { "Date must be positive timestamp" }
+            require(it <= System.currentTimeMillis() + 86_400_000) { 
+                "Date cannot be in the future" 
+            }
+        }
+    }
+}
 
 /**
  * Interface for app-specific notification parsers.
@@ -79,10 +104,20 @@ class AppParserRegistry @Inject constructor(
         // 1. O(1) lookup for app-specific parser
         val specificParser = packageToParserMap[packageName]
         if (specificParser != null) {
-            return specificParser.parse(title, text, bigText, subText, packageName)
+            return try {
+                specificParser.parse(title, text, bigText, subText, packageName)
+            } catch (e: Exception) {
+                Timber.w(e, "Parser failed for package: $packageName")
+                null
+            }
         }
 
         // 2. Fallback to generic parser with HIGH threshold
-        return genericParser.parse(title, text, bigText, subText, packageName)
+        return try {
+            genericParser.parse(title, text, bigText, subText, packageName)
+        } catch (e: Exception) {
+            Timber.w(e, "Generic parser failed for package: $packageName")
+            null
+        }
     }
 }

@@ -200,8 +200,10 @@ class ReviewViewModel @Inject constructor(
     }
     
     fun clearDebugData() {
+        viewModelScope.launch {
+            debugDataStorage.clear()
+        }
         _debugData.value = null
-        debugDataStorage.clear()
         _errorMessage.value = "Debug data cleared."
     }
 }

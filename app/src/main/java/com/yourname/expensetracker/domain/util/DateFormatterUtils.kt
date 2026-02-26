@@ -80,10 +80,6 @@ object DateFormatterUtils {
     fun javaTimeDateKey(): String = javaTime("yyyy-MM-dd").format(Instant.now().atZone(ZoneId.systemDefault()))
     fun javaTimeFullDateWithDay(): String = javaTime("EEEE, MMMM d, yyyy").format(Instant.now().atZone(ZoneId.systemDefault()))
 
-    fun formatTimestamp(timestamp: Long, pattern: String): String {
-        return get(pattern).format(Date(timestamp))
-    }
-
     fun formatTimestampJavaTime(timestamp: Long, pattern: String): String {
         return Instant.ofEpochMilli(timestamp)
             .atZone(ZoneId.systemDefault())

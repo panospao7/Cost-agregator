@@ -10,6 +10,9 @@ interface RawNotificationDao {
     @Insert
     suspend fun insert(notification: RawNotification): Long
     
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertOrIgnore(notification: RawNotification): Long
+    
     @Query("SELECT * FROM raw_notifications WHERE id = :id")
     suspend fun getById(id: Long): RawNotification?
     

@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface UserCorrectionDao {
 
+    data class MerchantCorrectionStats(val total: Int, val rejections: Int)
+    data class PackageCorrectionStats(val total: Int, val rejections: Int)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(correction: UserCorrection): Long
 
@@ -60,6 +63,22 @@ interface UserCorrectionDao {
         WHERE originalMerchant = :merchant AND wasRejected = 1
     """)
     suspend fun getMerchantRejectionCount(merchant: String): Int
+
+    @Query("""
+        SELECT COUNT(*) as total, 
+        COALESCE(SUM(CASE WHEN wasRejected = 1 THEN 1 ELSE 0 END), 0) as rejections
+        FROM user_corrections 
+        WHERE originalMerchant = :merchant
+    """)
+    suspend fun getMerchantStats(merchant: String): MerchantCorrectionStats
+
+    @Query("""
+        SELECT COUNT(*) as total, 
+        COALESCE(SUM(CASE WHEN wasRejected = 1 THEN 1 ELSE 0 END), 0) as rejections
+        FROM user_corrections 
+        WHERE packageName = :packageName
+    """)
+    suspend fun getPackageStats(packageName: String): PackageCorrectionStats
 
     @Query("""
         SELECT correctedCategoryId 
