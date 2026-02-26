@@ -1,0 +1,71 @@
+package com.yourname.expensetracker.domain.analytics
+
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class CategoryInsightEngine @Inject constructor() {
+
+    fun calculate(
+        currentMonth: MonthPeriod,
+        previousMonth: MonthPeriod?,
+        categoryMap: Map<Long, Category>,
+        allExpenses: List<Expense>
+    ): List<CategoryInsight> {
+        val currentExpenses = allExpenses.filter { 
+            it.date != null &&
+            it.date >= currentMonth.startMs && 
+            it.date < currentMonth.endMs &&
+            it.transactionType == TransactionType.PURCHASE && 
+            !it.isNotMine 
+        }
+        
+        val previousExpenses = previousMonth?.let { pm ->
+            allExpenses.filter { 
+                it.date != null &&
+                it.date >= pm.startMs && 
+                it.date < pm.endMs &&
+                it.transactionType == TransactionType.PURCHASE && 
+                !it.isNotMine 
+            }
+        }
+        
+        val totalCurrent = currentExpenses.sumOf { it.amount }
+        
+        val categoryTotals = currentExpenses.groupBy { it.categoryId }
+        
+        return categoryTotals.map { (categoryId, expenses) ->
+            val category = categoryMap[categoryId]
+            val currentTotal = expenses.sumOf { it.amount }
+            val currentCount = expenses.size
+            
+            val previousCategoryExpenses = previousExpenses?.filter { it.categoryId == categoryId }
+            val previousTotal = previousCategoryExpenses?.sumOf { it.amount }
+            val previousCount = previousCategoryExpenses?.size
+            
+            val changeFromPrevious = if (previousTotal != null && previousTotal > 0) {
+                ((currentTotal - previousTotal) / previousTotal * 100).toFloat()
+            } else null
+            
+            val percentageOfTotal = if (totalCurrent > 0) {
+                (currentTotal / totalCurrent * 100).toFloat()
+            } else 0f
+            
+            CategoryInsight(
+                category = category!!,
+                currentTotal = currentTotal,
+                currentCount = currentCount,
+                previousTotal = previousTotal,
+                previousCount = previousCount,
+                averageOverMonths = null,
+                monthsOfData = 1,
+                percentageOfTotal = percentageOfTotal,
+                changeFromPrevious = changeFromPrevious,
+                changeFromAverage = null
+            )
+        }.sortedByDescending { it.currentTotal }
+    }
+}

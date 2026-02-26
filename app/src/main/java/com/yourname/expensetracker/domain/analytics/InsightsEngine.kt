@@ -22,7 +22,14 @@ import timber.log.Timber
 class InsightsEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    // Extracted focused engines
+    private val spendingPaceCalculator: SpendingPaceCalculator,
+    private val anomalyDetector: AnomalyDetector,
+    private val monthlyComparisonCalculator: MonthlyComparisonCalculator,
+    private val categoryInsightEngine: CategoryInsightEngine,
+    private val merchantInsightEngine: MerchantInsightEngine,
+    private val dayOfWeekAnalyzer: DayOfWeekAnalyzer
 ) {
 
     companion object {
