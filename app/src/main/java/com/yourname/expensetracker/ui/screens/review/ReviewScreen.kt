@@ -30,6 +30,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.AmountText
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
@@ -508,6 +510,17 @@ fun ReviewCard(
                         style = MaterialTheme.typography.headlineSmall,
                         color = SemanticColors.TextPrimary
                     )
+                    
+                    // Transfer Direction Badge (for transfers and deposits)
+                    if (review.suggestedType == TransactionType.TRANSFER.name || 
+                        review.suggestedType == TransactionType.DEPOSIT.name) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TransferDirectionBadge(
+                            direction = review.transferDirection,
+                            accountName = review.transferAccountName,
+                            compact = true
+                        )
+                    }
                 }
             }
 

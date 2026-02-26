@@ -129,6 +129,7 @@ When analyzing a specific feature, check files in this order:
 |------|---------|
 | `domain/parser/AppParserRegistry.kt` | Routes notifications to appropriate parser |
 | `domain/parser/GenericTransactionParser.kt` | Fallback parser for generic notifications |
+| `domain/parser/TransferDirectionDetector.kt` | **NEW** - Transfer direction detection (50+ patterns) |
 | `domain/parser/parsers/GreekBankParser.kt` | Greek bank notifications (NBG, Alpha, Eurobank, Piraeus) |
 | `domain/parser/parsers/RevolutParser.kt` | Revolut app notifications |
 | `domain/parser/parsers/GoogleWalletParser.kt` | Google Wallet notifications |
@@ -136,6 +137,11 @@ When analyzing a specific feature, check files in this order:
 | `domain/intelligence/ConfidenceRouter.kt` | Routes transactions based on confidence scoring |
 | `domain/intelligence/TransactionClassifier.kt` | ML classifier for transaction detection |
 | `domain/service/NotificationService.kt` | Notification sending interface |
+
+### Analytics (NEW - Transfer Direction)
+| File | Purpose |
+|------|---------|
+| `domain/analytics/TransferDirectionAnalytics.kt` | Transfer detection analytics |
 
 ### Data Layer
 | File | Purpose |

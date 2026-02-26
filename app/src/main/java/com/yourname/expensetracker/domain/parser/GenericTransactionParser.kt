@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.parser
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.util.AppConstants
 import java.util.regex.Pattern
 
@@ -13,15 +14,20 @@ import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
+import javax.inject.Singleton
 
-/**
- * Fallback parser for unknown apps. VERY strict — requires both
- * a strong transaction signal AND a plausible amount pattern.
- * Returns results with lower confidence.
- */
+@Singleton
 class GenericTransactionParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
-    private val merchantCleaner: MerchantCleaner
+    private val merchantCleaner: MerchantCleaner,
+    private val directionDetector: TransferDirectionDetector  // NEW: Direction detection
+) {
+
+@Singleton
+class GenericTransactionParser @Inject constructor(
+    private val currencyNormalizer: CurrencyNormalizer,
+    private val merchantCleaner: MerchantCleaner,
+    private val directionDetector: TransferDirectionDetector  // NEW: Direction detection
 ) {
     // Strong signals that this is a REAL transaction notification
     private val strongTransactionSignals by lazy {
@@ -100,12 +106,27 @@ class GenericTransactionParser @Inject constructor(
         // 6. Extract merchant
         val merchant = extractMerchant(fullText, title)
 
+        // 7. Determine transaction type
+        val transactionType = if (hasDepositSignal) TransactionType.DEPOSIT else TransactionType.PURCHASE
+        
+        // 8. Detect transfer direction for deposits/transfers
+        val direction = directionDetector.detectDirection(title, text, bigText, transactionType)
+        val accountName = directionDetector.extractAccountName(title, text, bigText)
+
         return ParsedTransaction(
             amount = amountResult.first,
             currency = amountResult.second,
             merchant = merchant,
-            type = if (hasDepositSignal) TransactionType.DEPOSIT else TransactionType.PURCHASE,
-            confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.ML_PREDICTION // LOGIC-004
+            type = transactionType,
+            confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.ML_PREDICTION, // LOGIC-004
+            transferDirection = direction,
+            transferAccountName = accountName?.let { 
+                when (direction) {
+                    TransferDirection.INCOMING -> "From: $it"
+                    TransferDirection.OUTGOING -> "To: $it"
+                    else -> null
+                }
+            }
         )
     }
 

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.parser.parsers
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.util.AmountUtils
@@ -9,6 +10,16 @@ import com.yourname.expensetracker.domain.util.MerchantCleaner
 import java.util.regex.Pattern
 import javax.inject.Inject
 
+/**
+ * Parser for Revolut app notifications.
+ * 
+ * Supports:
+ * - Purchases: "Paid €12.50 at SKLAVENITIS"
+ * - Transfers (outgoing): "You paid €5.00 to John"
+ * - Deposits (incoming): "Received €100.00 from John"
+ * - ATM withdrawals: "ATM withdrawal: €50.00"
+ * - Revolut-to-Revolut transfers
+ */
 class RevolutParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
     private val merchantCleaner: MerchantCleaner
@@ -23,13 +34,18 @@ class RevolutParser @Inject constructor(
     // Also: "ATM withdrawal: €50.00"
     // Ignore: "Your exchange rate...", "Weekly report", "Special offer"
 
-    private val PAID_PATTERN = Pattern.compile(
-        """(?:paid|sent|💳)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:at|to)\s+(.+)""",
+    private val PAID_AT_PATTERN = Pattern.compile(
+        """(?:paid|sent|💳)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*at\s+(.+)""",
+        Pattern.CASE_INSENSITIVE
+    )
+    
+    private val PAID_TO_PATTERN = Pattern.compile(
+        """(?:you\s+)?(?:paid|sent)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*to\s+(.+)""",
         Pattern.CASE_INSENSITIVE
     )
 
     private val RECEIVED_PATTERN = Pattern.compile(
-        """received\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*from\s+(.+)""",
+        """(?:received|added)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:from\s+(.+))?""",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -42,7 +58,8 @@ class RevolutParser @Inject constructor(
     private val REJECT_PATTERNS = listOf(
         "exchange rate", "weekly report", "special offer", "cashback",
         "refer a friend", "upgrade", "verify", "security", "pin",
-        "top-up reminder", "price alert", "savings vault"
+        "top-up reminder", "price alert", "savings vault", "subscription",
+        "card delivery", "statements", "settings"
     )
 
     override fun parse(
@@ -59,27 +76,77 @@ class RevolutParser @Inject constructor(
             val lower = content.lowercase()
             if (REJECT_PATTERNS.any { lower.contains(it) }) return null
 
-            // Try paid/purchase pattern
-            val paidMatcher = PAID_PATTERN.matcher(content)
+            // Try patterns in order of specificity
+            val paidAtMatcher = PAID_AT_PATTERN.matcher(content)
+            val paidToMatcher = PAID_TO_PATTERN.matcher(content)
             val receivedMatcher = RECEIVED_PATTERN.matcher(content)
             val atmMatcher = ATM_PATTERN.matcher(content)
 
-            if (paidMatcher.find()) {
-                val amount = paidMatcher.group(2)?.let { AmountUtils.parseAmount(it) } ?: return null
-                val currency = currencyNormalizer.normalize(paidMatcher.group(1))
-                val merchant = merchantCleaner.clean(paidMatcher.group(3))
+            when {
+                // 1. Purchase at merchant: "Paid €12.50 at SKLAVENITIS"
+                paidAtMatcher.find() -> {
+                    val amount = paidAtMatcher.group(2)?.let { AmountUtils.parseAmount(it) } ?: continue
+                    val currency = currencyNormalizer.normalize(paidAtMatcher.group(1))
+                    val merchant = merchantCleaner.clean(paidAtMatcher.group(3))
 
-                return ParsedTransaction(amount, currency, merchant, TransactionType.PURCHASE, 0.95f)
-            } else if (receivedMatcher.find()) {
-                val amount = receivedMatcher.group(2)?.let { AmountUtils.parseAmount(it) } ?: return null
-                val currency = currencyNormalizer.normalize(receivedMatcher.group(1))
-                val merchant = merchantCleaner.clean(receivedMatcher.group(3))
+                    return ParsedTransaction(
+                        amount = amount, 
+                        currency = currency, 
+                        merchant = merchant, 
+                        type = TransactionType.PURCHASE, 
+                        confidence = 0.95f
+                    )
+                }
+                
+                // 2. Transfer to person: "You paid €5.00 to John" or "Sent €10 to Mary"
+                paidToMatcher.find() -> {
+                    val amount = paidToMatcher.group(2)?.let { AmountUtils.parseAmount(it) } ?: continue
+                    val currency = currencyNormalizer.normalize(paidToMatcher.group(1))
+                    val recipient = merchantCleaner.clean(paidToMatcher.group(3))
 
-                return ParsedTransaction(amount, currency, merchant, TransactionType.DEPOSIT, 0.90f)
-            } else if (atmMatcher.find()) {
-                val amount = atmMatcher.group(2)?.let { AmountUtils.parseAmount(it) } ?: continue
-                val currency = currencyNormalizer.normalize(atmMatcher.group(1))
-                return ParsedTransaction(amount, currency, "ATM", TransactionType.WITHDRAWAL, 0.95f)
+                    return ParsedTransaction(
+                        amount = amount, 
+                        currency = currency, 
+                        merchant = recipient, 
+                        type = TransactionType.TRANSFER, 
+                        confidence = 0.92f,
+                        transferDirection = TransferDirection.OUTGOING,
+                        transferAccountName = "To: $recipient"
+                    )
+                }
+                
+                // 3. Received money: "Received €100.00 from John" or "Added €50"
+                receivedMatcher.find() -> {
+                    val amount = receivedMatcher.group(2)?.let { AmountUtils.parseAmount(it) } ?: continue
+                    val currency = currencyNormalizer.normalize(receivedMatcher.group(1))
+                    val sender = receivedMatcher.group(3)?.let { merchantCleaner.clean(it) }
+                    
+                    // Determine if it's a transfer from someone or just an add-money
+                    val isFromPerson = sender != null && sender.isNotBlank()
+
+                    return ParsedTransaction(
+                        amount = amount, 
+                        currency = currency, 
+                        merchant = sender ?: "Revolut", 
+                        type = if (isFromPerson) TransactionType.TRANSFER else TransactionType.DEPOSIT, 
+                        confidence = if (isFromPerson) 0.92f else 0.88f,
+                        transferDirection = TransferDirection.INCOMING,
+                        transferAccountName = sender?.let { "From: $it" }
+                    )
+                }
+                
+                // 4. ATM withdrawal: "ATM withdrawal: €50.00"
+                atmMatcher.find() -> {
+                    val amount = atmMatcher.group(2)?.let { AmountUtils.parseAmount(it) } ?: continue
+                    val currency = currencyNormalizer.normalize(atmMatcher.group(1))
+                    return ParsedTransaction(
+                        amount = amount, 
+                        currency = currency, 
+                        merchant = "ATM Withdrawal", 
+                        type = TransactionType.WITHDRAWAL, 
+                        confidence = 0.95f
+                    )
+                }
             }
         }
 

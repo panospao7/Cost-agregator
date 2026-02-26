@@ -55,6 +55,7 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -751,6 +752,17 @@ private fun TransactionItem(
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary,
                         modifier = Modifier.clickable { onEditCategory() }
+                    )
+                }
+                
+                // Transfer Direction Badge (for transfers and deposits)
+                if (expense.transactionType == TransactionType.TRANSFER || 
+                    expense.transactionType == TransactionType.DEPOSIT) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    TransferDirectionBadge(
+                        direction = expense.transferDirection,
+                        accountName = expense.transferAccountName,
+                        compact = true
                     )
                 }
                 

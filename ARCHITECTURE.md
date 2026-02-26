@@ -130,6 +130,7 @@ domain/
 │   ├── CategoryInsightEngine.kt       # Category analysis (NEW)
 │   ├── MerchantInsightEngine.kt      # Merchant patterns (NEW)
 │   ├── DayOfWeekAnalyzer.kt         # Day-of-week patterns (NEW)
+│   ├── TransferDirectionAnalytics.kt # Transfer direction analytics (NEW)
 │   ├── AdvancedAnalyticsEngine.kt # Advanced patterns
 │   └── AnalyticsModels.kt        # Insight data classes
 ├── budget/                      # Budget management
@@ -149,6 +150,7 @@ domain/
 ├── parser/                      # Notification parsing
 │   ├── AppParserRegistry.kt     # Parser routing
 │   ├── GenericTransactionParser.kt
+│   ├── TransferDirectionDetector.kt  # Transfer direction detection (NEW)
 │   └── parsers/
 │       ├── GreekBankParser.kt   # NBG, Alpha, Eurobank
 │       ├── RevolutParser.kt
@@ -461,6 +463,19 @@ index_raw_notifications_packageName_timestamp_title_text UNIQUE
 | Input validation | Added max 200 char limit to MerchantNormalizer |
 | Flow error handling | Added catch + emit empty in FinancialWeatherRepository |
 | Category learning race | Added Mutex to updateExpenseCategory |
+
+### Transfer Direction Detection Feature (NEW)
+| Component | File | Purpose |
+|-----------|------|---------|
+| Detector | `domain/parser/TransferDirectionDetector.kt` | 50+ patterns for EN/GR |
+| Analytics | `domain/analytics/TransferDirectionAnalytics.kt` | Detection rate tracking |
+| UI Badge | `ui/components/TransferDirectionBadge.kt` | Direction visual indicator |
+
+### Transaction Types Supported
+- **PURCHASE** - Regular purchases
+- **DEPOSIT** - Money received (salary, etc.)
+- **TRANSFER** - Between accounts (with INCOMING/OUTGOING direction)
+- **WITHDRAWAL** - Cash withdrawals
 | Analytics slow | InsightsEngine, AdvancedAnalyticsEngine, AnalyticsRepository |
 
 ---
@@ -572,6 +587,7 @@ expensetracker://analytics  → Tab 4
 | `SpendingTrendChart.kt` | Trend visualization |
 | `SpendingPaceGauge.kt` | Spending pace gauge |
 | `ChartMarker.kt` | Chart markers |
+| `TransferDirectionBadge.kt` | Transfer direction indicator (NEW) |
 
 ### Domain Models (`domain/model/`)
 | Model | Purpose |

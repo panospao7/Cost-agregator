@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.parser.parsers
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import java.util.regex.Pattern
@@ -55,6 +56,19 @@ class SmsParser @Inject constructor(
         // Greek salary/income
         "μισθός", " salary", "wages", "επιστροφή", "refund"
     )
+    
+    // Direction detection patterns
+    private val INCOMING_PATTERNS = listOf(
+        "received from", "credited by", "deposit from", "transfer from",
+        "sent to you", "credited to", "incoming transfer",
+        "ελήφθη από", "πιστώθηκε από", "κατάθεση από", "μεταφορά από"
+    )
+    
+    private val OUTGOING_PATTERNS = listOf(
+        "sent to", "transferred to", "payment to", "withdrawal to",
+        "paid to", "outgoing transfer", "transfer to",
+        "απεστάλη σε", "μεταφορά σε", "πληρωμή σε", "ανάληψη"
+    )
 
     override fun parse(
         title: String?,
@@ -101,14 +115,63 @@ class SmsParser @Inject constructor(
 
         // Try to extract merchant from the SMS body
         val merchant = extractMerchantFromSms(body)
+        
+        // Detect transfer direction for deposits/transfers
+        val direction = detectSmsDirection(lowerBody, transactionType)
+        val accountName = extractAccountNameFromSms(body)
 
         return ParsedTransaction(
             amount = amount,
             currency = currency,
             merchant = merchant,
             type = transactionType,
-            confidence = 0.85f
+            confidence = 0.85f,
+            transferDirection = direction,
+            transferAccountName = accountName?.let { 
+                when (direction) {
+                    TransferDirection.INCOMING -> "From: $it"
+                    TransferDirection.OUTGOING -> "To: $it"
+                    else -> null
+                }
+            }
         )
+    }
+    
+    /**
+     * Detects transfer direction from SMS text.
+     */
+    private fun detectSmsDirection(text: String, transactionType: TransactionType): TransferDirection? {
+        if (transactionType != TransactionType.DEPOSIT && 
+            transactionType != TransactionType.TRANSFER) {
+            return null
+        }
+        
+        val incomingScore = INCOMING_PATTERNS.count { text.contains(it) }
+        val outgoingScore = OUTGOING_PATTERNS.count { text.contains(it) }
+        
+        return when {
+            incomingScore > outgoingScore -> TransferDirection.INCOMING
+            outgoingScore > incomingScore -> TransferDirection.OUTGOING
+            else -> TransferDirection.INCOMING  // Default to incoming for deposits
+        }
+    }
+    
+    /**
+     * Extracts account/counterparty name from SMS.
+     */
+    private fun extractAccountNameFromSms(body: String): String? {
+        val patterns = listOf(
+            Pattern.compile("""(?:from|από)[:\s]+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{2,30})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:to|σε)[:\s]+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{2,30})""", Pattern.CASE_INSENSITIVE)
+        )
+        
+        for (pattern in patterns) {
+            val matcher = pattern.matcher(body)
+            if (matcher.find()) {
+                return matcher.group(1)?.trim()?.let { merchantCleaner.clean(it) }
+            }
+        }
+        return null
     }
 
     private val merchantPatterns by lazy {

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.parser.parsers
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.util.AmountUtils
@@ -11,7 +12,9 @@ import javax.inject.Inject
 
 /**
  * Parser for Greek banking apps (NBG, Alpha, Eurobank, Piraeus).
- * These typically send very structured SMS-like notifications.
+ * These typically send very structured SMS-like notifications with transaction codes:
+ * - Χ (Χρέωση) = Debit/Outgoing
+ * - Π (Πίστωση) = Credit/Incoming
  */
 class GreekBankParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
@@ -25,6 +28,10 @@ class GreekBankParser @Inject constructor(
         "com.eurobank.mobile",
         "com.winbank.mobile"
     )
+
+    // Transaction type indicators (Greek bank codes)
+    private val DEBIT_CODES = listOf("Χ", "ΧΡ", "ΧΡΕ", "ΧΡΕΩΣΗ", "DEBIT")
+    private val CREDIT_CODES = listOf("Π", "ΠΙ", "ΠΙΣ", "ΠΙΣΤΩΣΗ", "CREDIT")
 
     private val PURCHASE_PATTERNS = listOf(
         // "Αγορά 12,50 EUR στο MERCHANT" or "Πληρωμή €6.30 σε..."
@@ -54,6 +61,20 @@ class GreekBankParser @Inject constructor(
         Pattern.compile("""(?:μισθ[όό]ς|salary|wages)[\p{L}]*\s*[€$£]?\s*(\d+[.,]\d{2})""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
         // Amount followed by deposit keywords
         Pattern.compile("""(\d+[.,]\d{2})\s*[€$£]?\s*(?:κατάθεση|πίστωση|deposit|credited)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)
+    )
+    
+    // Transfer patterns (specific to bank transfers, not purchases)
+    private val TRANSFER_PATTERNS = listOf(
+        // "Μεταφορά 100€ σε Λογαριασμό" (Transfer to account)
+        Pattern.compile(
+            """(?:μεταφορ[άα]|μεταφορά|transfer)\s*(?:[€$£])?\s*(\d+[.,]\d{2})\s*(?:EUR|€|σε|to|στον?)?\s*(.+)""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        ),
+        // Transaction code patterns: "Χ 50,00" or "Π 100,00"
+        Pattern.compile(
+            """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*(\d+[.,]\d{2})\s*(?:EUR|€)?\s*(.*)""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        )
     )
 
     // Patterns to REJECT
@@ -152,14 +173,66 @@ class GreekBankParser @Inject constructor(
 
         // For deposits, merchant is usually the sender (bank/employer)
         val merchant = extractDepositSource(fullText)
+        
+        // Detect direction based on keywords
+        val direction = detectGreekDirection(fullText)
+        
+        // Determine if it's a transfer or deposit based on context
+        val isTransfer = fullText.contains(Regex("""(?:μεταφορ[άα]|transfer|από\s+λογαρ)""", RegexOption.IGNORE_CASE))
 
         return ParsedTransaction(
             amount = amount,
             currency = currency,
             merchant = merchant,
-            type = TransactionType.DEPOSIT,
-            confidence = 0.90f
+            type = if (isTransfer) TransactionType.TRANSFER else TransactionType.DEPOSIT,
+            confidence = 0.90f,
+            transferDirection = direction ?: TransferDirection.INCOMING,  // Default to incoming for deposits
+            transferAccountName = direction?.let { 
+                when (it) {
+                    TransferDirection.INCOMING -> "From: $merchant"
+                    TransferDirection.OUTGOING -> "To: $merchant"
+                }
+            }
         )
+    }
+    
+    /**
+     * Detects transfer direction from Greek bank notification text.
+     * Uses transaction codes and keywords.
+     */
+    private fun detectGreekDirection(text: String): TransferDirection? {
+        val upperText = text.uppercase()
+        
+        // Check for debit codes (outgoing)
+        if (DEBIT_CODES.any { code -> 
+            upperText.contains(" $code ") || 
+            upperText.startsWith("$code ") ||
+            upperText.contains(Regex("""\b$code[\s:.-]"""))
+        }) {
+            return TransferDirection.OUTGOING
+        }
+        
+        // Check for credit codes (incoming)
+        if (CREDIT_CODES.any { code -> 
+            upperText.contains(" $code ") || 
+            upperText.startsWith("$code ") ||
+            upperText.contains(Regex("""\b$code[\s:.-]"""))
+        }) {
+            return TransferDirection.INCOMING
+        }
+        
+        // Check keywords
+        return when {
+            // Outgoing keywords
+            text.contains(Regex("""(?:χρ[έε]ωση|χρεώθηκε|χρεωστικό|μεταφορά\s+σε|sent\s+to|transfer\s+to)""", RegexOption.IGNORE_CASE)) ->
+                TransferDirection.OUTGOING
+            
+            // Incoming keywords
+            text.contains(Regex("""(?:πίστωση|πιστώθηκε|πιστωτικό|μεταφορά\s+από|received\s+from|transfer\s+from)""", RegexOption.IGNORE_CASE)) ->
+                TransferDirection.INCOMING
+            
+            else -> null
+        }
     }
 
     private fun extractDepositSource(text: String): String {

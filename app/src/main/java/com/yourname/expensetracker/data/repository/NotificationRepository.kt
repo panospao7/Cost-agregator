@@ -3,6 +3,7 @@ import androidx.room.*
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.RoutingDecision
@@ -12,6 +13,8 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as 
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.parser.TransferDirectionDetector  // NEW
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics  // NEW: Analytics
 import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.model.Result
@@ -39,7 +42,9 @@ class NotificationRepository @Inject constructor(
     private val hybridClassifier: HybridExpenseClassifier,
     private val classifier: TransactionClassifier,
     private val budgetMonitor: BudgetMonitor,
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+    private val directionDetector: TransferDirectionDetector,  // NEW: Direction detection
+    private val analytics: TransferDirectionAnalytics  // NEW: Analytics tracking
 ) {
 
     // === Notification access ===
@@ -166,6 +171,23 @@ class NotificationRepository @Inject constructor(
                     )
                     val categoryId = classification.categoryId.takeIf { it > 0 }
 
+                    // Detect transfer direction if not already set by parser
+                    val direction = parsed.transferDirection 
+                        ?: directionDetector.detectDirection(
+                            notification.title,
+                            notification.text,
+                            notification.bigText,
+                            parsed.type
+                        )
+                    
+                    // Extract account name if not already set
+                    val accountName = parsed.transferAccountName
+                        ?: directionDetector.extractAccountName(
+                            notification.title,
+                            notification.text,
+                            notification.bigText
+                        )
+
                     val expense = Expense(
                         amount = parsed.amount,
                         currency = parsed.currency,
@@ -176,7 +198,9 @@ class NotificationRepository @Inject constructor(
                         categoryId = categoryId,
                         paymentMethod = PaymentMethod.CARD,
                         isManualEntry = false,
-                        dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp)
+                        dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp),
+                        transferDirection = direction,  // NEW: Auto-detected direction
+                        transferAccountName = accountName  // NEW: Extracted account name
                     )
 
                     val expenseId = expenseDao.insertAtomic(expense)
@@ -184,6 +208,15 @@ class NotificationRepository @Inject constructor(
                     if (expenseId > 0) {
                         dao.markRelevance(rawId, true)
                         sourceStatsDao.incrementTotalAndAccepted(notification.packageName, timeProvider.now())
+                        
+                        // Track analytics for direction detection
+                        if (expense.transactionType == TransactionType.TRANSFER || expense.transactionType == TransactionType.DEPOSIT) {
+                            if (direction != null) {
+                                analytics.recordAutoDetection(direction, accountName, wasCorrect = true)
+                            } else {
+                                analytics.recordUnknownDirection()
+                            }
+                        }
                         
                         budgetMonitor.checkBudgets()
                         classifier.train(fullNotificationText, isTransaction = true)
@@ -221,6 +254,21 @@ class NotificationRepository @Inject constructor(
                     )
                     val suggestedCategoryId = classification.categoryId.takeIf { it > 0 }
 
+                    // Detect direction for review queue as well
+                    val direction = parsed.transferDirection 
+                        ?: directionDetector.detectDirection(
+                            notification.title,
+                            notification.text,
+                            notification.bigText,
+                            parsed.type
+                        )
+                    val accountName = parsed.transferAccountName
+                        ?: directionDetector.extractAccountName(
+                            notification.title,
+                            notification.text,
+                            notification.bigText
+                        )
+
                     val review = PendingReview(
                         rawNotificationId = rawId,
                         suggestedAmount = parsed.amount,
@@ -232,10 +280,21 @@ class NotificationRepository @Inject constructor(
                         packageName = notification.packageName,
                         notificationTitle = notification.title,
                         notificationText = notification.text ?: notification.bigText,
-                        suggestedDate = parsed.date
+                        suggestedDate = parsed.date,
+                        suggestedDirection = direction?.name,  // NEW: Include direction in review
+                        suggestedAccountName = accountName     // NEW: Include account name
                     )
                     pendingReviewDao.insert(review)
                     sourceStatsDao.incrementTotalAndPending(notification.packageName, timeProvider.now())
+                    
+                    // Track analytics for direction detection in review queue
+                    if (parsed.type == TransactionType.TRANSFER || parsed.type == TransactionType.DEPOSIT) {
+                        if (direction != null) {
+                            analytics.recordAutoDetection(direction, accountName, wasCorrect = true)
+                        } else {
+                            analytics.recordUnknownDirection()
+                        }
+                    }
                 }
 
                 RoutingDecision.AUTO_REJECT -> {

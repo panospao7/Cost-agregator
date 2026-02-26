@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.parser
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
@@ -11,6 +12,16 @@ import javax.inject.Singleton
 
 /**
  * Result from an app-specific parser. Higher confidence = more certain it's a real transaction.
+ * 
+ * @param amount Transaction amount (always positive)
+ * @param currency ISO 4217 currency code (e.g., "EUR", "USD")
+ * @param merchant Merchant or counterparty name
+ * @param type Transaction type (PURCHASE, TRANSFER, DEPOSIT, etc.)
+ * @param confidence Detection confidence (0.0 to 1.0)
+ * @param date Transaction timestamp (null if not detected)
+ * @param transferDirection For transfers/deposits: INCOMING (received) or OUTGOING (sent)
+ * @param transferAccountName The account name or counterparty (e.g., "From: Checking" or "To: John")
+ * @param isIncoming Helper flag derived from transferDirection
  */
 data class ParsedTransaction(
     val amount: Double,
@@ -18,8 +29,23 @@ data class ParsedTransaction(
     val merchant: String,
     val type: TransactionType,
     val confidence: Float, // 0.0 to 1.0
-    val date: Long? = null
+    val date: Long? = null,
+    // Transfer direction fields (auto-detected for transfers/deposits)
+    val transferDirection: TransferDirection? = null,
+    val transferAccountName: String? = null
 ) {
+    /**
+     * Helper property to quickly check if this is an incoming transaction
+     */
+    val isIncoming: Boolean?
+        get() = transferDirection?.let { it == TransferDirection.INCOMING }
+    
+    /**
+     * Helper property to quickly check if this is an outgoing transaction
+     */
+    val isOutgoing: Boolean?
+        get() = transferDirection?.let { it == TransferDirection.OUTGOING }
+
     init {
         require(amount.isFinite() && amount > 0) { 
             "Amount must be positive and finite: $amount" 
@@ -40,6 +66,20 @@ data class ParsedTransaction(
             require(it > 0) { "Date must be positive timestamp" }
             require(it <= System.currentTimeMillis() + 86_400_000) { 
                 "Date cannot be in the future" 
+            }
+        }
+        
+        // Validate transfer direction consistency
+        transferDirection?.let { direction ->
+            require(type == TransactionType.TRANSFER || type == TransactionType.DEPOSIT) {
+                "TransferDirection should only be set for TRANSFER or DEPOSIT types, not $type"
+            }
+        }
+        
+        // Validate transfer account name length
+        transferAccountName?.let { name ->
+            require(name.length <= 100) {
+                "Transfer account name too long (max 100 chars): ${name.take(50)}..."
             }
         }
     }
