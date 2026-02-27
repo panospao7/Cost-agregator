@@ -100,6 +100,7 @@ fun TransactionsScreen(
     var expenseToRename by remember { mutableStateOf<Expense?>(null) }
     var expenseToChangeType by remember { mutableStateOf<Expense?>(null) }
     var expenseToEditOwnership by remember { mutableStateOf<Expense?>(null) }
+    var expenseToDebug by remember { mutableStateOf<Expense?>(null) }
     var showSearch by remember { mutableStateOf(false) }
     
     // Pull-to-refresh state
@@ -393,7 +394,8 @@ fun TransactionsScreen(
                                     onMarkRecurring = { expenseToRecurring = item.expense },
                                     onRename = { expenseToRename = item.expense },
                                     onChangeType = { expenseToChangeType = item.expense },
-                                    onEditOwnership = { expenseToEditOwnership = item.expense }
+                                    onEditOwnership = { expenseToEditOwnership = item.expense },
+                                    onDebug = { expenseToDebug = item.expense }
                                 )
                             }
                         }
@@ -497,6 +499,30 @@ fun TransactionsScreen(
                     expenseToEditOwnership = null
                 }
             )
+        }
+        
+        // Debug Screen Overlay
+        if (expenseToDebug != null) {
+            Dialog(
+                onDismissRequest = { expenseToDebug = null },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = false
+                )
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    com.yourname.expensetracker.ui.screens.debug.CategorizationDebugScreen(
+                        initialMerchant = expenseToDebug!!.merchant,
+                        initialAmount = expenseToDebug!!.amount,
+                        initialTimestamp = expenseToDebug!!.date,
+                        onNavigateBack = { expenseToDebug = null }
+                    )
+                }
+            }
         }
     }
 }
@@ -630,7 +656,8 @@ private fun TransactionItem(
     onMarkRecurring: () -> Unit,
     onRename: () -> Unit,
     onChangeType: () -> Unit,
-    onEditOwnership: () -> Unit
+    onEditOwnership: () -> Unit,
+    onDebug: () -> Unit
 ) {
     val expense = transaction.expense
     val category = transaction.category

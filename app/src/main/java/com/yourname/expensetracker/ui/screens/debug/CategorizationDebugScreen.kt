@@ -13,11 +13,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -28,27 +30,67 @@ import com.yourname.expensetracker.domain.categorization.LayerDebugResult
 import com.yourname.expensetracker.domain.categorization.MatchType
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategorizationDebugScreen(
+    initialMerchant: String? = null,
+    initialAmount: Double? = null,
+    initialTimestamp: Long? = null,
     onNavigateBack: () -> Unit,
     viewModel: CategorizationDebugViewModel = hiltViewModel()
 ) {
-    var rawMerchant by remember { mutableStateOf("Sklavenitis Lagka") }
-    var rawAmount by remember { mutableStateOf("45.50") }
-    var timeString by remember { mutableStateOf(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())) }
+    val context = LocalContext.current
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
+
+    var rawMerchant by remember { mutableStateOf(initialMerchant ?: "Sklavenitis Lagka") }
+    var rawAmount by remember { mutableStateOf(initialAmount?.let { String.format(Locale.getDefault(), "%.2f", it) } ?: "45.50") }
+    
+    val initialTimeString = remember(initialTimestamp) {
+        if (initialTimestamp != null) {
+            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(initialTimestamp))
+        } else {
+            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+        }
+    }
+    var timeString by remember { mutableStateOf(initialTimeString) }
     
     val trace by viewModel.debugTrace.collectAsState()
     val isProcessing by viewModel.isProcessing.collectAsState()
 
+    // Auto-run if initialized with external data
+    LaunchedEffect(initialMerchant) {
+        if (initialMerchant != null) {
+            val amount = rawAmount.replace(",", ".").toDoubleOrNull() ?: 0.0
+            val timestamp = initialTimestamp ?: System.currentTimeMillis()
+            viewModel.testCategorization(rawMerchant, amount, timestamp)
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Categorization Debug") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    trace?.let { currentTrace ->
+                        IconButton(onClick = {
+                            val json = viewModel.exportTraceToJson(currentTrace)
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(json))
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar("Trace copied to clipboard")
+                            }
+                        }) {
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = "Copy JSON", tint = MaterialTheme.colorScheme.primary)
+                        }
                     }
                 }
             )

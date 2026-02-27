@@ -37,4 +37,44 @@ class CategorizationDebugViewModel @Inject constructor(
     fun clearTrace() {
         _debugTrace.value = null
     }
+
+    fun exportTraceToJson(trace: CategorizationDebugTrace): String {
+        return try {
+            val root = org.json.JSONObject()
+            
+            val info = org.json.JSONObject()
+            info.put("inputMerchant", trace.inputMerchant)
+            info.put("normalizedMerchant", trace.normalizedMerchant)
+            info.put("canonicalMerchant", trace.canonicalMerchant)
+            val strippedArr = org.json.JSONArray()
+            trace.strippedParts.forEach { strippedArr.put(it) }
+            info.put("strippedParts", strippedArr)
+            root.put("preprocessing", info)
+            
+            val layers = org.json.JSONArray()
+            trace.layerResults.forEach { layer ->
+                val layerObj = org.json.JSONObject()
+                layerObj.put("layerName", layer.layerName)
+                layerObj.put("matchFound", layer.matchFound)
+                layerObj.put("categoryId", layer.categoryId)
+                layerObj.put("categoryName", layer.categoryName)
+                layerObj.put("confidence", layer.confidence)
+                layerObj.put("details", layer.details)
+                layers.put(layerObj)
+            }
+            root.put("layers", layers)
+            
+            val finalRes = org.json.JSONObject()
+            finalRes.put("matchType", trace.finalResult.matchType.name)
+            finalRes.put("categoryId", trace.finalResult.categoryId)
+            finalRes.put("categoryName", trace.finalResult.categoryName)
+            finalRes.put("confidence", trace.finalResult.confidence)
+            finalRes.put("explanation", trace.finalResult.explanation)
+            root.put("finalDecision", finalRes)
+            
+            root.toString(2)
+        } catch (e: Exception) {
+            "Error exporting to JSON: ${e.message}"
+        }
+    }
 }

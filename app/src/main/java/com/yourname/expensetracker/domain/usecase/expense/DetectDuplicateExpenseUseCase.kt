@@ -5,11 +5,13 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
 import javax.inject.Inject
 
 class DetectDuplicateExpenseUseCase @Inject constructor(
     private val expenseRepository: ExpenseRepository,
-    private val userCorrectionRepository: UserCorrectionRepository
+    private val userCorrectionRepository: UserCorrectionRepository,
+    private val crossSourceDeduplication: CrossSourceDeduplication
 ) {
     suspend operator fun invoke(
         amount: Double,
@@ -23,10 +25,13 @@ class DetectDuplicateExpenseUseCase @Inject constructor(
             kotlin.math.abs(expense.date - date) < windowMs
         }
         
-        val duplicate = nearbyExpenses.find { expense ->
-            expense.amount == amount && 
-            expense.merchant.equals(merchant, ignoreCase = true)
-        }
+        val duplicate = crossSourceDeduplication.findExpenseDuplicate(
+            amount = amount,
+            merchant = merchant,
+            date = date,
+            expenses = nearbyExpenses,
+            timeWindowMs = windowMs
+        )
         
         return if (duplicate != null) {
             DuplicateCheckResult.Duplicate(duplicate)

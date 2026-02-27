@@ -366,6 +366,10 @@ class ReceiptRepository @Inject constructor(
         )
         val receiptId = scannedReceiptDao.insert(receiptRecord)
 
+        // Fetch duplicates context once before the loop
+        val allExpenses = expenseDao.getAllFlow(1000).first()
+        val allPendingReviews = pendingReviewDao.getPending(500).map { it.review }
+
         // 4. Create a PendingReview for EACH transaction found
         var successCount = 0
         val errors = mutableListOf<String>()
@@ -381,51 +385,31 @@ class ReceiptRepository @Inject constructor(
                     amount = tx.amount
                 )
 
-                // Check for cross-source duplicates (from notifications)
-                val existingExpenses = expenseDao.getAllFlow(1000).first()
                 val transactionDate = tx.date ?: timeProvider.now()
-                val existingSources = mutableListOf<String>()
                 
-                val hasNotificationDuplicate = existingExpenses.any { expense ->
-                    val dateDiff = kotlin.math.abs(expense.date - transactionDate)
-                    expense.rawNotificationId != null && 
-                    dateDiff < 24 * 60 * 60 * 1000 &&
-                    expense.amount == tx.amount && 
-                    expense.merchant == normalizedMerchant
-                }
-                if (hasNotificationDuplicate) {
-                    existingSources.add("notification")
-                }
-                
-                val dedupeResult = crossSourceDeduplication.isCrossSourceDuplicate(
+                // 1. Check for duplicates in Expense table (Unified logic)
+                val expenseDuplicate = crossSourceDeduplication.findExpenseDuplicate(
                     amount = tx.amount,
                     merchant = normalizedMerchant,
                     date = transactionDate,
-                    newSource = "statement",
-                    existingSources = existingSources
+                    expenses = allExpenses
                 )
                 
-                when (dedupeResult) {
-                    is com.yourname.expensetracker.domain.intelligence.DuplicateCheckResult.CrossSourceDuplicate -> {
-                        parsingLogs.add("SKIP: Duplicate from ${dedupeResult.existingSource} for ${tx.merchant} €${tx.amount}")
-                        return@forEach
-                    }
-                    else -> {
-                        // Continue with creating the review
-                    }
+                if (expenseDuplicate != null) {
+                    val existingSource = if (expenseDuplicate.rawNotificationId != null) "notification" else "other"
+                    parsingLogs.add("SKIP: Duplicate in Expenses from $existingSource for ${tx.merchant} €${tx.amount}")
+                    return@forEach
                 }
-                
-                // Check for duplicates in PendingReview table (new feature)
-                val recentPendingReviews = pendingReviewDao.getPending(500).map { it.review }
+
+                // 2. Check for duplicates in PendingReview table (Review Zone Expansion)
                 val pendingReviewDuplicate = crossSourceDeduplication.findPendingReviewDuplicate(
                     amount = tx.amount,
                     merchant = normalizedMerchant,
                     date = transactionDate,
-                    pendingReviews = recentPendingReviews
+                    pendingReviews = allPendingReviews
                 )
                 
                 if (pendingReviewDuplicate != null) {
-                    // Check if we should keep existing or replace
                     val resolution = crossSourceDeduplication.resolvePendingReviewDuplicate(
                         existingReview = pendingReviewDuplicate,
                         newSource = "statement"
@@ -433,12 +417,12 @@ class ReceiptRepository @Inject constructor(
                     
                     when (resolution) {
                         com.yourname.expensetracker.domain.intelligence.DuplicateResolution.KeepExisting -> {
-                            parsingLogs.add("SKIP: Pending review exists for ${tx.merchant} €${tx.amount} (keeping existing)")
+                            parsingLogs.add("SKIP: Pending review already exists for ${tx.merchant} €${tx.amount}")
                             return@forEach
                         }
                         com.yourname.expensetracker.domain.intelligence.DuplicateResolution.ReplaceExisting -> {
+                            parsingLogs.add("REPLACE: Replacing existing pending review with statement data for ${tx.merchant}")
                             pendingReviewDao.delete(pendingReviewDuplicate)
-                            parsingLogs.add("REPLACE: Replacing pending review for ${tx.merchant} €${tx.amount}")
                         }
                         com.yourname.expensetracker.domain.intelligence.DuplicateResolution.DiscardNew -> {
                             parsingLogs.add("SKIP: Discarding new transaction ${tx.merchant} €${tx.amount}")

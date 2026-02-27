@@ -101,6 +101,47 @@ class CrossSourceDeduplication @Inject constructor() {
     }
 
     /**
+     * Check if a transaction matches any existing Expense.
+     * Used to prevent duplicate expenses during manual entry or statement import.
+     *
+     * @param amount Transaction amount
+     * @param merchant Merchant name
+     * @param date Transaction date
+     * @param expenses List of recent expenses to check against
+     * @param timeWindowMs Optional time window override (default uses companion window)
+     * @return The matching Expense if duplicate found, null otherwise
+     */
+    fun findExpenseDuplicate(
+        amount: Double,
+        merchant: String,
+        date: Long,
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        timeWindowMs: Long = TIME_WINDOW_MS
+    ): com.yourname.expensetracker.data.database.entity.Expense? {
+        val normalizedMerchant = normalizeMerchant(merchant)
+        
+        for (expense in expenses) {
+            // Check date is within window
+            if (kotlin.math.abs(date - expense.date) > timeWindowMs) {
+                continue
+            }
+            
+            // Check amount matches
+            if (kotlin.math.abs(amount - expense.amount) > AMOUNT_TOLERANCE) {
+                continue
+            }
+            
+            // Check merchant similarity
+            val expenseMerchant = normalizeMerchant(expense.merchant)
+            if (isMerchantSimilar(normalizedMerchant, expenseMerchant)) {
+                return expense
+            }
+        }
+        
+        return null
+    }
+
+    /**
      * Determine which pending review to keep when duplicates found.
      * Priority: notification > statement (notifications are more accurate)
      */

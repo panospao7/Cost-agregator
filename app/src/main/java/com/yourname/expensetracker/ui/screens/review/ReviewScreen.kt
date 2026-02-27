@@ -57,6 +57,7 @@ fun ReviewScreen(
     val categories by viewModel.categories.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
+    var debugReview by remember { mutableStateOf<PendingReview?>(null) }
     // Guard against double-swipes/rapid-fire actions
     val processingIds = remember { mutableStateListOf<Long>() }
     val haptic = rememberHapticFeedback()
@@ -182,6 +183,18 @@ fun ReviewScreen(
                                     leadingIconColor = MaterialTheme.colorScheme.error
                                 )
                             )
+                            DropdownMenuItem(
+                                text = { Text("Clear Review Queue") },
+                                onClick = {
+                                    showDebugMenu = false
+                                    viewModel.rejectAll()
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.RemoveCircle, null) },
+                                colors = MenuDefaults.itemColors(
+                                    textColor = MaterialTheme.colorScheme.error,
+                                    leadingIconColor = MaterialTheme.colorScheme.error
+                                )
+                            )
                         }
                     }
                 }
@@ -292,9 +305,10 @@ fun ReviewScreen(
                                         }
                                     } ?: run {
                                         coroutineScope.launch {
-                                            snackbarHostState.showSnackbar("No automated receipt info available")
+                                            snackbarHostState.showSnackbar("No automated receipt info available. Showing categorization debug instead.")
                                         }
                                     }
+                                    debugReview = item.review
                                 }
                             )
                         }
@@ -319,6 +333,29 @@ fun ReviewScreen(
                     editingReview = null
                 }
             )
+        }
+
+        debugReview?.let { review ->
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { debugReview = null },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = false
+                )
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    com.yourname.expensetracker.ui.screens.debug.CategorizationDebugScreen(
+                        initialMerchant = review.suggestedMerchant,
+                        initialAmount = review.suggestedAmount,
+                        initialTimestamp = review.createdAt,
+                        onNavigateBack = { debugReview = null }
+                    )
+                }
+            }
         }
 
         debugInfoDialogText?.let { info ->
