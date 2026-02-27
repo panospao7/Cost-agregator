@@ -251,9 +251,10 @@ fun TransactionsScreen(
                     }
                 )
                 
-                // Tab row with counts - using compact spacing
-                TabRow(
+                // Tab row with counts - scrollable for proper tab widths
+                ScrollableTabRow(
                     selectedTabIndex = selectedTab.ordinal,
+                    edgePadding = 16.dp,
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.primary,
                     indicator = { tabPositions ->
@@ -282,12 +283,11 @@ fun TransactionsScreen(
                             text = {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                    modifier = Modifier.padding(horizontal = 2.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     Text(
                                         text = tab.label,
-                                        style = MaterialTheme.typography.labelMedium
+                                        style = MaterialTheme.typography.labelLarge
                                     )
                                     if (count > 0 && tab != TransactionTab.ALL) {
                                         Badge(
