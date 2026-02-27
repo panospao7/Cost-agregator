@@ -54,4 +54,10 @@ interface PendingReviewDao {
 
     @Query("UPDATE pending_reviews SET status = 'APPROVED' WHERE status = 'PENDING'")
     suspend fun approveAllPending()
+
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' AND suggestedDate BETWEEN :startDate AND :endDate")
+    suspend fun getPendingReviewsInDateRange(startDate: Long, endDate: Long): List<PendingReview>
+
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' AND suggestedMerchant LIKE '%' || :merchantPattern || '%' AND suggestedDate BETWEEN :startDate AND :endDate")
+    suspend fun getPendingReviewsByMerchantAndDateRange(merchantPattern: String, startDate: Long, endDate: Long): List<PendingReview>
 }

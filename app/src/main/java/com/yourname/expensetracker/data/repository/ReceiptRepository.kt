@@ -414,6 +414,38 @@ class ReceiptRepository @Inject constructor(
                         // Continue with creating the review
                     }
                 }
+                
+                // Check for duplicates in PendingReview table (new feature)
+                val recentPendingReviews = pendingReviewDao.getPending(500).map { it.review }
+                val pendingReviewDuplicate = crossSourceDeduplication.findPendingReviewDuplicate(
+                    amount = tx.amount,
+                    merchant = normalizedMerchant,
+                    date = transactionDate,
+                    pendingReviews = recentPendingReviews
+                )
+                
+                if (pendingReviewDuplicate != null) {
+                    // Check if we should keep existing or replace
+                    val resolution = crossSourceDeduplication.resolvePendingReviewDuplicate(
+                        existingReview = pendingReviewDuplicate,
+                        newSource = "statement"
+                    )
+                    
+                    when (resolution) {
+                        com.yourname.expensetracker.domain.intelligence.DuplicateResolution.KeepExisting -> {
+                            parsingLogs.add("SKIP: Pending review exists for ${tx.merchant} €${tx.amount} (keeping existing)")
+                            return@forEach
+                        }
+                        com.yourname.expensetracker.domain.intelligence.DuplicateResolution.ReplaceExisting -> {
+                            pendingReviewDao.delete(pendingReviewDuplicate)
+                            parsingLogs.add("REPLACE: Replacing pending review for ${tx.merchant} €${tx.amount}")
+                        }
+                        com.yourname.expensetracker.domain.intelligence.DuplicateResolution.DiscardNew -> {
+                            parsingLogs.add("SKIP: Discarding new transaction ${tx.merchant} €${tx.amount}")
+                            return@forEach
+                        }
+                    }
+                }
 
                 val review = PendingReview(
                     rawNotificationId = null,

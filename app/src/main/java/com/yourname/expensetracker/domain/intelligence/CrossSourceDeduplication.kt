@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.intelligence
 
+import com.yourname.expensetracker.data.database.entity.PendingReview
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -11,6 +12,7 @@ import javax.inject.Singleton
  * - Bank statements (imported via OCR)
  * - Google Wallet notifications
  * - Manual entry
+ * - Pending reviews (not yet approved)
  * 
  * Prevents duplicates when importing bank statements from multiple sources.
  */
@@ -19,6 +21,7 @@ class CrossSourceDeduplication @Inject constructor() {
 
     companion object {
         private const val TIME_WINDOW_MS = 24 * 60 * 60 * 1000L // 24 hours
+        private const val AMOUNT_TOLERANCE = 0.01
     }
 
     /**
@@ -55,6 +58,70 @@ class CrossSourceDeduplication @Inject constructor() {
         return DuplicateCheckResult.NoDuplicate
     }
 
+    /**
+     * Check if a statement transaction matches any existing PendingReview.
+     * Used to prevent creating duplicate pending reviews from bank statements.
+     * 
+     * @param amount Transaction amount
+     * @param merchant Merchant name
+     * @param date Transaction date
+     * @param pendingReviews List of recent pending reviews to check against
+     * @return The matching PendingReview if duplicate found, null otherwise
+     */
+    fun findPendingReviewDuplicate(
+        amount: Double,
+        merchant: String,
+        date: Long,
+        pendingReviews: List<PendingReview>
+    ): PendingReview? {
+        val normalizedMerchant = normalizeMerchant(merchant)
+        
+        for (review in pendingReviews) {
+            // Skip if no suggested date
+            val reviewDate = review.suggestedDate ?: continue
+            
+            // Check date is within window
+            if (kotlin.math.abs(date - reviewDate) > TIME_WINDOW_MS) {
+                continue
+            }
+            
+            // Check amount matches
+            if (kotlin.math.abs(amount - review.suggestedAmount) > AMOUNT_TOLERANCE) {
+                continue
+            }
+            
+            // Check merchant similarity
+            val reviewMerchant = normalizeMerchant(review.suggestedMerchant)
+            if (isMerchantSimilar(normalizedMerchant, reviewMerchant)) {
+                return review
+            }
+        }
+        
+        return null
+    }
+
+    /**
+     * Determine which pending review to keep when duplicates found.
+     * Priority: notification > statement (notifications are more accurate)
+     */
+    fun resolvePendingReviewDuplicate(
+        existingReview: PendingReview,
+        newSource: String
+    ): DuplicateResolution {
+        // If existing is from notification, keep it (more accurate)
+        if (existingReview.packageName != null && newSource == "statement") {
+            return DuplicateResolution.KeepExisting
+        }
+        
+        // If new is from notification and existing is statement, replace
+        if (newSource == "notification" && existingReview.packageName == null) {
+            return DuplicateResolution.ReplaceExisting
+        }
+        
+        // Otherwise keep existing (safer)
+        return DuplicateResolution.KeepExisting
+    }
+
     private fun isLikelySameTransaction(
         merchant: String,
         date: Long,
@@ -74,6 +141,47 @@ class CrossSourceDeduplication @Inject constructor() {
         }
         
         return false
+    }
+
+    private fun isMerchantSimilar(merchantA: String, merchantB: String): Boolean {
+        if (merchantA == merchantB) return true
+        
+        // Check if one contains the other
+        if (merchantA.contains(merchantB) || merchantB.contains(merchantA)) {
+            return true
+        }
+        
+        // Check Levenshtein distance
+        val distance = levenshteinDistance(merchantA, merchantB)
+        val maxLen = maxOf(merchantA.length, merchantB.length)
+        
+        // Allow 2 character difference for OCR errors
+        return distance <= 2
+    }
+
+    private fun levenshteinDistance(s1: String, s2: String): Int {
+        if (s1 == s2) return 0
+        if (s1.isEmpty()) return s2.length
+        if (s2.isEmpty()) return s1.length
+
+        val n = s2.length
+        var prev = IntArray(n + 1) { it }
+        var curr = IntArray(n + 1)
+
+        for (i in 1..s1.length) {
+            curr[0] = i
+            for (j in 1..n) {
+                val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
+                curr[j] = minOf(
+                    minOf(curr[j - 1] + 1, prev[j] + 1),
+                    prev[j - 1] + cost
+                )
+            }
+            val temp = prev
+            prev = curr
+            curr = temp
+        }
+        return prev[n]
     }
 
     private fun normalizeMerchant(merchant: String): String {
@@ -117,4 +225,10 @@ sealed class DuplicateCheckResult {
         val existingSource: String,
         val confidence: Float
     ) : DuplicateCheckResult()
+}
+
+enum class DuplicateResolution {
+    KeepExisting,
+    ReplaceExisting,
+    DiscardNew
 }
