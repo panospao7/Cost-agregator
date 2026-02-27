@@ -193,6 +193,11 @@ class ReviewQueueRepository @Inject constructor(
     }
 
     @Transaction
+    suspend fun rejectAllReviews() {
+        pendingReviewDao.rejectAllPending()
+    }
+
+    @Transaction
     suspend fun markAsRelevant(id: Long, isRelevant: Boolean) {
         val notification = rawNotificationDao.getById(id) ?: return
         rawNotificationDao.markRelevance(id, isRelevant)

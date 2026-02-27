@@ -120,6 +120,17 @@ class ReviewViewModel @Inject constructor(
         }
     }
 
+    fun rejectAll() {
+        viewModelScope.launch {
+            try {
+                reviewQueueRepository.rejectAllReviews()
+                _errorMessage.value = "All pending reviews cleared."
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to clear all: ${e.message}"
+            }
+        }
+    }
+
     fun processBatch(uris: List<android.net.Uri>) {
         if (uris.isEmpty()) return
         batchJob?.cancel() // Cancel previous if any
