@@ -291,24 +291,13 @@ class BankStatementParser @Inject constructor(
             return null
         }
         
-        // Debug logging
-        Timber.d("BankStatementParser: Processing row: $cleanRow")
-        
         // 2. Look for amount patterns
         val amountMatcher = com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX.matcher(cleanRow)
         
-        if (!amountMatcher.find()) {
-            Timber.d("BankStatementParser: No amount found in row: $cleanRow")
-            return null
-        }
+        if (!amountMatcher.find()) return null
         
-        // Fix (BUG-009): Robust European & US decimal parsing
-        val rawAmount = amountMatcher.group(2)?.replace(" ", "") ?: run {
-            Timber.d("BankStatementParser: No amount group found")
-            return null
-        }
-        
-        Timber.d("BankStatementParser: Raw amount: $rawAmount")
+        // Robust European & US decimal parsing
+        val rawAmount = amountMatcher.group(2)?.replace(" ", "") ?: return null
         
         val lastSep = rawAmount.findLastAnyOf(listOf(".", ","))
         
@@ -323,14 +312,14 @@ class BankStatementParser @Inject constructor(
         
         val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
         
-        // Fix (BUG-010): Use more specific currency check
-        var currency = "EUR" // Default currency
+        // Use more specific currency check
+        var currency = "EUR"
         val currencyGroup = amountMatcher.group(1) ?: amountMatcher.group(3)
         if (currencyGroup != null && currencyGroup.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
             currency = currencyNormalizer.normalize(currencyGroup)
         }
 
-        // 3. Detect Transaction Type (ISSUE-008)
+        // 3. Detect Transaction Type
         val upperRow = cleanRow.uppercase()
         val isPurchase = upperRow.contains("ΑΓΟΡΑ") || upperRow.contains("PURCHASE") || 
                          upperRow.contains("ΧΡΕΩΣΗ") || upperRow.contains("DEBIT") ||
@@ -345,30 +334,23 @@ class BankStatementParser @Inject constructor(
             isDeposit -> TransactionType.DEPOSIT
             isPurchase -> TransactionType.PURCHASE
             amountStr.contains("-") -> TransactionType.PURCHASE
-            else -> TransactionType.PURCHASE // Default to Purchase if ambiguous (Expense Tracker context) 
+            else -> TransactionType.PURCHASE 
         }
 
-        // 4. Extract dates - prioritize transaction date over value date
-        // Find all dates in the row
+        // 4. Extract dates - prioritize transaction date (first date) over value date (second date)
         val allDates = extractAllDates(cleanRow)
         
-        Timber.d("BankStatementParser: Dates found - first: ${allDates.firstDate}, tx: ${allDates.transactionDate}, value: ${allDates.valueDate}")
-        
-        // Use transaction date if found, otherwise fall back to any date
         val dateValue = allDates.transactionDate 
             ?: allDates.valueDate 
             ?: allDates.firstDate
 
-        Timber.d("BankStatementParser: Selected date: $dateValue")
-
         // 5. Extract merchant - remove all dates from the row
         var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
-            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Dates
-            .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "") // Time
-            // Remove common bank prefixes/suffixes
+            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "")
+            .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "")
             .replace(Regex("""(?i)^(AGORA|ΑΓΟΡΑ|PURCHASE|PAYMENT)\s*[:\-]?\s*"""), "")
             .replace(Regex("""(?i)\s*(STO|ΣΤΟ|AT)\s*$"""), "")
-            .replace(Regex("""\s{2,}"""), " ") // Double spaces
+            .replace(Regex("""\s{2,}"""), " ")
             .trim()
 
         // Basic validation: must have some letters to be a merchant
