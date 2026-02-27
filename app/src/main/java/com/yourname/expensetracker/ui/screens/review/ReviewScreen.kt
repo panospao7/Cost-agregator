@@ -294,6 +294,7 @@ fun ReviewScreen(
                         content = {
                             ReviewCard(
                                 item = item,
+                                categories = categories,
                                 onApprove = { viewModel.approveReview(item.review.id) },
                                 onReject = { viewModel.rejectReview(item.review.id) },
                                 onEdit = { editingReview = item.review },
@@ -447,12 +448,16 @@ fun ReviewScreen(
 @Composable
 fun ReviewCard(
     item: PendingReviewWithReceipt,
+    categories: List<Category>,
     onApprove: () -> Unit,
     onReject: () -> Unit,
     onEdit: () -> Unit,
     onDebug: () -> Unit
 ) {
     val review = item.review
+    
+    // Find the suggested category
+    val suggestedCategory = categories.find { it.id == review.suggestedCategoryId }
     val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, HH:mm", Locale.getDefault()) }
     var showTrustSignal by remember { mutableStateOf(false) }
     val haptic = rememberHapticFeedback()
@@ -543,11 +548,36 @@ fun ReviewCard(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    AmountText(
-                        amount = review.suggestedAmount,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = SemanticColors.TextPrimary
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AmountText(
+                            amount = review.suggestedAmount,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = SemanticColors.TextPrimary
+                        )
+                        
+                        // Category icon if available
+                        if (suggestedCategory != null) {
+                            Surface(
+                                shape = androidx.compose.foundation.shape.CircleShape,
+                                color = try {
+                                    android.graphics.Color.parseColor(suggestedCategory.color).toLong().let { 
+                                        androidx.compose.ui.graphics.Color(it).copy(alpha = 0.2f) 
+                                    }
+                                } catch (e: Exception) {
+                                    SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
+                                }
+                            ) {
+                                Text(
+                                    text = suggestedCategory.icon,
+                                    fontSize = 18.sp,
+                                    modifier = Modifier.padding(4.dp)
+                                )
+                            }
+                        }
+                    }
                     
                     // Transfer Direction Badge (for transfers and deposits)
                     if (review.suggestedType == TransactionType.TRANSFER.name || 
