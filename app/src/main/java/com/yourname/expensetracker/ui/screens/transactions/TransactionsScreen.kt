@@ -251,10 +251,9 @@ fun TransactionsScreen(
                     }
                 )
                 
-                // Tab row with counts
-                ScrollableTabRow(
+                // Tab row with counts - using compact spacing
+                TabRow(
                     selectedTabIndex = selectedTab.ordinal,
-                    edgePadding = 0.dp,
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.primary,
                     indicator = { tabPositions ->
@@ -283,11 +282,12 @@ fun TransactionsScreen(
                             text = {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    modifier = Modifier.padding(horizontal = 2.dp)
                                 ) {
                                     Text(
                                         text = tab.label,
-                                        style = MaterialTheme.typography.labelLarge
+                                        style = MaterialTheme.typography.labelMedium
                                     )
                                     if (count > 0 && tab != TransactionTab.ALL) {
                                         Badge(
@@ -362,22 +362,6 @@ fun TransactionsScreen(
             },
             modifier = Modifier.padding(padding)
         ) {
-            // Ownership Filter Chips
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OwnershipFilter.values().forEach { filter ->
-                    FilterChip(
-                        selected = ownershipFilter == filter,
-                        onClick = { viewModel.setOwnershipFilter(filter) },
-                        label = { Text(filter.label, style = MaterialTheme.typography.labelMedium) }
-                    )
-                }
-            }
-
             when {
                 isLoading && transactions.isEmpty() -> {
                     // Initial loading state
