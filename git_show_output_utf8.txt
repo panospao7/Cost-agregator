@@ -1,0 +1,524 @@
+﻿diff --git a/Bulk Category Update Feature Implementation Plan b/Bulk Category Update Feature Implementation Plan
+new file mode 100644
+index 0000000..68bbb3a
+--- /dev/null
++++ b/Bulk Category Update Feature Implementation Plan	
+@@ -0,0 +1,45 @@
++# Bulk Category Update Feature Implementation Plan
++
++## Overview
++Currently, users can update the category of an individual expense. This feature will prompt them to optionally apply this new category to *all* past transactions from the same merchant, maintaining consistency and saving time.
++
++## Proposed Changes
++
++### 1. Database Layer ([com/yourname/expensetracker/data/database/dao/ExpenseDao.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt))
++#### [MODIFY] ExpenseDao.kt
++- Add a new suspend function: `suspend fun updateCategoryForMerchant(merchant: String, categoryId: Long)` to efficiently update multiple rows in a single query.
++
++### 2. Repository Layer ([com/yourname/expensetracker/data/repository/ExpenseRepository.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt))
++#### [MODIFY] ExpenseRepository.kt
++- Add `suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long)` to wrap the DAO call.
++- Ensure the mutex and pattern learning side effects (like adding strictly one `UserCorrection` or multiple) are correctly managed.
++
++### 3. UI/State Layer ([com/yourname/expensetracker/ui/screens/transactions/TransactionsViewModel.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsViewModel.kt))
++#### [MODIFY] TransactionsViewModel.kt
++- Modify [updateCategory](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt#75-77) to accept a boolean `applyToAll: Boolean = false`.
++- If `applyToAll` is true, call the new `ExpenseRepository.updateExpenseCategoryBulk` instead of [updateExpenseCategory](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt#65-89).
++
++### 4. UI/View Layer ([com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt))
++#### [MODIFY] TransactionsScreen.kt
++- **[CategoryPickerDialog](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt#1007-1105)**: 
++  - Change `onCategorySelected` callback from [(Long) -> Unit](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/analytics/InsightsEngine.kt#623-624) to [(Long, Boolean) -> Unit](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/analytics/InsightsEngine.kt#623-624).
++  - Add a [Row](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/home/HomeScreen.kt#537-566) at the bottom of the dialog containing a `Checkbox` and `Text` ("Apply to all past transactions for this merchant").
++  - Maintain a local `Boolean` state for the checkbox.
++  - When a category is tapped, invoke the callback passing the category ID and the checkbox state.
++- **Main [TransactionsScreen](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt#67-529) Dialog Logic**:
++  - Update the invocation of [CategoryPickerDialog](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt#1007-1105) to handle the new `applyToAll` parameter.
++  - Call `viewModel.updateCategory(it, categoryId, applyToAll)` accordingly.
++
++## Verification Plan
++
++### Automated Tests
++- No new complex UI tests needed if tested manually.
++- Can optionally add a quick unit test in `ExpenseRepositoryTest` to verify the bulk update query behaves correctly.
++
++### Manual Verification
++1. Open the Transactions screen.
++2. Select a transaction with merchant "Starbucks" (ensure there are multiple).
++3. Tap to edit the category.
++4. Check the "Apply to all" box and select a new category (e.g., "Food & Drink").
++5. Verify *all* historical "Starbucks" transactions immediately change to "Food & Drink".
++6. Verify a single transaction update (without checking the box) only updates the single transaction.
+diff --git a/Bulk Category Update Feature Implementation Plan.md b/Bulk Category Update Feature Implementation Plan.md
+new file mode 100644
+index 0000000..68bbb3a
+--- /dev/null
++++ b/Bulk Category Update Feature Implementation Plan.md	
+@@ -0,0 +1,45 @@
++# Bulk Category Update Feature Implementation Plan
++
++## Overview
++Currently, users can update the category of an individual expense. This feature will prompt them to optionally apply this new category to *all* past transactions from the same merchant, maintaining consistency and saving time.
++
++## Proposed Changes
++
++### 1. Database Layer ([com/yourname/expensetracker/data/database/dao/ExpenseDao.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt))
++#### [MODIFY] ExpenseDao.kt
++- Add a new suspend function: `suspend fun updateCategoryForMerchant(merchant: String, categoryId: Long)` to efficiently update multiple rows in a single query.
++
++### 2. Repository Layer ([com/yourname/expensetracker/data/repository/ExpenseRepository.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt))
++#### [MODIFY] ExpenseRepository.kt
++- Add `suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long)` to wrap the DAO call.
++- Ensure the mutex and pattern learning side effects (like adding strictly one `UserCorrection` or multiple) are correctly managed.
++
++### 3. UI/State Layer ([com/yourname/expensetracker/ui/screens/transactions/TransactionsViewModel.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsViewModel.kt))
++#### [MODIFY] TransactionsViewModel.kt
++- Modify [updateCategory](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt#75-77) to accept a boolean `applyToAll: Boolean = false`.
++- If `applyToAll` is true, call the new `ExpenseRepository.updateExpenseCategoryBulk` instead of [updateExpenseCategory](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt#65-89).
++
++### 4. UI/View Layer ([com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt))
++#### [MODIFY] TransactionsScreen.kt
++- **[CategoryPickerDialog](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt#1007-1105)**: 
++  - Change `onCategorySelected` callback from [(Long) -> Unit](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/analytics/InsightsEngine.kt#623-624) to [(Long, Boolean) -> Unit](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/analytics/InsightsEngine.kt#623-624).
++  - Add a [Row](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/home/HomeScreen.kt#537-566) at the bottom of the dialog containing a `Checkbox` and `Text` ("Apply to all past transactions for this merchant").
++  - Maintain a local `Boolean` state for the checkbox.
++  - When a category is tapped, invoke the callback passing the category ID and the checkbox state.
++- **Main [TransactionsScreen](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt#67-529) Dialog Logic**:
++  - Update the invocation of [CategoryPickerDialog](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsScreen.kt#1007-1105) to handle the new `applyToAll` parameter.
++  - Call `viewModel.updateCategory(it, categoryId, applyToAll)` accordingly.
++
++## Verification Plan
++
++### Automated Tests
++- No new complex UI tests needed if tested manually.
++- Can optionally add a quick unit test in `ExpenseRepositoryTest` to verify the bulk update query behaves correctly.
++
++### Manual Verification
++1. Open the Transactions screen.
++2. Select a transaction with merchant "Starbucks" (ensure there are multiple).
++3. Tap to edit the category.
++4. Check the "Apply to all" box and select a new category (e.g., "Food & Drink").
++5. Verify *all* historical "Starbucks" transactions immediately change to "Food & Drink".
++6. Verify a single transaction update (without checking the box) only updates the single transaction.
+diff --git a/DEEP_ANALYSIS_REPORT.md b/DEEP_ANALYSIS_REPORT.md
+new file mode 100644
+index 0000000..b390f58
+--- /dev/null
++++ b/DEEP_ANALYSIS_REPORT.md
+@@ -0,0 +1,209 @@
++# Deep Code Analysis Report
++
++## SEGMENT 1: Financial Forecast/Weather
++
++### Issues Found:
++
++1. ~~SYNTAX ERROR~~ - **FALSE POSITIVE**: Line 298 appears to have extra `)` but it's actually correct - `set()` takes two arguments where the second is a function call.
++
++2. **NarrativeGenerator.kt:111 - Invalid Unicode**
++   - Icon "Γ¢¿" - Invalid Unicode character for emoji
++   - Should be "ΓÜû" or another valid emoji
++
++3. **Magic Numbers**: Multiple hardcoded values like 0.70, 0.90 scattered in forecast logic
++
++---
++
++## SEGMENT 2: Budget Management
++
++### Issues Found:
++
++1. **No Critical Issues Found**
++   - BudgetCalculator has well-documented period calculation logic
++   - BudgetMonitor has proper caching and retry logic
++   - Good separation of concerns between calculation and monitoring
++
++2. **Potential Improvement Areas**:
++   - BudgetRepository is accessed in both BudgetMonitor and BudgetCalculator - could benefit from a unified budget service
++   - Date calculation logic is complex - some duplication with TimePeriodUtils but justified
++
++3. **Observations**:
++   - Good: Retry logic with exponential backoff in BudgetMonitor
++   - Good: Cache invalidation with timestamp
++   - Good: Proper use of SupervisorJob for coroutine scope
++
++---
++
++## SEGMENT 3: Notification Parsing
++
++### Issues Found:
++
++1. **DUPLICATION - Duplicate Detection Mechanisms (MEDIUM)**
++   - `CrossSourceDeduplication` - for cross-source (notification vs statement) duplicates
++   - `DetectDuplicateExpenseUseCase` - for detecting duplicate expenses in expense table
++   - Both do similar things but are separate implementations
++   - Potential for inconsistent behavior between the two
++
++2. **Pattern Overlap**:
++   - Multiple parsers (GreekBankParser, RevolutParser, SmsParser, GenericParser) each have their own regex patterns
++   - Some patterns may overlap (e.g., currency detection, amount extraction)
++   - Amount extraction regex is duplicated in ReceiptParser
++
++3. **Good Practices Observed**:
++   - AppParserRegistry has O(1) package lookup - good performance
++   - Fallback to generic parser - good design
++   - Validation in ParsedTransaction - good error handling
++   - Order matters comment for parser priority - good documentation
++
++4. **Potential Issues**:
++   - No central pattern library - each parser defines its own patterns
++   - Confidence thresholds vary between parsers (hard to compare)
++
++---
++
++## SEGMENT 4: Receipt Scanning (OCR)
++
++### Issues Found:
++
++1. **God Object - ReceiptRepository (HIGH)**
++   - Line 36-50: ReceiptRepository has 13+ dependencies
++   - Does too much: OCR, parsing, categorization, duplicate detection, budget monitoring
++   - Violates Single Responsibility Principle
++   - Should be split into smaller services
++
++2. **Code Smell - Circular Dependencies**:
++   - ReceiptRepository depends on BudgetMonitor
++   - BudgetMonitor may need receipts for analytics in future
++   - Could create circular dependency issues
++
++3. **Duplicate Error Handling**:
++   - OCR failure handling is duplicated between processReceipt and processStatement
++   - Could be extracted to common utility
++
++4. **Unused Import**:
++   - Line 22: `// import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao` is commented out
++
++---
++
++## SEGMENT 5: Merchant Categorization
++
++### Issues Found:
++
++1. **Direct Object Creation (LOW)**
++   - Lines 67-70: CategorizationEngine creates instances directly instead of DI
++   - `MerchantCanonicalizer()`, `GreeklishNormalizer()`, etc.
++   - Makes testing harder, but not a bug
++
++2. **Potential Overlap - Categorization vs ML Classification**:
++   - CategorizationEngine has ML_PREDICTION as final layer
++   - HybridExpenseClassifier also does ML classification
++   - Both use similar categorization logic - potential for confusion
++
++3. **Good Design Observed**:
++   - HybridExpenseClassifier uses CategorizationEngine as single source of truth (line 17)
++   - Good separation of concerns: Exact ΓåÆ Canonical ΓåÆ Greeklish ΓåÆ Keyword ΓåÆ Context ΓåÆ ML
++   - Proper caching with Mutex
++
++---
++
++## SEGMENT 6-16: Remaining Segments Summary
++
++### Key Issues Found Across All Segments:
++
++1. **Merchant Repository Overlap (HIGH)**
++   - 3 separate repositories with similar names:
++     - `MerchantCategoryRepository` - merchant ΓåÆ category mappings
++     - `MerchantNormalizationRepository` - merchant name normalization
++     - `MerchantRulesRepository` - merchant rules
++   - Very confusing - could be consolidated into one
++
++2. **Duplicate Detection Duplication (MEDIUM)**
++   - `CrossSourceDeduplication` - for notifications vs statements
++   - `DetectDuplicateExpenseUseCase` - for expense table duplicates
++   - Should be unified or clearly separated
++
++3. **Repository God Objects (MEDIUM)**
++   - ReceiptRepository has 13+ dependencies
++   - FinancialWeatherRepository has many dependencies
++   - These should be split into smaller services
++
++4. **Naming Confusion**
++   - Multiple "Repository" classes that do more than just repository work
++   - E.g., NotificationRepository does parsing AND saving
++
++---
++
++## SUMMARY OF ALL ISSUES
++
++| Segment | Severity | Issue | Location |
++|---------|----------|-------|-----------|
++| 1 | LOW | Invalid Unicode character | NarrativeGenerator.kt:111 |
++| 1 | MEDIUM | Magic numbers scattered | SynthesisEngine.kt |
++| 3 | MEDIUM | Duplicate detection mechanisms | CrossSourceDeduplication vs DetectDuplicateExpenseUseCase |
++| 4 | HIGH | God Object - too many dependencies | ReceiptRepository.kt:36-50 |
++| 4 | LOW | Unused import | ReceiptRepository.kt:22 |
++| 5 | LOW | Direct object creation | CategorizationEngine.kt:67-70 |
++| ALL | MEDIUM | 3 merchant repos confusing | MerchantCategory/Normalization/RulesRepository |
++| ALL | MEDIUM | Duplicate detection duplication | Two separate dedupe mechanisms |
++
++---
++
++## RECOMMENDATIONS
++
++1. **Fix Critical Bugs**:
++   - Fix syntax error in SynthesisEngine.kt line 298
++   - Fix invalid Unicode character in NarrativeGenerator.kt
++
++2. **Consolidate Merchant Repositories**:
++   - Merge MerchantCategoryRepository, MerchantNormalizationRepository, MerchantRulesRepository into one
++
++3. **Split Large Repositories**:
++   - Break ReceiptRepository into smaller services (OcrService, ParsingService, etc.)
++
++4. **Unify Duplicate Detection**:
++   - Create single deduplication service used by both notification and expense flows
++
++5. **Add Central Pattern Library**:
++   - Extract common regex patterns to shared utility class
++
++Analysis completed: $(date)
++
++---
++
++## SEGMENT 4: Receipt Scanning (OCR)
++
++[To be analyzed]
++
++---
++
++## SEGMENT 5: Merchant Categorization
++
++[To be analyzed]
++
++---
++
++## SEGMENT 6: Recurring Expenses
++
++[To be analyzed]
++
++---
++
++## SEGMENT 7: Analytics & Insights
++
++[To be analyzed]
++
++---
++
++## SEGMENT 8: Expense Management
++
++[To be analyzed]
++
++---
++
++## Summary of Issues Found So Far
++
++| Segment | Severity | Issue |
++|---------|----------|-------|
++| 1 | CRITICAL | Syntax error in SynthesisEngine.kt line 298 |
++| 1 | LOW | Invalid Unicode character in NarrativeGenerator.kt line 111 |
++| 1 | MEDIUM | Magic numbers scattered in forecast logic |
+diff --git a/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt b/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+index f8a5b38..a8c4d1f 100644
+--- a/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
++++ b/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+@@ -140,11 +140,15 @@ class ExpenseRepository @Inject constructor(
+             ""
+         }
+ 
+-        // Build the full SQL query with LEFT JOIN for categories
++        // Build the full SQL query - let Room handle the @Relation for category
++        // by not selecting category columns here (use simple SELECT from expenses)
+         val sql = """
+-            SELECT e.*, c.id AS category_id, c.name AS category_name, c.icon AS category_icon, c.color AS category_color, c.type AS category_type
++            SELECT e.id, e.amount, e.currency, e.merchant, e.transactionType, e.date, 
++                   e.rawNotificationId, e.categoryId, e.createdAt, e.paymentMethod, 
++                   e.isManualEntry, e.notes, e.dedupeKey, e.transferDirection, 
++                   e.transferAccountName, e.isNotMine, e.ownerName, 
++                   e.isSharedExpense, e.sharedWithName, e.mySharePercentage, e.myShareAmount
+             FROM expenses e
+-            LEFT JOIN categories c ON e.categoryId = c.id
+             $whereClause
+             ORDER BY e.${sortOrder.sql}
+             LIMIT ? OFFSET ?
+diff --git a/build_log.txt b/build_log.txt
+new file mode 100644
+index 0000000..1580278
+Binary files /dev/null and b/build_log.txt differ
+diff --git a/implementation_plan.md.resolved b/implementation_plan.md.resolved
+new file mode 100644
+index 0000000..8758e11
+--- /dev/null
++++ b/implementation_plan.md.resolved
+@@ -0,0 +1,45 @@
++# Expanding Deduplication Logic to Review Zone
++
++## Evaluation
++Currently, the system successfully prevents duplicate *expenses* by checking incoming bank statement transactions against the [Expense](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt#87-92) table (via [CrossSourceDeduplication.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/CrossSourceDeduplication.kt)). However, it **does not** check against the [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58) table. 
++
++This creates a significant UX issue:
++1. A user receives a push notification for a coffee purchase -> A [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58) is created.
++2. The user later scans a bank statement containing that coffee purchase.
++3. The system checks the [Expense](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt#87-92) table, finds no duplicate (because the user hasn't approved the notification review yet), and creates a **second** [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58).
++4. The user is now forced to manually review two identical entries in the Review screen.
++
++Expanding deduplication to the Review Zone is **highly recommended** to keep the review queue clean and prevent duplicate work for the user. It is very much aligned with the app's goal of intelligent automation.
++
++## Key Considerations (Pros & Cons)
++*   **Pro**: Significantly reduces UI clutter on the Review Screen, especially after importing overlapping bank statement screenshots.
++*   **Pro**: Prevents the user from accidentally approving two instances of the same expense (though the DB atomic insert would catch it at the end, rejecting it in the UI is highly frustrating).
++*   **Con/Complexity**: Choosing the "winner". When a duplicate is detected, we must decide which data source is better. 
++    *   *Push Notifications* are digital and 100% accurate regarding amounts/dates.
++    *   *Bank Statements (OCR)* might have slight character errors or lower confidence scores. We should generally prioritize notifications.
++
++## Suggested Implementation Plan
++
++If you approve, here is how we can integrate this smoothly:
++
++### 1. Update [PendingReviewDao.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt)
++Add a fast query to fetch recent pending reviews based on date bounds, similar to how we fetch recent expenses.
++```kotlin
++@Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' AND suggestedDate BETWEEN :startDate AND :endDate")
++fun getPendingReviewsInTimeframe(startDate: Long, endDate: Long): Flow<List<PendingReview>>
++```
++
++### 2. Update [CrossSourceDeduplication.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/CrossSourceDeduplication.kt)
++Enhance `isCrossSourceDuplicate` to accept a list of [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58)s alongside [Expense](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt#87-92)s so the core matching logic (similarity algorithms, date windows) can be reused without duplicating code.
++
++### 3. Update [ReceiptRepository.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt) (processStatement)
++When parsing a bank statement:
++1. Fetch recent [Expense](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt#87-92)s **AND** recent [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58)s.
++2. Run the deduplication check against both collections.
++3. If the parsed statement transaction matches an existing [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58):
++   - If the existing review is from a `notification`, **discard** the statement transaction (trust the notification).
++   - If the existing review is from another `statement.import` (e.g., overlapping screenshots), **discard** the duplicate.
++   - Alternatively, we could *update* the existing [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58) if we think the new data is better, but discarding the duplicate is the safest initial approach.
++
++---
++**Do you want to proceed with this implementation plan?**
+diff --git a/implementation_plan1.md b/implementation_plan1.md
+new file mode 100644
+index 0000000..8758e11
+--- /dev/null
++++ b/implementation_plan1.md
+@@ -0,0 +1,45 @@
++# Expanding Deduplication Logic to Review Zone
++
++## Evaluation
++Currently, the system successfully prevents duplicate *expenses* by checking incoming bank statement transactions against the [Expense](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt#87-92) table (via [CrossSourceDeduplication.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/CrossSourceDeduplication.kt)). However, it **does not** check against the [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58) table. 
++
++This creates a significant UX issue:
++1. A user receives a push notification for a coffee purchase -> A [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58) is created.
++2. The user later scans a bank statement containing that coffee purchase.
++3. The system checks the [Expense](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt#87-92) table, finds no duplicate (because the user hasn't approved the notification review yet), and creates a **second** [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58).
++4. The user is now forced to manually review two identical entries in the Review screen.
++
++Expanding deduplication to the Review Zone is **highly recommended** to keep the review queue clean and prevent duplicate work for the user. It is very much aligned with the app's goal of intelligent automation.
++
++## Key Considerations (Pros & Cons)
++*   **Pro**: Significantly reduces UI clutter on the Review Screen, especially after importing overlapping bank statement screenshots.
++*   **Pro**: Prevents the user from accidentally approving two instances of the same expense (though the DB atomic insert would catch it at the end, rejecting it in the UI is highly frustrating).
++*   **Con/Complexity**: Choosing the "winner". When a duplicate is detected, we must decide which data source is better. 
++    *   *Push Notifications* are digital and 100% accurate regarding amounts/dates.
++    *   *Bank Statements (OCR)* might have slight character errors or lower confidence scores. We should generally prioritize notifications.
++
++## Suggested Implementation Plan
++
++If you approve, here is how we can integrate this smoothly:
++
++### 1. Update [PendingReviewDao.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt)
++Add a fast query to fetch recent pending reviews based on date bounds, similar to how we fetch recent expenses.
++```kotlin
++@Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' AND suggestedDate BETWEEN :startDate AND :endDate")
++fun getPendingReviewsInTimeframe(startDate: Long, endDate: Long): Flow<List<PendingReview>>
++```
++
++### 2. Update [CrossSourceDeduplication.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/domain/intelligence/CrossSourceDeduplication.kt)
++Enhance `isCrossSourceDuplicate` to accept a list of [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58)s alongside [Expense](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt#87-92)s so the core matching logic (similarity algorithms, date windows) can be reused without duplicating code.
++
++### 3. Update [ReceiptRepository.kt](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt) (processStatement)
++When parsing a bank statement:
++1. Fetch recent [Expense](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugViewModel.kt#87-92)s **AND** recent [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58)s.
++2. Run the deduplication check against both collections.
++3. If the parsed statement transaction matches an existing [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58):
++   - If the existing review is from a `notification`, **discard** the statement transaction (trust the notification).
++   - If the existing review is from another `statement.import` (e.g., overlapping screenshots), **discard** the duplicate.
++   - Alternatively, we could *update* the existing [PendingReview](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/database/dao/PendingReviewDao.kt#8-58) if we think the new data is better, but discarding the duplicate is the safest initial approach.
++
++---
++**Do you want to proceed with this implementation plan?**
+diff --git a/sortinbf filtering_plan.md b/sortinbf filtering_plan.md
+new file mode 100644
+index 0000000..5670b1f
+--- /dev/null
++++ b/sortinbf filtering_plan.md	
+@@ -0,0 +1,68 @@
++# Transaction Page Enhancements Plan
++
++## Goal Description
++The "All" transactions tab currently loads transactions in pages of 50. Filtering and searching are performed *in-memory* on the ViewModel side. This means if a user searches for an old transaction, it will not appear unless the user has scrolled down enough to load that page into memory. For users with 500-1000+ transactions over multiple years, this is extremely inefficient and limits the usability of the search feature. 
++
++This implementation plan moves filtering, searching, and new sorting capabilities directly to the database layer via SQL queries, allowing the app to efficiently query large datasets and paginate the results accurately. 
++
++## Proposed Changes
++
++### Database Layer
++We will implement dynamic SQL querying using Room's `@RawQuery` to handle combinations of sorting, searching, and filtering.
++
++#### [MODIFY] ExpenseDao.kt
++- Add a `@RawQuery` method to support dynamic search, filter, and sorting:
++  ```kotlin
++  @RawQuery
++  suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCategory>
++  ```
++- Alternatively, add an index on `merchant` in the DB schema to speed up LIKE queries if not already present.
++
++#### [MODIFY] ExpenseRepository.kt
++- Add a new function `getExpensesPagedDynamic(...)` that constructs the `SimpleSQLiteQuery`:
++  - Builds the `WHERE` clause based on:
++    - `searchQuery`: `merchant LIKE '%query%' OR categoryName LIKE '%query%'` (requires a `JOIN` with categories).
++    - `ownershipFilter`: Appends `isNotMine = 1`, `isShared = 1`, etc.
++    - Active `TransactionFilter` properties (date range, type, categoryId).
++  - Appends `ORDER BY` based on the selected sort order (e.g., `date DESC`, `date ASC`, `amount DESC`, `amount ASC`).
++  - Appends `LIMIT` and `OFFSET` for pagination.
++- Add `SortOrder` enum class in the domain/model layer.
++
++### ViewModel Layer
++#### [MODIFY] TransactionsViewModel.kt
++- Introduce a new `StateFlow<SortOrder>` for the active sorting method.
++- Refactor the `combine` flow: Instead of loading base expenses and filtering in-memory, the ViewModel will trigger the repository's new `getExpensesPagedDynamic()` method passing the current query, filters, and sort order.
++- On any change to `searchQuery`, `ownershipFilter`, [filter](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsViewModel.kt#475-490), or `sortOrder`, the `_currentPage` should be reset to 0, and `_pagedExpenses` should be cleared before loading the first page using the new DB query.
++- The [loadMore()](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/ui/screens/transactions/TransactionsViewModel.kt#245-278) function will fetch the next offset using the exact same dynamic query configuration.
++
++### UI Layer
++#### [MODIFY] TransactionsScreen.kt
++- Add a "Sort" icon button next to the search and filter icons in the TopAppBar.
++- Create a `SortBottomSheet` or dropdown menu to allow users to select sorting options:
++  - Newest First (Date Descending)
++  - Oldest First (Date Ascending)
++  - Amount High to Low (Amount Descending)
++  - Amount Low to High (Amount Ascending)
++- Hook up the selected sort order to `viewModel.setSortOrder(order)`.
++
++## Verification Plan
++
++### Automated Tests
++- **Unit Tests for Repository**: Write unit tests to verify that [ExpenseRepository](file:///c:/Users/panos/Desktop/cost%20agregator/ExpenseTracker/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt#23-236) correctly constructs the `SimpleSQLiteQuery` strings and binds arguments for different combinations of queries, filters, and sorting orders. Run via:
++  ```bash
++  ./gradlew testDebugUnitTest --tests "com.yourname.expensetracker.data.repository.ExpenseRepositoryTest"
++  ```
++
++### Manual Verification
++1. Open the app and navigate to the **Activity (Transactions)** tab.
++2. Ensure you have significantly more than 50 transactions. Select the **All** tab.
++3. Test **Searching**:
++   - Type a merchant name for a transaction that is *not* in the first 50 latest transactions.
++   - Verify it appears instantly and correctly without needing to scroll down to load more.
++4. Test **Sorting**:
++   - Tap the new Sort icon and select "Amount High to Low".
++   - Verify the transactions are sorted by amount correctly.
++   - Scroll down to trigger load more, and verify the next page continues the correct sorting.
++5. Test **Filtering**:
++   - Change the Ownership chips (e.g., "Not Mine") while a search query is active.
++   - Verify the combination of Search + Sort + Filter works accurately.
+diff --git a/test_output.txt b/test_output.txt
+new file mode 100644
+index 0000000..fd0c231
+Binary files /dev/null and b/test_output.txt differ

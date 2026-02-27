@@ -104,6 +104,7 @@ fun TransactionsScreen(
     var expenseToDebug by remember { mutableStateOf<Expense?>(null) }
     var showSearch by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showFilterSheet by remember { mutableStateOf(false) }
     
     // Pull-to-refresh state
     val pullToRefreshState = rememberPullToRefreshState()
@@ -239,6 +240,9 @@ fun TransactionsScreen(
                                 }
                             }
                         }
+                        IconButton(onClick = { showFilterSheet = true }) {
+                            Icon(Icons.Rounded.FilterList, contentDescription = "Filter")
+                        }
                         if (!showSearch) {
                             IconButton(onClick = { showSearch = true }) {
                                 Icon(Icons.Rounded.Search, contentDescription = "Search")
@@ -250,19 +254,20 @@ fun TransactionsScreen(
                 // Tab row with counts
                 ScrollableTabRow(
                     selectedTabIndex = selectedTab.ordinal,
-                    edgePadding = 8.dp,
+                    edgePadding = 0.dp,
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.primary,
                     indicator = { tabPositions ->
                         TabRowDefaults.SecondaryIndicator(
                             modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab.ordinal]),
+                            height = 3.dp,
                             color = SemanticColors.PrimaryIndigo
                         )
                     },
                     divider = {
                         HorizontalDivider(
-                            color = SemanticColors.GlassBorder,
-                            thickness = 1.dp
+                            color = SemanticColors.GlassBorder.copy(alpha = 0.5f),
+                            thickness = 0.5.dp
                         )
                     }
                 ) {
@@ -497,6 +502,25 @@ fun TransactionsScreen(
             )
         }
 
+        // Filter bottom sheet
+        if (showFilterSheet) {
+            TransactionFilterSheet(
+                categories = categories,
+                currentFilter = activeFilter,
+                currentOwnershipFilter = ownershipFilter,
+                onDismiss = { showFilterSheet = false },
+                onApply = { filter, ownership ->
+                    viewModel.applyFilter(filter ?: TransactionFilter())
+                    viewModel.setOwnershipFilter(ownership)
+                    showFilterSheet = false
+                },
+                onClear = {
+                    viewModel.clearFilter()
+                    showFilterSheet = false
+                }
+            )
+        }
+
         // Rename merchant dialog
         if (expenseToRename != null) {
             RenameMerchantDialog(
@@ -646,12 +670,12 @@ private fun DateHeader(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -659,7 +683,7 @@ private fun DateHeader(
                 Text(
                     text = date,
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = SemanticColors.TextPrimary
                 )
                 Text(
@@ -670,10 +694,10 @@ private fun DateHeader(
             }
             
             Text(
-                text = "€${String.format(Locale.getDefault(), "%.2f", totalAmount)}",
+                text = "€${String.format(Locale.getDefault(), "%.2f", kotlin.math.abs(totalAmount))}",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
-                color = SemanticColors.PrimaryIndigo
+                color = if (totalAmount < 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen
             )
         }
     }

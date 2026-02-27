@@ -169,10 +169,26 @@ class TransactionsViewModel @Inject constructor(
      * Grouped transactions by date for UI display.
      * Returns a map of date string to list of transactions.
      */
-    val groupedTransactions: StateFlow<Map<String, List<ExpenseWithCategory>>> = transactions
-        .map { expenseList ->
-            groupTransactionsByDate(expenseList)
+    val groupedTransactions: StateFlow<Map<String, List<ExpenseWithCategory>>> = combine(transactions, _sortOrder) { expenseList, order ->
+        val sortedList = if (_selectedTab.value == TransactionTab.ALL) {
+            // Already sorted and filtered via backend pagination
+            expenseList
+        } else {
+            // Needs sorting in-memory
+            when (order) {
+                SortOrder.DATE_DESC -> expenseList.sortedByDescending { it.expense.date }
+                SortOrder.DATE_ASC -> expenseList.sortedBy { it.expense.date }
+                SortOrder.AMOUNT_DESC -> expenseList.sortedByDescending { it.expense.amount }
+                SortOrder.AMOUNT_ASC -> expenseList.sortedBy { it.expense.amount }
+            }
         }
+
+        if (order == SortOrder.AMOUNT_DESC || order == SortOrder.AMOUNT_ASC) {
+            mapOf("Sorted By Amount" to sortedList)
+        } else {
+            groupTransactionsByDate(sortedList)
+        }
+    }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -549,7 +565,6 @@ class TransactionsViewModel @Inject constructor(
         if (expenses.isEmpty()) return emptyMap()
         
         return expenses
-            .sortedByDescending { it.expense.date }
             .groupBy { item ->
                 DateFormatterUtils.fullDateWithDay().format(java.util.Date(item.expense.date))
             }

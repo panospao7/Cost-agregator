@@ -88,7 +88,7 @@ class ExpenseRepository @Inject constructor(
 
         // Search query (merchant or category name)
         if (!searchQuery.isNullOrBlank()) {
-            whereClauses.add("(e.merchant LIKE ? OR c.name LIKE ?)")
+            whereClauses.add("(e.merchant LIKE ? OR e.categoryId IN (SELECT id FROM categories WHERE name LIKE ?))")
             val searchPattern = "%$searchQuery%"
             args.add(searchPattern)
             args.add(searchPattern)

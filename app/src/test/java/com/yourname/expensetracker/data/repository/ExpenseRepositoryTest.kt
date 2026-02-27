@@ -109,4 +109,27 @@ class ExpenseRepositoryTest {
         assertEquals(emptyList<MerchantSuggestion>(), result)
         coVerify(exactly = 0) { expenseDao.searchMerchants(any()) }
     }
+
+    @Test
+    fun `getExpensesPagedDynamic constructs correct query with search and sort`() = runTest {
+        // Arrange
+        val querySlot = slot<androidx.sqlite.db.SupportSQLiteQuery>()
+        coEvery { expenseDao.getExpensesDynamic(capture(querySlot)) } returns emptyList()
+        
+        // Act
+        repository.getExpensesPagedDynamic(
+            limit = 20,
+            offset = 0,
+            searchQuery = "Coffee",
+            sortOrder = SortOrder.AMOUNT_DESC
+        )
+        
+        // Assert
+        val capturedQuery = querySlot.captured
+        val sql = capturedQuery.sql
+        
+        assertTrue("Contains search clause", sql.contains("e.merchant LIKE ? OR e.categoryId IN (SELECT id FROM categories WHERE name LIKE ?)"))
+        assertTrue("Contains sort clause", sql.contains("ORDER BY e.amount DESC"))
+        assertTrue("Contains pagination", sql.contains("LIMIT ? OFFSET ?"))
+    }
 }
