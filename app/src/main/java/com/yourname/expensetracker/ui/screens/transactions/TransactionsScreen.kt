@@ -351,7 +351,8 @@ fun TransactionsScreen(
                     }
                 }
             }
-        }
+        },
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { padding ->
         PullToRefreshBox(
             state = pullToRefreshState,
