@@ -46,6 +46,12 @@ fun DebugScreen(
     
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
     var diagnosticsStats by remember { mutableStateOf(viewModel.getServiceDiagnostics()) }
+    var showCategorizationDebug by remember { mutableStateOf(false) }
+
+    if (showCategorizationDebug) {
+        CategorizationDebugScreen(onNavigateBack = { showCategorizationDebug = false })
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -241,6 +247,15 @@ fun DebugScreen(
             // 3. Test & Sync Buttons
             item {
                 Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    Button(
+                        onClick = { showCategorizationDebug = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("🛠️ Categorization Pipeline Debug")
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     Button(
                         onClick = { viewModel.simulateTestNotification() },
                         modifier = Modifier.fillMaxWidth(),

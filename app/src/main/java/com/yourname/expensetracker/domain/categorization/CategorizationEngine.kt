@@ -29,6 +29,27 @@ data class CategorizationResult(
     val explanation: String = ""
 )
 
+data class LayerDebugResult(
+    val layerName: String,
+    val matchFound: Boolean,
+    val categoryName: String? = null,
+    val categoryId: Long? = null,
+    val confidence: Double = 0.0,
+    val matchType: MatchType? = null,
+    val details: String = ""
+)
+
+data class CategorizationDebugTrace(
+    val inputMerchant: String,
+    val amount: Double,
+    val timestamp: Long,
+    val normalizedMerchant: String,
+    val canonicalMerchant: String,
+    val strippedParts: List<String>,
+    val layerResults: List<LayerDebugResult>,
+    val finalResult: CategorizationResult
+)
+
 @Singleton
 class CategorizationEngine @Inject constructor(
     private val merchantCategoryDao: MerchantCategoryDao,
@@ -184,6 +205,191 @@ class CategorizationEngine @Inject constructor(
             confidence = 0.0,
             matchType = MatchType.UNKNOWN,
             explanation = "No match found"
+        )
+    }
+    
+    suspend fun debugCategorize(
+        merchant: String,
+        amount: Double = 0.0,
+        timestamp: Long = System.currentTimeMillis()
+    ): CategorizationDebugTrace {
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = false)
+        val normalized = lookupResult.canonical.normalizedName.lowercase()
+        
+        val sortedMappings = getCache()
+        val patternsSet = getPatternsSet()
+        val categoryMap = getCategoryMap()
+        
+        val canonicalResult = canonicalizer.canonicalize(normalized)
+        val layerResults = mutableListOf<LayerDebugResult>()
+        var finalResult: CategorizationResult? = null
+
+        // LAYER 1: Exact match
+        var exactMatchFound = false
+        if (normalized in patternsSet) {
+            val match = sortedMappings.find { it.merchantPattern.equals(normalized, ignoreCase = true) }
+            if (match != null) {
+                exactMatchFound = true
+                val result = CategorizationResult(
+                    categoryId = match.categoryId,
+                    categoryName = categoryMap[match.categoryId],
+                    confidence = CONFIDENCE_EXACT,
+                    matchType = MatchType.EXACT,
+                    explanation = "Exact match: $normalized"
+                )
+                layerResults.add(LayerDebugResult("Layer 1: Exact", true, result.categoryName, result.categoryId, result.confidence, result.matchType, result.explanation))
+                finalResult = result
+            }
+        }
+        if (!exactMatchFound) {
+            layerResults.add(LayerDebugResult("Layer 1: Exact", false, details = "No exact match in dictionary"))
+        }
+
+        // LAYER 2: Canonical + Fuzzy
+        var canonicalMatchFound = false
+        if (finalResult == null && canonicalResult.canonicalName != normalized) {
+            if (canonicalResult.canonicalName in patternsSet) {
+                val match = sortedMappings.find { 
+                    it.merchantPattern.equals(canonicalResult.canonicalName, ignoreCase = true) 
+                }
+                if (match != null) {
+                    canonicalMatchFound = true
+                    val confidence = CONFIDENCE_CANONICAL - canonicalResult.confidencePenalty
+                    val result = CategorizationResult(
+                        categoryId = match.categoryId,
+                        categoryName = categoryMap[match.categoryId],
+                        confidence = confidence,
+                        matchType = MatchType.CANONICAL,
+                        explanation = "Canonical match: $normalized -> ${canonicalResult.canonicalName}"
+                    )
+                    layerResults.add(LayerDebugResult("Layer 2: Canonical", true, result.categoryName, result.categoryId, result.confidence, result.matchType, result.explanation))
+                    finalResult = result
+                }
+            }
+        }
+        if (!canonicalMatchFound) {
+             layerResults.add(LayerDebugResult("Layer 2: Canonical", false, details = "No canonical match"))
+        }
+
+        // LAYER 2b: Greeklish variations
+        var greeklishMatchFound = false
+        if (finalResult == null) {
+            val variations = greeklishNormalizer.getVariations(normalized)
+            for (variant in variations) {
+                if (variant != normalized && variant in patternsSet) {
+                    val match = sortedMappings.find { 
+                        it.merchantPattern.equals(variant, ignoreCase = true) 
+                    }
+                    if (match != null) {
+                        greeklishMatchFound = true
+                        val result = CategorizationResult(
+                            categoryId = match.categoryId,
+                            categoryName = categoryMap[match.categoryId],
+                            confidence = CONFIDENCE_GREEKLISH,
+                            matchType = MatchType.GREEKLISH,
+                            explanation = "Greeklish match: $normalized -> $variant"
+                        )
+                        layerResults.add(LayerDebugResult("Layer 2b: Greeklish", true, result.categoryName, result.categoryId, result.confidence, result.matchType, result.explanation))
+                        finalResult = result
+                        break
+                    }
+                }
+            }
+        }
+        if (!greeklishMatchFound) {
+             layerResults.add(LayerDebugResult("Layer 2b: Greeklish", false, details = "No Greeklish match"))
+        }
+
+        // LAYER 2c: Fuzzy match
+        var fuzzyMatchFound = false
+        if (finalResult == null) {
+            val fuzzyMatch = findFuzzyMatch(normalized, sortedMappings)
+            if (fuzzyMatch != null) {
+                fuzzyMatchFound = true
+                val result = CategorizationResult(
+                    categoryId = fuzzyMatch.categoryId,
+                    categoryName = categoryMap[fuzzyMatch.categoryId],
+                    confidence = CONFIDENCE_CANONICAL - 0.05,
+                    matchType = MatchType.CANONICAL,
+                    explanation = "Fuzzy match: $normalized -> ${fuzzyMatch.merchantPattern}"
+                )
+                layerResults.add(LayerDebugResult("Layer 2c: Fuzzy", true, result.categoryName, result.categoryId, result.confidence, result.matchType, result.explanation))
+                finalResult = result
+            }
+        }
+        if (!fuzzyMatchFound) {
+             layerResults.add(LayerDebugResult("Layer 2c: Fuzzy", false, details = "No fuzzy match"))
+        }
+        
+        // LAYER 3: Semantic keyword matching
+        var semanticMatchFound = false
+        if (finalResult == null) {
+            val semanticMatch = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+            if (semanticMatch != null) {
+                val categoryId = getCategoryIdByName(semanticMatch.categoryName)
+                if (categoryId != null) {
+                    semanticMatchFound = true
+                    val result = CategorizationResult(
+                        categoryId = categoryId,
+                        categoryName = semanticMatch.categoryName,
+                        confidence = semanticMatch.confidence,
+                        matchType = MatchType.KEYWORD,
+                        explanation = "Keyword match: '${semanticMatch.matchedKeyword}'"
+                    )
+                    layerResults.add(LayerDebugResult("Layer 3: Semantic", true, result.categoryName, result.categoryId, result.confidence, result.matchType, result.explanation))
+                    finalResult = result
+                }
+            }
+        }
+        if (!semanticMatchFound) {
+             layerResults.add(LayerDebugResult("Layer 3: Semantic", false, details = "No semantic match"))
+        }
+
+        // LAYER 4: Context inference
+        var contextMatchFound = false
+        if (finalResult == null) {
+            if (contextEngine.isLikelySurname(normalized) && amount > 0) {
+                val contextPrediction = contextEngine.inferFromContext(amount, timestamp)
+                if (contextPrediction != null) {
+                    val categoryId = getCategoryIdByName(contextPrediction.categoryName)
+                    if (categoryId != null) {
+                        contextMatchFound = true
+                        val result = CategorizationResult(
+                            categoryId = categoryId,
+                            categoryName = contextPrediction.categoryName,
+                            confidence = contextPrediction.confidence,
+                            matchType = MatchType.CONTEXT,
+                            explanation = "Context inference: ${contextPrediction.reason}"
+                        )
+                        layerResults.add(LayerDebugResult("Layer 4: Context", true, result.categoryName, result.categoryId, result.confidence, result.matchType, result.explanation))
+                        finalResult = result
+                    }
+                }
+            }
+        }
+        if (!contextMatchFound) {
+             layerResults.add(LayerDebugResult("Layer 4: Context", false, details = "No context inference match"))
+        }
+
+        if (finalResult == null) {
+            finalResult = CategorizationResult(
+                categoryId = null,
+                categoryName = null,
+                confidence = 0.0,
+                matchType = MatchType.UNKNOWN,
+                explanation = "No match found"
+            )
+        }
+
+        return CategorizationDebugTrace(
+            inputMerchant = merchant,
+            amount = amount,
+            timestamp = timestamp,
+            normalizedMerchant = normalized,
+            canonicalMerchant = canonicalResult.canonicalName,
+            strippedParts = canonicalResult.strippedParts,
+            layerResults = layerResults,
+            finalResult = finalResult
         )
     }
     
