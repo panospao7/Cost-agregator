@@ -21,9 +21,28 @@ class InsightsEngineEdgeCaseTest {
 
     @Before
     fun setup() {
+        val spendingPaceCalculator = mockk<SpendingPaceCalculator>(relaxed = true)
+        val anomalyDetector = mockk<AnomalyDetector>(relaxed = true)
+        val monthlyComparisonCalculator = mockk<MonthlyComparisonCalculator>(relaxed = true)
+        val categoryInsightEngine = mockk<CategoryInsightEngine>(relaxed = true)
+        val merchantInsightEngine = mockk<MerchantInsightEngine>(relaxed = true)
+        val dayOfWeekAnalyzer = mockk<DayOfWeekAnalyzer>(relaxed = true)
+        
         every { timeProvider.now() } returns System.currentTimeMillis()
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
-        engine = InsightsEngine(expenseRepository, recurringEngine, timeProvider)
+        
+        engine = InsightsEngine(
+            expenseRepository = expenseRepository,
+            recurringExpenseEngine = recurringEngine,
+            timeProvider = timeProvider,
+            spendingPaceCalculator = spendingPaceCalculator,
+            anomalyDetector = anomalyDetector,
+            monthlyComparisonCalculator = monthlyComparisonCalculator,
+            categoryInsightEngine = categoryInsightEngine,
+            merchantInsightEngine = merchantInsightEngine,
+            dayOfWeekAnalyzer = dayOfWeekAnalyzer
+        )
+        
         coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
         coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()

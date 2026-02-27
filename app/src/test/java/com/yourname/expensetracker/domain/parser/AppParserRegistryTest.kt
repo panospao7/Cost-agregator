@@ -18,13 +18,14 @@ class AppParserRegistryTest {
     private val merchantCleaner = io.mockk.mockk<com.yourname.expensetracker.domain.util.MerchantCleaner> {
         io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }
     }
+    private val directionDetector = io.mockk.mockk<com.yourname.expensetracker.domain.parser.TransferDirectionDetector>(relaxed = true)
 
     private val registry = AppParserRegistry(
         greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner),
         revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
         smsParser = SmsParser(currencyNormalizer, merchantCleaner),
         googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
-        genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner)
+        genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector)
     )
 
     @Test

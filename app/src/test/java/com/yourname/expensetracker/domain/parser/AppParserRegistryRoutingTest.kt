@@ -14,6 +14,7 @@ class AppParserRegistryRoutingTest {
     private val merchantCleaner = io.mockk.mockk<com.yourname.expensetracker.domain.util.MerchantCleaner> {
         io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }
     }
+    private val directionDetector = io.mockk.mockk<com.yourname.expensetracker.domain.parser.TransferDirectionDetector>(relaxed = true)
 
     @Before
     fun setup() {
@@ -22,7 +23,7 @@ class AppParserRegistryRoutingTest {
             revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
             smsParser = SmsParser(currencyNormalizer, merchantCleaner),
             googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
-            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner)
+            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector)
         )
     }
 

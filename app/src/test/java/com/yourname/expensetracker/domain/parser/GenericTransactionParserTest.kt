@@ -9,6 +9,7 @@ class GenericTransactionParserTest {
     private lateinit var parser: GenericTransactionParser
     private lateinit var currencyNormalizer: com.yourname.expensetracker.domain.util.CurrencyNormalizer
     private lateinit var merchantCleaner: com.yourname.expensetracker.domain.util.MerchantCleaner
+    private lateinit var directionDetector: com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 
     @Before
     fun setup() {
@@ -18,7 +19,8 @@ class GenericTransactionParserTest {
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() }
         }
-        parser = GenericTransactionParser(currencyNormalizer, merchantCleaner)
+        directionDetector = io.mockk.mockk(relaxed = true)
+        parser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector)
     }
 
     // === SUCCESSFUL PARSING ===

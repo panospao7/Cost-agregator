@@ -254,4 +254,3 @@ class BudgetCalculatorTest {
         assertEquals(Calendar.APRIL, endCal.get(Calendar.MONTH))
     }
 }
-}

@@ -19,9 +19,27 @@ class InsightsEngineTest {
     fun setup() {
         val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
         val recurringEngine = mockk<com.yourname.expensetracker.domain.logic.RecurringExpenseEngine>(relaxed = true)
+        val spendingPaceCalculator = mockk<SpendingPaceCalculator>(relaxed = true)
+        val anomalyDetector = mockk<AnomalyDetector>(relaxed = true)
+        val monthlyComparisonCalculator = mockk<MonthlyComparisonCalculator>(relaxed = true)
+        val categoryInsightEngine = mockk<CategoryInsightEngine>(relaxed = true)
+        val merchantInsightEngine = mockk<MerchantInsightEngine>(relaxed = true)
+        val dayOfWeekAnalyzer = mockk<DayOfWeekAnalyzer>(relaxed = true)
+        
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
         every { timeProvider.now() } returns System.currentTimeMillis()
-        engine = InsightsEngine(expenseRepository, recurringEngine, timeProvider)
+        
+        engine = InsightsEngine(
+            expenseRepository = expenseRepository,
+            recurringExpenseEngine = recurringEngine,
+            timeProvider = timeProvider,
+            spendingPaceCalculator = spendingPaceCalculator,
+            anomalyDetector = anomalyDetector,
+            monthlyComparisonCalculator = monthlyComparisonCalculator,
+            categoryInsightEngine = categoryInsightEngine,
+            merchantInsightEngine = merchantInsightEngine,
+            dayOfWeekAnalyzer = dayOfWeekAnalyzer
+        )
     }
 
     private val dayMs = 86_400_000L
