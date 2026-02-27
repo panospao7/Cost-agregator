@@ -296,15 +296,24 @@ FinancialWeatherRepository
 |--------|------|---------|
 | Forecast | `domain/logic/SynthesisEngine.kt` | Month-end prediction |
 | Budget | `domain/budget/BudgetMonitor.kt` | Budget alerts |
-| Categorization | `domain/categorization/CategorizationEngine.kt` | Auto-categorization |
+| Categorization | `domain/categorization/CategorizationEngine.kt` | Auto-categorization (5-layer pipeline) |
 | Recurring | `domain/logic/RecurringExpenseEngine.kt` | Pattern detection |
 | Insights | `domain/analytics/InsightsEngine.kt` | Spending insights (coordinator) |
-| Spending Pace | `domain/analytics/SpendingPaceCalculator.kt` | Pace calculation (NEW) |
-| Anomaly Detection | `domain/analytics/AnomalyDetector.kt` | Unusual transactions (NEW) |
-| Month Comparison | `domain/analytics/MonthlyComparisonCalculator.kt` | Month vs month (NEW) |
-| Category Insights | `domain/analytics/CategoryInsightEngine.kt` | Category analysis (NEW) |
-| Merchant Insights | `domain/analytics/MerchantInsightEngine.kt` | Merchant patterns (NEW) |
-| Day of Week | `domain/analytics/DayOfWeekAnalyzer.kt` | Day patterns (NEW) |
+| Spending Pace | `domain/analytics/SpendingPaceCalculator.kt` | Pace calculation |
+| Anomaly Detection | `domain/analytics/AnomalyDetector.kt` | Unusual transactions |
+| Month Comparison | `domain/analytics/MonthlyComparisonCalculator.kt` | Month vs month |
+| Category Insights | `domain/analytics/CategoryInsightEngine.kt` | Category analysis |
+| Merchant Insights | `domain/analytics/MerchantInsightEngine.kt` | Merchant patterns |
+| Day of Week | `domain/analytics/DayOfWeekAnalyzer.kt` | Day patterns |
+
+### New Categorization Components (Feb 2026)
+| Component | File | Purpose |
+|-----------|------|---------|
+| Greeklish Normalizer | `GreeklishNormalizer.kt` | Greek to Latin with diphthongs (μπ→b, ου→ou) |
+| Merchant Canonicalizer | `MerchantCanonicalizer.kt` | Strip corporate suffixes (IKE, EPE, ΑΦΟΙ) |
+| Semantic Keyword Matcher | `SemanticKeywordMatcher.kt` | Word-boundary regex matching |
+| Contextual Inference | `ContextualInferenceEngine.kt` | Amount/time-based category inference |
+| Category Keywords | `CategoryKeywords.kt` | Pre-defined keyword mappings |
 
 ### Parsers (Notification Processing)
 | Parser | File | Handles |
@@ -354,7 +363,7 @@ di/
 
 ## Database Schema
 
-### Version: 23
+### Version: 27 (Updated Feb 2026)
 
 ### Key Entities
 ```
@@ -399,19 +408,30 @@ raw_notifications
 pending_reviews
 ├── id (PK)
 ├── rawNotificationId (FK)
+├── scannedReceiptId (FK)
 ├── suggestedAmount
+├── suggestedCurrency
 ├── suggestedMerchant
+├── suggestedType (PURCHASE, TRANSFER, etc.)
 ├── suggestedCategoryId (FK)
+├── suggestedDate
 ├── confidence
-└── status (PENDING, APPROVED, REJECTED)
+├── matchType (EXACT, CANONICAL, KEYWORD, CONTEXT, ML) (NEW v27)
+├── explanation (NEW v27)
+├── packageName
+├── notificationTitle
+├── notificationText
+├── status (PENDING, APPROVED, REJECTED)
+├── suggestedDirection (INCOMING, OUTGOING) (NEW v24)
+├── suggestedAccountName (NEW v24)
+└── createdAt
 
-merchant_canonicals
-├── id (PK)
-├── normalizedName
-├── searchKey
+merchant_categories (NEW v26)
+├── merchantPattern (PK)
 ├── categoryId (FK)
-├── totalOccurrences
-└── totalSpent
+├── confidence
+├── timesUsed
+└── normalizedCanonicalName (NEW v26)
 ```
 
 ### Key Indices
@@ -463,13 +483,26 @@ index_raw_notifications_packageName_timestamp_title_text UNIQUE
 | Input validation | Added max 200 char limit to MerchantNormalizer |
 | Flow error handling | Added catch + emit empty in FinancialWeatherRepository |
 | Category learning race | Added Mutex to updateExpenseCategory |
+| Statement vs Notification duplicates | Added CrossSourceDeduplication check in ReceiptRepository |
+| PendingReview duplicates | Added duplicate detection against pending reviews before creating new ones |
+| Greek pattern matching | Added accent-insensitive Greek patterns to TransferDirectionDetector |
+| Keyword false positives | Added regex word boundaries to SemanticKeywordMatcher |
+| Grocery amount inference | Added €20-€150 bracket to ContextualInferenceEngine |
 
-### Transfer Direction Detection Feature (NEW)
+### Transfer Direction Detection Feature (Updated Feb 2026)
 | Component | File | Purpose |
 |-----------|------|---------|
-| Detector | `domain/parser/TransferDirectionDetector.kt` | 50+ patterns for EN/GR |
+| Detector | `domain/parser/TransferDirectionDetector.kt` | 60+ patterns for EN/GR, Greek accent handling |
 | Analytics | `domain/analytics/TransferDirectionAnalytics.kt` | Detection rate tracking |
 | UI Badge | `ui/components/TransferDirectionBadge.kt` | Direction visual indicator |
+| Deduplication | `domain/intelligence/CrossSourceDeduplication.kt` | Cross-source duplicate detection (ENHANCED) |
+
+### Cross-Source Deduplication (Feb 2026)
+| Component | File | Purpose |
+|-----------|------|---------|
+| Deduplication | `CrossSourceDeduplication.kt` | Detects duplicates across notifications, statements, pending reviews |
+| DAO | `PendingReviewDao.kt` | Date range queries for duplicate checking |
+| Repository | `ReceiptRepository.kt` | Skips duplicate pending reviews when processing statements |
 
 ### Transaction Types Supported
 - **PURCHASE** - Regular purchases

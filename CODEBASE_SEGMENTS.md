@@ -129,19 +129,25 @@ When analyzing a specific feature, check files in this order:
 |------|---------|
 | `domain/parser/AppParserRegistry.kt` | Routes notifications to appropriate parser |
 | `domain/parser/GenericTransactionParser.kt` | Fallback parser for generic notifications |
-| `domain/parser/TransferDirectionDetector.kt` | **NEW** - Transfer direction detection (50+ patterns) |
+| `domain/parser/TransferDirectionDetector.kt` | Transfer direction detection (60+ patterns, ENHANCED) |
 | `domain/parser/parsers/GreekBankParser.kt` | Greek bank notifications (NBG, Alpha, Eurobank, Piraeus) |
 | `domain/parser/parsers/RevolutParser.kt` | Revolut app notifications |
 | `domain/parser/parsers/GoogleWalletParser.kt` | Google Wallet notifications |
 | `domain/parser/parsers/SmsParser.kt` | SMS-based bank notifications |
 | `domain/intelligence/ConfidenceRouter.kt` | Routes transactions based on confidence scoring |
 | `domain/intelligence/TransactionClassifier.kt` | ML classifier for transaction detection |
+| `domain/intelligence/CrossSourceDeduplication.kt` | Duplicate detection (ENHANCED Feb 2026) |
 | `domain/service/NotificationService.kt` | Notification sending interface |
 
-### Analytics (NEW - Transfer Direction)
+### Analytics (Transfer Direction)
 | File | Purpose |
 |------|---------|
 | `domain/analytics/TransferDirectionAnalytics.kt` | Transfer detection analytics |
+
+### Cross-Source Deduplication (NEW Feb 2026)
+| File | Purpose |
+|------|---------|
+| `domain/intelligence/CrossSourceDeduplication.kt` | Detects duplicates across notifications, statements, pending reviews |
 
 ### Data Layer
 | File | Purpose |
@@ -204,20 +210,27 @@ When analyzing a specific feature, check files in this order:
 
 ---
 
-## SEGMENT 5: MERCHANT CATEGORIZATION
+## SEGMENT 5: MERCHANT CATEGORIZATION (ENHANCED Feb 2026)
 
-**Description:** Automatically categorizes transactions based on merchant names using rules and ML.
+**Description:** Automatically categorizes transactions based on merchant names using rules and ML. Now includes 5-layer categorization pipeline.
 
 ### UI Layer
 | File | Purpose |
 |------|---------|
 | `ui/screens/categories/CategoryScreen.kt` | Category management UI |
 | `ui/screens/categories/CategoryViewModel.kt` | Category operations |
+| `ui/screens/debug/CategorizationDebugScreen.kt` | Debug categorization pipeline (NEW) |
+| `ui/screens/debug/CategorizationDebugViewModel.kt` | Debug VM (NEW) |
 
-### Domain Layer
+### Domain Layer (Enhanced)
 | File | Purpose |
 |------|---------|
-| `domain/categorization/CategorizationEngine.kt` | **MAIN ENGINE** - Merchant to category mapping |
+| `domain/categorization/CategorizationEngine.kt` | **MAIN ENGINE** - 5-layer categorization pipeline |
+| `domain/categorization/GreeklishNormalizer.kt` | Greek to Latin with diphthongs (NEW) |
+| `domain/categorization/MerchantCanonicalizer.kt` | Strip corporate suffixes (NEW) |
+| `domain/categorization/SemanticKeywordMatcher.kt` | Word-boundary keyword matching (NEW) |
+| `domain/categorization/ContextualInferenceEngine.kt` | Amount/time-based inference (NEW) |
+| `domain/categorization/CategoryKeywords.kt` | Pre-defined keyword mappings (NEW) |
 | `domain/intelligence/ml/MerchantNormalizer.kt` | Normalizes merchant names using BK-tree |
 | `domain/intelligence/ml/HybridExpenseClassifier.kt` | ML-based category prediction |
 | `domain/intelligence/ml/ExpenseCategoryClassifier.kt` | Naive Bayes category classifier |
@@ -421,7 +434,7 @@ When analyzing a specific feature, check files in this order:
 
 **Description:** Debug screens for troubleshooting and testing.
 
-### UI Layer
+### UI Layer (Updated Feb 2026)
 | File | Purpose |
 |------|---------|
 | `ui/screens/debug/DebugScreen.kt` | Main debug screen |
@@ -429,6 +442,8 @@ When analyzing a specific feature, check files in this order:
 | `ui/screens/debug/DebugViewerScreen.kt` | Debug data viewer |
 | `ui/screens/debug/DebugDataStorage.kt` | Debug data storage/loading |
 | `ui/screens/debug/DebugIssueDetector.kt` | Issue detection logic |
+| `ui/screens/debug/CategorizationDebugScreen.kt` | Categorization pipeline debug (NEW) |
+| `ui/screens/debug/CategorizationDebugViewModel.kt` | Categorization debug VM (NEW) |
 
 ### Domain Layer
 | File | Purpose |
