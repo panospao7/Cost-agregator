@@ -140,11 +140,15 @@ class ExpenseRepository @Inject constructor(
             ""
         }
 
-        // Build the full SQL query with LEFT JOIN for categories
+        // Build the full SQL query - let Room handle the @Relation for category
+        // by not selecting category columns here (use simple SELECT from expenses)
         val sql = """
-            SELECT e.*, c.id AS category_id, c.name AS category_name, c.icon AS category_icon, c.color AS category_color, c.type AS category_type
+            SELECT e.id, e.amount, e.currency, e.merchant, e.transactionType, e.date, 
+                   e.rawNotificationId, e.categoryId, e.createdAt, e.paymentMethod, 
+                   e.isManualEntry, e.notes, e.dedupeKey, e.transferDirection, 
+                   e.transferAccountName, e.isNotMine, e.ownerName, 
+                   e.isSharedExpense, e.sharedWithName, e.mySharePercentage, e.myShareAmount
             FROM expenses e
-            LEFT JOIN categories c ON e.categoryId = c.id
             $whereClause
             ORDER BY e.${sortOrder.sql}
             LIMIT ? OFFSET ?
