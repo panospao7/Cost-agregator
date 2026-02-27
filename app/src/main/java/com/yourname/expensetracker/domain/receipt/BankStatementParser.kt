@@ -291,13 +291,25 @@ class BankStatementParser @Inject constructor(
             return null
         }
         
-        // 2. Look for amount patterns (DUP-005)
+        // Debug logging
+        Timber.d("BankStatementParser: Processing row: $cleanRow")
+        
+        // 2. Look for amount patterns
         val amountMatcher = com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX.matcher(cleanRow)
         
-        if (!amountMatcher.find()) return null
+        if (!amountMatcher.find()) {
+            Timber.d("BankStatementParser: No amount found in row: $cleanRow")
+            return null
+        }
         
         // Fix (BUG-009): Robust European & US decimal parsing
-        val rawAmount = amountMatcher.group(2)?.replace(" ", "") ?: return null
+        val rawAmount = amountMatcher.group(2)?.replace(" ", "") ?: run {
+            Timber.d("BankStatementParser: No amount group found")
+            return null
+        }
+        
+        Timber.d("BankStatementParser: Raw amount: $rawAmount")
+        
         val lastSep = rawAmount.findLastAnyOf(listOf(".", ","))
         
         val amountStr = if (lastSep != null) {
@@ -340,10 +352,14 @@ class BankStatementParser @Inject constructor(
         // Find all dates in the row
         val allDates = extractAllDates(cleanRow)
         
+        Timber.d("BankStatementParser: Dates found - first: ${allDates.firstDate}, tx: ${allDates.transactionDate}, value: ${allDates.valueDate}")
+        
         // Use transaction date if found, otherwise fall back to any date
         val dateValue = allDates.transactionDate 
             ?: allDates.valueDate 
             ?: allDates.firstDate
+
+        Timber.d("BankStatementParser: Selected date: $dateValue")
 
         // 5. Extract merchant - remove all dates from the row
         var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
