@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.domain.model.Result
+import timber.log.Timber
 // ...
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +29,7 @@ class ReviewViewModel @Inject constructor(
     private val reviewQueueRepository: ReviewQueueRepository,
     private val categoryRepository: CategoryRepository,
     private val receiptRepository: com.yourname.expensetracker.data.repository.ReceiptRepository,
+    private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val debugDataStorage: com.yourname.expensetracker.ui.screens.debug.DebugDataStorage
 ) : ViewModel() {
     
@@ -91,7 +93,8 @@ class ReviewViewModel @Inject constructor(
         finalAmount: Double?,
         finalMerchant: String?,
         finalCategoryId: Long?,
-        finalType: TransactionType?
+        finalType: TransactionType?,
+        applyToAll: Boolean = false
     ) {
         viewModelScope.launch {
             val result = reviewQueueRepository.approveReview(
@@ -102,6 +105,19 @@ class ReviewViewModel @Inject constructor(
                 finalType = finalType
             )
             handleResult(result, "Failed to approve edits")
+
+            if (applyToAll && (finalCategoryId != null || finalMerchant != null)) {
+                try {
+                    val review = reviewQueueRepository.getReviewById(reviewId)
+                    val merchantName = finalMerchant ?: review?.suggestedMerchant
+                    val categoryId = finalCategoryId
+                    if (merchantName != null && categoryId != null) {
+                        expenseRepository.updateExpenseCategoryBulk(merchantName, categoryId)
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to apply bulk category update")
+                }
+            }
         }
     }
 

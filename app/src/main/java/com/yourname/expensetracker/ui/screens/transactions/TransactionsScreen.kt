@@ -454,9 +454,10 @@ fun TransactionsScreen(
             CategoryPickerDialog(
                 categories = categories,
                 currentCategoryId = expenseToCategorize?.categoryId,
+                currentMerchant = expenseToCategorize?.merchant,
                 onDismiss = { expenseToCategorize = null },
-                onCategorySelected = { categoryId ->
-                    expenseToCategorize?.let { viewModel.updateCategory(it, categoryId) }
+                onCategorySelected = { categoryId, applyToAll ->
+                    expenseToCategorize?.let { viewModel.updateCategory(it, categoryId, applyToAll) }
                     expenseToCategorize = null
                 }
             )
@@ -1008,10 +1009,12 @@ fun RecurrencePickerDialog(
 fun CategoryPickerDialog(
     categories: List<Category>,
     currentCategoryId: Long?,
+    currentMerchant: String?,
     onDismiss: () -> Unit,
-    onCategorySelected: (Long) -> Unit
+    onCategorySelected: (Long, Boolean) -> Unit
 ) {
     var searchText by remember { mutableStateOf("") }
+    var applyToAll by remember { mutableStateOf(false) }
     
     val filteredCategories = remember(categories, searchText) {
         if (searchText.isBlank()) {
@@ -1047,7 +1050,7 @@ fun CategoryPickerDialog(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 400.dp),
+                        .heightIn(max = 300.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     items(filteredCategories) { category ->
@@ -1056,7 +1059,7 @@ fun CategoryPickerDialog(
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onCategorySelected(category.id) },
+                                .clickable { onCategorySelected(category.id, applyToAll) },
                             shape = RoundedCornerShape(12.dp),
                             color = if (isSelected) {
                                 SemanticColors.PrimaryIndigo.copy(alpha = 0.15f)
@@ -1090,6 +1093,26 @@ fun CategoryPickerDialog(
                                 }
                             }
                         }
+                    }
+                }
+
+                if (currentMerchant != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { applyToAll = !applyToAll }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = applyToAll,
+                            onCheckedChange = { applyToAll = it }
+                        )
+                        Text(
+                            text = "Apply to all past transactions for $currentMerchant",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
                     }
                 }
             }

@@ -87,6 +87,31 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
+    suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) {
+        categoryUpdateMutex.withLock {
+            expenseDao.updateCategoryForMerchant(merchant, newCategoryId)
+            merchantCategoryRepository.learnPattern(merchant, newCategoryId)
+
+            // Record as a bulk correction for learning
+            val correction = UserCorrection(
+                packageName = "bulk_edit",
+                originalMerchant = merchant,
+                correctedMerchant = null,
+                originalAmount = 0.0,
+                correctedAmount = null,
+                originalCategoryId = null,
+                correctedCategoryId = newCategoryId,
+                originalType = null,
+                correctedType = null,
+                wasRejected = false,
+                wasApproved = true,
+                notificationTitle = "Bulk category update",
+                notificationText = "Applied to all transactions for $merchant"
+            )
+            userCorrectionDao.insert(correction)
+        }
+    }
+
     suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String) {
         if (expense.merchant == newMerchant) return
         

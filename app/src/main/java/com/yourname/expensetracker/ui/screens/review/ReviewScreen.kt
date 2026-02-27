@@ -322,13 +322,14 @@ fun ReviewScreen(
                 review = review,
                 categories = categories,
                 onDismiss = { editingReview = null },
-                onSave = { amount, merchant, categoryId, type ->
+                onSave = { amount, merchant, categoryId, type, applyToAll ->
                     viewModel.approveReviewWithEdits(
                         reviewId = review.id,
                         finalAmount = amount,
                         finalMerchant = merchant,
                         finalCategoryId = categoryId,
-                        finalType = type
+                        finalType = type,
+                        applyToAll = applyToAll
                     )
                     editingReview = null
                 }
@@ -670,7 +671,7 @@ fun EditReviewDialog(
     review: PendingReview,
     categories: List<Category>,
     onDismiss: () -> Unit,
-    onSave: (Double?, String?, Long?, TransactionType?) -> Unit
+    onSave: (Double?, String?, Long?, TransactionType?, Boolean) -> Unit
 ) {
     var amount by remember { mutableStateOf(String.format("%.2f", review.suggestedAmount)) }
     var merchant by remember { mutableStateOf(review.suggestedMerchant) }
@@ -681,6 +682,7 @@ fun EditReviewDialog(
             catch (e: Exception) { TransactionType.PURCHASE }
         )
     }
+    var applyToAll by remember { mutableStateOf(false) }
     var typeExpanded by remember { mutableStateOf(false) }
     val haptic = rememberHapticFeedback()
 
@@ -801,6 +803,24 @@ fun EditReviewDialog(
                         }
                     }
                 }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { applyToAll = !applyToAll }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = applyToAll,
+                        onCheckedChange = { applyToAll = it }
+                    )
+                    Text(
+                        text = "Apply to all past transactions for $merchant",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
             }
         },
         confirmButton = {
@@ -815,7 +835,7 @@ fun EditReviewDialog(
                         try { TransactionType.valueOf(review.suggestedType) != it }
                         catch (e: Exception) { true }
                     }
-                    onSave(editedAmount, editedMerchant, editedCategory, editedType)
+                    onSave(editedAmount, editedMerchant, editedCategory, editedType, applyToAll)
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {

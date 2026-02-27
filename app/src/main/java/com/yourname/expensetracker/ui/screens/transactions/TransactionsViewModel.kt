@@ -291,12 +291,17 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
-    fun updateCategory(expense: Expense, categoryId: Long) {
+    fun updateCategory(expense: Expense, categoryId: Long, applyToAll: Boolean = false) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                expenseRepository.updateExpenseCategory(expense, categoryId)
-                _successMessage.emit("Category updated")
+                if (applyToAll) {
+                    expenseRepository.updateExpenseCategoryBulk(expense.merchant, categoryId)
+                    _successMessage.emit("Category updated for all ${expense.merchant} transactions")
+                } else {
+                    expenseRepository.updateExpenseCategory(expense, categoryId)
+                    _successMessage.emit("Category updated")
+                }
             } catch (e: Exception) {
                 _error.emit("Failed to update category: ${e.message}")
             } finally {

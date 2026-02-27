@@ -41,6 +41,9 @@ class ReviewQueueRepository @Inject constructor(
     fun getPendingReviewCount(): Flow<Int> =
         pendingReviewDao.getPendingCountFlow()
 
+    suspend fun getReviewById(reviewId: Long): PendingReview? =
+        pendingReviewDao.getById(reviewId)
+
     @Transaction
     suspend fun approveReview(
         reviewId: Long,
