@@ -14,11 +14,23 @@ import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import androidx.sqlite.db.SimpleSQLiteQuery
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
+
+enum class SortOrder(val sql: String, val displayName: String) {
+    DATE_DESC("date DESC", "Newest First"),
+    DATE_ASC("date ASC", "Oldest First"),
+    AMOUNT_DESC("amount DESC", "Amount High to Low"),
+    AMOUNT_ASC("amount ASC", "Amount Low to High")
+}
+
+enum class OwnershipFilter {
+    ALL, MINE, NOT_MINE, SHARED, TRANSFER
+}
 
 @Singleton
 class ExpenseRepository @Inject constructor(
@@ -56,6 +68,95 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun getExpensesPaged(limit: Int, offset: Int): List<ExpenseWithCategory> =
         expenseDao.getExpensesWithCategoryPaged(limit, offset)
+
+    /**
+     * Dynamic query for filtering, searching, and sorting with pagination.
+     */
+    suspend fun getExpensesPagedDynamic(
+        limit: Int,
+        offset: Int,
+        searchQuery: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null,
+        transactionType: TransactionType? = null,
+        categoryId: Long? = null,
+        ownershipFilter: OwnershipFilter = OwnershipFilter.ALL,
+        sortOrder: SortOrder = SortOrder.DATE_DESC
+    ): List<ExpenseWithCategory> {
+        val args = mutableListOf<Any>()
+        val whereClauses = mutableListOf<String>()
+
+        // Search query (merchant or category name)
+        if (!searchQuery.isNullOrBlank()) {
+            whereClauses.add("(e.merchant LIKE ? OR c.name LIKE ?)")
+            val searchPattern = "%$searchQuery%"
+            args.add(searchPattern)
+            args.add(searchPattern)
+        }
+
+        // Date range
+        if (startDate != null) {
+            whereClauses.add("e.date >= ?")
+            args.add(startDate)
+        }
+        if (endDate != null) {
+            whereClauses.add("e.date <= ?")
+            args.add(endDate)
+        }
+
+        // Transaction type
+        if (transactionType != null) {
+            whereClauses.add("e.transactionType = ?")
+            args.add(transactionType.name)
+        }
+
+        // Category filter
+        if (categoryId != null) {
+            whereClauses.add("e.categoryId = ?")
+            args.add(categoryId)
+        }
+
+        // Ownership filter
+        when (ownershipFilter) {
+            OwnershipFilter.MINE -> {
+                whereClauses.add("e.isNotMine = 0")
+            }
+            OwnershipFilter.NOT_MINE -> {
+                whereClauses.add("e.isNotMine = 1")
+            }
+            OwnershipFilter.SHARED -> {
+                whereClauses.add("e.isSharedExpense = 1")
+            }
+            OwnershipFilter.TRANSFER -> {
+                whereClauses.add("e.transactionType = 'TRANSFER'")
+            }
+            OwnershipFilter.ALL -> { /* No filter */ }
+        }
+
+        // Build WHERE clause
+        val whereClause = if (whereClauses.isNotEmpty()) {
+            "WHERE ${whereClauses.joinToString(" AND ")}"
+        } else {
+            ""
+        }
+
+        // Build the full SQL query with LEFT JOIN for categories
+        val sql = """
+            SELECT e.*, c.id AS category_id, c.name AS category_name, c.icon AS category_icon, c.color AS category_color, c.type AS category_type
+            FROM expenses e
+            LEFT JOIN categories c ON e.categoryId = c.id
+            $whereClause
+            ORDER BY e.${sortOrder.sql}
+            LIMIT ? OFFSET ?
+        """.trimIndent()
+
+        args.add(limit)
+        args.add(offset)
+
+        val argArray = args.toTypedArray()
+        val query = SimpleSQLiteQuery(sql, argArray)
+        return expenseDao.getExpensesDynamic(query)
+    }
 
     suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int =
         expenseDao.getCountForPeriod(startMs, endMs)

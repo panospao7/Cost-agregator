@@ -5,9 +5,11 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.RawQuery
+import androidx.room.Transaction
+import androidx.sqlite.db.SupportSQLiteQuery
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
-import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -34,6 +36,14 @@ interface ExpenseDao {
     @Transaction
     @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit OFFSET :offset")
     suspend fun getExpensesWithCategoryPaged(limit: Int, offset: Int): List<ExpenseWithCategory>
+
+    /**
+     * Dynamic query for filtering, searching, and sorting with pagination.
+     * Supports: search query, date range, transaction type, category, ownership, and sorting.
+     */
+    @Transaction
+    @RawQuery
+    suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCategory>
 
     @Transaction
     @Query("""

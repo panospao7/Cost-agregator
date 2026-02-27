@@ -8,6 +8,8 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.data.repository.OwnershipFilter
+import com.yourname.expensetracker.data.repository.SortOrder
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -74,6 +76,10 @@ class TransactionsViewModel @Inject constructor(
     // Ownership filter state
     private val _ownershipFilter = MutableStateFlow(OwnershipFilter.ALL)
     val ownershipFilter: StateFlow<OwnershipFilter> = _ownershipFilter.asStateFlow()
+
+    // Sort order state
+    private val _sortOrder = MutableStateFlow(SortOrder.DATE_DESC)
+    val sortOrder: StateFlow<SortOrder> = _sortOrder.asStateFlow()
 
     // Pagination state for ALL tab
     private val _currentPage = MutableStateFlow(0)
@@ -230,6 +236,29 @@ class TransactionsViewModel @Inject constructor(
 
     fun search(query: String) {
         _searchQuery.value = query.trim()
+        if (_selectedTab.value == TransactionTab.ALL) {
+            _currentPage.value = 0
+            _pagedExpenses.value = emptyList()
+            loadInitialAll()
+        }
+    }
+
+    fun setSortOrder(order: SortOrder) {
+        _sortOrder.value = order
+        if (_selectedTab.value == TransactionTab.ALL) {
+            _currentPage.value = 0
+            _pagedExpenses.value = emptyList()
+            loadInitialAll()
+        }
+    }
+
+    fun setOwnershipFilter(filter: OwnershipFilter) {
+        _ownershipFilter.value = filter
+        if (_selectedTab.value == TransactionTab.ALL) {
+            _currentPage.value = 0
+            _pagedExpenses.value = emptyList()
+            loadInitialAll()
+        }
     }
 
     fun refresh() {
@@ -257,7 +286,13 @@ class TransactionsViewModel @Inject constructor(
                 val offset = nextPage * PAGE_SIZE
                 
                 val nextItems = withContext(Dispatchers.IO) {
-                    expenseRepository.getExpensesPaged(PAGE_SIZE, offset)
+                    expenseRepository.getExpensesPagedDynamic(
+                        limit = PAGE_SIZE,
+                        offset = offset,
+                        searchQuery = _searchQuery.value.takeIf { it.isNotBlank() },
+                        ownershipFilter = mapOwnershipFilter(_ownershipFilter.value),
+                        sortOrder = _sortOrder.value
+                    )
                 }
                 
                 if (nextItems.isNotEmpty()) {
@@ -425,7 +460,13 @@ class TransactionsViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 val initial = withContext(Dispatchers.IO) {
-                    expenseRepository.getExpensesPaged(PAGE_SIZE, 0)
+                    expenseRepository.getExpensesPagedDynamic(
+                        limit = PAGE_SIZE,
+                        offset = 0,
+                        searchQuery = _searchQuery.value.takeIf { it.isNotBlank() },
+                        ownershipFilter = mapOwnershipFilter(_ownershipFilter.value),
+                        sortOrder = _sortOrder.value
+                    )
                 }
                 _pagedExpenses.value = initial
                 _currentPage.value = 0
@@ -434,6 +475,16 @@ class TransactionsViewModel @Inject constructor(
             } finally {
                 _isLoading.value = false
             }
+        }
+    }
+
+    private fun mapOwnershipFilter(filter: OwnershipFilter): com.yourname.expensetracker.data.repository.OwnershipFilter {
+        return when (filter) {
+            OwnershipFilter.ALL -> com.yourname.expensetracker.data.repository.OwnershipFilter.ALL
+            OwnershipFilter.MINE -> com.yourname.expensetracker.data.repository.OwnershipFilter.MINE
+            OwnershipFilter.NOT_MINE -> com.yourname.expensetracker.data.repository.OwnershipFilter.NOT_MINE
+            OwnershipFilter.SHARED -> com.yourname.expensetracker.data.repository.OwnershipFilter.SHARED
+            OwnershipFilter.TRANSFER -> com.yourname.expensetracker.data.repository.OwnershipFilter.TRANSFER
         }
     }
 
@@ -486,13 +537,6 @@ class TransactionsViewModel @Inject constructor(
             OwnershipFilter.SHARED -> expenses.filter { it.expense.isSharedExpense }
             OwnershipFilter.TRANSFER -> expenses.filter { it.expense.transactionType == TransactionType.TRANSFER }
         }
-    }
-
-    /**
-     * Set the ownership filter.
-     */
-    fun setOwnershipFilter(filter: OwnershipFilter) {
-        _ownershipFilter.value = filter
     }
 
     /**

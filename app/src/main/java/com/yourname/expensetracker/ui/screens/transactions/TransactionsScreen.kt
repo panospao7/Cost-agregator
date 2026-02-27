@@ -81,6 +81,7 @@ fun TransactionsScreen(
     val isLoadingMore by viewModel.isLoadingMoreState.collectAsState()
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
     val ownershipFilter by viewModel.ownershipFilter.collectAsState()
+    val sortOrder by viewModel.sortOrder.collectAsState()
     
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -102,6 +103,7 @@ fun TransactionsScreen(
     var expenseToEditOwnership by remember { mutableStateOf<Expense?>(null) }
     var expenseToDebug by remember { mutableStateOf<Expense?>(null) }
     var showSearch by remember { mutableStateOf(false) }
+    var showSortMenu by remember { mutableStateOf(false) }
     
     // Pull-to-refresh state
     val pullToRefreshState = rememberPullToRefreshState()
@@ -204,6 +206,38 @@ fun TransactionsScreen(
                     actions = {
                         IconButton(onClick = onNavigateToAnalytics) {
                             Icon(Icons.Rounded.BarChart, contentDescription = "Advanced Analytics")
+                        }
+                        Box {
+                            IconButton(onClick = { showSortMenu = true }) {
+                                Icon(Icons.Rounded.Sort, contentDescription = "Sort")
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false }
+                            ) {
+                                com.yourname.expensetracker.data.repository.SortOrder.values().forEach { order ->
+                                    DropdownMenuItem(
+                                        text = { 
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(order.displayName)
+                                                if (sortOrder == order) {
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Icon(
+                                                        Icons.Rounded.Check, 
+                                                        contentDescription = "Selected",
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            viewModel.setSortOrder(order)
+                                            showSortMenu = false
+                                        }
+                                    )
+                                }
+                            }
                         }
                         if (!showSearch) {
                             IconButton(onClick = { showSearch = true }) {
