@@ -2,63 +2,195 @@ package com.yourname.expensetracker.domain.categorization
 
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
+
+enum class MatchType {
+    EXACT,           // Direct dictionary match (98%)
+    CANONICAL,       // After stripping suffixes (90-95%)
+    GREEKLISH,       // Greek/Greeklish match (90%)
+    KEYWORD,         // Semantic keyword match (60-80%)
+    CONTEXT,         // Inferred from context (45-70%)
+    ML_PREDICTION,   // ML model prediction (40-70%)
+    UNKNOWN          // No match found (0%)
+}
+
+data class CategorizationResult(
+    val categoryId: Long?,
+    val categoryName: String?,
+    val confidence: Double,
+    val matchType: MatchType,
+    val explanation: String = ""
+)
 
 @Singleton
 class CategorizationEngine @Inject constructor(
     private val merchantCategoryDao: MerchantCategoryDao,
-    private val merchantNormalizer: MerchantNormalizer
+    private val merchantNormalizer: MerchantNormalizer,
+    private val categoryRepositoryProvider: javax.inject.Provider<CategoryRepository>
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
     private var cachedPatternsSet: Set<String>? = null
+    private var cachedCategoryMap: Map<Long, String>? = null
+    private var cachedCategoryNameToId: Map<String, Long>? = null
     private var lastCacheTime = 0L
-    private val CACHE_EXPIRY_MS = 300_000 // 5 minutes
+    private val CACHE_EXPIRY_MS = 300_000
+    
+    private val canonicalizer = MerchantCanonicalizer()
+    private val greeklishNormalizer = GreeklishNormalizer()
+    private val semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer)
+    private val contextEngine = ContextualInferenceEngine()
 
     companion object {
         private val STOP_WORDS = setOf("the", "and", "for", "inc", "ltd", "com")
+        
+        const val CONFIDENCE_EXACT = 0.98
+        const val CONFIDENCE_CANONICAL = 0.93
+        const val CONFIDENCE_GREEKLISH = 0.90
+        const val CONFIDENCE_KEYWORD_MIN = 0.50
+        const val CONFIDENCE_CONTEXT_MIN = 0.45
+        const val CONFIDENCE_ML_MIN = 0.40
     }
 
-    suspend fun categorize(merchant: String): Long? {
+    suspend fun categorize(merchant: String): CategorizationResult {
+        return categorizeWithContext(merchant, 0.0, System.currentTimeMillis())
+    }
+    
+    suspend fun categorizeWithContext(
+        merchant: String,
+        amount: Double = 0.0,
+        timestamp: Long = System.currentTimeMillis()
+    ): CategorizationResult {
+        
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = false)
         val normalized = lookupResult.canonical.normalizedName.lowercase()
-
+        
         val sortedMappings = getCache()
         val patternsSet = getPatternsSet()
-
-        // 1. Exact match - check against normalized patterns set
-        if (normalized in patternsSet) {
-            return sortedMappings.find { it.merchantPattern.equals(normalized, ignoreCase = true) }?.categoryId
-        }
-
-        // 2. Substring match - padded search
-        val paddedNormalized = " $normalized "
+        val categoryMap = getCategoryMap()
         
-        for (mapping in sortedMappings) {
-            if (mapping.merchantPattern.length >= 5) {
-                val paddedPattern = " ${mapping.merchantPattern} "
-                if (paddedNormalized.contains(paddedPattern)) {
-                    return mapping.categoryId
+        // LAYER 1: Exact match
+        if (normalized in patternsSet) {
+            val match = sortedMappings.find { it.merchantPattern.equals(normalized, ignoreCase = true) }
+            if (match != null) {
+                return CategorizationResult(
+                    categoryId = match.categoryId,
+                    categoryName = categoryMap[match.categoryId],
+                    confidence = CONFIDENCE_EXACT,
+                    matchType = MatchType.EXACT,
+                    explanation = "Exact match: $normalized"
+                )
+            }
+        }
+        
+        // LAYER 2: Canonical + Fuzzy
+        val canonicalResult = canonicalizer.canonicalize(normalized)
+        if (canonicalResult.canonicalName != normalized) {
+            if (canonicalResult.canonicalName in patternsSet) {
+                val match = sortedMappings.find { 
+                    it.merchantPattern.equals(canonicalResult.canonicalName, ignoreCase = true) 
+                }
+                if (match != null) {
+                    val confidence = CONFIDENCE_CANONICAL - canonicalResult.confidencePenalty
+                    return CategorizationResult(
+                        categoryId = match.categoryId,
+                        categoryName = categoryMap[match.categoryId],
+                        confidence = confidence,
+                        matchType = MatchType.CANONICAL,
+                        explanation = "Canonical match: $normalized -> ${canonicalResult.canonicalName}"
+                    )
                 }
             }
         }
-
-        // 3. Word-level match - check each word
-        val words = normalized.split(" ")
-            .filter { it.length >= 2 }
-            .filter { it !in STOP_WORDS }
-            
-        for (word in words) {
-            if (word in patternsSet) {
-                return sortedMappings.find { it.merchantPattern.equals(word, ignoreCase = true) }?.categoryId
+        
+        // LAYER 2b: Greeklish variations
+        val variations = greeklishNormalizer.getVariations(normalized)
+        for (variant in variations) {
+            if (variant != normalized && variant in patternsSet) {
+                val match = sortedMappings.find { 
+                    it.merchantPattern.equals(variant, ignoreCase = true) 
+                }
+                if (match != null) {
+                    return CategorizationResult(
+                        categoryId = match.categoryId,
+                        categoryName = categoryMap[match.categoryId],
+                        confidence = CONFIDENCE_GREEKLISH,
+                        matchType = MatchType.GREEKLISH,
+                        explanation = "Greeklish match: $normalized -> $variant"
+                    )
+                }
             }
         }
-
-        return null
+        
+        // LAYER 2c: Fuzzy match against normalized canonical names
+        val fuzzyMatch = findFuzzyMatch(normalized, sortedMappings)
+        if (fuzzyMatch != null) {
+            return CategorizationResult(
+                categoryId = fuzzyMatch.categoryId,
+                categoryName = categoryMap[fuzzyMatch.categoryId],
+                confidence = CONFIDENCE_CANONICAL - 0.05,
+                matchType = MatchType.CANONICAL,
+                explanation = "Fuzzy match: $normalized -> ${fuzzyMatch.merchantPattern}"
+            )
+        }
+        
+        // LAYER 3: Semantic keyword matching
+        val semanticMatch = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+        if (semanticMatch != null) {
+            val categoryId = getCategoryIdByName(semanticMatch.categoryName)
+            if (categoryId != null) {
+                return CategorizationResult(
+                    categoryId = categoryId,
+                    categoryName = semanticMatch.categoryName,
+                    confidence = semanticMatch.confidence,
+                    matchType = MatchType.KEYWORD,
+                    explanation = "Keyword match: '${semanticMatch.matchedKeyword}'"
+                )
+            }
+        }
+        
+        // LAYER 4: Context inference (for surnames)
+        if (contextEngine.isLikelySurname(normalized) && amount > 0) {
+            val contextPrediction = contextEngine.inferFromContext(amount, timestamp)
+            if (contextPrediction != null) {
+                val categoryId = getCategoryIdByName(contextPrediction.categoryName)
+                if (categoryId != null) {
+                    return CategorizationResult(
+                        categoryId = categoryId,
+                        categoryName = contextPrediction.categoryName,
+                        confidence = contextPrediction.confidence,
+                        matchType = MatchType.CONTEXT,
+                        explanation = "Context inference: ${contextPrediction.reason}"
+                    )
+                }
+            }
+        }
+        
+        // LAYER 5: ML Prediction fallback
+        // Note: ML classification is handled by HybridExpenseClassifier separately
+        // This layer could be integrated here if needed for unified pipeline
+        
+        // LAYER 6: Unknown
+        return CategorizationResult(
+            categoryId = null,
+            categoryName = null,
+            confidence = 0.0,
+            matchType = MatchType.UNKNOWN,
+            explanation = "No match found"
+        )
+    }
+    
+    // Legacy method for backward compatibility
+    suspend fun categorizeLegacy(merchant: String): Long? {
+        val result = categorize(merchant)
+        return result.categoryId
     }
 
     suspend fun normalize(merchant: String): String {
@@ -67,7 +199,8 @@ class CategorizationEngine @Inject constructor(
 
     private data class CacheData(
         val mappings: List<MerchantCategory>,
-        val patternsSet: Set<String>
+        val patternsSet: Set<String>,
+        val categoryMap: Map<Long, String>
     )
 
     private suspend fun getCacheData(): CacheData {
@@ -77,9 +210,14 @@ class CategorizationEngine @Inject constructor(
                 val all = merchantCategoryDao.getAll()
                 cachedMappings = all.sortedByDescending { it.merchantPattern.length }
                 cachedPatternsSet = all.map { it.merchantPattern.lowercase() }.toSet()
+                
+                // Build category ID -> name map from CategoryRepository
+                val categories = getCategoryRepository().getAll()
+                cachedCategoryMap = categories.associate { it.id to it.name }
+                cachedCategoryNameToId = categories.associate { it.name to it.id }
                 lastCacheTime = now
             }
-            CacheData(cachedMappings!!, cachedPatternsSet!!)
+            CacheData(cachedMappings!!, cachedPatternsSet!!, cachedCategoryMap!!)
         }
     }
 
@@ -90,19 +228,98 @@ class CategorizationEngine @Inject constructor(
     private suspend fun getPatternsSet(): Set<String> {
         return getCacheData().patternsSet
     }
+    
+    private suspend fun getCategoryMap(): Map<Long, String> {
+        return getCacheData().categoryMap
+    }
+    
+    private suspend fun getCategoryIdByName(categoryName: String): Long? {
+        return getCategoryNameToIdMap()[categoryName]
+    }
+    
+    private fun getCategoryRepository(): CategoryRepository = categoryRepositoryProvider.get()
+    
+    private suspend fun getCategoryNameToIdMap(): Map<String, Long> {
+        return cacheMutex.withLock {
+            val now = System.currentTimeMillis()
+            if (cachedCategoryNameToId == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
+                val categories = getCategoryRepository().getAll()
+                cachedCategoryNameToId = categories.associate { it.name to it.id }
+            }
+            cachedCategoryNameToId!!
+        }
+    }
 
     suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) {
         val normalized = merchantNormalizer.normalize(merchantName, autoCreate = false).canonical.normalizedName
-        val mapping = MerchantCategory(merchantPattern = normalized, categoryId = categoryId)
+        val canonicalResult = canonicalizer.canonicalize(normalized)
+        val normalizedCanonical = greeklishNormalizer.normalize(canonicalResult.canonicalName)
+        
+        val mapping = MerchantCategory(
+            merchantPattern = normalized,
+            categoryId = categoryId,
+            normalizedCanonicalName = normalizedCanonical
+        )
         merchantCategoryDao.insert(mapping)
         invalidateCache()
+        Timber.d("Learned merchant: $normalized -> category $categoryId (canonical: $normalizedCanonical)")
     }
 
     suspend fun invalidateCache() {
         cacheMutex.withLock {
             cachedMappings = null
             cachedPatternsSet = null
+            cachedCategoryMap = null
+            cachedCategoryNameToId = null
             lastCacheTime = 0
         }
+    }
+    
+    // Utility methods for testing
+    fun testCanonicalize(merchant: String): CanonicalResult {
+        return canonicalizer.canonicalize(merchant)
+    }
+    
+    fun testGreeklishNormalize(merchant: String): String {
+        return greeklishNormalizer.normalize(merchant)
+    }
+    
+    fun testSemanticMatch(merchant: String): List<SemanticMatch> {
+        return semanticMatcher.match(merchant)
+    }
+    
+    fun testContextInference(amount: Double, timestamp: Long): ContextPrediction? {
+        return contextEngine.inferFromContext(amount, timestamp)
+    }
+    
+    private suspend fun findFuzzyMatch(
+        normalized: String,
+        mappings: List<MerchantCategory>
+    ): MerchantCategory? {
+        if (normalized.length < 4) return null
+        
+        val threshold = if (normalized.length > 8) 2 else 1
+        
+        val prefix = normalized.take(2)
+        val candidates = mappings.filter { 
+            it.merchantPattern.startsWith(prefix) || 
+            (it.normalizedCanonicalName?.startsWith(prefix) == true)
+        }
+        
+        var bestMatch: MerchantCategory? = null
+        var bestDistance = threshold + 1
+        
+        for (candidate in candidates) {
+            val candidateName = candidate.normalizedCanonicalName ?: candidate.merchantPattern
+            
+            val distance = StringDistanceUtils.levenshteinDistance(normalized, candidateName)
+            
+            if (distance <= threshold && distance < bestDistance) {
+                bestDistance = distance
+                bestMatch = candidate
+            }
+        }
+        
+        return bestMatch
     }
 }

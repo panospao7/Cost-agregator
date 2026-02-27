@@ -11,6 +11,12 @@ interface MerchantCategoryDao {
     @Query("SELECT * FROM merchant_categories WHERE merchantPattern = :merchantPattern")
     suspend fun getCategoryForMerchant(merchantPattern: String): MerchantCategory?
 
+    @Query("SELECT * FROM merchant_categories WHERE normalizedCanonicalName = :normalizedCanonicalName")
+    suspend fun getCategoryByNormalizedCanonical(normalizedCanonicalName: String): MerchantCategory?
+
+    @Query("SELECT * FROM merchant_categories WHERE normalizedCanonicalName LIKE :prefix || '%'")
+    suspend fun getCategoriesByPrefix(prefix: String): List<MerchantCategory>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(merchantCategory: MerchantCategory)
 

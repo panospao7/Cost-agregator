@@ -100,15 +100,15 @@ class HybridExpenseClassifier @Inject constructor(
      * This is the single source of truth for merchant->category mapping.
      */
     private suspend fun classifyWithMerchantDictionary(merchantName: String): ClassificationResult? {
-        val categoryId = categorizationEngine.categorize(merchantName)
+        val result = categorizationEngine.categorize(merchantName)
         
-        if (categoryId != null) {
-            val category = categories.find { it.id == categoryId }
+        if (result.categoryId != null) {
+            val category = categories.find { it.id == result.categoryId }
             if (category != null) {
                 return ClassificationResult(
                     categoryId = category.id,
                     categoryName = category.name,
-                    confidence = 0.98f,
+                    confidence = result.confidence.toFloat(),
                     matchType = MatchType.RULE_MATCH
                 )
             }

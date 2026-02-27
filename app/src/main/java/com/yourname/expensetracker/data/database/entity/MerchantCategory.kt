@@ -15,12 +15,13 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index(value = ["categoryId"])]
+    indices = [Index(value = ["categoryId"]), Index(value = ["normalizedCanonicalName"])]
 )
 data class MerchantCategory(
     @PrimaryKey
-    val merchantPattern: String, // The normalized merchant name (e.g., "SKLAVENITIS")
+    val merchantPattern: String,
     val categoryId: Long,
     val confidence: Float = 1.0f,
-    val timesUsed: Int = 1
+    val timesUsed: Int = 1,
+    val normalizedCanonicalName: String? = null
 )

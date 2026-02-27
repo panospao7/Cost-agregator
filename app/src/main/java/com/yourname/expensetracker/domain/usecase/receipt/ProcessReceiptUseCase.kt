@@ -28,12 +28,12 @@ class ProcessReceiptUseCase @Inject constructor(
                 parsed.merchantName ?: "Unknown"
             ).canonical.normalizedName
             
-            val categoryId = categorizationEngine.categorize(normalizedMerchant)
+            val result = categorizationEngine.categorize(normalizedMerchant)
             
             Result.success(ProcessedReceipt(
                 merchant = normalizedMerchant,
                 amount = parsed.total ?: 0.0,
-                categoryId = categoryId,
+                categoryId = result.categoryId,
                 date = parsed.date,
                 imagePath = ocrResult.savedImagePath
             ))

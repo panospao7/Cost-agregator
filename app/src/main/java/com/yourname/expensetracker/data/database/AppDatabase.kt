@@ -22,7 +22,7 @@ import androidx.room.*
         MerchantCanonical::class,
         MerchantAlias::class
     ],
-        version = 25,
+        version = 27,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -480,6 +480,22 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE pending_reviews ADD COLUMN suggestedDirection TEXT DEFAULT NULL")
                 database.execSQL("ALTER TABLE pending_reviews ADD COLUMN suggestedAccountName TEXT DEFAULT NULL")
+            }
+        }
+
+        // Migration 25 -> 26: Add normalizedCanonicalName to merchant_categories
+        val MIGRATION_25_26 = object : androidx.room.migration.Migration(25, 26) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE merchant_categories ADD COLUMN normalizedCanonicalName TEXT DEFAULT NULL")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_categories_normalizedCanonicalName ON merchant_categories (normalizedCanonicalName)")
+            }
+        }
+
+        // Migration 26 -> 27: Add matchType and explanation to pending_reviews
+        val MIGRATION_26_27 = object : androidx.room.migration.Migration(26, 27) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE pending_reviews ADD COLUMN matchType TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE pending_reviews ADD COLUMN explanation TEXT DEFAULT NULL")
             }
         }
     }

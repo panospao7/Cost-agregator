@@ -77,4 +77,8 @@ class CategoryRepository @Inject constructor(
         val mapping = MerchantCategory(merchantPattern = normalized, categoryId = categoryId)
         merchantCategoryDao.insert(mapping)
     }
+    
+    suspend fun getCategoryByName(name: String): Category? = withContext(Dispatchers.IO) {
+        categoryDao.getAll().find { it.name.equals(name, ignoreCase = true) }
+    }
 }

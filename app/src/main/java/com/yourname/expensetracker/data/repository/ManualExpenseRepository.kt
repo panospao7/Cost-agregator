@@ -110,6 +110,6 @@ class ManualExpenseRepository @Inject constructor(
      * Get category ID for a merchant (for auto-fill in manual entry)
      */
     suspend fun getCategoryForMerchant(merchant: String): Long? {
-        return categorizationEngine.categorize(merchant)
+        return categorizationEngine.categorize(merchant).categoryId
     }
 }

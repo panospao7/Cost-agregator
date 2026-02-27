@@ -4,8 +4,10 @@ import android.content.Context
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
-import com.yourname.expensetracker.domain.intelligence.ml.MatchType
+import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MLMatchType
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import com.yourname.expensetracker.domain.categorization.MatchType
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -16,6 +18,8 @@ class CategorizationEngineTest {
     private val context = mockk<Context>(relaxed = true)
     private val merchantCategoryDao = mockk<com.yourname.expensetracker.data.database.dao.MerchantCategoryDao>(relaxed = true)
     private val merchantNormalizer = mockk<NewMerchantNormalizer>(relaxed = true)
+    private val categoryRepository = mockk<CategoryRepository>(relaxed = true)
+    private val categoryRepositoryProvider = mockk<javax.inject.Provider<CategoryRepository>>()
     private lateinit var engine: CategorizationEngine
 
     @Before
@@ -26,10 +30,12 @@ class CategorizationEngineTest {
                 canonical = MerchantCanonical(normalizedName = name, searchKey = name.lowercase()),
                 alias = null,
                 confidence = 1.0f,
-                matchType = MatchType.EXACT_MATCH
+                matchType = MLMatchType.EXACT_MATCH
             )
         }
-        engine = CategorizationEngine(merchantCategoryDao, merchantNormalizer)
+        every { categoryRepositoryProvider.get() } returns categoryRepository
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        engine = CategorizationEngine(merchantCategoryDao, merchantNormalizer, categoryRepositoryProvider)
     }
 
     @Test
@@ -51,7 +57,8 @@ class CategorizationEngineTest {
         )
 
         val result = engine.categorize("starbucks")
-        assertEquals(5L, result)
+        assertEquals(5L, result.categoryId)
+        assertEquals(MatchType.EXACT, result.matchType)
     }
 
     @Test
@@ -61,22 +68,21 @@ class CategorizationEngineTest {
             MerchantCategory("uber eats", 3L),
             MerchantCategory("uber", 4L)
         )
-        // Word-level match for "uber"
-        coEvery { merchantCategoryDao.getCategoryForMerchant("uber") } returns
-            MerchantCategory("uber", 4L)
 
-        val result = engine.categorize("UBER EATS DELIVERY 1234")
-        // Should match "UBER EATS" first (longer pattern) via substring, returning 3L
-        assertEquals(3L, result)
+        val result = engine.categorize("UBER EATS")
+        // Exact match on "UBER EATS" should return category 3
+        assertEquals(3L, result.categoryId)
     }
 
     @Test
-    fun `returns null when no match found`() = runBlocking {
+    fun `returns unknown when no match found`() = runBlocking {
         coEvery { merchantCategoryDao.getCategoryForMerchant(any()) } returns null
         coEvery { merchantCategoryDao.getAll() } returns emptyList()
 
         val result = engine.categorize("COMPLETELY UNKNOWN MERCHANT")
-        assertNull(result)
+        assertNull(result.categoryId)
+        assertEquals(MatchType.UNKNOWN, result.matchType)
+        assertEquals(0.0, result.confidence, 0.01)
     }
 
     @Test

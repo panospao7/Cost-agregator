@@ -23,13 +23,15 @@ class TransferDirectionDetector @Inject constructor() {
     
     val incomingPatterns = listOf(
         // English - General
-        Pattern.compile("""received\s+(?:from|via)""", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("""credited\s+(?:to|with)""", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("""deposit(?:ed)?\s+(?:received|to)""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""received.*\s+from""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""received.*\s+via""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""credited.*\s+(?:to|with)""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""deposit(?:ed)?.*\s+(?:received|to)""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""money\s+received""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""transfer\s+(?:in|received|inbound)""", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("""salary\s+(?:credited|received|deposited)""", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("""refund\s+(?:received|credited|deposited)""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""salary\s+(?:credited|received|deposited|deposit)""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""refund\s+(?:received|credited|deposited|processed)""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""refunded""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""incoming\s+(?:transfer|payment)""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""credit\s+transfer""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""wire\s+received""", Pattern.CASE_INSENSITIVE),
@@ -54,6 +56,8 @@ class TransferDirectionDetector @Inject constructor() {
         Pattern.compile("""επιστροφή\s+χρημάτων""", Pattern.CASE_INSENSITIVE),  // refund
         Pattern.compile("""εισερχόμενη""", Pattern.CASE_INSENSITIVE),  // incoming
         Pattern.compile("""πίστωση""", Pattern.CASE_INSENSITIVE),  // credit
+        Pattern.compile("""πιστωση""", Pattern.CASE_INSENSITIVE),  // credit without accent
+        Pattern.compile("""καταθεση""", Pattern.CASE_INSENSITIVE),  // deposit without accent
         Pattern.compile("""από\s+(.+?)\s+(?:σε|στο|στην)\s*(?:εσάς|μένα|λογαριασμό)""", Pattern.CASE_INSENSITIVE),  // from X to you/me/account
         
         // Greek Bank Codes
@@ -76,6 +80,8 @@ class TransferDirectionDetector @Inject constructor() {
         Pattern.compile("""ACH\s+debit""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""bill\s+payment""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""-\s*[€$£¥]?\s*\d+[.,]?\d*"""),  // -€50.00 or -50.00
+        Pattern.compile("""debited""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""has been debited""", Pattern.CASE_INSENSITIVE),
         
         // English - "To ... from you/me" patterns
         Pattern.compile("""to\s+(.+?)\s+(?:from|→|->|→)\s*(?:you|me|my|account)""", Pattern.CASE_INSENSITIVE),
@@ -86,19 +92,27 @@ class TransferDirectionDetector @Inject constructor() {
         Pattern.compile("""payment\s+to""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""\-\s*[€$£¥]?\s*\d""", Pattern.CASE_INSENSITIVE),  // -€50
         Pattern.compile("""sent\s+via""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""transfer\s+to""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""paid\s+to""", Pattern.CASE_INSENSITIVE),
         
         // Greek (Ελληνικά)
         Pattern.compile("""απεστάλη\s+(?:σε|προς)""", Pattern.CASE_INSENSITIVE),  // sent to
         Pattern.compile("""μεταφορά\s+σε""", Pattern.CASE_INSENSITIVE),  // transfer to
+        Pattern.compile("""μεταφορα\s+σε""", Pattern.CASE_INSENSITIVE),  // transfer to without accent
         Pattern.compile("""ανάληψη""", Pattern.CASE_INSENSITIVE),  // withdrawal
+        Pattern.compile("""αναληψη""", Pattern.CASE_INSENSITIVE),  // withdrawal without accent
         Pattern.compile("""πληρωμή""", Pattern.CASE_INSENSITIVE),  // payment
+        Pattern.compile("""πληρωμη""", Pattern.CASE_INSENSITIVE),  // payment without accent
         Pattern.compile("""εξερχόμενη""", Pattern.CASE_INSENSITIVE),  // outgoing
+        Pattern.compile("""εξερχομενη""", Pattern.CASE_INSENSITIVE),  // outgoing without accent
         Pattern.compile("""χρέωση""", Pattern.CASE_INSENSITIVE),  // debit/charge
+        Pattern.compile("""χρεωση""", Pattern.CASE_INSENSITIVE),  // debit without accent
         Pattern.compile("""σε\s+(.+?)\s+(?:από|απ)\s*(?:εσάς|μένα|λογαριασμό)""", Pattern.CASE_INSENSITIVE),  // to X from you/me/account
         
         // Greek Bank Codes
         Pattern.compile("""\bΧ[Ρ.]?(?:ΡΕ)?\b"""),  // Χ or ΧΡ or ΧΡΕ (Debit)
         Pattern.compile("""χρεωστικό""", Pattern.CASE_INSENSITIVE),  // debit
+        Pattern.compile("""χρεωστικο""", Pattern.CASE_INSENSITIVE),  // debit without accent
         
         // Payment-specific
         Pattern.compile("""purchase\s+(?:at|from)""", Pattern.CASE_INSENSITIVE),
@@ -147,6 +161,11 @@ class TransferDirectionDetector @Inject constructor() {
         bigText: String?,
         transactionType: TransactionType
     ): TransferDirection? {
+        // WITHDRAWAL is always OUTGOING
+        if (transactionType == TransactionType.WITHDRAWAL) {
+            return TransferDirection.OUTGOING
+        }
+        
         // Only detect for TRANSFER and DEPOSIT types
         if (transactionType != TransactionType.TRANSFER && 
             transactionType != TransactionType.DEPOSIT) {

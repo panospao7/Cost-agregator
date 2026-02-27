@@ -23,7 +23,7 @@ class ReceiptParser @Inject constructor(
         private val GEO_STRIP_REGEX = Regex("""[><\}|▶]""")
         private val NUMBER_SPACE_FIX = Regex("""(?<=\d)[ \t\u00A0]+(?=[.,\d])""")
         private val SEPARATOR_SPACE_AFTER = Regex("""(?<=\d)[ \t\u00A0]+([.,])""")
-        private val SEPARATOR_SPACE_BEFORE = Regex("""([.,])[ \t\u00A0]+(?=\d])""")
+        private val SEPARATOR_SPACE_BEFORE = Regex("""([.,])[ \t\u00A0]+(?=\d)""")
         private val COMPOUND_TOTAL = Regex("""ΣΥΝΟΛΙΚΗ\s+ΑΞΙΑ""")
         private val COMPOUND_SUBTOTAL = Regex("""ΚΑΘΑΡΗ\s+ΑΞΙΑ""")
         private val COMPOUND_GENIKO = Regex("""ΓΕΝΙΚΟ\s+ΣΥΝΟΛΟ""")

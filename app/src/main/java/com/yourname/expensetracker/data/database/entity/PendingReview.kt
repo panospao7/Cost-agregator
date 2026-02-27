@@ -46,6 +46,8 @@ data class PendingReview(
     val suggestedCategoryId: Long?,
     val suggestedDate: Long? = null,    // Added in v11 to preserve parsed date
     val confidence: Float,
+    val matchType: String? = null,      // How the category was determined (EXACT, CANONICAL, KEYWORD, CONTEXT, etc.)
+    val explanation: String? = null,     // Human-readable explanation of how category was inferred
     val packageName: String,
     val notificationTitle: String?,
     val notificationText: String?,
