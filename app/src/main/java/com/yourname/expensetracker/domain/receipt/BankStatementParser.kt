@@ -25,6 +25,33 @@ class BankStatementParser @Inject constructor(
         private val ACCOUNT_NUMBER_PATTERN = Regex("""Κίνηση Λογαριασμού\s+(\d+)""")
         private val IBAN_PATTERN = Regex("""ΙΒΑΝ\s*Λογαριασμού[:\s]+(GR\d+)""")
         private val BALANCE_PATTERN = Regex("""Λογιστικό\s*Υπόλοιπο[:\s]+([\d.,]+)€""")
+
+        // Date column keywords (Greek, English, Greeklish variants)
+        // Transaction date keywords
+        private val TRANSACTION_DATE_KEYWORDS = listOf(
+            // Greek
+            "ΗΜΕΡΟΜΗΝΙΑ ΣΥΝΑΛΛΑΓΗΣ", "ΗΜ/ΝΙΑ ΣΥΝΑΛΛΑΓΗΣ", "ΗΜΕΡΟΜΗΝΙΑ", "ΗΜ/ΝΙΑ",
+            // English
+            "DATE", "TRANSACTION DATE", "TX DATE", "POSTING DATE",
+            // Greeklish
+            "HM_NIA", "HM/NIA", "HMEROMHNIA", "hmeromhnia"
+        )
+
+        // Value date keywords (date when the transaction actually clears)
+        private val VALUE_DATE_KEYWORDS = listOf(
+            // Greek
+            "ΗΜΕΡΟΜΗΝΙΑ ΑΞΙΑΣ", "ΗΜ/ΝΙΑ ΑΞΙΑΣ", "ΑΞΙΑ", "ΑΞΙΑΣ",
+            // English
+            "VALUE DATE", "VAL DATE", "VALUE DATE", "EFFECTIVE DATE",
+            // Greeklish
+            "AXIAS", "axia", "AXIA", "HM_NIA_AXIAS", "HM_NIA_AKIAS"
+        )
+
+        // Data class for date column detection info
+        data class DateColumnInfo(
+            val hasTransactionDateKeyword: Boolean,
+            val hasValueDateKeyword: Boolean
+        )
     }
 
     /**
@@ -37,7 +64,10 @@ class BankStatementParser @Inject constructor(
         // 1. Group blocks into rows based on vertical proximity
         val rows = groupBlocksIntoRows(blocks)
 
-        // 2. Try Greek NBG specific parsing first
+        // 2. Detect header columns to identify which date is which
+        val columnInfo = detectDateColumns(rows)
+
+        // 3. Try Greek NBG specific parsing first
         val greekNbgTransactions = rows.mapNotNull { rowText ->
             tryParseGreekNbgTransaction(rowText)
         }
@@ -48,10 +78,28 @@ class BankStatementParser @Inject constructor(
             return greekNbgTransactions
         }
 
-        // 3. Otherwise fall back to generic parsing
+        // 4. Otherwise fall back to generic parsing with column awareness
         return rows.mapNotNull { rowText ->
-            extractTransactionFromRow(rowText)
+            extractTransactionFromRow(rowText, columnInfo)
         }
+    }
+
+    /**
+     * Detect date column order from headers
+     */
+    private fun detectDateColumns(rows: List<String>): DateColumnInfo {
+        val headerRows = rows.take(5).joinToString(" ").uppercase()
+        
+        val hasTransactionDateKeyword = TRANSACTION_DATE_KEYWORDS.any { headerRows.contains(it.uppercase()) }
+        val hasValueDateKeyword = VALUE_DATE_KEYWORDS.any { headerRows.contains(it.uppercase()) }
+        
+        // If we have both keywords, transaction date should come first in typical Greek bank statements
+        // If only one is present, the first date in each row is typically transaction date
+        
+        return DateColumnInfo(
+            hasTransactionDateKeyword = hasTransactionDateKeyword,
+            hasValueDateKeyword = hasValueDateKeyword
+        )
     }
 
     private fun groupBlocksIntoRows(blocks: List<TextBlock>): List<String> {
@@ -184,9 +232,9 @@ class BankStatementParser @Inject constructor(
             )
         } catch (e: Exception) {
             Timber.tag("BankStatementParser").w("Failed to parse NBG transaction: ${e.message} | Row: $cleanRow")
-            return null
-        }
+        return null
     }
+}
     
     /**
      * Parse Greek bank date and time: DD/MM/YYYY HH:MM:SS
@@ -230,9 +278,18 @@ class BankStatementParser @Inject constructor(
         }
     }
 
-    private fun extractTransactionFromRow(rowText: String): ParsedTransaction? {
+    private fun extractTransactionFromRow(rowText: String, columnInfo: DateColumnInfo = DateColumnInfo(false, false)): ParsedTransaction? {
         // 1. Clean noise
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
+        
+        // Skip header rows
+        if (cleanRow.contains("Ημερομηνία") || cleanRow.contains("ΗΜΕΡΟΜΗΝΙΑ") ||
+            cleanRow.contains("Περιγραφή") || cleanRow.contains("ΠΕΡΙΓΡΑΦΗ") ||
+            cleanRow.contains("ΠΟΣΟ") || cleanRow.contains("Ποσό") ||
+            cleanRow.uppercase().contains("DATE") && cleanRow.uppercase().contains("AMOUNT") ||
+            cleanRow.isBlank()) {
+            return null
+        }
         
         // 2. Look for amount patterns (DUP-005)
         val amountMatcher = com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX.matcher(cleanRow)
@@ -279,12 +336,18 @@ class BankStatementParser @Inject constructor(
             else -> TransactionType.PURCHASE // Default to Purchase if ambiguous (Expense Tracker context) 
         }
 
-        // 4. Extract logic for merchant (ISSUE-010)
-        // Usually merchant is the text that is NOT the amount and NOT a date/time
-        val dateValue = extractDate(cleanRow)
+        // 4. Extract dates - prioritize transaction date over value date
+        // Find all dates in the row
+        val allDates = extractAllDates(cleanRow)
         
+        // Use transaction date if found, otherwise fall back to any date
+        val dateValue = allDates.transactionDate 
+            ?: allDates.valueDate 
+            ?: allDates.firstDate
+
+        // 5. Extract merchant - remove all dates from the row
         var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
-            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Date (for cleaning)
+            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // Dates
             .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "") // Time
             // Remove common bank prefixes/suffixes
             .replace(Regex("""(?i)^(AGORA|ΑΓΟΡΑ|PURCHASE|PAYMENT)\s*[:\-]?\s*"""), "")
@@ -306,6 +369,58 @@ class BankStatementParser @Inject constructor(
             date = dateValue
         )
     }
+
+    /**
+     * Extract all dates from a row and identify which is transaction date vs value date
+     * Based on position: first date is typically transaction date, second is value date
+     */
+    private fun extractAllDates(text: String): AllDatesResult {
+        val datePatterns = listOf(
+            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})"""),
+            Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})""")
+        )
+
+        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
+        sdf.isLenient = false
+
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val minYear = currentYear - 20
+
+        val foundDates = mutableListOf<Long>()
+
+        for (pattern in datePatterns) {
+            val matches = pattern.findAll(text)
+            for (match in matches) {
+                val (d, m, y) = match.destructured
+                val year = if (y.length == 2) "20$y" else y
+                val yearInt = year.toIntOrNull() ?: 0
+                
+                if (yearInt in minYear..currentYear) {
+                    try {
+                        val parsedDate = sdf.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year")?.time
+                        if (parsedDate != null) {
+                            foundDates.add(parsedDate)
+                        }
+                    } catch (e: Exception) {
+                        // Skip invalid dates
+                    }
+                }
+            }
+        }
+
+        // First date is typically transaction date, second is value date
+        return AllDatesResult(
+            firstDate = foundDates.getOrNull(0),
+            transactionDate = foundDates.getOrNull(0), // First date = transaction date
+            valueDate = foundDates.getOrNull(1)
+        )
+    }
+
+    data class AllDatesResult(
+        val firstDate: Long?,
+        val transactionDate: Long?,
+        val valueDate: Long?
+    )
 
     private fun extractDate(text: String): Long? {
         val datePatterns = listOf(
