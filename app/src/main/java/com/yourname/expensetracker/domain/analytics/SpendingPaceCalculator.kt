@@ -62,10 +62,16 @@ class SpendingPaceCalculator @Inject constructor(
             .takeIf { !it.isNaN() }
         
         val projectedTotal = calculateProjectedTotal(monthSpent, currentDay, daysInMonth)
-        val pacePercentage = if (previousMonthSpent > 0) {
-            (monthSpent / previousMonthSpent * 100).toFloat()
-        } else if (previousMonthAvg != null) {
-            (monthSpent / (previousMonthAvg * currentDay) * 100).toFloat()
+        
+        // Compare daily spending rates, not partial vs full month totals
+        val currentDailyRate = if (currentDay > 0) monthSpent / currentDay else 0.0
+        val previousMonthDays = TimePeriodUtils.getDaysInMonth(previousMonthStart)
+        val previousDailyRate = if (previousMonthDays > 0) previousMonthSpent / previousMonthDays else 0.0
+        
+        val pacePercentage = if (previousDailyRate > 0) {
+            (currentDailyRate / previousDailyRate * 100).toFloat()
+        } else if (previousMonthAvg != null && previousMonthAvg > 0) {
+            (currentDailyRate / previousMonthAvg * 100).toFloat()
         } else {
             100f
         }

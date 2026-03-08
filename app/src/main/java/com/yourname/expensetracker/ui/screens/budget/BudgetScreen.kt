@@ -74,7 +74,7 @@ fun BudgetScreen(
                 if (uiState.budgets.isEmpty()) {
                     item { EmptyBudgetsState { showAddDialog = true } }
                 } else {
-                    items(uiState.budgets) { budgetStatus ->
+                    items(uiState.budgets, key = { it.budget.id }) { budgetStatus ->
                         BudgetCard(
                             status = budgetStatus,
                             dateFormat = dateFormat,

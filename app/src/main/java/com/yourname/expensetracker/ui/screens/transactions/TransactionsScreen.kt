@@ -56,6 +56,7 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
+import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -102,6 +103,7 @@ fun TransactionsScreen(
     var expenseToChangeType by remember { mutableStateOf<Expense?>(null) }
     var expenseToEditOwnership by remember { mutableStateOf<Expense?>(null) }
     var expenseToDebug by remember { mutableStateOf<Expense?>(null) }
+    var expenseToEditLocation by remember { mutableStateOf<Expense?>(null) }
     var showSearch by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
     var showFilterSheet by remember { mutableStateOf(false) }
@@ -254,22 +256,19 @@ fun TransactionsScreen(
                 // Tab row with counts - scrollable for proper tab widths
                 ScrollableTabRow(
                     selectedTabIndex = selectedTab.ordinal,
-                    edgePadding = 16.dp,
+                    edgePadding = 0.dp,
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.primary,
                     indicator = { tabPositions ->
                         TabRowDefaults.SecondaryIndicator(
-                            modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab.ordinal]),
-                            height = 3.dp,
+                            modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab.ordinal])
+                                .padding(horizontal = 16.dp)
+                                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)),
+                            height = 4.dp,
                             color = SemanticColors.PrimaryIndigo
                         )
                     },
-                    divider = {
-                        HorizontalDivider(
-                            color = SemanticColors.GlassBorder.copy(alpha = 0.5f),
-                            thickness = 0.5.dp
-                        )
-                    }
+                    divider = {}
                 ) {
                     TransactionTab.values().forEach { tab ->
                         val count = tabCounts[tab] ?: 0
@@ -419,7 +418,8 @@ fun TransactionsScreen(
                                     onRename = { expenseToRename = item.expense },
                                     onChangeType = { expenseToChangeType = item.expense },
                                     onEditOwnership = { expenseToEditOwnership = item.expense },
-                                    onDebug = { expenseToDebug = item.expense }
+                                    onDebug = { expenseToDebug = item.expense },
+                                    onEditLocation = { expenseToEditLocation = item.expense }
                                 )
                             }
                         }
@@ -511,8 +511,8 @@ fun TransactionsScreen(
             RenameMerchantDialog(
                 currentName = expenseToRename?.merchant ?: "",
                 onDismiss = { expenseToRename = null },
-                onConfirm = { newName ->
-                    expenseToRename?.let { viewModel.updateMerchant(it, newName) }
+                onConfirm = { newName, applyToAll ->
+                    expenseToRename?.let { viewModel.updateMerchant(it, newName, applyToAll) }
                     expenseToRename = null
                 }
             )
@@ -567,6 +567,22 @@ fun TransactionsScreen(
                     )
                 }
             }
+        }
+
+        // Edit location bottom sheet
+        if (expenseToEditLocation != null) {
+            EditLocationDialog(
+                expense = expenseToEditLocation!!,
+                onDismiss = { expenseToEditLocation = null },
+                onSave = { lat, lon, address, osmId ->
+                    expenseToEditLocation?.let { viewModel.updateLocation(it, lat, lon, address, osmId) }
+                    expenseToEditLocation = null
+                },
+                onClear = {
+                    expenseToEditLocation?.let { viewModel.clearLocation(it) }
+                    expenseToEditLocation = null
+                }
+            )
         }
     }
 }
@@ -653,37 +669,55 @@ private fun DateHeader(
     totalAmount: Double,
     itemCount: Int
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp)
+            .background(MaterialTheme.colorScheme.surface) // Solid background underneath for sticky visibility
     ) {
-        Row(
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .clip(RoundedCornerShape(12.dp))
+                .background(SemanticColors.GlassSurface),
+            color = Color.Transparent, // Let the background modifier handle the glass fill
+            border = BorderStroke(1.dp, SemanticColors.GlassBorder)
         ) {
-            Column {
-                Text(
-                    text = date,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = SemanticColors.TextPrimary
-                )
-                Text(
-                    text = "$itemCount transaction${if (itemCount != 1) "s" else ""}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = SemanticColors.TextMuted
-                )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = date,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextPrimary
+                    )
+                    Text(
+                        text = "$itemCount transaction${if (itemCount != 1) "s" else ""}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SemanticColors.TextMuted,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (totalAmount < 0) SemanticColors.DangerRed.copy(alpha = 0.1f) else SemanticColors.SuccessGreen.copy(alpha = 0.1f)
+                ) {
+                    Text(
+                        text = "€${String.format(java.util.Locale.getDefault(), "%.2f", kotlin.math.abs(totalAmount))}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (totalAmount < 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
-            
-            Text(
-                text = "€${String.format(Locale.getDefault(), "%.2f", kotlin.math.abs(totalAmount))}",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = if (totalAmount < 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen
-            )
         }
     }
 }
@@ -701,7 +735,8 @@ private fun TransactionItem(
     onRename: () -> Unit,
     onChangeType: () -> Unit,
     onEditOwnership: () -> Unit,
-    onDebug: () -> Unit
+    onDebug: () -> Unit,
+    onEditLocation: () -> Unit
 ) {
     val expense = transaction.expense
     val category = transaction.category
@@ -843,6 +878,28 @@ private fun TransactionItem(
                     style = MaterialTheme.typography.labelSmall,
                     color = SemanticColors.TextMuted
                 )
+
+                // Resolved address subtitle
+                if (expense.resolvedAddress != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.LocationOn,
+                            contentDescription = null,
+                            modifier = Modifier.size(10.dp),
+                            tint = SemanticColors.TextMuted.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            text = expense.resolvedAddress,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SemanticColors.TextMuted.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
 
             // Amount
@@ -910,6 +967,22 @@ private fun TransactionItem(
                             imageVector = Icons.Rounded.Repeat,
                             contentDescription = stringResource(R.string.mark_recurring_content_description),
                             tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.6f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    // Location pin action
+                    IconButton(
+                        onClick = onEditLocation,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (expense.latitude != null) Icons.Filled.LocationOn else Icons.Rounded.AddLocationAlt,
+                            contentDescription = "Edit location",
+                            tint = if (expense.latitude != null)
+                                SemanticColors.PrimaryIndigo.copy(alpha = 0.8f)
+                            else
+                                SemanticColors.TextMuted.copy(alpha = 0.5f),
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -1173,26 +1246,27 @@ fun CategoryPickerDialog(
 fun RenameMerchantDialog(
     currentName: String,
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
+    onConfirm: (String, Boolean) -> Unit
 ) {
     var name by remember(currentName) { mutableStateOf(currentName) }
+    var applyToAll by remember { mutableStateOf(false) }
     var isError by remember { mutableStateOf(false) }
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
         title = { Text("Rename Merchant") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(
-                    "Assign a brand name helps the app learn. Future transactions from this source will be auto-corrected.",
+                    "Assigning a brand name helps the app learn. Future transactions from this source will be auto-corrected.",
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextSecondary
                 )
-                
+
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { 
+                    onValueChange = {
                         name = it
                         isError = it.isBlank()
                     },
@@ -1203,33 +1277,54 @@ fun RenameMerchantDialog(
                         { Text("Name cannot be empty") }
                     } else null,
                     modifier = Modifier.fillMaxWidth(),
-                    leadingIcon = { 
-                        Icon(Icons.Rounded.Store, contentDescription = null) 
+                    leadingIcon = {
+                        Icon(Icons.Rounded.Store, contentDescription = null)
                     },
                     shape = RoundedCornerShape(12.dp)
                 )
+
+                // Apply to All Checkbox
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { applyToAll = !applyToAll }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = applyToAll,
+                        onCheckedChange = { applyToAll = it },
+                        colors = CheckboxDefaults.colors(checkedColor = SemanticColors.PrimaryIndigo)
+                    )
+                    Text(
+                        "Apply to all past and pending entries",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.TextPrimary
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { 
-                    if (name.isNotBlank() && name != currentName) {
-                        onConfirm(name.trim())
+                onClick = {
+                    if (name.isNotBlank()) {
+                        onConfirm(name, applyToAll)
                     } else {
                         isError = true
                     }
                 },
-                enabled = name.isNotBlank() && name != currentName,
+                enabled = name.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SemanticColors.PrimaryIndigo
                 )
             ) {
-                Text("Update")
+                Text(stringResource(R.string.save_button))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.cancel_button))
             }
         }
     )
@@ -1452,9 +1547,7 @@ fun EditOwnershipDialog(
                 onClick = {
                     onSave(isNotMine, ownerName, isSharedExpense, sharedWithName, mySharePercentage, myShareAmount)
                 },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = SemanticColors.PrimaryIndigo
-                )
+                modifier = Modifier
             ) {
                 Text("Save")
             }
@@ -1465,4 +1558,84 @@ fun EditOwnershipDialog(
             }
         }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditLocationDialog(
+    expense: Expense,
+    onDismiss: () -> Unit,
+    onSave: (lat: Double, lon: Double, address: String?, osmId: String?) -> Unit,
+    onClear: () -> Unit
+) {
+    var pendingLat by remember { mutableStateOf<Double?>(null) }
+    var pendingLon by remember { mutableStateOf<Double?>(null) }
+    var pendingAddress by remember { mutableStateOf<String?>(null) }
+    var pendingOsmId by remember { mutableStateOf<String?>(null) }
+    var hasSelection by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Edit Location",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                if (expense.latitude != null) {
+                    TextButton(
+                        onClick = onClear,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = SemanticColors.DangerRed
+                        )
+                    ) {
+                        Text("Clear")
+                    }
+                }
+            }
+
+            Text(
+                text = expense.merchant,
+                style = MaterialTheme.typography.bodySmall,
+                color = SemanticColors.TextSecondary
+            )
+
+            LocationSearchPicker(
+                currentLat = if (hasSelection) pendingLat else expense.latitude,
+                currentLon = if (hasSelection) pendingLon else expense.longitude,
+                currentAddress = if (hasSelection) pendingAddress else expense.resolvedAddress,
+                onResult = { lat, lon, address, osmId ->
+                    if (lat == null) {
+                        onClear()
+                    } else {
+                        pendingLat = lat
+                        pendingLon = lon
+                        pendingAddress = address
+                        pendingOsmId = osmId
+                        hasSelection = true
+                    }
+                }
+            )
+
+            if (hasSelection && pendingLat != null && pendingLon != null) {
+                Button(
+                    onClick = { onSave(pendingLat!!, pendingLon!!, pendingAddress, pendingOsmId) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)
+                ) {
+                    Text("Save Location")
+                }
+            }
+        }
+    }
 }

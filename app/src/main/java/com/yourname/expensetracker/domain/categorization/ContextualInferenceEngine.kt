@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.categorization
 
 import java.util.Calendar
+import javax.inject.Inject
+import javax.inject.Singleton
 
 data class ContextPrediction(
     val categoryName: String,
@@ -8,7 +10,8 @@ data class ContextPrediction(
     val reason: String
 )
 
-class ContextualInferenceEngine {
+@Singleton
+class ContextualInferenceEngine @Inject constructor() {
     
     companion object {
         // Confidence thresholds

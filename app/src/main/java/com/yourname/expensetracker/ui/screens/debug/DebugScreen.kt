@@ -357,7 +357,7 @@ fun DebugScreen(
                                 label = { Text("All") }
                             )
                         }
-                        items(packages) { pkg ->
+                        items(packages, key = { it }) { pkg ->
                             FilterChip(
                                 selected = selectedFilter == pkg,
                                 onClick = { viewModel.setPackageFilter(pkg) },
@@ -389,7 +389,7 @@ fun DebugScreen(
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(blockedApps) { blocked ->
+                        items(blockedApps, key = { it.packageName }) { blocked ->
                             InputChip(
                                 selected = true,
                                 onClick = { viewModel.unblockPackage(blocked.packageName) },

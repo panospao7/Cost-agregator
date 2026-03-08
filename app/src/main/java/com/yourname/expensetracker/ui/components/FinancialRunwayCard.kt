@@ -12,7 +12,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.yourname.expensetracker.ui.screens.home.DashboardWidget
+import androidx.compose.ui.draw.clip
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -26,6 +27,10 @@ fun FinancialRunwayCard(
     status: DashboardWidget.RunwayStatus,
     modifier: Modifier = Modifier
 ) {
+    // Guard negative days
+    val safeDays = daysRemaining.coerceAtLeast(0)
+    val isExhausted = daysRemaining <= 0 && status != DashboardWidget.RunwayStatus.NO_INCOME
+
     val (backgroundColor, accentColor) = when (status) {
         DashboardWidget.RunwayStatus.HEALTHY -> SemanticColors.SuccessGreen.copy(alpha = 0.15f) to SemanticColors.SuccessGreen
         DashboardWidget.RunwayStatus.CAUTION -> SemanticColors.WarningOrange.copy(alpha = 0.15f) to SemanticColors.WarningOrange
@@ -93,7 +98,7 @@ fun FinancialRunwayCard(
                 verticalAlignment = Alignment.Bottom
             ) {
                 Text(
-                    text = "$daysRemaining",
+                    text = "$safeDays",
                     style = MaterialTheme.typography.displayMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = accentColor
@@ -109,9 +114,23 @@ fun FinancialRunwayCard(
             }
 
             Text(
-                text = "of discretionary spending remaining",
+                text = if (isExhausted) "Budget exhausted — discretionary funds depleted"
+                       else "of discretionary spending remaining",
                 style = MaterialTheme.typography.bodyMedium,
-                color = SemanticColors.TextSecondary
+                color = if (isExhausted) SemanticColors.DangerRed else SemanticColors.TextSecondary
+            )
+
+            // Runway progress bar
+            Spacer(modifier = Modifier.height(8.dp))
+            val progress = (safeDays / 30f).coerceIn(0f, 1f)
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = accentColor,
+                trackColor = accentColor.copy(alpha = 0.15f)
             )
 
             Spacer(modifier = Modifier.height(12.dp))

@@ -29,7 +29,8 @@ import androidx.room.PrimaryKey
         Index(value = ["amount", "merchant", "date"]),
         Index(value = ["merchant", "date"]),
         Index(value = ["transactionType", "merchant", "date"]),
-        Index(value = ["dedupeKey"], unique = true) // Atomic duplicate prevention
+        Index(value = ["dedupeKey"], unique = true), // Atomic duplicate prevention
+        Index(value = ["latitude", "longitude"])      // Location queries (v28)
     ]
 )
 data class Expense(
@@ -65,7 +66,21 @@ data class Expense(
     val isSharedExpense: Boolean = false,
     val sharedWithName: String? = null,
     val mySharePercentage: Int? = null,
-    val myShareAmount: Double? = null
+    val myShareAmount: Double? = null,
+
+    // Location enrichment (v28) — nullable, resolved asynchronously
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val locationSource: String? = null,  // "MERCHANT_GEOCODE", "DEVICE_GPS", "USER_MANUAL", "OVERPASS_POI"
+    val placeId: String? = null,         // OSM node ID for future re-lookups
+
+    // Number of times the backfill worker has tried and failed to geocode this expense (v29).
+    // Expenses that reach MAX_BACKFILL_ATTEMPTS are skipped by the worker to prevent
+    // indefinite Nominatim calls for unresolvable merchants.
+    val backfillAttempts: Int = 0,
+
+    // Human-readable resolved address string (v30), e.g. "Σκλαβενίτης, Γλυφάδα, Αττική"
+    val resolvedAddress: String? = null
 ) {
     companion object {
         private const val DUPLICATE_WINDOW_MS = 300_000L // 5 minutes

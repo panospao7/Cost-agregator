@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -81,35 +83,41 @@ class DashboardDataProvider @Inject constructor(
         )
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun getProcessedDataFlow(
         analyticsRepository: AnalyticsRepository
     ): Flow<ProcessedDashboardData> {
-        val now = timeProvider.now()
-        val monthStart = timePeriodUtils.getStartOfMonth(now)
-        val monthEnd = timePeriodUtils.getEndOfMonth(now)
+        return getAllDataFlow()
+            .flatMapLatest { data: DashboardData ->
+                // Recompute time boundaries on every emission so month roll-overs
+                // are always reflected without requiring app restart.
+                val now = timeProvider.now()
+                val monthStart = timePeriodUtils.getStartOfMonth(now)
+                val monthEnd = timePeriodUtils.getEndOfMonth(now)
 
-        return combine(
-            getAllDataFlow(),
-            analyticsRepository.getSpendingSummary(monthStart, monthEnd)
-                .catch {
-                    emit(SpendingSummary(
-                        totalSpent = 0.0,
-                        previousTotalSpent = null,
-                        changePercent = null,
-                        dailyHistory = emptyList(),
-                        previousDailyHistory = emptyList(),
-                        transactionCount = 0
-                    ))
-                },
-            analyticsRepository.getCategoryBreakdown(monthStart, monthEnd)
-                .catch { emit(emptyList()) }
-        ) { data, summary, categoryBreakdown ->
-            ProcessedDashboardData(
-                data = data,
-                summary = summary,
-                categoryBreakdown = categoryBreakdown
-            )
-        }.flowOn(kotlinx.coroutines.Dispatchers.Default)
+                combine(
+                    analyticsRepository.getSpendingSummary(monthStart, monthEnd)
+                        .catch {
+                            emit(SpendingSummary(
+                                totalSpent = 0.0,
+                                previousTotalSpent = null,
+                                changePercent = null,
+                                dailyHistory = emptyList(),
+                                previousDailyHistory = emptyList(),
+                                transactionCount = 0
+                            ))
+                        },
+                    analyticsRepository.getCategoryBreakdown(monthStart, monthEnd)
+                        .catch { emit(emptyList()) }
+                ) { summary, categoryBreakdown ->
+                    ProcessedDashboardData(
+                        data = data,
+                        summary = summary,
+                        categoryBreakdown = categoryBreakdown
+                    )
+                }
+            }
+            .flowOn(kotlinx.coroutines.Dispatchers.Default)
     }
 
     private fun getFinancialWeatherWithDefaults(): Flow<FinancialWeather> =

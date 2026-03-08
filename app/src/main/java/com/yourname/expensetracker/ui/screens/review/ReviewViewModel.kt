@@ -94,7 +94,11 @@ class ReviewViewModel @Inject constructor(
         finalMerchant: String?,
         finalCategoryId: Long?,
         finalType: TransactionType?,
-        applyToAll: Boolean = false
+        applyToAll: Boolean = false,
+        approveAllPending: Boolean = false,
+        finalLatitude: Double? = null,
+        finalLongitude: Double? = null,
+        finalAddress: String? = null
     ) {
         viewModelScope.launch {
             val result = reviewQueueRepository.approveReview(
@@ -102,20 +106,57 @@ class ReviewViewModel @Inject constructor(
                 finalAmount = finalAmount,
                 finalMerchant = finalMerchant,
                 finalCategoryId = finalCategoryId,
-                finalType = finalType
+                finalType = finalType,
+                finalLatitude = finalLatitude,
+                finalLongitude = finalLongitude,
+                finalAddress = finalAddress
             )
             handleResult(result, "Failed to approve edits")
 
             if (applyToAll && (finalCategoryId != null || finalMerchant != null)) {
                 try {
                     val review = reviewQueueRepository.getReviewById(reviewId)
-                    val merchantName = finalMerchant ?: review?.suggestedMerchant
+                    val originalMerchant = review?.suggestedMerchant
+                    val merchantName = finalMerchant ?: originalMerchant
                     val categoryId = finalCategoryId
+                    
                     if (merchantName != null && categoryId != null) {
                         expenseRepository.updateExpenseCategoryBulk(merchantName, categoryId)
+                        // Propagation to other pending reviews
+                        reviewQueueRepository.updatePendingReviewCategoryBulk(merchantName, categoryId)
+                    }
+
+                    // Also handle bulk renaming if a new merchant name was provided
+                    if (finalMerchant != null && originalMerchant != null && finalMerchant != originalMerchant) {
+                        expenseRepository.updateExpenseMerchantBulk(originalMerchant, finalMerchant)
+                        reviewQueueRepository.updatePendingReviewMerchantBulk(originalMerchant, finalMerchant)
                     }
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to apply bulk category update")
+                }
+            }
+
+            if (approveAllPending) {
+                try {
+                    val review = reviewQueueRepository.getReviewById(reviewId)
+                    val originalMerchant = review?.suggestedMerchant
+                    val searchMerchant = finalMerchant ?: originalMerchant
+                    if (searchMerchant != null) {
+                        val identicalPending = reviewQueueRepository.getPendingReviewsByMerchant(searchMerchant)
+                        for (pending in identicalPending) {
+                            if (pending.id != reviewId) {
+                                reviewQueueRepository.approveReview(
+                                    reviewId = pending.id,
+                                    finalAmount = null, // Keep original amounts for identical transactions
+                                    finalMerchant = finalMerchant,
+                                    finalCategoryId = finalCategoryId,
+                                    finalType = finalType
+                                )
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to apply bulk approval")
                 }
             }
         }

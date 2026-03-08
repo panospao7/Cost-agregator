@@ -3,70 +3,310 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.sqrt
+import kotlin.math.abs
 
+/**
+ * Detects anomalous transactions using three complementary statistical methods:
+ *
+ *  1. IQR (Interquartile Range) — flags amounts above Q3 + 1.5×IQR per category.
+ *     More robust than Z-score for the typical right-skewed expense distribution.
+ *
+ *  2. MAD (Median Absolute Deviation) — modified Z-score > 3.5 per category.
+ *     The single most robust method for skewed data; resistant to masking by
+ *     multiple outliers that inflate the mean/std dev.
+ *
+ *  3. Contextual — sub-groups expenses by (dayOfWeek, timeSlot) before computing
+ *     IQR thresholds. Catches transactions that are normal globally but unusual
+ *     for that specific context (e.g. €50 groceries at 2 AM on a Wednesday).
+ *
+ * The three methods run in union: any single method flagging a transaction is
+ * sufficient. MAD takes priority in [detectionMethod]; contextual hits add a
+ * human-readable [AnomalyTransaction.contextualNote].
+ *
+ * This class operates purely on the in-memory expense list — no DB calls.
+ * It complements [InsightsEngine]'s merchant-level DB-backed detection.
+ */
 @Singleton
 class AnomalyDetector @Inject constructor() {
 
     companion object {
-        private const val ANOMALY_MULTIPLIER = 2.5
-        private const val MIN_TRANSACTIONS_FOR_ANALYSIS = 5
+        // Minimum samples required before any method runs for a group
+        private const val MIN_SAMPLES_GLOBAL = 5
+        private const val MIN_SAMPLES_CONTEXTUAL = 3
+
+        // IQR fence multiplier (Tukey's standard: 1.5 = mild outlier, 3.0 = extreme)
+        private const val IQR_FENCE = 1.5
+
+        // Modified Z-score threshold (Iglewicz & Hoaglin recommend 3.5)
+        private const val MAD_ZSCORE_THRESHOLD = 3.5
+
+        // Constant for modified Z-score formula
+        private const val MAD_SCALE = 0.6745
     }
 
+    // ─── Time-of-day buckets ──────────────────────────────────────────────────
+
+    private enum class TimeSlot(val label: String) {
+        MORNING("morning"),       //  6–11
+        AFTERNOON("afternoon"),   // 12–17
+        EVENING("evening"),       // 18–21
+        NIGHT("night")            // 22–5
+    }
+
+    private fun timeSlot(timestampMs: Long): TimeSlot {
+        val hour = Calendar.getInstance().apply { timeInMillis = timestampMs }
+            .get(Calendar.HOUR_OF_DAY)
+        return when (hour) {
+            in 6..11  -> TimeSlot.MORNING
+            in 12..17 -> TimeSlot.AFTERNOON
+            in 18..21 -> TimeSlot.EVENING
+            else      -> TimeSlot.NIGHT
+        }
+    }
+
+    private fun dayName(timestampMs: Long): String {
+        val dow = Calendar.getInstance().apply { timeInMillis = timestampMs }
+            .get(Calendar.DAY_OF_WEEK)
+        return when (dow) {
+            Calendar.MONDAY    -> "Monday"
+            Calendar.TUESDAY   -> "Tuesday"
+            Calendar.WEDNESDAY -> "Wednesday"
+            Calendar.THURSDAY  -> "Thursday"
+            Calendar.FRIDAY    -> "Friday"
+            Calendar.SATURDAY  -> "Saturday"
+            else               -> "Sunday"
+        }
+    }
+
+    // ─── Public API ───────────────────────────────────────────────────────────
+
+    /**
+     * Detects statistical anomalies in [monthPeriod]'s expenses.
+     *
+     * Returns a deduplicated, sorted list of [AnomalyTransaction]s.
+     * Results are sorted by [AnomalyTransaction.deviationMultiple] descending
+     * (most extreme first).
+     *
+     * Signature is identical to the original — drop-in replacement.
+     */
     fun detect(
         monthPeriod: MonthPeriod,
         categoryMap: Map<Long, Category>,
         allExpenses: List<Expense>
     ): List<AnomalyTransaction> {
-        val anomalies = mutableListOf<AnomalyTransaction>()
-        
-        val monthExpenses = allExpenses.filter { 
-            expense -> 
-            expense.date != null &&
-            expense.date >= monthPeriod.startMs && 
+
+        val monthExpenses = allExpenses.filter { expense ->
+            expense.date >= monthPeriod.startMs &&
             expense.date < monthPeriod.endMs &&
-            expense.transactionType == TransactionType.PURCHASE && 
-            !expense.isNotMine 
+            expense.transactionType == TransactionType.PURCHASE &&
+            !expense.isNotMine
         }
-        
-        if (monthExpenses.size < MIN_TRANSACTIONS_FOR_ANALYSIS) {
-            return anomalies
-        }
-        
-        val categoryExpenses = monthExpenses.groupBy { it.categoryId }
-        
-        for ((categoryId, expenses) in categoryExpenses) {
-            if (expenses.size < 2) continue
-            
+
+        if (monthExpenses.size < MIN_SAMPLES_GLOBAL) return emptyList()
+
+        // expense.id → best AnomalyTransaction (highest-priority method wins)
+        val flagged = mutableMapOf<Long, AnomalyTransaction>()
+
+        val byCategory = monthExpenses.groupBy { it.categoryId }
+
+        for ((categoryId, expenses) in byCategory) {
             val category = categoryMap[categoryId]
-            val amounts = expenses.mapNotNull { it.amount }
+            val amounts = expenses.map { it.amount }
+
             if (amounts.size < 2) continue
-            
-            val avg = amounts.average()
-            val stdDev = calculateStdDev(amounts, avg)
-            
-            for (expense in expenses) {
-                if (expense.amount > avg + (ANOMALY_MULTIPLIER * stdDev)) {
-                    anomalies.add(
-                        AnomalyTransaction(
-                            expense = expense,
-                            merchantAvg = avg,
-                            deviationMultiple = (expense.amount / avg).toFloat(),
-                            category = category
+
+            val categoryAvg = amounts.average()
+
+            // ── 1. IQR ────────────────────────────────────────────────────────
+            if (amounts.size >= MIN_SAMPLES_GLOBAL) {
+                val iqrOutliers = detectIqr(expenses, amounts, category, categoryAvg)
+                iqrOutliers.forEach { anomaly ->
+                    flagged.merge(anomaly.expense.id, anomaly) { existing, new ->
+                        // MAD > IQR > CONTEXTUAL > MULTIPLIER in priority
+                        if (new.detectionMethod.ordinal > existing.detectionMethod.ordinal) new
+                        else existing
+                    }
+                }
+            }
+
+            // ── 2. MAD ────────────────────────────────────────────────────────
+            if (amounts.size >= MIN_SAMPLES_GLOBAL) {
+                val madOutliers = detectMad(expenses, amounts, category, categoryAvg)
+                madOutliers.forEach { anomaly ->
+                    flagged.merge(anomaly.expense.id, anomaly) { existing, new ->
+                        if (new.detectionMethod.ordinal > existing.detectionMethod.ordinal) new
+                        else existing
+                    }
+                }
+            }
+
+            // ── 3. Contextual ─────────────────────────────────────────────────
+            val contextualOutliers = detectContextual(expenses, category, categoryAvg)
+            contextualOutliers.forEach { anomaly ->
+                // Only add contextual if not already flagged by a stronger method
+                if (!flagged.containsKey(anomaly.expense.id)) {
+                    flagged[anomaly.expense.id] = anomaly
+                } else {
+                    // Preserve existing method but attach contextual note if absent
+                    val existing = flagged[anomaly.expense.id]!!
+                    if (existing.contextualNote == null && anomaly.contextualNote != null) {
+                        flagged[anomaly.expense.id] = existing.copy(
+                            contextualNote = anomaly.contextualNote
                         )
-                    )
+                    }
                 }
             }
         }
-        
-        return anomalies.sortedByDescending { it.expense.amount }
+
+        return flagged.values
+            .sortedByDescending { it.deviationMultiple }
     }
-    
-    private fun calculateStdDev(amounts: List<Double>, mean: Double): Double {
-        if (amounts.size < 2) return 0.0
-        val variance = amounts.map { (it - mean) * (it - mean) }.average()
-        return sqrt(variance)
+
+    // ─── Detection methods ────────────────────────────────────────────────────
+
+    /**
+     * IQR method: flags amounts above Q3 + [IQR_FENCE] × IQR.
+     *
+     * Better than Z-score for right-skewed expense distributions because it
+     * uses the median-based quartiles rather than the mean, which is sensitive
+     * to the very outliers we are trying to detect.
+     */
+    private fun detectIqr(
+        expenses: List<Expense>,
+        amounts: List<Double>,
+        category: Category?,
+        categoryAvg: Double
+    ): List<AnomalyTransaction> {
+        val sorted = amounts.sorted()
+        val q1 = percentile(sorted, 25.0)
+        val q3 = percentile(sorted, 75.0)
+        val iqr = q3 - q1
+        if (iqr == 0.0) return emptyList()
+
+        val upperFence = q3 + IQR_FENCE * iqr
+
+        return expenses.filter { it.amount > upperFence }.map { expense ->
+            AnomalyTransaction(
+                expense = expense,
+                merchantAvg = categoryAvg,
+                deviationMultiple = if (categoryAvg > 0) (expense.amount / categoryAvg).toFloat() else 0f,
+                category = category,
+                detectionMethod = AnomalyMethod.IQR,
+                categoryAvg = categoryAvg
+            )
+        }
     }
+
+    /**
+     * MAD method: flags transactions whose modified Z-score exceeds [MAD_ZSCORE_THRESHOLD].
+     *
+     * Modified Z-score = 0.6745 × (xᵢ − median) / MAD
+     *
+     * Using MAD instead of std dev makes this resistant to the "masking" effect
+     * where multiple outliers inflate the standard deviation and make themselves
+     * harder to detect. Recommended by Iglewicz & Hoaglin (1993).
+     */
+    private fun detectMad(
+        expenses: List<Expense>,
+        amounts: List<Double>,
+        category: Category?,
+        categoryAvg: Double
+    ): List<AnomalyTransaction> {
+        val sorted = amounts.sorted()
+        val median = percentile(sorted, 50.0)
+
+        val absoluteDeviations = amounts.map { abs(it - median) }.sorted()
+        val mad = percentile(absoluteDeviations, 50.0)
+
+        // If MAD is zero (all values identical), fall back — no outliers possible
+        if (mad == 0.0) return emptyList()
+
+        return expenses.filter { expense ->
+            val modifiedZ = MAD_SCALE * (expense.amount - median) / mad
+            modifiedZ > MAD_ZSCORE_THRESHOLD
+        }.map { expense ->
+            AnomalyTransaction(
+                expense = expense,
+                merchantAvg = categoryAvg,
+                deviationMultiple = if (categoryAvg > 0) (expense.amount / categoryAvg).toFloat() else 0f,
+                category = category,
+                detectionMethod = AnomalyMethod.MAD,
+                categoryAvg = categoryAvg
+            )
+        }
+    }
+
+    /**
+     * Contextual method: sub-groups expenses by (dayOfWeek, timeSlot) and runs
+     * IQR within each sub-group.
+     *
+     * A €50 grocery charge is unremarkable on a Saturday afternoon but unusual
+     * at 2 AM on a Wednesday. This method catches that signal.
+     *
+     * Requires at least [MIN_SAMPLES_CONTEXTUAL] entries per context group.
+     */
+    private fun detectContextual(
+        expenses: List<Expense>,
+        category: Category?,
+        categoryAvg: Double
+    ): List<AnomalyTransaction> {
+        val result = mutableListOf<AnomalyTransaction>()
+
+        // Group by (dayOfWeek name, timeSlot)
+        val byContext = expenses.groupBy { expense ->
+            Pair(dayName(expense.date), timeSlot(expense.date))
+        }
+
+        for ((context, contextExpenses) in byContext) {
+            if (contextExpenses.size < MIN_SAMPLES_CONTEXTUAL) continue
+
+            val (day, slot) = context
+            val amounts = contextExpenses.map { it.amount }.sorted()
+            val q1 = percentile(amounts, 25.0)
+            val q3 = percentile(amounts, 75.0)
+            val iqr = q3 - q1
+            if (iqr == 0.0) continue
+
+            val upperFence = q3 + IQR_FENCE * iqr
+
+            contextExpenses
+                .filter { it.amount > upperFence }
+                .forEach { expense ->
+                    val contextAvg = amounts.average()
+                    result.add(
+                        AnomalyTransaction(
+                            expense = expense,
+                            merchantAvg = contextAvg,
+                            deviationMultiple = if (contextAvg > 0) (expense.amount / contextAvg).toFloat() else 0f,
+                            category = category,
+                            detectionMethod = AnomalyMethod.CONTEXTUAL,
+                            contextualNote = "Unusual for a $day ${slot.label}",
+                            categoryAvg = categoryAvg
+                        )
+                    )
+                }
+        }
+
+        return result
+    }
+
+    // ─── Statistics helpers ───────────────────────────────────────────────────
+
+    /**
+     * Interpolated percentile on a pre-sorted list.
+     * Uses the "nearest rank" method — simple and correct for our data sizes.
+     */
+    private fun percentile(sorted: List<Double>, pct: Double): Double {
+        if (sorted.isEmpty()) return 0.0
+        if (sorted.size == 1) return sorted[0]
+        val index = (pct / 100.0 * (sorted.size - 1))
+        val lower = sorted[index.toInt()]
+        val upper = sorted[(index.toInt() + 1).coerceAtMost(sorted.size - 1)]
+        val fraction = index - index.toInt()
+        return lower + fraction * (upper - lower)
+    }
+
 }

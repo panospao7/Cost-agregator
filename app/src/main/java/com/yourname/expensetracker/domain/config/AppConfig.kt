@@ -40,4 +40,49 @@ object AppConfig {
 
     // Duplicate detection window
     const val DUPLICATE_WINDOW_MS = 300_000L  // 5 minutes
+
+    // ── Geolocation & Maps (Segment 17) ──────────────────────────────────────
+
+    object Location {
+        /** Age threshold below which a transaction is considered "recent enough"
+         *  to bias Nominatim with the device's current GPS coordinates. */
+        const val RECENT_TRANSACTION_THRESHOLD_MS = 2 * 60 * 60 * 1000L  // 2 hours
+
+        /** Nominatim rate-limit: minimum gap between successive requests (ms). */
+        const val NOMINATIM_MIN_INTERVAL_MS = 1_100L  // 1.1 sec → safe under 1 req/sec policy
+
+        /** User-Agent header required by Nominatim usage policy. */
+        const val NOMINATIM_USER_AGENT = "ExpenseTrackerApp/1.0 (Android; contact@example.com)"
+
+        /** Nominatim base URL. */
+        const val NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
+
+        /** Overpass API base URL. */
+        const val OVERPASS_BASE_URL = "https://overpass-api.de/api/interpreter"
+
+        /** Radius in metres for Overpass POI lookup around device location. */
+        const val OVERPASS_SEARCH_RADIUS_M = 150
+
+        /** Haversine radius (km) within which a user correction is considered area-local. */
+        const val CORRECTION_AREA_RADIUS_KM = 5.0f
+
+        /** How long a merchant_locations cache entry remains valid before re-geocoding. */
+        const val CACHE_TTL_MS = 30L * 24 * 60 * 60 * 1000L  // 30 days
+
+        /** Max results to request from Nominatim per query. */
+        const val NOMINATIM_MAX_RESULTS = 5
+
+        /** Greece bounding box used as Nominatim viewbox bias for name-only queries. */
+        const val GREECE_VIEWBOX = "19.3,34.8,29.6,42.0"
+
+        /** Country code bias for Nominatim. */
+        const val GREECE_COUNTRY_CODE = "gr"
+
+        // Location source constants (stored in Expense.locationSource)
+        const val SOURCE_NOMINATIM_GPS_BIAS = "NOMINATIM_GPS_BIAS"
+        const val SOURCE_NOMINATIM_NAME_ONLY = "NOMINATIM_NAME_ONLY"
+        const val SOURCE_OVERPASS_POI = "OVERPASS_POI"
+        const val SOURCE_USER_MANUAL = "USER_MANUAL"
+        const val SOURCE_DEVICE_GPS = "DEVICE_GPS"
+    }
 }

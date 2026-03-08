@@ -38,9 +38,13 @@ class RecurringExpenseEngine @Inject constructor(
         // Use lowercase().trim() to match how expenses are grouped (normalized merchant names)
         val manualMap = manualExpenses.associateBy { it.merchant.lowercase().trim() }
         
+        // Filter to PURCHASE only — deposits, transfers, and withdrawals are not recurring obligations
+        val purchaseExpenses = allExpenses.filter { 
+            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE 
+        }
 
         // Group by normalized merchant name - use same key format as manualMap
-        val grouped = allExpenses.groupBy { it.merchant.lowercase().trim() }
+        val grouped = purchaseExpenses.groupBy { it.merchant.lowercase().trim() }
 
         val detectedPatterns = mutableListOf<RecurringPattern>()
 
@@ -181,9 +185,8 @@ class RecurringExpenseEngine @Inject constructor(
              in 3..11 -> RecurrenceFrequency.WEEKLY          // ~7 days (weekly)
              in 12..22 -> RecurrenceFrequency.BIWEEKLY      // ~14 days (bi-weekly)
              in 23..45 -> RecurrenceFrequency.MONTHLY       // ~30 days (monthly)
-             in 46..75 -> RecurrenceFrequency.QUARTERLY      // ~90 days (quarterly)
-             in 76..120 -> RecurrenceFrequency.QUARTERLY     // Extended quarterly
-             in 121..270 -> RecurrenceFrequency.SEMI_ANNUALLY // ~180 days
+             in 46..135 -> RecurrenceFrequency.QUARTERLY    // ~90 days (quarterly)
+             in 136..270 -> RecurrenceFrequency.SEMI_ANNUALLY // ~180 days (semi-annually)
              in 271..400 -> RecurrenceFrequency.ANNUALLY     // ~365 days
              else -> RecurrenceFrequency.IRREGULAR
         }

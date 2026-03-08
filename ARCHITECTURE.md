@@ -122,6 +122,11 @@ domain/
 │   ├── SynthesisEngine.kt       # Financial forecast synthesis
 │   ├── NarrativeGenerator.kt   # Weather narratives
 │   └── RecurringExpenseEngine.kt # Recurring pattern detection
+├── forecasting/                 # Monte Carlo Spending Simulator (NEW Mar 2026)
+│   ├── MonteCarloSpendingSimulator.kt # Core simulation engine
+│   ├── MonteCarloResult.kt      # Result data models
+│   ├── HistoricalSpendingDistribution.kt # Weekly aggregation + log-normal fit
+│   └── DataQualityAssessor.kt   # Confidence scoring
 ├── analytics/                   # Analytics engines
 │   ├── InsightsEngine.kt        # Spending insights (coordinator)
 │   ├── SpendingPaceCalculator.kt      # Spending pace (NEW)
@@ -294,7 +299,8 @@ FinancialWeatherRepository
 ### Core Engines
 | Engine | File | Purpose |
 |--------|------|---------|
-| Forecast | `domain/logic/SynthesisEngine.kt` | Month-end prediction |
+| Forecast | `domain/logic/SynthesisEngine.kt` | Month-end prediction (deterministic) |
+| Monte Carlo | `domain/forecasting/MonteCarloSpendingSimulator.kt` | Probabilistic spending forecast (stochastic) |
 | Budget | `domain/budget/BudgetMonitor.kt` | Budget alerts |
 | Categorization | `domain/categorization/CategorizationEngine.kt` | Auto-categorization (5-layer pipeline) |
 | Recurring | `domain/logic/RecurringExpenseEngine.kt` | Pattern detection |
@@ -305,6 +311,8 @@ FinancialWeatherRepository
 | Category Insights | `domain/analytics/CategoryInsightEngine.kt` | Category analysis |
 | Merchant Insights | `domain/analytics/MerchantInsightEngine.kt` | Merchant patterns |
 | Day of Week | `domain/analytics/DayOfWeekAnalyzer.kt` | Day patterns |
+| Dashboard Widgets | `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` | Dashboard widget computation |
+| Dashboard Data | `domain/usecase/dashboard/DashboardDataProvider.kt` | Dashboard data provider (flatMapLatest) |
 
 ### New Categorization Components (Feb 2026)
 | Component | File | Purpose |
@@ -314,6 +322,84 @@ FinancialWeatherRepository
 | Semantic Keyword Matcher | `SemanticKeywordMatcher.kt` | Word-boundary regex matching |
 | Contextual Inference | `ContextualInferenceEngine.kt` | Amount/time-based category inference |
 | Category Keywords | `CategoryKeywords.kt` | Pre-defined keyword mappings |
+
+### Monte Carlo Spending Simulator (Mar 2026)
+| Component | File | Purpose |
+|-----------|------|---------|
+| Simulator Engine | `MonteCarloSpendingSimulator.kt` | 1000-iteration Monte Carlo simulation |
+| Result Model | `MonteCarloResult.kt` | Percentiles (P10/P25/P50/P75/P90), probability under budget |
+| Distribution Builder | `HistoricalSpendingDistribution.kt` | Weekly aggregation + log-normal fitting |
+| Quality Assessor | `DataQualityAssessor.kt` | Confidence scoring (volume/density/fitness/recency) |
+| UI Card | `MonteCarloForecastCard.kt` | Dashboard widget display |
+
+### Advanced Analytics Features (Mar 2026) - ALL 6 FEATURES IMPLEMENTED
+
+#### Feature 1: Anomaly Detection Upgrade
+| Component | File | Purpose |
+|-----------|------|---------|
+| Detector | `AnomalyDetector.kt` | Multi-method anomaly detection (MAD, IQR, Contextual, Multiplier) |
+| Models | `AnalyticsModels.kt` | `AnomalyMethod` enum, `AnomalyTransaction` fields |
+| Integration | `InsightsEngine.kt` | `findAnomalies()` updated to use new detector |
+
+**Detection Methods:**
+- **MAD** (Median Absolute Deviation): Flags transactions > 3x MAD from median - most robust
+- **IQR** (Interquartile Range): Flags transactions > 1.5x IQR above Q3 - classic statistical outlier
+- **Contextual**: Compares to category average for that merchant
+- **Multiplier**: Flags round amounts >=500 EUR divisible by 50 AND >2x average
+
+#### Feature 2: Cumulative Spending Curve
+| Component | File | Purpose |
+|-----------|------|---------|
+| Data Model | `ComputeDashboardWidgetsUseCase.kt` | `SpendingTrendSeries` with multi-month cumulative data |
+| Chart | `SpendingTrendChart.kt` | Multi-series line chart (current + 5 prior months) |
+| Widget | `DashboardWidget.SpendingTrend` | Stores series list |
+| UI | `HomeScreen.kt` | Renders multi-line trend chart |
+
+#### Feature 3: Year-over-Year Comparison
+| Component | File | Purpose |
+|-----------|------|---------|
+| Models | `AnalyticsModels.kt` | `MonthlyYearTotal`, `YearOverYearComparison` |
+| Compute | `AnalyticsViewModel.kt` | `computeYearOverYear()` function |
+| UI | `AnalyticsScreen.kt` | `YearOverYearCard` composable |
+
+#### Feature 4: Spending Velocity Anomaly
+| Component | File | Purpose |
+|-----------|------|---------|
+| Models | `AnalyticsModels.kt` | `VelocityAnomaly` with date, amount, deviation |
+| Compute | `AnalyticsViewModel.kt` | `computeVelocityAnomalies()` - flags days >2x avg AND >IQR fence |
+| UI | `AnalyticsScreen.kt` | `VelocityAnomalyCard` composable |
+
+#### Feature 5: Post-Salary Sequential Pattern
+| Component | File | Purpose |
+|-----------|------|---------|
+| Models | `AnalyticsModels.kt` | `PostSalaryCategory`, `PostSalaryPattern` |
+| Compute | `AnalyticsViewModel.kt` | `computePostSalaryPattern()` - tracks spending after salary deposits |
+| UI | `AnalyticsScreen.kt` | `PostSalaryPatternCard` composable |
+
+**Algorithm:**
+- Identifies salary deposits (DEPOSIT or incoming TRANSFER)
+- Finds largest deposit per month (assumed salary)
+- Tracks spending in 7 days after each salary
+- Shows: avg days to first purchase, avg spend per cycle, top categories
+
+#### Feature 6: Duplicate/Error Detection
+| Component | File | Purpose |
+|-----------|------|---------|
+| Models | `AnalyticsModels.kt` | `SuspectReason` enum, `SuspectTransaction` model |
+| Compute | `AnalyticsViewModel.kt` | `detectSuspectTransactions()` function |
+| UI | `AnalyticsScreen.kt` | `SuspectTransactionCard` composable |
+
+**Detection Rules:**
+- **Near Duplicate**: Same amount + same merchant within 24 hours
+- **Round Amount**: >=500 EUR AND divisible by 50 AND >2x average
+- **Extreme Outlier**: >5x period average
+
+### Analytics ViewModel (NEW)
+| Component | File | Purpose |
+|-----------|------|---------|
+| ViewModel | `AnalyticsViewModel.kt` | Full analytics state with all 6 features |
+| State | `AnalyticsState` | Contains all feature fields (anomalies, yearOverYear, velocityAnomalies, postSalaryPattern, suspectTransactions) |
+| Screen | `AnalyticsScreen.kt` | Main analytics UI (replaced `AdvancedAnalyticsScreen`) |
 
 ### Parsers (Notification Processing)
 | Parser | File | Handles |
@@ -363,7 +449,7 @@ di/
 
 ## Database Schema
 
-### Version: 27 (Updated Feb 2026)
+### Version: 27 (Updated Mar 2026)
 
 ### Key Entities
 ```
@@ -469,6 +555,7 @@ index_raw_notifications_packageName_timestamp_title_text UNIQUE
 | Issue | Check Files |
 |-------|-------------|
 | Forecast wrong | SynthesisEngine, FinancialWeatherRepository, BudgetCalculator |
+| Monte Carlo wrong | MonteCarloSpendingSimulator, HistoricalSpendingDistribution, DataQualityAssessor |
 | Budget alerts | BudgetMonitor, AndroidNotificationService |
 | Parser failing | AppParserRegistry, specific *Parser.kt, ConfidenceRouter |
 | OCR issues | ReceiptOcrService, ReceiptParser, ML Kit config |
@@ -488,6 +575,17 @@ index_raw_notifications_packageName_timestamp_title_text UNIQUE
 | Greek pattern matching | Added accent-insensitive Greek patterns to TransferDirectionDetector |
 | Keyword false positives | Added regex word boundaries to SemanticKeywordMatcher |
 | Grocery amount inference | Added €20-€150 bracket to ContextualInferenceEngine |
+| Monte Carlo Simulator | NEW: Probabilistic month-end spending forecast (Mar 2026) |
+| AnomalyDetector ordinal priority | Fixed < to > so MAD beats IQR |
+| AnomalyDetector division by zero | Added guards for categoryAvg/contextAvg = 0 |
+| ComputeDashboardWidgetsUseCase txCount | Now uses today's count instead of month-wide |
+| detectSuspectTransactions round-amount | Added >2x average requirement |
+| computeVelocityAnomalies unused param | Removed unused periodStartMs |
+| computePostSalaryPattern force-unwrap | Replaced !! with safe unwrap |
+| String.format locale | Added Locale.US for decimal consistency |
+| FinancialRunway daily rate | Fixed to use actual MTD spend, not projected total |
+| DashboardDataProvider stale timestamp | Now recomputes monthStart/monthEnd on every emission |
+| AnalyticsScreen Tab 4 | Switched to AnalyticsScreen with all 6 features |
 
 ### Transfer Direction Detection Feature (Updated Feb 2026)
 | Component | File | Purpose |
@@ -593,7 +691,7 @@ class SynthesisEngine @Inject constructor(
 | 1 | Activity | `TransactionsScreen.kt` |
 | 2 | Review | `ReviewScreen.kt` |
 | 3 | Plan | `BudgetScreen.kt` |
-| 4 | Analytics | `AdvancedAnalyticsScreen.kt` |
+| 4 | Analytics | `AnalyticsScreen.kt` (all 6 advanced features) |
 
 ### Deep Links
 ```
@@ -621,6 +719,13 @@ expensetracker://analytics  → Tab 4
 | `SpendingPaceGauge.kt` | Spending pace gauge |
 | `ChartMarker.kt` | Chart markers |
 | `TransferDirectionBadge.kt` | Transfer direction indicator (NEW) |
+| `MonteCarloForecastCard.kt` | Probabilistic month-end forecast (P10/P50/P90) |
+| `SpendingTrendChart.kt` | Multi-month cumulative spending curve (Feature 2) |
+| `FinancialRunwayCard.kt` | Days remaining + discretionary + daily rate |
+| `VelocityAnomalyCard.kt` | Spending velocity anomaly display (Feature 4) |
+| `YearOverYearCard.kt` | Year-over-year comparison (Feature 3) |
+| `PostSalaryPatternCard.kt` | Post-salary spending pattern (Feature 5) |
+| `SuspectTransactionCard.kt` | Duplicate/error detection (Feature 6) |
 
 ### Domain Models (`domain/model/`)
 | Model | Purpose |
@@ -704,15 +809,15 @@ expensetracker://analytics  → Tab 4
 
 | Segment | Files | Main Files |
 |---------|-------|------------|
-| 1: Financial Forecast | ~15 | SynthesisEngine, FinancialWeatherRepository, HomeScreen |
+| 1: Financial Forecast | ~20 | SynthesisEngine, MonteCarloSpendingSimulator, FinancialWeatherRepository, HomeScreen |
 | 2: Budget | ~8 | BudgetCalculator, BudgetMonitor, BudgetRepository |
 | 3: Notification Parsing | ~20 | NotificationCaptureService, AppParserRegistry, *Parser.kt |
 | 4: OCR/Receipt | ~8 | ReceiptOcrService, ReceiptParser, ReceiptRepository |
 | 5: Categorization | ~15 | CategorizationEngine, MerchantNormalizer, CategoryRepository |
 | 6: Recurring | ~5 | RecurringExpenseEngine, RecurringExpenseRepository |
-| 7: Analytics | ~15 | InsightsEngine (+6 new engines), AdvancedAnalyticsEngine |
+| 7: Analytics | ~20 | InsightsEngine, AnomalyDetector, AdvancedAnalyticsEngine, AnalyticsViewModel, AnalyticsScreen |
 | 8: Core Expense | ~20 | ExpenseRepository, TransactionsScreen, AddExpenseSheet |
-| 9: Dashboard | ~10 | MainActivity, DashboardRepository, HomeViewModel |
+| 9: Dashboard | ~15 | MainActivity, DashboardRepository, HomeViewModel, ComputeDashboardWidgetsUseCase, DashboardDataProvider |
 | 10: Notifications | ~3 | AndroidNotificationService, NotificationService |
 | 11: Debug | ~8 | DebugScreen, DebugViewModel, ServiceDiagnostics |
 | 12: DI | ~6 | AppModule, DatabaseModule, DaoModule, ServiceModule |

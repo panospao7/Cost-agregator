@@ -195,7 +195,7 @@ fun RecurringExpensesScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(patterns) { pattern ->
+                        items(patterns, key = { it.id ?: it.merchantName }) { pattern ->
                             RecurringExpenseItem(
                                 pattern = pattern,
                                 onDelete = { viewModel.deleteManualRule(pattern) },
@@ -222,7 +222,7 @@ fun RecurringExpensesScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(planned) { item ->
+                        items(planned, key = { it.id }) { item ->
                             PlannedExpenseItem(
                                 expense = item,
                                 onDelete = { viewModel.deletePlannedExpense(item) }
@@ -256,7 +256,7 @@ fun PlannedExpenseItem(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "€${String.format("%.2f", expense.amount)} • ${expense.priority.name.lowercase().capitalize()}",
+                    text = "€${String.format("%.2f", expense.amount)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }

@@ -66,4 +66,33 @@ class CategorizationEngineDebugTest {
         assertEquals(MatchType.CANONICAL, trace.finalResult.matchType)
         assertEquals(1L, trace.finalResult.categoryId)
     }
+
+    @Test
+    fun `learnMerchantCategory invalidates cache and allows immediate re-categorization`() = runBlocking {
+        // 1. Initial state: Unknown merchant
+        coEvery { merchantCategoryDao.getAll() } returns emptyList()
+        var result = engine.categorize("NEW_MERCHANT")
+        assertEquals(MatchType.UNKNOWN, result.matchType)
+
+        // 2. Learn the merchant
+        val merchantName = "NEW_MERCHANT"
+        val categoryId = 5L
+        
+        // Mock the DAO to return the new mapping after insertion
+        val newMapping = MerchantCategory(merchantName.lowercase(), categoryId)
+        coEvery { merchantCategoryDao.getAll() } returns listOf(newMapping)
+        coEvery { merchantCategoryDao.insert(any()) } just runs
+        
+        // This should trigger invalidateCache()
+        engine.learnMerchantCategory(merchantName, categoryId)
+
+        // 3. Categorize again - should now work immediately
+        result = engine.categorize(merchantName)
+        
+        assertEquals(MatchType.EXACT, result.matchType)
+        assertEquals(categoryId, result.categoryId)
+        
+        // Verify DAO was called
+        coVerify { merchantCategoryDao.insert(any()) }
+    }
 }

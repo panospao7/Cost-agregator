@@ -12,6 +12,9 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.data.database.dao.PendingReviewDao
+import com.yourname.expensetracker.data.database.dao.MonthlyDepositTotal
+import com.yourname.expensetracker.data.database.dao.LocationCluster
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import androidx.sqlite.db.SimpleSQLiteQuery
@@ -36,6 +39,7 @@ enum class OwnershipFilter {
 class ExpenseRepository @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val userCorrectionDao: UserCorrectionDao,
+    private val pendingReviewDao: PendingReviewDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
     private val merchantNormalizer: MerchantNormalizer
 ) {
@@ -147,7 +151,9 @@ class ExpenseRepository @Inject constructor(
                    e.rawNotificationId, e.categoryId, e.createdAt, e.paymentMethod, 
                    e.isManualEntry, e.notes, e.dedupeKey, e.transferDirection, 
                    e.transferAccountName, e.isNotMine, e.ownerName, 
-                   e.isSharedExpense, e.sharedWithName, e.mySharePercentage, e.myShareAmount
+                   e.isSharedExpense, e.sharedWithName, e.mySharePercentage, e.myShareAmount,
+                   e.latitude, e.longitude, e.locationSource, e.placeId,
+                   e.backfillAttempts, e.resolvedAddress
             FROM expenses e
             $whereClause
             ORDER BY e.${sortOrder.sql}
@@ -217,13 +223,30 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
-    suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String) {
+    suspend fun updateExpenseMerchantBulk(oldMerchant: String, newMerchant: String) {
+        if (oldMerchant == newMerchant) return
+        
+        expenseDao.updateMerchantForMerchant(oldMerchant, newMerchant)
+        merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
+    }
+
+    suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String, applyToAll: Boolean = false) {
         if (expense.merchant == newMerchant) return
         
-        expenseDao.updateMerchant(expense.id, newMerchant)
+        val oldMerchant = expense.merchant
+        
+        if (applyToAll) {
+            // Update all approved expenses with this name
+            expenseDao.updateMerchantForMerchant(oldMerchant, newMerchant)
+            // Also update any pending reviews with this name
+            pendingReviewDao.bulkRenameMerchant(oldMerchant, newMerchant)
+        } else {
+            // Just update this single record
+            expenseDao.updateMerchant(expense.id, newMerchant)
+        }
         
         // Catch the rename for future auto-correction
-        merchantNormalizer.learnMerchantAlias(expense.merchant, newMerchant)
+        merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
         
         // Also learn the category for this brand name
         expense.categoryId?.let { 
@@ -337,4 +360,50 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun getTotalDeposits(): Double =
         expenseDao.getTotalDeposits()
+
+    // ── Location methods (v28) ────────────────────────────────────────────────
+
+    /** Reactive flow of located expenses — collected by SpendingMapViewModel. */
+    fun getLocatedExpenses() = expenseDao.getLocatedExpensesFlow()
+
+    suspend fun getUnlocatedExpenses(limit: Int = 500) = expenseDao.getUnlocatedExpenses(limit)
+
+    /** Returns unlocated expenses that haven't exceeded the max backfill attempt threshold. */
+    suspend fun getUnlocatedExpensesForBackfill(limit: Int = 500) =
+        expenseDao.getUnlocatedExpensesForBackfill(limit)
+
+    suspend fun incrementBackfillAttempts(expenseId: Long) =
+        expenseDao.incrementBackfillAttempts(expenseId)
+
+    suspend fun countLocatedExpenses() = expenseDao.countLocated()
+
+    suspend fun countUnlocatedExpenses() = expenseDao.countUnlocated()
+
+    suspend fun updateExpenseLocation(
+        expenseId: Long,
+        latitude: Double,
+        longitude: Double,
+        source: String,
+        placeId: String?,
+        address: String? = null
+    ) = expenseDao.updateLocation(expenseId, latitude, longitude, source, placeId, address)
+
+    suspend fun clearExpenseLocation(expenseId: Long) = expenseDao.clearLocation(expenseId)
+
+    /** Reactive flow of unlocated expenses — used by Map tab unlocated panel. */
+    fun getUnlocatedExpensesFlow(limit: Int = 100) = expenseDao.getUnlocatedExpensesFlow(limit)
+
+    suspend fun getLocatedMerchantTotals() = expenseDao.getLocatedMerchantTotals()
+
+    suspend fun getExpensesInBoundingBox(
+        minLat: Double, maxLat: Double,
+        minLon: Double, maxLon: Double
+    ) = expenseDao.getExpensesInBoundingBox(minLat, maxLat, minLon, maxLon)
+
+    /**
+     * Returns location clusters for a merchant based on historically located expenses.
+     * Used by Feature A (Merchant Location Affinity) in the resolver.
+     */
+    suspend fun getMerchantLocationClusters(normalizedMerchant: String): List<LocationCluster> =
+        expenseDao.getMerchantLocationClusters(normalizedMerchant)
 }

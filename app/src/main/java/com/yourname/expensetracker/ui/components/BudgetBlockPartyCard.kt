@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Date
+import java.util.Calendar
 
 enum class BlockStatus {
     UNDER_BUDGET, // Time to Party (Green)
@@ -47,14 +48,21 @@ data class DayBudgetStatus(
 @Composable
 fun BudgetBlockPartyCard(
     days: List<DayBudgetStatus>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToDay: ((Long) -> Unit)? = null
 ) {
     var selectedDay by remember { mutableStateOf<DayBudgetStatus?>(null) }
 
     selectedDay?.let { day ->
         DayAtAGlanceDialog(
             day = day,
-            onDismiss = { selectedDay = null }
+            onDismiss = { selectedDay = null },
+            onViewTransactions = if (onNavigateToDay != null) {
+                {
+                    selectedDay = null
+                    onNavigateToDay(day.date)
+                }
+            } else null
         )
     }
 
@@ -71,15 +79,28 @@ fun BudgetBlockPartyCard(
         Spacer(modifier = Modifier.height(12.dp))
         
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            days.chunked(7).forEach { week ->
+            // Calculate the day-of-week offset for the first day of the month
+            // so blocks align to a proper calendar grid (Mon=0 .. Sun=6)
+            val startOffset = if (days.isNotEmpty()) {
+                val cal = Calendar.getInstance().apply { timeInMillis = days.first().date }
+                // Calendar.MONDAY=2, so shift to 0-indexed Mon start
+                (cal.get(Calendar.DAY_OF_WEEK) + 5) % 7
+            } else 0
+
+            // Pad with null entries for empty leading cells
+            val paddedDays: List<DayBudgetStatus?> = List(startOffset) { null } + days
+            paddedDays.chunked(7).forEach { week ->
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    week.forEach { day ->
-                         Box(modifier = Modifier.weight(1f)) {
-                             DayBlock(day, onClick = { selectedDay = day })
-                         }
+                    week.forEach { dayOrNull ->
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (dayOrNull != null) {
+                                DayBlock(dayOrNull, onClick = { selectedDay = dayOrNull })
+                            }
+                            // null = empty cell, renders nothing but takes space via weight(1f)
+                        }
                     }
                     // Fill remaining space if last week is short
                     if (week.size < 7) {
@@ -90,6 +111,48 @@ fun BudgetBlockPartyCard(
                 }
             }
         }
+
+        // Color legend
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            BlockLegendItem(color = SemanticColors.SuccessGreen, label = "Under")
+            BlockLegendItem(color = SemanticColors.DangerRed, label = "Over")
+            BlockLegendItem(color = SemanticColors.PrimaryIndigo, label = "Today")
+            BlockLegendItem(
+                color = Color.Transparent,
+                label = "Bill",
+                borderColor = Color.White.copy(alpha = 0.5f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun BlockLegendItem(
+    color: Color,
+    label: String,
+    borderColor: Color? = null
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        val shape = RoundedCornerShape(3.dp)
+        val boxMod = Modifier
+            .size(10.dp)
+            .clip(shape)
+            .background(if (color == Color.Transparent) Color.Transparent else color.copy(alpha = 0.9f))
+        val borderedMod = if (borderColor != null) boxMod.border(1.dp, borderColor, shape) else boxMod
+        Box(modifier = borderedMod)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 10.sp,
+            color = SemanticColors.TextMuted
+        )
     }
 }
 
@@ -143,7 +206,8 @@ fun DayBlock(day: DayBudgetStatus, onClick: () -> Unit) {
 @Composable
 fun DayAtAGlanceDialog(
     day: DayBudgetStatus,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onViewTransactions: (() -> Unit)? = null
 ) {
     val dateStr = DateFormatterUtils.monthDay().format(Date(day.date))
 
@@ -171,10 +235,26 @@ fun DayAtAGlanceDialog(
                         color = SemanticColors.TextSecondary,
                         fontWeight = FontWeight.Bold
                     )
+                    val statusText = when (day.status) {
+                        BlockStatus.UNDER_BUDGET -> "Under Budget"
+                        BlockStatus.OVER_BUDGET -> "Over Budget"
+                        BlockStatus.TODAY -> if (day.actualSpent <= day.targetBudget) "On Track" else "Over Budget"
+                        BlockStatus.BILL_DAY -> "Bill Day"
+                        BlockStatus.NO_DATA -> "No Data"
+                        BlockStatus.FUTURE -> "Upcoming"
+                    }
+                    val statusColor = when (day.status) {
+                        BlockStatus.UNDER_BUDGET -> SemanticColors.SuccessGreen
+                        BlockStatus.OVER_BUDGET -> SemanticColors.DangerRed
+                        BlockStatus.TODAY -> if (day.actualSpent <= day.targetBudget) SemanticColors.PrimaryIndigo else SemanticColors.DangerRed
+                        BlockStatus.BILL_DAY -> SemanticColors.WarningOrange
+                        BlockStatus.NO_DATA -> SemanticColors.TextSecondary
+                        BlockStatus.FUTURE -> SemanticColors.TextSecondary
+                    }
                     Text(
-                        text = if (day.status == BlockStatus.UNDER_BUDGET) "Under Budget" else "Over Budget",
+                        text = statusText,
                         style = MaterialTheme.typography.titleLarge,
-                        color = if (day.status == BlockStatus.UNDER_BUDGET) SemanticColors.SuccessGreen else SemanticColors.DangerRed,
+                        color = statusColor,
                         fontWeight = FontWeight.Black
                     )
                 }
@@ -267,8 +347,22 @@ fun DayAtAGlanceDialog(
             
             Spacer(modifier = Modifier.height(24.dp))
             
+            if (onViewTransactions != null && day.status != BlockStatus.FUTURE) {
+                Button(
+                    onClick = onViewTransactions,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SemanticColors.PrimaryIndigo,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("View Transactions")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             Button(
-                onClick = onDismiss, // Ideally navigate to transactions filtered by day, but that requires hoisting nav logic. Keep simple for now.
+                onClick = onDismiss,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.GlassSurface, contentColor = SemanticColors.TextPrimary),
                 border = androidx.compose.foundation.BorderStroke(1.dp, SemanticColors.GlassBorder)

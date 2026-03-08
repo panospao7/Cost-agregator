@@ -131,7 +131,7 @@ class TransactionsViewModel @Inject constructor(
                 expenseRepository.getExpensesWithCategoryFiltered(
                     startMs = start,
                     endMs = end,
-                    type = TransactionType.PURCHASE,
+                    type = params.filter.transactionType,
                     categoryId = params.filter.categoryId,
                     merchant = params.filter.merchantName
                 )
@@ -361,26 +361,26 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
-    fun updateMerchant(expense: Expense, newMerchant: String) {
-        val trimmedName = newMerchant.trim()
-        if (trimmedName.isBlank()) {
-            viewModelScope.launch { _error.emit("Merchant name cannot be empty") }
-            return
-        }
-        
-        viewModelScope.launch {
-            _isLoading.value = true
-            try {
-                expenseRepository.updateExpenseMerchant(expense, trimmedName)
-                _successMessage.emit("Merchant renamed to $trimmedName")
-            } catch (e: Exception) {
-                _error.emit("Failed to update merchant: ${e.message}")
-            } finally {
-                _isLoading.value = false
-            }
+    fun updateMerchant(expense: Expense, newMerchant: String, applyToAll: Boolean = false) {
+    val trimmedName = newMerchant.trim()
+    if (trimmedName.isBlank()) {
+        viewModelScope.launch { _error.emit("Merchant name cannot be empty") }
+        return
+    }
+    
+    viewModelScope.launch {
+        _isLoading.value = true
+        try {
+            expenseRepository.updateExpenseMerchant(expense, trimmedName, applyToAll)
+            val message = if (applyToAll) "Merchant renamed to $trimmedName globally" else "Merchant renamed to $trimmedName"
+            _successMessage.emit(message)
+        } catch (e: Exception) {
+            _error.emit("Failed to update merchant: ${e.message}")
+        } finally {
+            _isLoading.value = false
         }
     }
-
+}
     fun updateExpenseType(expense: Expense, newType: TransactionType) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -440,6 +440,35 @@ class TransactionsViewModel @Inject constructor(
                 _successMessage.emit(if (isSharedExpense) "Marked as shared expense" else "Unmarked shared expense")
             } catch (e: Exception) {
                 _error.emit("Failed to update: ${e.message}")
+            }
+        }
+    }
+
+    fun updateLocation(expense: Expense, lat: Double, lon: Double, address: String?, osmId: String?) {
+        viewModelScope.launch {
+            try {
+                expenseRepository.updateExpenseLocation(
+                    expenseId = expense.id,
+                    latitude = lat,
+                    longitude = lon,
+                    source = "USER_MANUAL",
+                    placeId = osmId,
+                    address = address
+                )
+                _successMessage.emit("Location saved")
+            } catch (e: Exception) {
+                _error.emit("Failed to save location: ${e.message}")
+            }
+        }
+    }
+
+    fun clearLocation(expense: Expense) {
+        viewModelScope.launch {
+            try {
+                expenseRepository.clearExpenseLocation(expense.id)
+                _successMessage.emit("Location cleared")
+            } catch (e: Exception) {
+                _error.emit("Failed to clear location: ${e.message}")
             }
         }
     }

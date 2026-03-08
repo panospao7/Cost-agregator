@@ -12,12 +12,33 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import com.yourname.expensetracker.data.database.entity.Category
 
+/**
+ * Summary of spending for a given time period, used by the analytics screen
+ * and the dashboard to display trends and comparisons.
+ */
 data class SpendingSummary(
     val totalSpent: Double,
     val previousTotalSpent: Double?,
     val changePercent: Float?,
+    /** Daily spending totals for the current period, one entry per day. */
     val dailyHistory: List<Float>,
+    /** Daily spending totals for the previous period, one entry per day. */
     val previousDailyHistory: List<Float>,
+    val transactionCount: Int
+)
+
+data class LocationSpendSummary(
+    /** Top spending places sorted by total spend descending. */
+    val topMerchants: List<LocationMerchantStat>,
+    /** Total number of expenses with coordinates. */
+    val locatedCount: Int,
+    /** Total number of expenses without coordinates. */
+    val unlocatedCount: Int
+)
+
+data class LocationMerchantStat(
+    val merchant: String,
+    val totalSpend: Double,
     val transactionCount: Int
 )
 
@@ -115,5 +136,31 @@ class AnalyticsRepository @Inject constructor(
                 }
                 .sortedByDescending { it.total }
         }
+    }
+
+    // ── Location-aware analytics (v28) ────────────────────────────────────────
+
+    /**
+     * Returns a summary of spending grouped by located vs un-located expenses,
+     * and the top merchants that have been geocoded.
+     */
+    suspend fun getLocationSpendSummary(): LocationSpendSummary {
+        val merchantTotals = expenseDao.getLocatedMerchantTotals()
+        val locatedCount = expenseDao.countLocated()
+        val unlocatedCount = expenseDao.countUnlocated()
+
+        val topMerchants = merchantTotals.take(20).map { mt ->
+            LocationMerchantStat(
+                merchant = mt.merchant,
+                totalSpend = mt.total,
+                transactionCount = mt.cnt
+            )
+        }
+
+        return LocationSpendSummary(
+            topMerchants = topMerchants,
+            locatedCount = locatedCount,
+            unlocatedCount = unlocatedCount
+        )
     }
 }

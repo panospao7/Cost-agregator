@@ -183,7 +183,7 @@ object MerchantCategoryProvider {
         "BRITISH PETROLEUM" to "Transport",
         "EKO" to "Transport", "EKO ABEE" to "Transport", 
         "EKO KALYPSO" to "Transport", "HELLENIC PETROLEUM" to "Transport",
-        "ELPE" to "Transport", "ΕΛΠΕ" to "Utilities", // Note: ELPE can be heating oil/utility too, but keeping as fuel here or user preference
+        "ELPE" to "Transport", "ΕΛΠΕ" to "Transport",
         "Aegean" to "Transport", "Aegean Oil" to "Transport", 
         "AEGEAN OIL" to "Transport",
         "Avin" to "Transport", "AVIN OIL" to "Transport", 
@@ -206,15 +206,15 @@ object MerchantCategoryProvider {
         "Q8" to "Transport", "KUWAIT PETROLEUM" to "Transport",
         "Cepsa" to "Transport", "CEPSA" to "Transport",
         "Repsol" to "Transport", "REPSOL" to "Transport",
-        "OMV" to "Transport", "OMV" to "Transport",
-        "MOL" to "Transport", "MOL" to "Transport",
+        "OMV" to "Transport",
+        "MOL" to "Transport",
         
         // Generic Fuel
         "Gas Station" to "Transport", "Fuel Station" to "Transport", 
         "Πρατήριο" to "Transport", "Benzinadiko" to "Transport",
         "Βενζινάδικο" to "Transport", "PRATIRIO" to "Transport",
         "Petrol" to "Transport", "PETROL" to "Transport",
-        "Diesel" to "Transport", "DIESEL" to "Transport",
+        "Diesel Fuel" to "Transport", "DIESEL FUEL" to "Transport",
         "LPG" to "Transport", "AUTOGAS" to "Transport",
         "Charging Station" to "Transport", "EV CHARGE" to "Transport",
         
@@ -295,7 +295,7 @@ object MerchantCategoryProvider {
         "Rio Antirio" to "Transport", "RIO ANTIRIO" to "Transport",
         "DIODIA" to "Transport", "Διόδια" to "Transport",
         "Aktor" to "Transport", "AKTOR CONCESSIONS" to "Transport",
-        "Autohellas" to "Transport", "AUTOKINITODROMO" to "Transport",
+        "AUTOKINITODROMO" to "Transport",
         
         // Micromobility
         "Lime" to "Transport", "LIME SCOOTER" to "Transport",
@@ -433,7 +433,7 @@ object MerchantCategoryProvider {
         "Vrbo" to "Travel", "VRBO" to "Travel", 
         "HOMEAWAY" to "Travel",
         "TripAdvisor" to "Travel", "TRIPADVISOR" to "Travel",
-        "Kayak" to "Travel", "KAYAK" to "Travel",
+        "Kayak Travel" to "Travel", "KAYAK" to "Travel",
         "Skyscanner" to "Travel", "SKYSCANNER" to "Travel",
         "Google Flights" to "Travel", "GOOGLE FLIGHTS" to "Travel",
         "Momondo" to "Travel", "MOMONDO" to "Travel",
@@ -638,7 +638,7 @@ object MerchantCategoryProvider {
         "Gelato" to "Food", "GELATO" to "Food",
         "Pagoto" to "Food", "Παγωτό" to "Food",
         "Dodoni" to "Food", "ΔΩΔΩΝΗ" to "Food",
-        "Kayak" to "Food", "KAYAK ICECREAM" to "Food",
+        "Kayak Ice Cream" to "Food", "KAYAK ICECREAM" to "Food",
         "Cremeria" to "Food", "CREMERIA" to "Food",
         "Patisserie" to "Food", "PATISSERIE" to "Food",
         "Zacharoplasteio" to "Food", "Ζαχαροπλαστείο" to "Food",
@@ -802,7 +802,7 @@ object MerchantCategoryProvider {
         "Birkenstock" to "Shopping", "BIRKENSTOCK" to "Shopping",
         "Crocs" to "Shopping", "CROCS" to "Shopping",
         "Dr Martens" to "Shopping", "DR MARTENS" to "Shopping",
-        "UGG" to "Shopping", "UGG" to "Shopping",
+        "UGG" to "Shopping",
         "Stuart Weitzman" to "Shopping", "STUART WEITZMAN" to "Shopping",
         "Jimmy Choo" to "Shopping", "JIMMY CHOO" to "Shopping",
         
@@ -865,7 +865,7 @@ object MerchantCategoryProvider {
         "AMAZON.CO.UK" to "Electronics", "AMAZON.ES" to "Electronics",
         "AMAZON.FR" to "Electronics", "AMAZON.IT" to "Electronics",
         "AMAZON.COM" to "Electronics", "AWS" to "Electronics",
-        "AMAZON PRIME" to "Subscriptions", "PRIME VIDEO" to "Subscriptions",
+        "AMAZON PRIME" to "Subscriptions",
         "Ebay" to "Electronics", "EBAY" to "Electronics", 
         "PAYPAL EBAY" to "Electronics",
         "AliExpress" to "Electronics", "ALIEXPRESS" to "Electronics",
@@ -905,7 +905,7 @@ object MerchantCategoryProvider {
         "Bose" to "Electronics", "BOSE" to "Electronics",
         "Bang Olufsen" to "Electronics", "BANG OLUFSEN" to "Electronics",
         "Harman Kardon" to "Electronics", "HARMAN" to "Electronics",
-        "JBL" to "Electronics", "JBL" to "Electronics",
+        "JBL" to "Electronics",
         "Beats" to "Electronics", "BEATS" to "Electronics",
         "Sennheiser" to "Electronics", "SENNHEISER" to "Electronics",
         "DJI" to "Electronics", "DJI STORE" to "Electronics",
@@ -915,16 +915,15 @@ object MerchantCategoryProvider {
         "Sony Alpha" to "Electronics", "SONY ALPHA" to "Electronics",
         "Fujifilm" to "Electronics", "FUJIFILM" to "Electronics",
         "Olympus" to "Electronics", "OLYMPUS" to "Electronics",
-        "Nintendo" to "Electronics", "NINTENDO" to "Electronics",
-        "PlayStation" to "Electronics", "PLAYSTATION STORE" to "Electronics",
-        "Xbox" to "Electronics", "XBOX STORE" to "Electronics",
+        "Nintendo Switch" to "Electronics", "NINTENDO ESHOP" to "Electronics",
+        "PlayStation Console" to "Electronics", "PLAYSTATION STORE" to "Electronics",
+        "Xbox Console" to "Electronics", "XBOX STORE" to "Electronics",
         
-        // Telecom Shops
-        "Cosmote" to "Electronics", "COSMOTE" to "Electronics",
-        "COSMOTE SHOP" to "Electronics",
-        "Vodafone" to "Electronics", "VODAFONE SHOP" to "Electronics",
-        "Wind" to "Electronics", "WIND SHOP" to "Electronics",
-        "Nova" to "Electronics", "NOVA SHOP" to "Electronics",
+        // Telecom Shops (use specific shop variants; bare names go to Utilities for bills)
+        "Cosmote Shop" to "Electronics", "COSMOTE SHOP" to "Electronics",
+        "Vodafone Shop" to "Electronics", "VODAFONE SHOP" to "Electronics",
+        "Wind Shop" to "Electronics", "WIND SHOP" to "Electronics",
+        "Nova Shop" to "Electronics", "NOVA SHOP" to "Electronics",
         "Phone" to "Electronics", "PHONE STORE" to "Electronics",
         "Mobile" to "Electronics", "MOBILE SHOP" to "Electronics",
         "Service Mobile" to "Electronics", "REPAIR SHOP" to "Electronics",
@@ -953,7 +952,7 @@ object MerchantCategoryProvider {
         
         // Greek TV & Streaming
         "Cosmote TV" to "Subscriptions", "COSMOTE TV" to "Subscriptions",
-        "Nova" to "Subscriptions", "NOVA" to "Subscriptions", 
+        "Nova TV" to "Subscriptions", "NOVA TV" to "Subscriptions", 
         "Eon" to "Subscriptions", "EON TV" to "Subscriptions",
         "Vodafone TV" to "Subscriptions", "VODAFONE TV" to "Subscriptions",
         "Ertflix" to "Subscriptions", "ERTFLIX" to "Subscriptions",
@@ -963,7 +962,7 @@ object MerchantCategoryProvider {
         // Music Streaming
         "Spotify" to "Subscriptions", "SPOTIFY" to "Subscriptions", 
         "SPOTIFY LUXEMBOURG" to "Subscriptions",
-        "Apple Music" to "Subscriptions", "APPLE.COM/BILL" to "Subscriptions",
+        "Apple Music" to "Subscriptions",
         "Youtube Music" to "Subscriptions", "YOUTUBE PREMIUM" to "Subscriptions",
         "Deezer" to "Subscriptions", "DEEZER" to "Subscriptions",
         "Tidal" to "Subscriptions", "TIDAL" to "Subscriptions",
@@ -976,7 +975,7 @@ object MerchantCategoryProvider {
         "iCloud" to "Subscriptions", "APPLE ICLOUD" to "Subscriptions",
         "Dropbox" to "Subscriptions", "DROPBOX" to "Subscriptions",
         "OneDrive" to "Subscriptions", "MICROSOFT STORAGE" to "Subscriptions",
-        "Box.com" to "Subscriptions", "BOX" to "Subscriptions",
+        "Box.com" to "Subscriptions", "BOX.COM" to "Subscriptions",
         "Mega.nz" to "Subscriptions", "MEGA" to "Subscriptions",
         "Nextcloud" to "Subscriptions", "NEXTCLOUD" to "Subscriptions",
         
@@ -1042,8 +1041,8 @@ object MerchantCategoryProvider {
         
         // Education & Others
         "Duolingo" to "Subscriptions", "DUOLINGO" to "Subscriptions",
-        "Udemy" to "Subscriptions", "UDEMY" to "Subscriptions",
-        "Coursera" to "Subscriptions", "COURSERA" to "Subscriptions",
+        "UDEMY" to "Education",
+        "COURSERA" to "Education",
         "Masterclass" to "Subscriptions", "MASTERCLASS" to "Subscriptions",
         "Babbel" to "Subscriptions", "BABBEL" to "Subscriptions",
         "Fitness App" to "Subscriptions", "GYMSHARK" to "Subscriptions",
@@ -1077,7 +1076,7 @@ object MerchantCategoryProvider {
         "EYATH" to "Utilities", "ΕΥΑΘ" to "Utilities",
         
         // Gas & Heating
-        "Fysiko Aerio" to "Utilities", "AERIO" to "Utilities", 
+        "AERIO" to "Utilities", 
         "EPA" to "Utilities", "GAS BILL" to "Utilities",
         "Heating Oil" to "Utilities", "PETRELAIO" to "Utilities",
         
@@ -1212,7 +1211,7 @@ object MerchantCategoryProvider {
         "Book" to "Education", "Bookstore" to "Education",
         "Vivlio" to "Education", "Βιβλιοπωλείο" to "Education",
         "Ianos" to "Education", "Politeia" to "Education",
-        "Evripidis" to "Education", "Public" to "Electronics", // Note: Public is also books, but mostly Electronics in categorization
+        "Evripidis" to "Education", // Note: "Public" is already mapped to Electronics above
         "School" to "Education", "University" to "Education",
         "Tuition" to "Education", "Didaktra" to "Education",
 

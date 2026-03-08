@@ -300,8 +300,18 @@ class SynthesisEngine @Inject constructor(
         
         val components = forecast.components
         
-        // 1. Calculate Monthly Totals for pro-rating
-        val totalMonthlyRecurring = components.recurringExpenses.sumOf { it.averageAmount }
+        // 1. Calculate Monthly Totals for pro-rating (frequency-adjusted)
+        val totalMonthlyRecurring = components.recurringExpenses.sumOf { pattern ->
+            when (pattern.frequency) {
+                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 7.0)
+                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 14.0)
+                RecurrenceFrequency.MONTHLY -> pattern.averageAmount
+                RecurrenceFrequency.QUARTERLY -> pattern.averageAmount / 3.0
+                RecurrenceFrequency.SEMI_ANNUALLY -> pattern.averageAmount / 6.0
+                RecurrenceFrequency.ANNUALLY -> pattern.averageAmount / 12.0
+                else -> 0.0
+            }
+        }
         
         // Filter planned expenses for this month only using timestamp range
         // MUST at 100%, LIKELY at 70%, OPTIONAL ignored
@@ -444,19 +454,31 @@ class SynthesisEngine @Inject constructor(
                 }
             }
             RecurrenceFrequency.QUARTERLY -> {
-                 val diff = dateCal.timeInMillis - anchor
-                 val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
-                 daysDiff in 88L..94L
+                 // Check if this day-of-month matches the anchor AND the month is a quarter boundary from anchor
+                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+                 val targetDay = dateCal.get(Calendar.DAY_OF_MONTH)
+                 val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                 val dayMatch = if (anchorDay > maxDayInTargetMonth) targetDay == maxDayInTargetMonth else targetDay == anchorDay
+                 val monthDiff = (dateCal.get(Calendar.YEAR) - anchorCal.get(Calendar.YEAR)) * 12 +
+                         (dateCal.get(Calendar.MONTH) - anchorCal.get(Calendar.MONTH))
+                 dayMatch && monthDiff >= 0 && monthDiff % 3 == 0
             }
             RecurrenceFrequency.SEMI_ANNUALLY -> {
-                 val diff = dateCal.timeInMillis - anchor
-                 val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
-                 daysDiff in 175L..190L
+                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+                 val targetDay = dateCal.get(Calendar.DAY_OF_MONTH)
+                 val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                 val dayMatch = if (anchorDay > maxDayInTargetMonth) targetDay == maxDayInTargetMonth else targetDay == anchorDay
+                 val monthDiff = (dateCal.get(Calendar.YEAR) - anchorCal.get(Calendar.YEAR)) * 12 +
+                         (dateCal.get(Calendar.MONTH) - anchorCal.get(Calendar.MONTH))
+                 dayMatch && monthDiff >= 0 && monthDiff % 6 == 0
             }
             RecurrenceFrequency.ANNUALLY -> {
-                 val diff = dateCal.timeInMillis - anchor
-                 val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
-                 daysDiff in 358L..372L
+                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+                 val targetDay = dateCal.get(Calendar.DAY_OF_MONTH)
+                 val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                 val dayMatch = if (anchorDay > maxDayInTargetMonth) targetDay == maxDayInTargetMonth else targetDay == anchorDay
+                 val monthMatch = dateCal.get(Calendar.MONTH) == anchorCal.get(Calendar.MONTH)
+                 dayMatch && monthMatch
             }
             else -> false 
         }

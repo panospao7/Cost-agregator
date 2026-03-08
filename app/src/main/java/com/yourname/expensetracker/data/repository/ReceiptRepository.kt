@@ -213,7 +213,10 @@ class ReceiptRepository @Inject constructor(
         categoryId: Long?,
         date: Long = timeProvider.now(),
         paymentMethod: PaymentMethod = PaymentMethod.CARD,
-        notes: String? = null
+        notes: String? = null,
+        latitude: Double? = null,
+        longitude: Double? = null,
+        locationSource: String? = null
     ): com.yourname.expensetracker.domain.model.Result<Long> {
         // 1. Normalize merchant
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
@@ -238,7 +241,10 @@ class ReceiptRepository @Inject constructor(
             paymentMethod = paymentMethod,
             isManualEntry = true,
             notes = notes ?: "Scanned from receipt",
-            dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date)
+            dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date),
+            latitude = latitude,
+            longitude = longitude,
+            locationSource = locationSource
         )
 
         val expenseId = expenseDao.insertAtomic(expense)

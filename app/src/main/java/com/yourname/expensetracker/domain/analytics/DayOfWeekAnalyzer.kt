@@ -24,7 +24,9 @@ class DayOfWeekAnalyzer @Inject constructor() {
         val byDayOfWeek = expenses.groupBy { expense ->
             val cal = java.util.Calendar.getInstance()
             cal.timeInMillis = expense.date!!
-            cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
+            // Calendar.DAY_OF_WEEK: Sunday=1, Monday=2, ..., Saturday=7
+            // Convert to Monday=0, Tuesday=1, ..., Sunday=6 to match DAY_NAMES
+            (cal.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
         }
         
         return (0..6).map { dayIndex ->

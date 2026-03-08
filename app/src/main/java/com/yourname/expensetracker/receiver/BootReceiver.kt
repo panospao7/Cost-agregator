@@ -3,7 +3,6 @@ package com.yourname.expensetracker.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import com.yourname.expensetracker.service.NotificationCaptureService
 import timber.log.Timber
 

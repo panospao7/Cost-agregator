@@ -46,7 +46,10 @@ class ManualExpenseRepository @Inject constructor(
         isSharedExpense: Boolean = false,
         sharedWithName: String? = null,
         mySharePercentage: Int? = null,
-        myShareAmount: Double? = null
+        myShareAmount: Double? = null,
+        latitude: Double? = null,
+        longitude: Double? = null,
+        locationSource: String? = null
     ): Result<Long> {
         if (amount <= 0) {
             return Result.Error(message = "Amount must be greater than zero")
@@ -87,7 +90,10 @@ class ManualExpenseRepository @Inject constructor(
                 isSharedExpense = isSharedExpense,
                 sharedWithName = sharedWithName,
                 mySharePercentage = mySharePercentage,
-                myShareAmount = myShareAmount
+                myShareAmount = myShareAmount,
+                latitude = latitude,
+                longitude = longitude,
+                locationSource = locationSource
             )
 
             val id = expenseDao.insertAtomic(expense)

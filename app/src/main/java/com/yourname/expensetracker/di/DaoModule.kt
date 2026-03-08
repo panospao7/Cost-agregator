@@ -81,4 +81,8 @@ object DaoModule {
     @Provides
     @Singleton
     fun provideMerchantNormalizationDao(database: AppDatabase): MerchantNormalizationDao = database.merchantNormalizationDao()
+
+    @Provides
+    @Singleton
+    fun provideMerchantLocationDao(database: AppDatabase): MerchantLocationDao = database.merchantLocationDao()
 }

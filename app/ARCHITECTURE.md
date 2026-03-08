@@ -114,7 +114,7 @@ app/src/main/java/com/yourname/expensetracker/
 
 ### Database
 
-**AppDatabase** (Room) - Version 20
+**AppDatabase** (Room) - Version 27 (Updated Mar 2026)
 
 #### Entities
 
@@ -228,10 +228,43 @@ Notification → AppParserRegistry → [SmsParser | GreekBankParser | RevolutPar
 
 | Engine | Purpose |
 |--------|---------|
-| `InsightsEngine` | Generates spending insights |
+| `InsightsEngine` | Generates spending insights (coordinator) |
 | `AdvancedAnalyticsEngine` | Advanced analytics and trends |
+| `AnomalyDetector` | Multi-method anomaly detection (MAD, IQR, Contextual, Multiplier) |
 | `BudgetMonitor` | Budget tracking and alerts (uses `NotificationService` interface) |
 | `BudgetCalculator` | Budget calculations |
+
+### Advanced Analytics Features (Mar 2026) - ALL 6 IMPLEMENTED
+
+#### Feature 1: Anomaly Detection (Multi-Method)
+- **AnomalyDetector.kt**: MAD, IQR, Contextual, Multiplier detection
+- **AnalyticsModels.kt**: `AnomalyMethod` enum, `AnomalyTransaction` fields
+- Priority: MAD > IQR > Contextual > Multiplier
+
+#### Feature 2: Cumulative Spending Curve
+- **ComputeDashboardWidgetsUseCase.kt**: `SpendingTrendSeries` with multi-month data
+- **SpendingTrendChart.kt**: Multi-series line chart (current + 5 prior months)
+- Shows cumulative daily spending per month
+
+#### Feature 3: Year-over-Year Comparison
+- **AnalyticsViewModel.kt**: `computeYearOverYear()` function
+- **AnalyticsModels.kt**: `MonthlyYearTotal`, `YearOverYearComparison`
+- Compares same month across years
+
+#### Feature 4: Spending Velocity Anomaly
+- **AnalyticsViewModel.kt**: `computeVelocityAnomalies()` function
+- Flags days with spending >2x daily average AND >IQR upper fence
+
+#### Feature 5: Post-Salary Sequential Pattern
+- **AnalyticsViewModel.kt**: `computePostSalaryPattern()` function
+- Tracks spending in 7 days after salary deposits
+- Shows: avg days to first purchase, top categories
+
+#### Feature 6: Duplicate/Error Detection
+- **AnalyticsViewModel.kt**: `detectSuspectTransactions()` function
+- Near-duplicates (same amount+merchant within 24h)
+- Round amounts (>=500, divisible by 50, >2x avg)
+- Extreme outliers (>5x average)
 
 ### Logic Engines
 
@@ -283,8 +316,10 @@ Notification → AppParserRegistry → [SmsParser | GreekBankParser | RevolutPar
 | `ReviewViewModel` | - | Review queue ViewModel |
 | `BudgetScreen` | Tab 3 | Budget planning |
 | `BudgetViewModel` | - | Budget ViewModel |
-| `AdvancedAnalyticsScreen` | Tab 4 | Detailed analytics |
-| `AdvancedAnalyticsViewModel` | - | Analytics ViewModel |
+| `AnalyticsScreen` | Tab 4 | Financial Insights (all 6 advanced features) |
+| `AdvancedAnalyticsScreen` | - | Legacy - replaced by AnalyticsScreen |
+| `AnalyticsViewModel` | - | Analytics ViewModel with all 6 features |
+| `AdvancedAnalyticsViewModel` | - | Legacy ViewModel - replaced by AnalyticsViewModel |
 | `AddExpenseSheet` | Modal | Manual expense entry |
 | `AddExpenseViewModel` | - | Add expense ViewModel |
 | `ReceiptScanScreen` | Modal | Receipt OCR scanning |
@@ -303,10 +338,16 @@ Notification → AppParserRegistry → [SmsParser | GreekBankParser | RevolutPar
 | `BentoCard` | Bento-style card layout |
 | `FinancialRunwayCard` | Financial runway display |
 | `FinancialWeatherCard` | Financial health indicator |
-| `SpendingTrendChart` | Spending trends visualization |
+| `SpendingTrendChart` | Multi-month cumulative spending curve (Feature 2) |
 | `ForecastTimeline` | Expense forecast |
 | `SpendingPaceGauge` | Budget pace indicator |
 | `BudgetBlockPartyCard` | Block party budget card |
+| `FinancialRunwayCard` | Days remaining + discretionary + daily rate |
+| `MonteCarloForecastCard` | Probabilistic month-end forecast (P10/P50/P90) |
+| `VelocityAnomalyCard` | Spending velocity anomaly display (Feature 4) |
+| `YearOverYearCard` | Year-over-year comparison (Feature 3) |
+| `PostSalaryPatternCard` | Post-salary spending pattern (Feature 5) |
+| `SuspectTransactionCard` | Duplicate/error detection (Feature 6) |
 | `PulseDot` | Notification indicator |
 | `ChartMarker` | Chart tooltips |
 | `CurrencyFormatter` | Currency formatting |
@@ -676,12 +717,33 @@ Tab 3: BudgetScreen (Plan)
   - Connected trajectory line (past + projected seamless)
   - Uses `CategorizationEngine` for consistent merchant categorization
 
-### 6. Analytics
+### 6. Analytics (Enhanced Mar 2026)
 
+#### Basic Analytics
 - Spending by category/time/source
 - Trend analysis
 - Source statistics
 - Custom date ranges
+
+#### Advanced Features (All 6 Implemented)
+1. **Anomaly Detection** - Multi-method (MAD, IQR, Contextual, Multiplier)
+2. **Cumulative Spending Curve** - Multi-month visualization
+3. **Year-over-Year Comparison** - Same month vs prior year
+4. **Spending Velocity Anomaly** - Unusually high daily spending
+5. **Post-Salary Pattern** - Spending after receiving salary
+6. **Duplicate/Error Detection** - Near-duplicates, round amounts, outliers
+
+#### Monte Carlo Forecasting
+- 1000-iteration probabilistic simulation
+- Log-normal distribution fitted to historical weekly totals
+- Percentile bands: P10 (best), P50 (likely), P90 (worst)
+- Probability under budget
+- Confidence scoring based on data quality
+
+#### Financial Runway
+- Days remaining based on discretionary budget
+- Daily burn rate calculation
+- Committed vs likely expenses tracking
 
 ---
 
@@ -727,7 +789,7 @@ Tab 3: BudgetScreen (Plan)
 - Edge-to-edge display support
 - Write-ahead logging journal mode for database
 - Migration strategy: Destructive fallback from v1-v5, named migrations v6+
-- **Note**: `AnalyticsScreen` exists but is unused; `AdvancedAnalyticsScreen` is the active Tab 4
+- **Note**: `AnalyticsScreen` now active at Tab 4 with all 6 advanced features (replaced `AdvancedAnalyticsScreen`)
 
 ### Recent Architecture Changes (2026)
 
@@ -837,3 +899,19 @@ data/service/AndroidNotificationService.kt (implementation)
 - **ReceiptParser**: Now delegates to `AmountUtils.parseAmount()` for consistency
 - **SynthesisEngine**: Fixed Calendar instance creation in loop - now reuses single instance
 - **SynthesisEngine**: Fixed O(n²) projection loop - now uses running totals for O(n) complexity
+
+
+### Recent Fixes (March 2026)
+
+| Issue | Fix |
+|-------|-----|
+| AnomalyDetector ordinal priority | Fixed < to > so MAD beats IQR |
+| AnomalyDetector division by zero | Added guards for categoryAvg/contextAvg = 0 |
+| ComputeDashboardWidgetsUseCase txCount | Now uses today's count instead of month-wide |
+| detectSuspectTransactions round-amount | Added >2x average requirement |
+| computeVelocityAnomalies unused param | Removed unused periodStartMs |
+| computePostSalaryPattern force-unwrap | Replaced !! with safe unwrap |
+| String.format locale | Added Locale.US for decimal consistency |
+| FinancialRunway daily rate | Fixed to use actual MTD spend, not projected total |
+| DashboardDataProvider stale timestamp | Now recomputes monthStart/monthEnd on every emission |
+| AnalyticsScreen Tab 4 | Switched to AnalyticsScreen with all 6 features |

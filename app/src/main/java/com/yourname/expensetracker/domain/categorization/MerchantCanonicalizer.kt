@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.categorization
 
 import javax.inject.Inject
+import javax.inject.Singleton
 
 data class CanonicalResult(
     val canonicalName: String,
@@ -8,6 +9,7 @@ data class CanonicalResult(
     val confidencePenalty: Double
 )
 
+@Singleton
 class MerchantCanonicalizer @Inject constructor() {
     
     private val LOCATION_SUFFIXES = listOf(

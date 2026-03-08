@@ -2,8 +2,11 @@ package com.yourname.expensetracker
 
 import android.app.Application
 import android.os.StrictMode
+import androidx.hilt.work.HiltWorkerFactory
 import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.work.Configuration
 import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.location.LocationBackfillWorker
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import dagger.hilt.android.HiltAndroidApp
@@ -11,13 +14,22 @@ import timber.log.Timber
 import javax.inject.Inject
 
 @HiltAndroidApp
-class ExpenseTrackerApp : Application() {
+class ExpenseTrackerApp : Application(), Configuration.Provider {
     
     @Inject
     lateinit var transactionClassifier: TransactionClassifier
     
     @Inject
     lateinit var budgetMonitor: BudgetMonitor
+
+    @Inject
+    lateinit var workerFactory: HiltWorkerFactory
+
+    // WorkManager requires this when using Hilt-injected workers
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
     
     override fun onCreate() {
         super.onCreate()
@@ -42,6 +54,9 @@ class ExpenseTrackerApp : Application() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             LifecycleObserver(transactionClassifier, budgetMonitor)
         )
+
+        // Schedule the background geocoding backfill (runs on Wi-Fi every 6 hrs)
+        LocationBackfillWorker.schedule(this)
     }
 }
 

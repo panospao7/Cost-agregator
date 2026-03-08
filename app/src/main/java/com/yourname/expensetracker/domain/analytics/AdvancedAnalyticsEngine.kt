@@ -449,7 +449,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val cal = Calendar.getInstance()
         val dailyTotals = purchases.groupBy { expense ->
             cal.timeInMillis = expense.date
-            "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}-${cal.get(Calendar.DAY_OF_MONTH)}"
+            "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH) + 1}-${cal.get(Calendar.DAY_OF_MONTH)}"
         }.mapValues { it.value.sumOf { e -> e.amount } }
         
         val periodDays = ((period.endMs - period.startMs) / MILLIS_PER_DAY).toInt().coerceAtLeast(1)

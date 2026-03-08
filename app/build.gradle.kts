@@ -66,6 +66,10 @@ dependencies {
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
+
+
+    // Encrypted SharedPreferences (for SQLCipher passphrase storage)
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
     
     // Hilt Dependency Injection
     implementation("com.google.dagger:hilt-android:2.51.1")
@@ -95,6 +99,22 @@ dependencies {
 
     // Coil for image loading in Compose
     implementation("io.coil-kt:coil-compose:2.5.0")
+
+    // OkHttp — used by NominatimGeocodingService and OverpassNearbyService
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Google Play Services Location — FusedLocationProviderClient
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    // Coroutines adapter for Google Tasks (used by FusedLocationProvider await())
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
+
+    // osmdroid — OpenStreetMap tile rendering for SpendingMapScreen
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
+
+    // WorkManager — background geocoding backfill worker
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.hilt:hilt-work:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     // Logging
     implementation("com.jakewharton.timber:timber:5.0.1")

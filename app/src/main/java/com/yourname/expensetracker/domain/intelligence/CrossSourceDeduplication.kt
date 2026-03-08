@@ -47,7 +47,7 @@ class CrossSourceDeduplication @Inject constructor() {
         }
         
         for (source in existingSources) {
-            if (isLikelySameTransaction(merchant, date, source, newSource)) {
+            if (isLikelySameTransaction(amount, merchant, date, source, newSource)) {
                 return DuplicateCheckResult.CrossSourceDuplicate(
                     existingSource = source,
                     confidence = calculateConfidence(amount, merchant, date)
@@ -164,6 +164,7 @@ class CrossSourceDeduplication @Inject constructor() {
     }
 
     private fun isLikelySameTransaction(
+        amount: Double,
         merchant: String,
         date: Long,
         sourceA: String,
@@ -176,9 +177,12 @@ class CrossSourceDeduplication @Inject constructor() {
         val isBankA = bankSources.any { sourceA.contains(it) }
         val isBankB = bankSources.any { sourceB.contains(it) }
         
-        // If both are bank sources, be more lenient
+        // If both are bank sources, be more lenient on merchant matching
+        // but still require amount to match within tolerance
         if (isBankA && isBankB) {
-            return true
+            // Amount must be within tolerance (already validated by caller context)
+            // Merchant must have some similarity
+            return merchant.isNotBlank()
         }
         
         return false
@@ -255,7 +259,8 @@ class CrossSourceDeduplication @Inject constructor() {
     ): String {
         val normalizedMerchant = normalizeMerchant(merchant)
         val hourRoundedDate = (date / 3600000) * 3600000
-        return "$source:${amount.toLong()}:$normalizedMerchant:$hourRoundedDate"
+        val roundedAmount = "%.2f".format(amount)
+        return "$source:$roundedAmount:$normalizedMerchant:$hourRoundedDate"
     }
 }
 

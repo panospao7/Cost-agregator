@@ -20,9 +20,11 @@ import androidx.room.*
         PlannedExpense::class,
         SavingsGoal::class,
         MerchantCanonical::class,
-        MerchantAlias::class
+        MerchantAlias::class,
+        MerchantLocation::class,
+        MerchantLocationCorrection::class
     ],
-        version = 27,
+        version = 31,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -42,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun plannedExpenseDao(): PlannedExpenseDao
     abstract fun savingsGoalDao(): SavingsGoalDao
     abstract fun merchantNormalizationDao(): MerchantNormalizationDao
+    abstract fun merchantLocationDao(): MerchantLocationDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -496,6 +499,138 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE pending_reviews ADD COLUMN matchType TEXT DEFAULT NULL")
                 database.execSQL("ALTER TABLE pending_reviews ADD COLUMN explanation TEXT DEFAULT NULL")
+            }
+        }
+
+        // Migration 27 -> 28: Geolocation & Maps feature
+        // - Add latitude/longitude/locationSource/placeId to expenses
+        // - Add suggestedLatitude/suggestedLongitude to pending_reviews
+        // - Create merchant_locations cache table
+        // - Create merchant_location_corrections table
+        val MIGRATION_27_28 = object : androidx.room.migration.Migration(27, 28) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // 1. Add location columns to expenses
+                database.execSQL("ALTER TABLE expenses ADD COLUMN latitude REAL DEFAULT NULL")
+                database.execSQL("ALTER TABLE expenses ADD COLUMN longitude REAL DEFAULT NULL")
+                database.execSQL("ALTER TABLE expenses ADD COLUMN locationSource TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE expenses ADD COLUMN placeId TEXT DEFAULT NULL")
+                // Index for location-based queries (bug #22 fix)
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_latitude_longitude ON expenses (latitude, longitude)")
+
+                // 2. Add suggested location to pending_reviews
+                database.execSQL("ALTER TABLE pending_reviews ADD COLUMN suggestedLatitude REAL DEFAULT NULL")
+                database.execSQL("ALTER TABLE pending_reviews ADD COLUMN suggestedLongitude REAL DEFAULT NULL")
+
+                // 3. Create merchant_locations cache table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS merchant_locations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        normalizedMerchantName TEXT NOT NULL,
+                        displayName TEXT NOT NULL,
+                        latitude REAL NOT NULL,
+                        longitude REAL NOT NULL,
+                        source TEXT NOT NULL,
+                        osmId TEXT DEFAULT NULL,
+                        displayAddress TEXT DEFAULT NULL,
+                        confidence REAL NOT NULL DEFAULT 1.0,
+                        lastResolvedAt INTEGER NOT NULL,
+                        hitCount INTEGER NOT NULL DEFAULT 1
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_locations_normalizedMerchantName ON merchant_locations (normalizedMerchantName)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt ON merchant_locations (lastResolvedAt)")
+
+                // 4. Create merchant_location_corrections table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS merchant_location_corrections (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        normalizedMerchantName TEXT NOT NULL,
+                        correctedLatitude REAL NOT NULL,
+                        correctedLongitude REAL NOT NULL,
+                        areaLatitude REAL DEFAULT NULL,
+                        areaLongitude REAL DEFAULT NULL,
+                        areaKey TEXT NOT NULL DEFAULT '',
+                        areaRadiusKm REAL NOT NULL DEFAULT 5.0,
+                        osmId TEXT DEFAULT NULL,
+                        displayAddress TEXT DEFAULT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                // Composite unique index so INSERT OR REPLACE deduplicates by merchant+area
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_location_corrections_merchant_area ON merchant_location_corrections (normalizedMerchantName, areaKey)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_location_corrections_createdAt ON merchant_location_corrections (createdAt)")
+            }
+        }
+
+        // Migration 28 -> 29: Add backfillAttempts to expenses to prevent infinite geocode retries
+        val MIGRATION_28_29 = object : androidx.room.migration.Migration(28, 29) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE expenses ADD COLUMN backfillAttempts INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        // Migration 29 -> 30: Add resolvedAddress to expenses; add areaKey to merchant_locations
+        // (merchant_locations must be recreated to change the unique index to composite)
+        val MIGRATION_29_30 = object : androidx.room.migration.Migration(29, 30) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // 1. Add resolvedAddress to expenses
+                database.execSQL("ALTER TABLE expenses ADD COLUMN resolvedAddress TEXT DEFAULT NULL")
+
+                // 2. Recreate merchant_locations to change unique index from single-column
+                //    (normalizedMerchantName) to composite (normalizedMerchantName, areaKey)
+                database.beginTransaction()
+                try {
+                    database.execSQL("ALTER TABLE merchant_locations RENAME TO merchant_locations_old")
+                    database.execSQL("""
+                        CREATE TABLE IF NOT EXISTS merchant_locations (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            normalizedMerchantName TEXT NOT NULL,
+                            areaKey TEXT,
+                            displayName TEXT NOT NULL,
+                            latitude REAL NOT NULL,
+                            longitude REAL NOT NULL,
+                            source TEXT NOT NULL,
+                            osmId TEXT,
+                            displayAddress TEXT,
+                            confidence REAL NOT NULL,
+                            lastResolvedAt INTEGER NOT NULL,
+                            hitCount INTEGER NOT NULL
+                        )
+                    """.trimIndent())
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_locations_normalizedMerchantName_areaKey " +
+                        "ON merchant_locations (normalizedMerchantName, areaKey)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt " +
+                        "ON merchant_locations (lastResolvedAt)"
+                    )
+                    // Copy existing rows — provide default values for legacy data
+                    database.execSQL("""
+                        INSERT INTO merchant_locations
+                            (id, normalizedMerchantName, areaKey, displayName, latitude, longitude,
+                             source, osmId, displayAddress, confidence, lastResolvedAt, hitCount)
+                        SELECT id, normalizedMerchantName, NULL, displayName, latitude, longitude,
+                               source, osmId, displayAddress, 
+                               COALESCE(confidence, 1.0), lastResolvedAt, 
+                               COALESCE(hitCount, 1)
+                        FROM merchant_locations_old
+                    """.trimIndent())
+                    database.execSQL("DROP TABLE merchant_locations_old")
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        val MIGRATION_30_31 = object : androidx.room.migration.Migration(30, 31) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Add missing index on lastResolvedAt for cleanup queries
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt " +
+                    "ON merchant_locations (lastResolvedAt)"
+                )
             }
         }
     }

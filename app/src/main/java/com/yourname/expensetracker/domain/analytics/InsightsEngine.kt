@@ -54,7 +54,7 @@ class InsightsEngine @Inject constructor(
         val categoryInsightsDeferred = async { buildCategoryInsights(currentMonth, previousMonth, categoryMap, allExpenses) }
         val topMerchantsDeferred = async { buildMerchantInsights(allExpenses) }
         val spendingPaceDeferred = async { buildSpendingPace(currentMonth, previousMonth, allExpenses) }
-        val anomaliesDeferred = async { findAnomalies(currentMonth, categoryMap) }
+        val anomaliesDeferred = async { findAnomalies(currentMonth, categoryMap, allExpenses) }
         // Use RecurringExpenseEngine directly
         val recurringExpensesDeferred = async { findRecurringExpenses(allExpenses) }
         
@@ -311,7 +311,7 @@ class InsightsEngine @Inject constructor(
         for (expense in purchases) {
             val catId = expense.categoryId ?: continue
             cal.timeInMillis = expense.date
-            val monthKey = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
+            val monthKey = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
             categoryMonthTotals
                 .getOrPut(catId) { mutableMapOf() }
                 .merge(monthKey, expense.amount) { a, b -> a + b }
@@ -431,7 +431,7 @@ class InsightsEngine @Inject constructor(
         val monthTotals = mutableMapOf<String, Double>()
         for (p in purchases) {
             cal.timeInMillis = p.date
-            val key = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
+            val key = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
             monthTotals.merge(key, p.amount) { a, b -> a + b }
         }
 
@@ -440,59 +440,113 @@ class InsightsEngine @Inject constructor(
 
     // === Anomaly Detection ===
 
+    /**
+     * Merges two complementary anomaly detection paths:
+     *
+     *  1. Merchant-level (DB-backed): compares each merchant's current-month max
+     *     against their all-time historical average with an adaptive multiplier.
+     *     Precise but only fires on known merchants with enough history.
+     *
+     *  2. Statistical (in-memory, [AnomalyDetector]): IQR, MAD, and contextual
+     *     methods operating on the current month's expenses grouped by category.
+     *     Fires even for new merchants; more sensitive to distributional outliers.
+     *
+     * Results are deduplicated by expense id and capped at 10, sorted by
+     * deviation multiple descending.
+     */
     private suspend fun findAnomalies(
         currentMonth: MonthPeriod,
-        categoryMap: Map<Long, Category>
+        categoryMap: Map<Long, Category>,
+        allExpenses: List<Expense>
     ): List<AnomalyTransaction> = coroutineScope {
-        val merchantStats = expenseRepository.getMerchantStats()
+
+        // ── Path 1: merchant-level DB-backed detection (existing logic) ────────
+        val merchantStatsDeferred = async { expenseRepository.getMerchantStats() }
+        val topMerchantsDeferred = async {
+            expenseRepository.getTopMerchantsForPeriod(
+                currentMonth.startMs, currentMonth.endMs, 100
+            )
+        }
+
+        val merchantStats = merchantStatsDeferred.await()
+        val topMerchants  = topMerchantsDeferred.await()
         val statsMap: Map<String, MerchantStats> = merchantStats.associateBy { it.merchantName }
 
-        val topMerchants = expenseRepository.getTopMerchantsForPeriod(
-            currentMonth.startMs, currentMonth.endMs, 100
-        )
-
-        val candidates: List<AnomalyCandidate?> = topMerchants.mapNotNull { merchantStat: MerchantStats ->
-            val historicalStats: MerchantStats? = statsMap[merchantStat.merchantName]
+        val candidates: List<AnomalyCandidate?> = topMerchants.mapNotNull { merchantStat ->
+            val historicalStats = statsMap[merchantStat.merchantName]
             if (historicalStats == null || historicalStats.transactionCount < 3) return@mapNotNull null
 
             val multiplier = when {
-                historicalStats.transactionCount < 5 -> 5.0
+                historicalStats.transactionCount < 5  -> 5.0
                 historicalStats.transactionCount < 10 -> 4.0
-                else -> 3.0
+                else                                  -> 3.0
             }
 
             if (merchantStat.maxAmount > historicalStats.averageAmount * multiplier) {
                 AnomalyCandidate(
-                    merchantName = merchantStat.merchantName,
-                    maxAmount = merchantStat.maxAmount,
-                    historicalAvg = historicalStats.averageAmount,
+                    merchantName     = merchantStat.merchantName,
+                    maxAmount        = merchantStat.maxAmount,
+                    historicalAvg    = historicalStats.averageAmount,
                     deviationMultiple = (merchantStat.maxAmount / historicalStats.averageAmount).toFloat()
                 )
             } else null
         }
 
-        val topCandidates: List<AnomalyCandidate> = candidates
+        val topCandidates = candidates
             .filterNotNull()
             .sortedByDescending { it.deviationMultiple }
             .take(5)
 
-        val deferredAnomalies = topCandidates.map { candidate: AnomalyCandidate ->
-            async {
-                expenseRepository.getLargestExpenseForMerchant(
-                    candidate.merchantName, currentMonth.startMs, currentMonth.endMs
-                )?.let { expense ->
-                    AnomalyTransaction(
-                        expense = expense,
-                        merchantAvg = candidate.historicalAvg,
-                        deviationMultiple = candidate.deviationMultiple,
-                        category = expense.categoryId?.let { categoryMap[it] }
+        val merchantAnomalies: List<AnomalyTransaction> = topCandidates
+            .map { candidate ->
+                async {
+                    expenseRepository.getLargestExpenseForMerchant(
+                        candidate.merchantName, currentMonth.startMs, currentMonth.endMs
+                    )?.let { expense ->
+                        AnomalyTransaction(
+                            expense           = expense,
+                            merchantAvg       = candidate.historicalAvg,
+                            deviationMultiple = candidate.deviationMultiple,
+                            category          = expense.categoryId?.let { categoryMap[it] },
+                            detectionMethod   = AnomalyMethod.MULTIPLIER
+                        )
+                    }
+                }
+            }
+            .awaitAll()
+            .filterNotNull()
+
+        // ── Path 2: statistical in-memory detection (IQR / MAD / contextual) ──
+        val statisticalAnomalies: List<AnomalyTransaction> =
+            anomalyDetector.detect(currentMonth, categoryMap, allExpenses)
+
+        // ── Merge: deduplicate by expense.id; statistical results fill gaps ────
+        val merged = mutableMapOf<Long, AnomalyTransaction>()
+
+        // Merchant-path results get priority (they carry precise historical avg)
+        merchantAnomalies.forEach { merged[it.expense.id] = it }
+
+        // Statistical results add new detections; skip if already found by merchant path
+        statisticalAnomalies.forEach { anomaly ->
+            if (!merged.containsKey(anomaly.expense.id)) {
+                merged[anomaly.expense.id] = anomaly
+            } else {
+                // Enrich existing entry with contextual note if the statistical
+                // path picked up extra context information
+                val existing = merged[anomaly.expense.id]!!
+                if (existing.contextualNote == null && anomaly.contextualNote != null) {
+                    merged[anomaly.expense.id] = existing.copy(
+                        contextualNote = anomaly.contextualNote
                     )
                 }
             }
         }
 
-        deferredAnomalies.awaitAll().filterNotNull()
+        merged.values
+            .sortedByDescending { it.deviationMultiple }
+            .take(10)
     }
+
 
     private data class AnomalyCandidate(
         val merchantName: String,
@@ -600,7 +654,7 @@ class InsightsEngine @Inject constructor(
         if (expenses.isEmpty()) return 0
         return expenses.map { expense ->
             val cal = Calendar.getInstance().apply { timeInMillis = expense.date }
-            String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
+            String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
         }.distinct().size
     }
 

@@ -20,7 +20,8 @@ val navItems = listOf(
     NavItem("Activity", Icons.Rounded.Receipt, Icons.Filled.Receipt),
     NavItem("Review", Icons.Rounded.FactCheck, Icons.Filled.FactCheck),
     NavItem("Plan", Icons.Rounded.CalendarMonth, Icons.Filled.CalendarMonth),
-    NavItem("Analytics", Icons.Rounded.Insights, Icons.Filled.Insights)
+    NavItem("Analytics", Icons.Rounded.Insights, Icons.Filled.Insights),
+    NavItem("Map", Icons.Rounded.Map, Icons.Filled.Map)
 )
 
 @Composable

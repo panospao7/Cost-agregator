@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence.ml
 
 import android.content.Context
-import android.util.Log
+import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
@@ -128,17 +128,31 @@ class MerchantNormalizer @Inject constructor(
         val brandLookup = normalize(brandName, autoCreate = true)
         val brandId = brandLookup.canonical.id
 
-        // 2. Link the original POS name to this brand ID
+        // 2. Repoint all aliases belonging to the old canonical merchant to the new one
+        val oldSearchKey = createSearchKey(cleanMerchantName(rawName))
+        val oldCanonical = repository.getCanonicalBySearchKey(oldSearchKey)
+        
+        if (oldCanonical != null && oldCanonical.id != brandId) {
+            val aliases = repository.getAliasesForCanonical(oldCanonical.id)
+            aliases.forEach { alias ->
+                repository.updateAlias(alias.copy(
+                    canonicalId = brandId,
+                    isUserDefined = true,
+                    lastUsedAt = timeProvider.now()
+                ))
+            }
+        }
+
+        // 3. Link the original POS name to this brand ID (just in case it wasn't a canonical)
         repository.linkAliasToCanonical(rawName, brandId, isUserDefined = true, timestamp = timeProvider.now())
         
-        Log.i(TAG, "Learned alias: $rawName -> $brandName")
+        Timber.i("Learned alias: $rawName -> $brandName")
         invalidateTreeCache()
     }
 
     fun cleanMerchantName(rawName: String): String {
         return merchantRules.cleanMerchantName(rawName)
     }
-
     private fun createSearchKey(name: String): String {
         return name.lowercase()
             .replace(Regex("[^a-z0-9α-ωά-ώ]"), "")

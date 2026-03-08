@@ -231,6 +231,21 @@ class AddExpenseViewModel @Inject constructor(
             return
         }
 
+        // Reject future dates — allow up to end of today to accommodate timezone edge cases
+        val endOfToday = run {
+            val cal = java.util.Calendar.getInstance()
+            cal.timeInMillis = timeProvider.now()
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 23)
+            cal.set(java.util.Calendar.MINUTE, 59)
+            cal.set(java.util.Calendar.SECOND, 59)
+            cal.set(java.util.Calendar.MILLISECOND, 999)
+            cal.timeInMillis
+        }
+        if (currentState.date > endOfToday) {
+            _state.update { it.copy(saveResult = SaveResult.Error("Date cannot be in the future")) }
+            return
+        }
+
         // Normalize to 2 decimal places
         val normalizedAmount = java.math.BigDecimal(amount)
             .setScale(2, java.math.RoundingMode.HALF_UP)

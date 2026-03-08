@@ -55,5 +55,8 @@ data class PendingReview(
     val status: PendingReviewStatus = PendingReviewStatus.PENDING,
     // Transfer direction fields (v24)
     val suggestedDirection: String? = null,    // INCOMING, OUTGOING
-    val suggestedAccountName: String? = null   // Account name from/to
+    val suggestedAccountName: String? = null,  // Account name from/to
+    // Location enrichment (v28) — captured at review-time if device location available
+    val suggestedLatitude: Double? = null,
+    val suggestedLongitude: Double? = null
 )

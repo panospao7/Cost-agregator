@@ -29,6 +29,7 @@ import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
 import com.yourname.expensetracker.ui.screens.home.HomeScreen
+import com.yourname.expensetracker.ui.screens.map.SpendingMapScreen
 import com.yourname.expensetracker.ui.screens.review.ReviewScreen
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
@@ -72,6 +73,7 @@ class MainActivity : ComponentActivity() {
                 "plan" -> mainViewModel.navigateToTab(3)
                 "add" -> mainViewModel.navigateToTab(0)
                 "analytics" -> mainViewModel.navigateToTab(4)
+                "map" -> mainViewModel.navigateToTab(5)
             }
         }
     }
@@ -185,13 +187,13 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     )
                     2 -> ReviewScreen()
                     3 -> BudgetScreen()
-                    4 -> com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen(
-                        onNavigateBack = { selectedTab = 1 },
+                    4 -> com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen(
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
                             selectedTab = 1
                         }
                     )
+                    5 -> SpendingMapScreen()
                 }
             }
 

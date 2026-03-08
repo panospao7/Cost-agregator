@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.domain.categorization
 
-import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import javax.inject.Inject
@@ -52,9 +52,13 @@ data class CategorizationDebugTrace(
 
 @Singleton
 class CategorizationEngine @Inject constructor(
-    private val merchantCategoryDao: MerchantCategoryDao,
+    private val merchantCategoryRepository: MerchantCategoryRepository,
     private val merchantNormalizer: MerchantNormalizer,
-    private val categoryRepositoryProvider: javax.inject.Provider<CategoryRepository>
+    private val categoryRepositoryProvider: javax.inject.Provider<CategoryRepository>,
+    private val canonicalizer: MerchantCanonicalizer,
+    private val greeklishNormalizer: GreeklishNormalizer,
+    private val semanticMatcher: SemanticKeywordMatcher,
+    private val contextEngine: ContextualInferenceEngine
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
@@ -63,11 +67,6 @@ class CategorizationEngine @Inject constructor(
     private var cachedCategoryNameToId: Map<String, Long>? = null
     private var lastCacheTime = 0L
     private val CACHE_EXPIRY_MS = 300_000
-    
-    private val canonicalizer = MerchantCanonicalizer()
-    private val greeklishNormalizer = GreeklishNormalizer()
-    private val semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer)
-    private val contextEngine = ContextualInferenceEngine()
 
     companion object {
         private val STOP_WORDS = setOf("the", "and", "for", "inc", "ltd", "com")
@@ -413,7 +412,7 @@ class CategorizationEngine @Inject constructor(
         return cacheMutex.withLock {
             val now = System.currentTimeMillis()
             if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
-                val all = merchantCategoryDao.getAll()
+                val all = merchantCategoryRepository.getAll()
                 cachedMappings = all.sortedByDescending { it.merchantPattern.length }
                 cachedPatternsSet = all.map { it.merchantPattern.lowercase() }.toSet()
                 
@@ -440,21 +439,13 @@ class CategorizationEngine @Inject constructor(
     }
     
     private suspend fun getCategoryIdByName(categoryName: String): Long? {
-        return getCategoryNameToIdMap()[categoryName]
+        // Use getCacheData() which already populates cachedCategoryNameToId under cacheMutex,
+        // avoiding a second independent lock acquisition that would be redundant.
+        val cacheData = getCacheData()
+        return cachedCategoryNameToId?.get(categoryName)
     }
     
     private fun getCategoryRepository(): CategoryRepository = categoryRepositoryProvider.get()
-    
-    private suspend fun getCategoryNameToIdMap(): Map<String, Long> {
-        return cacheMutex.withLock {
-            val now = System.currentTimeMillis()
-            if (cachedCategoryNameToId == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
-                val categories = getCategoryRepository().getAll()
-                cachedCategoryNameToId = categories.associate { it.name to it.id }
-            }
-            cachedCategoryNameToId!!
-        }
-    }
 
     suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) {
         val normalized = merchantNormalizer.normalize(merchantName, autoCreate = false).canonical.normalizedName
@@ -466,7 +457,7 @@ class CategorizationEngine @Inject constructor(
             categoryId = categoryId,
             normalizedCanonicalName = normalizedCanonical
         )
-        merchantCategoryDao.insert(mapping)
+        merchantCategoryRepository.insert(mapping)
         invalidateCache()
         Timber.d("Learned merchant: $normalized -> category $categoryId (canonical: $normalizedCanonical)")
     }

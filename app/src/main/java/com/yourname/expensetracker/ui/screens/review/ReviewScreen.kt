@@ -33,6 +33,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.AmountText
+import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
@@ -323,14 +324,18 @@ fun ReviewScreen(
                 review = review,
                 categories = categories,
                 onDismiss = { editingReview = null },
-                onSave = { amount, merchant, categoryId, type, applyToAll ->
+                onSave = { amount, merchant, categoryId, type, applyToAll, approveAllPending, lat, lon, address ->
                     viewModel.approveReviewWithEdits(
                         reviewId = review.id,
                         finalAmount = amount,
                         finalMerchant = merchant,
                         finalCategoryId = categoryId,
                         finalType = type,
-                        applyToAll = applyToAll
+                        applyToAll = applyToAll,
+                        approveAllPending = approveAllPending,
+                        finalLatitude = lat,
+                        finalLongitude = lon,
+                        finalAddress = address
                     )
                     editingReview = null
                 }
@@ -591,6 +596,33 @@ fun ReviewCard(
                             compact = true
                         )
                     }
+
+                    // Location chip (if GPS was captured at review time)
+                    if (review.suggestedLatitude != null && review.suggestedLongitude != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = SemanticColors.PrimaryIndigo.copy(alpha = 0.12f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.LocationOn,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = SemanticColors.PrimaryIndigo
+                                )
+                                Text(
+                                    text = "%.4f, %.4f".format(review.suggestedLatitude, review.suggestedLongitude),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SemanticColors.PrimaryIndigo
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -696,12 +728,13 @@ fun ReviewCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EditReviewDialog(
     review: PendingReview,
     categories: List<Category>,
     onDismiss: () -> Unit,
-    onSave: (Double?, String?, Long?, TransactionType?, Boolean) -> Unit
+    onSave: (Double?, String?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?) -> Unit
 ) {
     var amount by remember { mutableStateOf(String.format("%.2f", review.suggestedAmount)) }
     var merchant by remember { mutableStateOf(review.suggestedMerchant) }
@@ -713,8 +746,15 @@ fun EditReviewDialog(
         )
     }
     var applyToAll by remember { mutableStateOf(false) }
+    var approveAllPending by remember { mutableStateOf(false) }
     var typeExpanded by remember { mutableStateOf(false) }
     val haptic = rememberHapticFeedback()
+
+    // Location state
+    var locationLat by remember { mutableStateOf<Double?>(review.suggestedLatitude) }
+    var locationLon by remember { mutableStateOf<Double?>(review.suggestedLongitude) }
+    var locationAddress by remember { mutableStateOf<String?>(null) }
+    var showLocationPicker by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -727,8 +767,10 @@ fun EditReviewDialog(
                     style = MaterialTheme.typography.labelMedium
                 )
                 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     TransactionType.values().filter { it != TransactionType.UNKNOWN }.forEach { type ->
                         val isSelected = selectedType == type
@@ -851,6 +893,74 @@ fun EditReviewDialog(
                         modifier = Modifier.padding(start = 4.dp)
                     )
                 }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { approveAllPending = !approveAllPending }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = approveAllPending,
+                        onCheckedChange = { approveAllPending = it },
+                        colors = CheckboxDefaults.colors(checkedColor = SemanticColors.SuccessGreen)
+                    )
+                    Text(
+                        text = "Approve all identical pending transactions",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 4.dp),
+                        color = SemanticColors.SuccessGreen,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Location section
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Location",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    TextButton(onClick = { showLocationPicker = !showLocationPicker }) {
+                        Text(if (showLocationPicker) "Hide" else if (locationLat != null) "Edit" else "Add")
+                    }
+                }
+                if (locationLat != null && locationLon != null && !showLocationPicker) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.LocationOn,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = SemanticColors.PrimaryIndigo
+                        )
+                        Text(
+                            text = locationAddress ?: "%.4f, %.4f".format(locationLat, locationLon),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SemanticColors.PrimaryIndigo
+                        )
+                    }
+                }
+                if (showLocationPicker) {
+                    LocationSearchPicker(
+                        currentLat = locationLat,
+                        currentLon = locationLon,
+                        currentAddress = locationAddress,
+                        onResult = { lat, lon, address, _ ->
+                            locationLat = lat
+                            locationLon = lon
+                            locationAddress = address
+                            if (lat != null) showLocationPicker = false
+                        }
+                    )
+                }
             }
         },
         confirmButton = {
@@ -865,7 +975,7 @@ fun EditReviewDialog(
                         try { TransactionType.valueOf(review.suggestedType) != it }
                         catch (e: Exception) { true }
                     }
-                    onSave(editedAmount, editedMerchant, editedCategory, editedType, applyToAll)
+                    onSave(editedAmount, editedMerchant, editedCategory, editedType, applyToAll, approveAllPending, locationLat, locationLon, locationAddress)
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {

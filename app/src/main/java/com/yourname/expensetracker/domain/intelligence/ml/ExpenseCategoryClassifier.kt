@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence.ml
 
 import android.content.Context
-import android.util.Log
+import timber.log.Timber
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -156,7 +156,7 @@ class ExpenseCategoryClassifier @Inject constructor(
                 File(context.filesDir, MODEL_FILE).writeText(json.toString())
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to save model", e)
+            Timber.e(e, "Failed to save model")
         }
     }
 
@@ -195,7 +195,7 @@ class ExpenseCategoryClassifier @Inject constructor(
                 isLoaded = true
                 unsavedChanges = 0
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load model", e)
+                Timber.e(e, "Failed to load model")
                 isLoaded = true
             }
         }

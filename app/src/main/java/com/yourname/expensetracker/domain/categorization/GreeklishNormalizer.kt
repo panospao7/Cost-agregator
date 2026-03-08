@@ -2,7 +2,9 @@ package com.yourname.expensetracker.domain.categorization
 
 import java.text.Normalizer
 import javax.inject.Inject
+import javax.inject.Singleton
 
+@Singleton
 class GreeklishNormalizer @Inject constructor() {
     
     private val DIPHTHONG_REPLACEMENTS = listOf(
@@ -13,7 +15,7 @@ class GreeklishNormalizer @Inject constructor() {
         "γκ" to "g",
         "ντ" to "d",
         "τζ" to "j",
-        "γγ" to "g",
+        "γγ" to "ng",
         "γχ" to "nch",
         "γξ" to "nx"
     )
@@ -79,7 +81,14 @@ class GreeklishNormalizer @Inject constructor() {
     )
 
     fun toLatin(greek: String): String {
-        return greek.map { char ->
+        // Strip accents and process diphthongs before character mapping,
+        // same pipeline as processGreekText but preserving original case
+        var result = stripAccents(greek)
+        // Process diphthongs case-insensitively for uppercase support
+        for ((gr, lat) in DIPHTHONG_REPLACEMENTS) {
+            result = result.replace(gr, lat, ignoreCase = true)
+        }
+        return result.map { char ->
             GREEK_TO_LATIN[char] ?: char.toString()
         }.joinToString("")
     }

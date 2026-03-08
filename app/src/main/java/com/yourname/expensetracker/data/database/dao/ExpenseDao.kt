@@ -70,10 +70,10 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     suspend fun getAll(): List<Expense>
     
-    @Query("SELECT * FROM expenses WHERE date >= :since ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE date >= :since AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getExpensesSince(since: Long): List<Expense>
     
-    @Query("SELECT SUM(amount) FROM expenses WHERE transactionType = 'PURCHASE'")
+    @Query("SELECT SUM(amount) FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0")
     fun getTotalSpentFlow(): Flow<Double?>
 
     @Query("DELETE FROM expenses")
@@ -87,6 +87,9 @@ interface ExpenseDao {
 
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE merchant = :merchant")
     suspend fun updateCategoryForMerchant(merchant: String, categoryId: Long)
+
+    @Query("UPDATE expenses SET merchant = :newMerchant WHERE merchant = :oldMerchant")
+    suspend fun updateMerchantForMerchant(oldMerchant: String, newMerchant: String)
 
     @Query("UPDATE expenses SET merchant = :merchant WHERE id = :expenseId")
     suspend fun updateMerchant(expenseId: Long, merchant: String)
@@ -147,6 +150,7 @@ interface ExpenseDao {
         WHERE transactionType = 'PURCHASE' 
         AND categoryId = :categoryId 
         AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
     """)
     suspend fun getCategorySpentInPeriod(categoryId: Long, startMs: Long, endMs: Long): Double
 
@@ -155,6 +159,7 @@ interface ExpenseDao {
         WHERE transactionType = 'PURCHASE' 
         AND categoryId = :categoryId 
         AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
     """)
     fun getCategorySpentInPeriodFlow(categoryId: Long, startMs: Long, endMs: Long): Flow<Double>
 
@@ -179,22 +184,23 @@ interface ExpenseDao {
 
     // === Analytics Queries ===
 
-    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense>
 
-    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String): List<Expense>
 
-    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
     fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
 
-    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
     fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String): Flow<List<Expense>>
 
     @Query("""
         SELECT SUM(amount) FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startDate AND date <= :endDate
+        AND isNotMine = 0
     """)
     suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
 
@@ -203,6 +209,7 @@ interface ExpenseDao {
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startDate AND date <= :endDate
+        AND isNotMine = 0
         GROUP BY UPPER(merchant)
         ORDER BY total DESC
     """)
@@ -214,15 +221,16 @@ interface ExpenseDao {
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startDate AND date <= :endDate
         AND categoryId IS NOT NULL
+        AND isNotMine = 0
         GROUP BY categoryId
         ORDER BY total DESC
     """)
     suspend fun getCategoryTotalsBetween(startDate: Long, endDate: Long): List<CategoryTotal>
 
-    @Query("SELECT COUNT(*) FROM expenses WHERE transactionType = 'PURCHASE'")
+    @Query("SELECT COUNT(*) FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0")
     suspend fun getPurchaseCount(): Int
 
-    @Query("SELECT MIN(date) FROM expenses")
+    @Query("SELECT MIN(date) FROM expenses WHERE isNotMine = 0")
     suspend fun getOldestExpenseDate(): Long?
 
     // === Tier 1 & 2 Analytics Queries ===
@@ -232,6 +240,7 @@ interface ExpenseDao {
         SELECT COALESCE(SUM(amount), 0.0) FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
     """)
     suspend fun getTotalForPeriod(startMs: Long, endMs: Long): Double
 
@@ -240,6 +249,7 @@ interface ExpenseDao {
         SELECT COUNT(*) FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
     """)
     suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int
 
@@ -250,6 +260,7 @@ interface ExpenseDao {
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         AND categoryId IS NOT NULL
+        AND isNotMine = 0
         GROUP BY categoryId
         ORDER BY total DESC
     """)
@@ -267,6 +278,7 @@ interface ExpenseDao {
                MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
+        AND isNotMine = 0
         GROUP BY merchant
         HAVING transactionCount >= 2
         ORDER BY totalAmount DESC
@@ -285,6 +297,7 @@ interface ExpenseDao {
                MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
+        AND isNotMine = 0
         GROUP BY merchant
         ORDER BY totalAmount DESC
     """)
@@ -303,6 +316,7 @@ interface ExpenseDao {
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
         GROUP BY merchant
         ORDER BY totalAmount DESC
         LIMIT :limit
@@ -314,6 +328,7 @@ interface ExpenseDao {
         SELECT * FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
         ORDER BY amount DESC
         LIMIT 1
     """)
@@ -325,6 +340,7 @@ interface ExpenseDao {
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         AND merchant = :merchant
+        AND isNotMine = 0
         ORDER BY amount DESC
         LIMIT 1
     """)
@@ -336,6 +352,7 @@ interface ExpenseDao {
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
         GROUP BY dayEpoch
         ORDER BY dayEpoch ASC
     """)
@@ -353,6 +370,7 @@ interface ExpenseDao {
                MAX(date) as lastDate
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
+        AND isNotMine = 0
         GROUP BY merchant
         HAVING transactionCount >= 2 
         AND (maxAmount - minAmount) < (averageAmount * 0.15)
@@ -370,6 +388,7 @@ interface ExpenseDao {
         FROM expenses
         WHERE transactionType = 'PURCHASE'
         AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
         GROUP BY dayOfWeek
         ORDER BY dayOfWeek ASC
     """)
@@ -377,13 +396,13 @@ interface ExpenseDao {
 
     // === Deposit/Income Queries ===
 
-    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getDepositsBetween(startDate: Long, endDate: Long): List<Expense>
 
-    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
     fun getDepositsBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
 
-    @Query("SELECT COALESCE(SUM(amount), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs")
+    @Query("SELECT COALESCE(SUM(amount), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs AND isNotMine = 0")
     suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double
 
     @Query("""
@@ -391,14 +410,144 @@ interface ExpenseDao {
                SUM(amount) as total, COUNT(*) as count
         FROM expenses 
         WHERE transactionType = 'DEPOSIT'
+        AND isNotMine = 0
         GROUP BY month
         ORDER BY month DESC
         LIMIT 12
     """)
     suspend fun getMonthlyDeposits(): List<MonthlyDepositTotal>
 
-    @Query("SELECT COALESCE(SUM(amount), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT'")
+    @Query("SELECT COALESCE(SUM(amount), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND isNotMine = 0")
     suspend fun getTotalDeposits(): Double
+
+    // ── Location queries (v28) ────────────────────────────────────────────────
+
+    /**
+     * All expenses that have been resolved to coordinates, as a reactive Flow.
+     * The ViewModel collects this so the map auto-updates whenever the DB changes.
+     */
+    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC")
+    fun getLocatedExpensesFlow(): Flow<List<Expense>>
+
+    /** Suspend version for one-shot reads (e.g., analytics). */
+    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC")
+    suspend fun getLocatedExpenses(): List<Expense>
+
+    /** All expenses that still lack coordinates. */
+    @Query("SELECT * FROM expenses WHERE latitude IS NULL ORDER BY date DESC LIMIT :limit")
+    suspend fun getUnlocatedExpenses(limit: Int = 500): List<Expense>
+
+    /** Count of located expenses — used for stats display. */
+    @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+    suspend fun countLocated(): Int
+
+    /** Count of unlocated expenses — used by backfill worker and stats display. */
+    @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NULL")
+    suspend fun countUnlocated(): Int
+
+    /**
+     * Unlocated expenses that have not yet exceeded the max backfill attempt count.
+     * Bug #23 fix: excludes permanently-unresolvable expenses so the worker
+     * does not retry them indefinitely.
+     */
+    @Query("SELECT * FROM expenses WHERE latitude IS NULL AND backfillAttempts < :maxAttempts ORDER BY date DESC LIMIT :limit")
+    suspend fun getUnlocatedExpensesForBackfill(limit: Int = 500, maxAttempts: Int = 3): List<Expense>
+
+    /** Increment the backfill attempt counter for an expense that could not be resolved. */
+    @Query("UPDATE expenses SET backfillAttempts = backfillAttempts + 1 WHERE id = :expenseId")
+    suspend fun incrementBackfillAttempts(expenseId: Long)
+
+    /**
+     * Update the location fields for a single expense.
+     * Called by [LocationResolver] after a successful geocode, and by the
+     * user when they correct a pin.
+     */
+    @Query("""
+        UPDATE expenses
+        SET latitude = :latitude,
+            longitude = :longitude,
+            locationSource = :source,
+            placeId = :placeId,
+            resolvedAddress = :resolvedAddress
+        WHERE id = :expenseId
+    """)
+    suspend fun updateLocation(
+        expenseId: Long,
+        latitude: Double,
+        longitude: Double,
+        source: String,
+        placeId: String?,
+        resolvedAddress: String? = null
+    )
+
+    /** Clear all location fields for an expense (e.g. user removes a pin). */
+    @Query("""
+        UPDATE expenses
+        SET latitude = NULL,
+            longitude = NULL,
+            locationSource = NULL,
+            placeId = NULL,
+            resolvedAddress = NULL
+        WHERE id = :expenseId
+    """)
+    suspend fun clearLocation(expenseId: Long)
+
+    /** Reactive flow of unlocated expenses — used by Map tab unlocated panel. */
+    @Query("SELECT * FROM expenses WHERE latitude IS NULL ORDER BY date DESC LIMIT :limit")
+    fun getUnlocatedExpensesFlow(limit: Int = 100): Flow<List<Expense>>
+
+    /**
+     * Aggregate spend by merchant for expenses that have coordinates.
+     * Used by [SpendingHeatmapEngine] to weight heatmap intensity.
+     */
+    @Query("""
+        SELECT merchant, SUM(amount) as total, COUNT(*) as cnt
+        FROM expenses
+        WHERE latitude IS NOT NULL
+          AND transactionType = 'PURCHASE'
+          AND isNotMine = 0
+        GROUP BY merchant
+        ORDER BY total DESC
+    """)
+    suspend fun getLocatedMerchantTotals(): List<MerchantTotal>
+
+    /**
+     * Expenses within a geographic bounding box.
+     * SQLite has no native geo math so we use a lat/lon bounding box pre-filter;
+     * callers can apply an exact Haversine filter if needed.
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE latitude BETWEEN :minLat AND :maxLat
+          AND longitude BETWEEN :minLon AND :maxLon
+          AND latitude IS NOT NULL
+        ORDER BY date DESC
+    """)
+    suspend fun getExpensesInBoundingBox(
+        minLat: Double, maxLat: Double,
+        minLon: Double, maxLon: Double
+    ): List<Expense>
+
+    /**
+     * Cluster past located expenses for a given merchant into ~5 km grid cells.
+     * Uses ROUND(lat/0.045) and ROUND(lon/0.045) as grid keys (≈ 5 km cells).
+     * Returns clusters ordered by count DESC so the caller can bias toward the
+     * most-common area.
+     */
+    @Query("""
+        SELECT
+            AVG(latitude)  AS centerLat,
+            AVG(longitude) AS centerLon,
+            COUNT(*)       AS count
+        FROM expenses
+        WHERE merchant = :normalizedMerchant
+          AND latitude IS NOT NULL
+          AND longitude IS NOT NULL
+        GROUP BY ROUND(latitude / 0.045), ROUND(longitude / 0.045)
+        ORDER BY count DESC
+        LIMIT 5
+    """)
+    suspend fun getMerchantLocationClusters(normalizedMerchant: String): List<LocationCluster>
 }
 
 data class MerchantSuggestion(
@@ -447,6 +596,13 @@ data class DayOfWeekTotal(
 data class MonthlyDepositTotal(
     val month: String,
     val total: Double,
+    val count: Int
+)
+
+/** Represents a cluster of historically located expenses for the same merchant. */
+data class LocationCluster(
+    val centerLat: Double,
+    val centerLon: Double,
     val count: Int
 )
 

@@ -1,0 +1,266 @@
+package com.yourname.expensetracker.data.repository
+
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.PendingReviewDao
+import com.yourname.expensetracker.data.database.dao.RawNotificationDao
+import com.yourname.expensetracker.data.database.dao.SourceStatsDao
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.budget.BudgetMonitor
+import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
+import com.yourname.expensetracker.domain.intelligence.RoutingDecision
+import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+import com.yourname.expensetracker.domain.util.TimeProvider
+import timber.log.Timber
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * Encapsulates the notification processing pipeline, extracted from [NotificationRepository]
+ * to reduce its constructor dependency count.
+ *
+ * Responsibilities:
+ *  - Parse raw notifications into structured transactions
+ *  - Route through the confidence system
+ *  - Classify merchants and transfer directions
+ *  - Write the result (expense / pending review / rejected) inside a DB transaction
+ */
+@Singleton
+class NotificationProcessingPipeline @Inject constructor(
+    private val database: AppDatabase,
+    private val dao: RawNotificationDao,
+    private val expenseDao: ExpenseDao,
+    private val pendingReviewDao: PendingReviewDao,
+    private val sourceStatsDao: SourceStatsDao,
+    private val parserRegistry: AppParserRegistry,
+    private val confidenceRouter: ConfidenceRouter,
+    private val merchantNormalizer: MerchantNormalizer,
+    private val hybridClassifier: HybridExpenseClassifier,
+    private val classifier: TransactionClassifier,
+    private val budgetMonitor: BudgetMonitor,
+    private val timeProvider: TimeProvider,
+    private val directionDetector: TransferDirectionDetector,
+    private val analytics: TransferDirectionAnalytics
+) {
+
+    suspend fun process(notification: RawNotification) {
+        try {
+            processInternal(notification)
+        } catch (e: Exception) {
+            Timber.e(e, "Error processing notification: ${notification.packageName}")
+        }
+    }
+
+    suspend fun processBatch(notifications: List<RawNotification>) {
+        if (notifications.isEmpty()) return
+        classifier.initialize()
+        notifications.forEach { process(it) }
+    }
+
+    private suspend fun processInternal(notification: RawNotification) {
+        classifier.initialize()
+
+        val parsed = parserRegistry.parse(
+            title = notification.title,
+            text = notification.text,
+            bigText = notification.bigText,
+            subText = notification.subText,
+            packageName = notification.packageName
+        )
+
+        if (parsed == null) {
+            database.withTransaction {
+                val rawId = dao.insertOrIgnore(notification)
+                if (rawId == -1L) return@withTransaction
+                sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
+                dao.markRelevance(rawId, false)
+            }
+            confidenceRouter.invalidateSourceStatsCache(notification.packageName)
+            return
+        }
+
+        val fullNotificationText = listOfNotNull(
+            notification.title, notification.text, notification.bigText
+        ).joinToString(" ")
+
+        var routingResult = confidenceRouter.route(
+            parsed = parsed,
+            packageName = notification.packageName,
+            notificationText = fullNotificationText
+        )
+
+        if (parsed.amount > 1_000_000.0 && routingResult.decision == RoutingDecision.AUTO_ACCEPT) {
+            Timber.w("Auto-accept suppressed: amount exceeds validation limit")
+            routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
+        }
+
+        val correctedMerchant = merchantNormalizer.normalize(parsed.merchant).canonical.normalizedName
+
+        database.withTransaction {
+            val rawId = dao.insertOrIgnore(notification)
+            if (rawId == -1L) return@withTransaction
+
+            confidenceRouter.ensureSourceStats(notification.packageName)
+
+            when (routingResult.decision) {
+                RoutingDecision.AUTO_ACCEPT -> handleAutoAccept(
+                    notification, rawId, parsed, correctedMerchant, fullNotificationText, routingResult
+                )
+                RoutingDecision.NEEDS_REVIEW -> handleNeedsReview(
+                    notification, rawId, parsed, correctedMerchant, fullNotificationText, routingResult
+                )
+                RoutingDecision.AUTO_REJECT -> {
+                    dao.markRelevance(rawId, false)
+                    sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
+                }
+            }
+
+            confidenceRouter.invalidateSourceStatsCache(notification.packageName)
+            confidenceRouter.invalidateMerchantCache(correctedMerchant)
+        }
+    }
+
+    private suspend fun handleAutoAccept(
+        notification: RawNotification,
+        rawId: Long,
+        parsed: com.yourname.expensetracker.domain.parser.ParsedTransaction,
+        correctedMerchant: String,
+        fullText: String,
+        routingResult: com.yourname.expensetracker.domain.intelligence.RoutingResult
+    ) {
+        val isDuplicate = expenseDao.isDuplicate(
+            amount = parsed.amount,
+            merchant = correctedMerchant,
+            date = notification.timestamp,
+            windowMs = 300_000
+        )
+        if (isDuplicate) {
+            dao.markRelevance(rawId, false)
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            classifier.train(fullText, isTransaction = true)
+            return
+        }
+
+        val classification = hybridClassifier.classify(
+            merchantName = correctedMerchant,
+            amount = parsed.amount,
+            notificationTitle = notification.title,
+            notificationText = notification.text,
+            packageName = notification.packageName
+        )
+        val categoryId = classification.categoryId.takeIf { it > 0 }
+
+        val direction = parsed.transferDirection
+            ?: directionDetector.detectDirection(
+                notification.title, notification.text, notification.bigText, parsed.type
+            )
+        val accountName = parsed.transferAccountName
+            ?: directionDetector.extractAccountName(
+                notification.title, notification.text, notification.bigText
+            )
+
+        val expense = Expense(
+            amount = parsed.amount,
+            currency = parsed.currency,
+            merchant = correctedMerchant,
+            transactionType = parsed.type,
+            date = notification.timestamp,
+            rawNotificationId = rawId,
+            categoryId = categoryId,
+            paymentMethod = PaymentMethod.CARD,
+            isManualEntry = false,
+            dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp),
+            transferDirection = direction,
+            transferAccountName = accountName
+        )
+
+        val expenseId = expenseDao.insertAtomic(expense)
+        if (expenseId > 0) {
+            dao.markRelevance(rawId, true)
+            sourceStatsDao.incrementTotalAndAccepted(notification.packageName, timeProvider.now())
+            if (expense.transactionType == TransactionType.TRANSFER || expense.transactionType == TransactionType.DEPOSIT) {
+                if (direction != null) analytics.recordAutoDetection(direction, accountName, wasCorrect = true)
+                else analytics.recordUnknownDirection()
+            }
+            budgetMonitor.checkBudgets()
+            classifier.train(fullText, isTransaction = true)
+        } else {
+            dao.markRelevance(rawId, false)
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            classifier.train(fullText, isTransaction = true)
+        }
+    }
+
+    private suspend fun handleNeedsReview(
+        notification: RawNotification,
+        rawId: Long,
+        parsed: com.yourname.expensetracker.domain.parser.ParsedTransaction,
+        correctedMerchant: String,
+        fullText: String,
+        routingResult: com.yourname.expensetracker.domain.intelligence.RoutingResult
+    ) {
+        val isDuplicate = expenseDao.isDuplicate(
+            amount = parsed.amount,
+            merchant = correctedMerchant,
+            date = notification.timestamp,
+            windowMs = 300_000
+        )
+        if (isDuplicate) {
+            dao.markRelevance(rawId, false)
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            classifier.train(fullText, isTransaction = true)
+            return
+        }
+
+        val classification = hybridClassifier.classify(
+            merchantName = correctedMerchant,
+            amount = parsed.amount,
+            notificationTitle = notification.title,
+            notificationText = notification.text,
+            packageName = notification.packageName
+        )
+        val suggestedCategoryId = classification.categoryId.takeIf { it > 0 }
+
+        val direction = parsed.transferDirection
+            ?: directionDetector.detectDirection(
+                notification.title, notification.text, notification.bigText, parsed.type
+            )
+        val accountName = parsed.transferAccountName
+            ?: directionDetector.extractAccountName(
+                notification.title, notification.text, notification.bigText
+            )
+
+        val review = PendingReview(
+            rawNotificationId = rawId,
+            suggestedAmount = parsed.amount,
+            suggestedCurrency = parsed.currency,
+            suggestedMerchant = correctedMerchant,
+            suggestedType = parsed.type.name,
+            suggestedCategoryId = suggestedCategoryId,
+            confidence = routingResult.adjustedConfidence,
+            packageName = notification.packageName,
+            notificationTitle = notification.title,
+            notificationText = notification.text ?: notification.bigText,
+            suggestedDate = parsed.date,
+            suggestedDirection = direction?.name,
+            suggestedAccountName = accountName
+        )
+        pendingReviewDao.insert(review)
+        sourceStatsDao.incrementTotalAndPending(notification.packageName, timeProvider.now())
+
+        if (parsed.type == TransactionType.TRANSFER || parsed.type == TransactionType.DEPOSIT) {
+            if (direction != null) analytics.recordAutoDetection(direction, accountName, wasCorrect = true)
+            else analytics.recordUnknownDirection()
+        }
+    }
+}

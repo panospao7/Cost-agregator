@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.rounded.*
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.ui.components.*
@@ -37,6 +38,8 @@ import java.util.*
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +50,7 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
+    val categories by viewModel.categories.collectAsState()
 
     var showQuickSettings by remember { mutableStateOf(false) }
     var showCategories by remember { mutableStateOf(false) }
@@ -161,7 +165,23 @@ fun HomeScreen(
                             is DashboardWidget.BudgetBlockParty -> {
                                 BudgetBlockPartyCard(
                                     days = widget.days,
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onNavigateToDay = { dateMs ->
+                                        // Create a date range covering the full day
+                                        val cal = Calendar.getInstance().apply {
+                                            timeInMillis = dateMs
+                                            set(Calendar.HOUR_OF_DAY, 0)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                        }
+                                        val startOfDay = cal.timeInMillis
+                                        cal.add(Calendar.DAY_OF_MONTH, 1)
+                                        val endOfDay = cal.timeInMillis - 1
+                                        onNavigateToTransactions(
+                                            TransactionFilter(dateRange = startOfDay to endOfDay)
+                                        )
+                                    }
                                 )
                             }
                             is DashboardWidget.SpendingPaceWidget -> {
@@ -227,8 +247,7 @@ fun HomeScreen(
                                     }
                                 ) {
                                     SpendingTrendChart(
-                                        currentMonthData = widget.currentMonthData,
-                                        previousMonthData = widget.previousMonthData
+                                        series = widget.series
                                     )
                                 }
                             }
@@ -306,6 +325,11 @@ fun HomeScreen(
                                 }
                             }
                             is DashboardWidget.RecentTransactions -> {
+                                val categoryMap = remember(categories) {
+                                    categories.associate { cat ->
+                                        cat.id to try { Color(android.graphics.Color.parseColor(cat.color)) } catch (_: Exception) { Color.Gray }
+                                    }
+                                }
                                 BentoCard {
                                     Text(
                                         "RECENT ACTIVITY", 
@@ -314,7 +338,12 @@ fun HomeScreen(
                                         color = SemanticColors.TextSecondary
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
-                                    widget.expenses.forEach { RecentExpenseRow(it) }
+                                    widget.expenses.forEach { expense ->
+                                        RecentExpenseRow(
+                                            expense = expense,
+                                            categoryColor = expense.categoryId?.let { categoryMap[it] }
+                                        )
+                                    }
                                 }
                             }
                             is DashboardWidget.FinancialWeatherWidget -> {
@@ -344,6 +373,11 @@ fun HomeScreen(
                                     committedExpenses = widget.committedExpenses,
                                     likelyExpenses = widget.likelyExpenses,
                                     status = widget.status
+                                )
+                            }
+                            is DashboardWidget.MonteCarloForecast -> {
+                                MonteCarloForecastCard(
+                                    result = widget.result
                                 )
                             }
                         }
@@ -380,6 +414,7 @@ fun HomeScreen(
 
         if (showAddPlannedExpenseDialog) {
             AddPlannedExpenseDialog(
+                categories = categories,
                 onDismiss = { showAddPlannedExpenseDialog = false },
                 onConfirm = { desc, amount, date, catId, priority ->
                     viewModel.addPlannedExpense(desc, amount, date, catId, priority)
@@ -467,26 +502,6 @@ fun QuickSettingsDialog(
 }
 
 @Composable
-fun PeriodCard(label: String, amount: Double, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(label, style = MaterialTheme.typography.labelSmall)
-            Text(
-                "€${String.format("%.2f", amount)}",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-    }
-}
-
-@Composable
 fun CategorySpendingRow(item: CategorySpending) {
     Row(
         modifier = Modifier
@@ -535,7 +550,7 @@ fun CategorySpendingRow(item: CategorySpending) {
 }
 
 @Composable
-fun RecentExpenseRow(expense: Expense) {
+fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -543,19 +558,31 @@ fun RecentExpenseRow(expense: Expense) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(expense.merchant, style = MaterialTheme.typography.bodyMedium)
-                if (expense.isManualEntry) {
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("✏️", fontSize = 12.sp)
-                }
-            }
-            Text(
-                DateFormatterUtils.monthDay().format(Date(expense.date)),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Category color dot
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(
+                        categoryColor ?: SemanticColors.TextMuted,
+                        CircleShape
+                    )
             )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(expense.merchant, style = MaterialTheme.typography.bodyMedium)
+                    if (expense.isManualEntry) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("✏️", fontSize = 12.sp)
+                    }
+                }
+                Text(
+                    DateFormatterUtils.monthDay().format(Date(expense.date)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         Text(
             "€${String.format("%.2f", expense.amount)}",
@@ -564,49 +591,10 @@ fun RecentExpenseRow(expense: Expense) {
     }
 }
 
-@Composable
-fun BudgetSummaryWidget(onTrack: Int, warning: Int, exceeded: Int, summary: String?) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Budget Status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                StatusBadge("On Track", onTrack, Color(0xFF4CAF50))
-                StatusBadge("Warning", warning, Color(0xFFFFC107))
-                StatusBadge("Exceeded", exceeded, Color(0xFFFF5722))
-            }
-            if (summary != null) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    summary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (exceeded > 0) Color(0xFFFF5722) else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun StatusBadge(label: String, count: Int, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier.size(32.dp).clip(CircleShape).background(color.copy(alpha = 0.1f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(count.toString(), fontWeight = FontWeight.Bold, color = color)
-        }
-        Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddPlannedExpenseDialog(
+    categories: List<Category> = emptyList(),
     onDismiss: () -> Unit,
     onConfirm: (String, Double, Long, Long?, PlannedExpensePriority) -> Unit
 ) {
@@ -614,6 +602,7 @@ fun AddPlannedExpenseDialog(
     var amount by remember { mutableStateOf("") }
     var priority by remember { mutableStateOf(PlannedExpensePriority.LIKELY) }
     var date by remember { mutableStateOf(System.currentTimeMillis()) }
+    var selectedCategoryId by remember { mutableStateOf<Long?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -675,6 +664,38 @@ fun AddPlannedExpenseDialog(
                     dateMs = date,
                     onDateSelected = { date = it }
                 )
+
+                // Category selector
+                if (categories.isNotEmpty()) {
+                    Column {
+                        Text(
+                            "CATEGORY",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SemanticColors.TextSecondary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        androidx.compose.foundation.lazy.LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            item {
+                                FilterChip(
+                                    selected = selectedCategoryId == null,
+                                    onClick = { selectedCategoryId = null },
+                                    label = { Text("None") }
+                                )
+                            }
+                            items(categories.size) { idx ->
+                                val cat = categories[idx]
+                                FilterChip(
+                                    selected = selectedCategoryId == cat.id,
+                                    onClick = { selectedCategoryId = cat.id },
+                                    label = { Text("${cat.icon} ${cat.name}") }
+                                )
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
@@ -682,7 +703,7 @@ fun AddPlannedExpenseDialog(
                 onClick = {
                     val amt = amount.toDoubleOrNull() ?: 0.0
                     if (description.isNotBlank() && amt > 0) {
-                        onConfirm(description, amt, date, null, priority)
+                        onConfirm(description, amt, date, selectedCategoryId, priority)
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)

@@ -14,8 +14,8 @@ import android.os.Build
 import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import android.util.Log
 import androidx.core.app.NotificationCompat
+import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.receiver.ServiceRestartReceiver
@@ -143,9 +143,9 @@ class NotificationCaptureService : NotificationListenerService() {
                 RESTART_INTERVAL_MS,
                 pendingIntent
             )
-            Log.d(TAG, "Scheduled restart alarm every ${RESTART_INTERVAL_MS}ms")
+            Timber.d("Scheduled restart alarm every ${RESTART_INTERVAL_MS}ms")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to schedule restart alarm", e)
+            Timber.e(e, "Failed to schedule restart alarm")
         }
     }
 
@@ -167,8 +167,7 @@ class NotificationCaptureService : NotificationListenerService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundWithNotification()
         if (intent?.action == ACTION_REFRESH_NOTIFICATIONS) {
-            Log.d(TAG, "Refresh action received")
-            // If already connected, refresh immediately, otherwise set flag for onListenerConnected
+            Timber.d("Refresh action received")            // If already connected, refresh immediately, otherwise set flag for onListenerConnected
             if (isListenerConnected) {
                 refreshActiveNotifications()
             } else {
@@ -181,7 +180,7 @@ class NotificationCaptureService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         isListenerConnected = true
-        Log.d(TAG, "NotificationListener connected! Starting foreground service.")
+        Timber.d("NotificationListener connected! Starting foreground service.")
         startForegroundWithNotification()
         // Refresh active notifications after connection is established
         if (pendingRefresh) {
@@ -206,14 +205,14 @@ class NotificationCaptureService : NotificationListenerService() {
                     startForeground(FOREGROUND_ID, notification, 
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to start foreground with type DATA_SYNC, fallback to generic", e)
+                    Timber.e(e, "Failed to start foreground with type DATA_SYNC, fallback to generic")
                     startForeground(FOREGROUND_ID, notification)
                 }
             } else {
                 startForeground(FOREGROUND_ID, notification)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "CRITICAL: Failed to start foreground service", e)
+            Timber.e(e, "CRITICAL: Failed to start foreground service")
         }
     }
 
@@ -221,7 +220,7 @@ class NotificationCaptureService : NotificationListenerService() {
         super.onListenerDisconnected()
         isListenerConnected = false
         diagnostics.recordListenerDisconnected()
-        Log.w(TAG, "NotificationListener disconnected - attempting rebind")
+        Timber.w("NotificationListener disconnected - attempting rebind")
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             requestRebind(ComponentName(this, NotificationCaptureService::class.java))
@@ -229,7 +228,7 @@ class NotificationCaptureService : NotificationListenerService() {
         
         // Restart foreground service to ensure we stay alive while waiting for rebind
         if (isRunning) {
-            Log.d(TAG, "Restarting foreground service after disconnect")
+            Timber.d("Restarting foreground service after disconnect")
             startForegroundWithNotification()
         }
     }
@@ -288,7 +287,7 @@ class NotificationCaptureService : NotificationListenerService() {
         extras: android.os.Bundle
     ) {
         if (repository.isPackageBlocked(packageName)) {
-            Log.d(TAG, "Ignoring blocked package: $packageName")
+            Timber.d("Ignoring blocked package: $packageName")
             return
         }
         
@@ -327,23 +326,23 @@ class NotificationCaptureService : NotificationListenerService() {
 
         try {
             repository.processAndSave(rawNotification)
-            Log.d(TAG, "Processed notification from: $packageName")
+            Timber.d("Processed notification from: $packageName")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to process notification", e)
+            Timber.e(e, "Failed to process notification")
         }
     }
 
     private fun refreshActiveNotifications() {
-        Log.d(TAG, "Manual refresh triggered")
+        Timber.d("Manual refresh triggered")
         try {
             val activeNotifications = activeNotifications
-            Log.d(TAG, "Found ${activeNotifications.size} active notifications")
+            Timber.d("Found ${activeNotifications.size} active notifications")
             activeNotifications.forEach { sbn ->
                 // Bypass deduplication cache for manual refresh
                 processNotificationBypassDedupe(sbn)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error refreshing active notifications", e)
+            Timber.e(e, "Error refreshing active notifications")
         }
     }
 
@@ -356,11 +355,11 @@ class NotificationCaptureService : NotificationListenerService() {
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
 
         if (!shouldCapture(packageName, title, text, bigText)) {
-            Log.d(TAG, "Skipping (shouldCapture=false): $packageName")
+            Timber.d("Skipping (shouldCapture=false): $packageName")
             return
         }
         
-        Log.d(TAG, "Processing notification from: $packageName, title: $title")
+        Timber.d("Processing notification from: $packageName, title: $title")
 
         serviceScope.launch {
             processNotification(sbn, packageName, title, text, bigText, extras)
@@ -408,8 +407,8 @@ class NotificationCaptureService : NotificationListenerService() {
             }
             json.toString()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to build extras JSON", e)
-            "{}"
+            Timber.e(e, "Failed to build extras JSON")
+            return "{}"
         }
     }
 
@@ -418,7 +417,7 @@ class NotificationCaptureService : NotificationListenerService() {
         isRunning = false
         cancelRestartAlarm()
         diagnostics.recordServiceKilled()
-        Log.d(TAG, "Service destroyed")
+        Timber.d("Service destroyed")
         serviceJob.cancel() // Stop all active coroutines
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -441,9 +440,9 @@ class NotificationCaptureService : NotificationListenerService() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             alarmManager.cancel(pendingIntent)
-            Log.d(TAG, "Cancelled restart alarm")
+            Timber.d("Cancelled restart alarm")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to cancel restart alarm", e)
+            Timber.e(e, "Failed to cancel restart alarm")
         }
     }
 }

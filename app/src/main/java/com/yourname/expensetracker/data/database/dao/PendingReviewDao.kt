@@ -63,4 +63,13 @@ interface PendingReviewDao {
 
     @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' AND suggestedMerchant LIKE '%' || :merchantPattern || '%' AND suggestedDate BETWEEN :startDate AND :endDate")
     suspend fun getPendingReviewsByMerchantAndDateRange(merchantPattern: String, startDate: Long, endDate: Long): List<PendingReview>
+
+    @Query("SELECT * FROM pending_reviews WHERE suggestedMerchant = :merchantName AND status = 'PENDING'")
+    suspend fun getPendingByMerchant(merchantName: String): List<PendingReview>
+
+    @Query("UPDATE pending_reviews SET suggestedCategoryId = :categoryId WHERE suggestedMerchant = :merchantName AND status = 'PENDING'")
+    suspend fun bulkUpdateCategoryByMerchant(merchantName: String, categoryId: Long)
+
+    @Query("UPDATE pending_reviews SET suggestedMerchant = :newMerchant WHERE suggestedMerchant = :oldMerchant AND status = 'PENDING'")
+    suspend fun bulkRenameMerchant(oldMerchant: String, newMerchant: String)
 }

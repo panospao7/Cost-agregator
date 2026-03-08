@@ -1,0 +1,2082 @@
+ocr text 
+{
+    "metadata": {
+        "timestamp": "2026-02-28T16:31:46",
+        "processingTimeMs": 11338,
+        "parserUsed": "BankStatementParser (98 transactions)"
+    },
+    "rawText": {
+        "lineCount": 339,
+        "characterCount": 13771,
+        "preview": "EUR Statement\n Generated on Feb 28, 2026\nRevolut Bank UAB\nPage of 1 36© 2026 Revolut Bank UAB\nReport lost or stolen card\n+370 5 214 3608\nGet help directly in-app\nScan the QR code\nRevolut Bank UAB is ..."
+    },
+    "transactions": [
+        {
+            "index": 0,
+            "merchant": "Jan 10, 2023",
+            "amount": 20.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 1,
+            "merchant": "Jan 10, 2023 Transfer",
+            "amount": 20.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 2,
+            "merchant": "Feb 25, 2023",
+            "amount": 10.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 3,
+            "merchant": "Feb 25, 2023 Revolut Ltd",
+            "amount": 2.88,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 4,
+            "merchant": "Fee:",
+            "amount": 0.03,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 5,
+            "merchant": "Unknown Merchant",
+            "amount": 3.0,
+            "currency": "USD",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 6,
+            "merchant": "Feb 26, 2023 Transfer",
+            "amount": 2.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 7,
+            "merchant": "Mar 16, 2023 Exchanged",
+            "amount": 94.11,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 8,
+            "merchant": "Unknown Merchant",
+            "amount": 100.0,
+            "currency": "USD",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 9,
+            "merchant": "Mar 18, 2023 Transfer",
+            "amount": 15.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 10,
+            "merchant": "Mar 24, 2023 Transfer",
+            "amount": 4.71,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 11,
+            "merchant": "Fee:",
+            "amount": 0.05,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 12,
+            "merchant": "Unknown Merchant",
+            "amount": 5.0,
+            "currency": "USD",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 13,
+            "merchant": "Mar 27, 2023",
+            "amount": 8.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 14,
+            "merchant": "Mar 30, 2023 Bread",
+            "amount": 0.6,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 15,
+            "merchant": "Mar 30, 2023 Bread",
+            "amount": 1.1,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 16,
+            "merchant": "Mar 30, 2023 Promo VFGR_SPECIAL 1",
+            "amount": 25.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 17,
+            "merchant": "Mar 31, 2023 4all 1",
+            "amount": 2.1,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 18,
+            "merchant": "Mar 31, 2023 B Plus Gp 1",
+            "amount": 3.3,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 19,
+            "merchant": "Mar 31, 2023 Transfer from DIMITRIOS KOT",
+            "amount": 3.5,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 20,
+            "merchant": "Apr 2, 2023 Dimitriou Ioannis 1",
+            "amount": 1.4,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 21,
+            "merchant": "Apr 3, 2023 Odeon Πλατεία",
+            "amount": 8.5,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 22,
+            "merchant": "Apr 3, 2023 Masoutis",
+            "amount": 4.67,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 23,
+            "merchant": "Apr 3, 2023 Banquet",
+            "amount": 4.5,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 24,
+            "merchant": "Apr 4, 2023 Jumbo",
+            "amount": 2.39,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 25,
+            "merchant": "Apr 4, 2023 Harry's spot cafe",
+            "amount": 10.5,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 26,
+            "merchant": "Apr 5, 2023 Devido",
+            "amount": 6.9,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 27,
+            "merchant": "Apr 5, 2023 Masoutis",
+            "amount": 1.72,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 28,
+            "merchant": "Apr 5, 2023 OASTH",
+            "amount": 27.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 29,
+            "merchant": "Apr 6, 2023 Cazza Nova",
+            "amount": 3.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 30,
+            "merchant": "Apr 8, 2023 Odysseas Restaurant",
+            "amount": 4.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 31,
+            "merchant": "Apr 11, 2023 Masoutis",
+            "amount": 1.43,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 32,
+            "merchant": "Apr 12, 2023 Papadas Panagiotis",
+            "amount": 5.5,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 33,
+            "merchant": "Apr 12, 2023 Tsakmaki Panagiota",
+            "amount": 5.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 34,
+            "merchant": "Apr 12, 2023 KFC",
+            "amount": 11.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 35,
+            "merchant": "Apr 12, 2023 Roasters Kolektiva Coffee",
+            "amount": 5.5,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 36,
+            "merchant": "Apr 12, 2023 Masoutis",
+            "amount": 1.43,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 37,
+            "merchant": "Apr 12, 2023 Jumbo",
+            "amount": 3.33,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 38,
+            "merchant": "Apr 28, 2023 Transfer from Stylianos-Ari",
+            "amount": 4.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 39,
+            "merchant": "May 1, 2023 Sykies",
+            "amount": 1.7,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 40,
+            "merchant": "May 1, 2023",
+            "amount": 14.1,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 41,
+            "merchant": "May 1, 2023 Transfer",
+            "amount": 15.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 42,
+            "merchant": "May 1, 2023",
+            "amount": 15.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 43,
+            "merchant": "May 1, 2023 Transfer",
+            "amount": 15.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 44,
+            "merchant": "May 3, 2023 Mikel Coffee",
+            "amount": 2.55,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 45,
+            "merchant": "Jun 2, 2023 Transfer from Stylianos-Aris",
+            "amount": 9.5,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 46,
+            "merchant": "Jun 6, 2023 Xt Network",
+            "amount": 4.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 47,
+            "merchant": "Jun 7, 2023",
+            "amount": 10.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 48,
+            "merchant": "Jun 8, 2023 Transfer",
+            "amount": 8.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 49,
+            "merchant": "Jun 13, 2023 Bread",
+            "amount": 3.4,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 50,
+            "merchant": "Jun 16, 2023 Mikel Coffee",
+            "amount": 3.2,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 51,
+            "merchant": "Jun 24, 2023",
+            "amount": 10.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 52,
+            "merchant": "Jun 24, 2023 Transfer",
+            "amount": 10.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 53,
+            "merchant": "Jul 2, 2023",
+            "amount": 18.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 54,
+            "merchant": "Jul 2, 2023 Transfer",
+            "amount": 18.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 55,
+            "merchant": "Jul 9, 2023 Google Pay deposit by *5895",
+            "amount": 10.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "DEPOSIT",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 56,
+            "merchant": "Jul 10, 2023 Niantic",
+            "amount": 0.46,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 57,
+            "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+            "amount": 1.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 58,
+            "merchant": "Jul 10, 2023 Niantic",
+            "amount": 0.1,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 59,
+            "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+            "amount": 1.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 60,
+            "merchant": "Jul 10, 2023 Niantic",
+            "amount": 1.25,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 61,
+            "merchant": "Fee:",
+            "amount": 0.01,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 62,
+            "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+            "amount": 1.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 63,
+            "merchant": "Jul 10, 2023 Niantic",
+            "amount": 0.1,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 64,
+            "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+            "amount": 1.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 65,
+            "merchant": "Jul 10, 2023 Niantic",
+            "amount": 1.25,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 66,
+            "merchant": "Fee:",
+            "amount": 0.01,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 67,
+            "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+            "amount": 1.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 68,
+            "merchant": "Jul 10, 2023 Niantic",
+            "amount": 0.46,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 69,
+            "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+            "amount": 1.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 70,
+            "merchant": "Jul 11, 2023 Voultsios Stavros",
+            "amount": 4.4,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 71,
+            "merchant": "Jul 12, 2023 4all",
+            "amount": 2.1,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 72,
+            "merchant": "Jul 22, 2023 Transfer from Stylianos-Ari",
+            "amount": 4.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 73,
+            "merchant": "Jul 24, 2023 Google Pay deposit by *5895",
+            "amount": 41.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "DEPOSIT",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 74,
+            "merchant": "Jul 24, 2023 Transfer",
+            "amount": 45.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 75,
+            "merchant": "Aug 7, 2023 Google Pay deposit by *5895",
+            "amount": 10.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "DEPOSIT",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 76,
+            "merchant": "Aug 8, 2023 Neteller",
+            "amount": 10.25,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 77,
+            "merchant": "Aug 11, 2023 Google Pay deposit by *5895",
+            "amount": 10.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "DEPOSIT",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 78,
+            "merchant": "Aug 11, 2023 Transfer",
+            "amount": 10.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 79,
+            "merchant": "Aug 26, 2023 Google Pay deposit by *5895",
+            "amount": 15.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "DEPOSIT",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 80,
+            "merchant": "Aug 30, 2023 Samsung",
+            "amount": 0.11,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 81,
+            "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+            "amount": 1.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 82,
+            "merchant": "Oct 5, 2023 Transfer",
+            "amount": 10.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 83,
+            "merchant": "Oct 7, 2023 Transfer",
+            "amount": 5.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PURCHASE",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 84,
+            "merchant": "Oct 20, 2023 Google Pay deposit by *5895",
+            "amount": 35.0,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "DEPOSIT",
+            "date": null,
+            "issues": [
+                "MISSING_DATE"
+            ]
+        },
+        {
+            "index": 85,
+            "merchant": "Oct 21, 2023 Loaded",
+            "amount": 34.79,
+            "currency": "EUR",
+            "confidence": 0.7,
+            "type": "PU
+
+      parsed text 
+
+      {
+                "metadata": {
+                    "timestamp": "2026-02-28T16:32:14",
+                    "processingTimeMs": 11338,
+                    "parserUsed": "BankStatementParser (98 transactions)"
+                },
+                "rawText": {
+                    "lineCount": 339,
+                    "characterCount": 13771,
+                    "preview": "EUR Statement\n Generated on Feb 28, 2026\nRevolut Bank UAB\nPage of 1 36© 2026 Revolut Bank UAB\nReport lost or stolen card\n+370 5 214 3608\nGet help directly in-app\nScan the QR code\nRevolut Bank UAB is ..."
+                },
+                "transactions": [
+                    {
+                        "index": 0,
+                        "merchant": "Jan 10, 2023",
+                        "amount": 20.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 1,
+                        "merchant": "Jan 10, 2023 Transfer",
+                        "amount": 20.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 2,
+                        "merchant": "Feb 25, 2023",
+                        "amount": 10.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 3,
+                        "merchant": "Feb 25, 2023 Revolut Ltd",
+                        "amount": 2.88,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 4,
+                        "merchant": "Fee:",
+                        "amount": 0.03,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 5,
+                        "merchant": "Unknown Merchant",
+                        "amount": 3.0,
+                        "currency": "USD",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 6,
+                        "merchant": "Feb 26, 2023 Transfer",
+                        "amount": 2.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 7,
+                        "merchant": "Mar 16, 2023 Exchanged",
+                        "amount": 94.11,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 8,
+                        "merchant": "Unknown Merchant",
+                        "amount": 100.0,
+                        "currency": "USD",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 9,
+                        "merchant": "Mar 18, 2023 Transfer",
+                        "amount": 15.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 10,
+                        "merchant": "Mar 24, 2023 Transfer",
+                        "amount": 4.71,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 11,
+                        "merchant": "Fee:",
+                        "amount": 0.05,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 12,
+                        "merchant": "Unknown Merchant",
+                        "amount": 5.0,
+                        "currency": "USD",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 13,
+                        "merchant": "Mar 27, 2023",
+                        "amount": 8.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 14,
+                        "merchant": "Mar 30, 2023 Bread",
+                        "amount": 0.6,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 15,
+                        "merchant": "Mar 30, 2023 Bread",
+                        "amount": 1.1,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 16,
+                        "merchant": "Mar 30, 2023 Promo VFGR_SPECIAL 1",
+                        "amount": 25.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 17,
+                        "merchant": "Mar 31, 2023 4all 1",
+                        "amount": 2.1,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 18,
+                        "merchant": "Mar 31, 2023 B Plus Gp 1",
+                        "amount": 3.3,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 19,
+                        "merchant": "Mar 31, 2023 Transfer from DIMITRIOS KOT",
+                        "amount": 3.5,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 20,
+                        "merchant": "Apr 2, 2023 Dimitriou Ioannis 1",
+                        "amount": 1.4,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 21,
+                        "merchant": "Apr 3, 2023 Odeon Πλατεία",
+                        "amount": 8.5,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 22,
+                        "merchant": "Apr 3, 2023 Masoutis",
+                        "amount": 4.67,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 23,
+                        "merchant": "Apr 3, 2023 Banquet",
+                        "amount": 4.5,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 24,
+                        "merchant": "Apr 4, 2023 Jumbo",
+                        "amount": 2.39,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 25,
+                        "merchant": "Apr 4, 2023 Harry's spot cafe",
+                        "amount": 10.5,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 26,
+                        "merchant": "Apr 5, 2023 Devido",
+                        "amount": 6.9,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 27,
+                        "merchant": "Apr 5, 2023 Masoutis",
+                        "amount": 1.72,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 28,
+                        "merchant": "Apr 5, 2023 OASTH",
+                        "amount": 27.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 29,
+                        "merchant": "Apr 6, 2023 Cazza Nova",
+                        "amount": 3.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 30,
+                        "merchant": "Apr 8, 2023 Odysseas Restaurant",
+                        "amount": 4.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 31,
+                        "merchant": "Apr 11, 2023 Masoutis",
+                        "amount": 1.43,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 32,
+                        "merchant": "Apr 12, 2023 Papadas Panagiotis",
+                        "amount": 5.5,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 33,
+                        "merchant": "Apr 12, 2023 Tsakmaki Panagiota",
+                        "amount": 5.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 34,
+                        "merchant": "Apr 12, 2023 KFC",
+                        "amount": 11.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 35,
+                        "merchant": "Apr 12, 2023 Roasters Kolektiva Coffee",
+                        "amount": 5.5,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 36,
+                        "merchant": "Apr 12, 2023 Masoutis",
+                        "amount": 1.43,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 37,
+                        "merchant": "Apr 12, 2023 Jumbo",
+                        "amount": 3.33,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 38,
+                        "merchant": "Apr 28, 2023 Transfer from Stylianos-Ari",
+                        "amount": 4.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 39,
+                        "merchant": "May 1, 2023 Sykies",
+                        "amount": 1.7,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 40,
+                        "merchant": "May 1, 2023",
+                        "amount": 14.1,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 41,
+                        "merchant": "May 1, 2023 Transfer",
+                        "amount": 15.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 42,
+                        "merchant": "May 1, 2023",
+                        "amount": 15.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 43,
+                        "merchant": "May 1, 2023 Transfer",
+                        "amount": 15.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 44,
+                        "merchant": "May 3, 2023 Mikel Coffee",
+                        "amount": 2.55,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 45,
+                        "merchant": "Jun 2, 2023 Transfer from Stylianos-Aris",
+                        "amount": 9.5,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 46,
+                        "merchant": "Jun 6, 2023 Xt Network",
+                        "amount": 4.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 47,
+                        "merchant": "Jun 7, 2023",
+                        "amount": 10.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 48,
+                        "merchant": "Jun 8, 2023 Transfer",
+                        "amount": 8.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 49,
+                        "merchant": "Jun 13, 2023 Bread",
+                        "amount": 3.4,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 50,
+                        "merchant": "Jun 16, 2023 Mikel Coffee",
+                        "amount": 3.2,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 51,
+                        "merchant": "Jun 24, 2023",
+                        "amount": 10.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 52,
+                        "merchant": "Jun 24, 2023 Transfer",
+                        "amount": 10.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 53,
+                        "merchant": "Jul 2, 2023",
+                        "amount": 18.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 54,
+                        "merchant": "Jul 2, 2023 Transfer",
+                        "amount": 18.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 55,
+                        "merchant": "Jul 9, 2023 Google Pay deposit by *5895",
+                        "amount": 10.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "DEPOSIT",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 56,
+                        "merchant": "Jul 10, 2023 Niantic",
+                        "amount": 0.46,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 57,
+                        "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+                        "amount": 1.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 58,
+                        "merchant": "Jul 10, 2023 Niantic",
+                        "amount": 0.1,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 59,
+                        "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+                        "amount": 1.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 60,
+                        "merchant": "Jul 10, 2023 Niantic",
+                        "amount": 1.25,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 61,
+                        "merchant": "Fee:",
+                        "amount": 0.01,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 62,
+                        "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+                        "amount": 1.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 63,
+                        "merchant": "Jul 10, 2023 Niantic",
+                        "amount": 0.1,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 64,
+                        "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+                        "amount": 1.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 65,
+                        "merchant": "Jul 10, 2023 Niantic",
+                        "amount": 1.25,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 66,
+                        "merchant": "Fee:",
+                        "amount": 0.01,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 67,
+                        "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+                        "amount": 1.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 68,
+                        "merchant": "Jul 10, 2023 Niantic",
+                        "amount": 0.46,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 69,
+                        "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+                        "amount": 1.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 70,
+                        "merchant": "Jul 11, 2023 Voultsios Stavros",
+                        "amount": 4.4,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 71,
+                        "merchant": "Jul 12, 2023 4all",
+                        "amount": 2.1,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 72,
+                        "merchant": "Jul 22, 2023 Transfer from Stylianos-Ari",
+                        "amount": 4.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 73,
+                        "merchant": "Jul 24, 2023 Google Pay deposit by *5895",
+                        "amount": 41.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "DEPOSIT",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 74,
+                        "merchant": "Jul 24, 2023 Transfer",
+                        "amount": 45.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 75,
+                        "merchant": "Aug 7, 2023 Google Pay deposit by *5895",
+                        "amount": 10.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "DEPOSIT",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 76,
+                        "merchant": "Aug 8, 2023 Neteller",
+                        "amount": 10.25,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 77,
+                        "merchant": "Aug 11, 2023 Google Pay deposit by *5895",
+                        "amount": 10.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "DEPOSIT",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 78,
+                        "merchant": "Aug 11, 2023 Transfer",
+                        "amount": 10.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 79,
+                        "merchant": "Aug 26, 2023 Google Pay deposit by *5895",
+                        "amount": 15.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "DEPOSIT",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 80,
+                        "merchant": "Aug 30, 2023 Samsung",
+                        "amount": 0.11,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 81,
+                        "merchant": "Revolut Rate = TRY (ECB rate* = TRY) TRY",
+                        "amount": 1.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 82,
+                        "merchant": "Oct 5, 2023 Transfer",
+                        "amount": 10.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 83,
+                        "merchant": "Oct 7, 2023 Transfer",
+                        "amount": 5.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PURCHASE",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 84,
+                        "merchant": "Oct 20, 2023 Google Pay deposit by *5895",
+                        "amount": 35.0,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "DEPOSIT",
+                        "date": null,
+                        "issues": [
+                            "MISSING_DATE"
+                        ]
+                    },
+                    {
+                        "index": 85,
+                        "merchant": "Oct 21, 2023 Loaded",
+                        "amount": 34.79,
+                        "currency": "EUR",
+                        "confidence": 0.7,
+                        "type": "PU

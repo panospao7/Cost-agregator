@@ -62,26 +62,47 @@ class BankStatementParser @Inject constructor(
         if (blocks.isEmpty()) return emptyList()
 
         // 1. Group blocks into rows based on vertical proximity
-        val rows = groupBlocksIntoRows(blocks)
+        // Now returns List<List<TextBlock>> to preserve spatial data
+        val rows = groupBlocksIntoRowLists(blocks)
+        
+        // Convert to strings for existing logic and header detection
+        val rowStrings = rows.map { rowBlocks ->
+            rowBlocks.sortedBy { it.left }.joinToString(" ") { it.text }
+        }
 
         // 2. Detect header columns to identify which date is which
-        val columnInfo = detectDateColumns(rows)
+        val columnInfo = detectDateColumns(rowStrings)
 
-        // 3. Try Greek NBG specific parsing first
-        val greekNbgTransactions = rows.mapNotNull { rowText ->
-            tryParseGreekNbgTransaction(rowText)
-        }
-        
-        // If we got good results from Greek NBG parser, use those
-        if (greekNbgTransactions.isNotEmpty()) {
-            Timber.d("Parsed ${greekNbgTransactions.size} Greek NBG transactions")
-            return greekNbgTransactions
+        val transactions = mutableListOf<ParsedTransaction>()
+
+        for (i in rows.indices) {
+            val rowBlocks = rows[i]
+            val rowText = rowStrings[i]
+
+            // Try parsers in order of specificity
+            
+            // 3. Try Revolut specific parsing (uses spatial data)
+            val revolutTx = tryParseRevolutTransaction(rowBlocks)
+            if (revolutTx != null) {
+                transactions.add(revolutTx)
+                continue
+            }
+
+            // 4. Try Greek NBG specific parsing
+            val greekNbgTx = tryParseGreekNbgTransaction(rowText)
+            if (greekNbgTx != null) {
+                transactions.add(greekNbgTx)
+                continue
+            }
+
+            // 5. Fallback to generic parsing
+            val genericTx = extractTransactionFromRow(rowText, columnInfo)
+            if (genericTx != null) {
+                transactions.add(genericTx)
+            }
         }
 
-        // 4. Otherwise fall back to generic parsing with column awareness
-        return rows.mapNotNull { rowText ->
-            extractTransactionFromRow(rowText, columnInfo)
-        }
+        return transactions
     }
 
     /**
@@ -102,7 +123,7 @@ class BankStatementParser @Inject constructor(
         )
     }
 
-    private fun groupBlocksIntoRows(blocks: List<TextBlock>): List<String> {
+    private fun groupBlocksIntoRowLists(blocks: List<TextBlock>): List<List<TextBlock>> {
         // Sort by top coordinate to process top-to-bottom
         val sortedBlocks = blocks.sortedBy { it.top }
         val rows = mutableListOf<MutableList<TextBlock>>()
@@ -119,9 +140,12 @@ class BankStatementParser @Inject constructor(
             }
         }
 
-        // Within each row, sort blocks by left-to-right and join into a single string
-        return rows.map { rowBlocks ->
-            rowBlocks.sortedBy { it.left }.joinToString(" ") { it.text }
+        return rows.map { it.sortedBy { block -> block.left } }
+    }
+
+    private fun groupBlocksIntoRows(blocks: List<TextBlock>): List<String> {
+        return groupBlocksIntoRowLists(blocks).map { rowBlocks ->
+            rowBlocks.joinToString(" ") { it.text }
         }
     }
 
@@ -145,17 +169,132 @@ class BankStatementParser @Inject constructor(
     }
     
     /**
-     * Try to parse a Greek National Bank transaction line.
-     * Format: 12/02/2026 15:22:23 11/02/2026 705 040 MASOUTIS Χ -4,00 1.602,57
+     * Try to parse a Revolut transaction line.
+     * Format: Apr 12, 2023 Tzakmaki Panagiota MoneyOut? MoneyIn? Balance
      * 
-     * Table columns:
-     * - Ημερομηνία/Ώρα: 12/02/2026 15:22:23 (timestamp)
-     * - Κατάστημα: 705 (store code - ignore)
-     * - Σύν: 040 (transaction code - ignore)
-     * - Περιγραφή: MASOUTIS (merchant name)
-     * - Χ/Π: Χ (transaction type)
-     * - Ποσό: -4,00 (amount)
-     * - Λογιστικό Υπόλοιπο: 1.602,57 (balance - ignore)
+     * Uses horizontal positions to distinguish Money Out vs Money In.
+     */
+    private fun tryParseRevolutTransaction(rowBlocks: List<TextBlock>): ParsedTransaction? {
+        if (rowBlocks.isEmpty()) return null
+        
+        val rowText = rowBlocks.joinToString(" ") { it.text }
+        
+        // 1. Detect Revolut Date: MMM d, yyyy (e.g. Apr 12, 2023)
+        // Match months like Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec
+        val months = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        val dateRegex = Regex("""(?i)\b($months\s+\d{1,2})[\s,]*(\d{4})\b""")
+        val dateMatch = dateRegex.find(rowText)
+        if (dateMatch == null) {
+            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Date regex failed for row -> $rowText")
+            return null
+        }
+        
+        val dateStr = dateMatch.value
+        val timestamp = parseRevolutDate(dateStr)
+        
+        // 2. Identify all amount blocks
+        // Revolut amounts always have currency symbol: €12.50 or £10.00
+        val amountMatches = Regex("""[€$£]\s*[\d.,]+""").findAll(rowText).map { it.value }.toList()
+        
+        if (amountMatches.size < 2) {
+            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Less than 2 amounts found (${amountMatches.size}) for row -> $rowText")
+            return null
+        }
+        
+        // The last is balance, the second-to-last is tx amount
+        val txAmountStr = amountMatches[amountMatches.size - 2]
+        val balanceStr = amountMatches.last()
+        
+        val rawAmount = txAmountStr.replace(Regex("""[€$£\s]"""), "").replace(",", ".")
+        val absAmount = kotlin.math.abs(rawAmount.toDoubleOrNull() ?: run {
+            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Failed to parse amount '$txAmountStr' in row -> $rowText")
+            return null
+        })
+        
+        if (absAmount <= 0.0 || !absAmount.isFinite()) {
+            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Invalid absolute amount ($absAmount) in row -> $rowText")
+            return null
+        }
+        
+        var currency = "EUR"
+        if (txAmountStr.contains("£")) currency = "GBP"
+        if (txAmountStr.contains("$")) currency = "USD"
+
+        // 3. Determine if it's Money Out or Money In
+        // Find the block that contains the transaction amount to determine its X position
+        val txAmountBlock = rowBlocks.find { it.text.contains(txAmountStr) } ?: rowBlocks.last()
+        val balanceBlock = rowBlocks.find { it.text.contains(balanceStr) } ?: rowBlocks.last()
+
+        // Use relative X position. 
+        // Row starts at rowBlocks.first().left, ends at balanceBlock.right
+        val rowLeft = rowBlocks.first().left
+        val rowRight = balanceBlock.right
+        val rowWidth = rowRight - rowLeft
+        
+        if (rowWidth <= 0) {
+            if (BuildConfig.DEBUG) Timber.d("RevolutParser: Invalid row width ($rowWidth) in row -> $rowText")
+            return null
+        }
+        
+        val relativeX = (txAmountBlock.left - rowLeft).toFloat() / rowWidth
+        
+        // Layout: Date (0-15%), Description (15-60%), Money out (60-75%), Money In (75-90%), Balance (90-100%)
+        val isMoneyIn = relativeX > 0.75f || 
+                       rowText.contains("Top-up", ignoreCase = true) || 
+                       rowText.contains("Received from", ignoreCase = true) ||
+                       rowText.contains("Transfer from", ignoreCase = true) ||
+                       rowText.contains("Promo", ignoreCase = true)
+
+        val type = if (isMoneyIn) TransactionType.DEPOSIT else TransactionType.PURCHASE
+        
+        // Merchant is usually between the date and the first amount
+        // Use the index of the MatchResult to correctly handle variable spacing
+        val dateEndIndex = dateMatch.range.last + 1
+        val firstAmountIndex = rowText.indexOf(txAmountStr)
+        
+        var merchant = if (firstAmountIndex > dateEndIndex) {
+            rowText.substring(dateEndIndex, firstAmountIndex).trim()
+        } else {
+            "Unknown Merchant"
+        }
+        
+        // Clean up merchant (remove "To:", "Card:", "Reference:", etc.)
+        merchant = merchant.replace(Regex("""(?i)\b(To:|From:|Card:|Reference:|Reference\b.*|Fee:.*)\b"""), "")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            
+        // Specific Revolut prefixes
+        merchant = merchant.replace(Regex("""(?i)\bTransfer to\s+"""), "")
+        merchant = merchant.replace(Regex("""(?i)\bTransfer from\s+"""), "")
+        merchant = merchant.replace(Regex("""(?i)\bTop-up by\s+"""), "")
+
+        if (merchant.isBlank()) merchant = "Revolut Transaction"
+
+        val tx = ParsedTransaction(
+            amount = absAmount,
+            currency = currency,
+            merchant = merchantCleaner.clean(merchant),
+            type = type,
+            confidence = 0.95f,
+            date = timestamp
+        )
+        if (BuildConfig.DEBUG) Timber.d("RevolutParser: Successfully parsed -> ${tx.merchant} | $absAmount | ${tx.type}")
+        return tx
+    }
+
+    private fun parseRevolutDate(dateStr: String): Long? {
+        return try {
+            // Normalize spaces and commas
+            val normalized = dateStr.replace(Regex("""\s*,\s*|\s+"""), " ").trim()
+            val sdf = SimpleDateFormat("MMM d yyyy", Locale.US)
+            sdf.parse(normalized)?.time
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Try to parse a Greek National Bank transaction line.
      */
     private fun tryParseGreekNbgTransaction(rowText: String): ParsedTransaction? {
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
@@ -204,7 +343,7 @@ class BankStatementParser @Inject constructor(
             } + 2
             
             if (merchantStartIndex < 2 || merchantStartIndex >= typeIndex) {
-                Timber.tag("BankStatementParser").w("Could not find merchant in: $cleanRow")
+                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Could not find merchant in: $cleanRow")
                 return null
             }
             
@@ -213,14 +352,14 @@ class BankStatementParser @Inject constructor(
             val merchant = merchantParts.joinToString(" ").trim()
             
             if (merchant.isBlank()) {
-                Timber.tag("BankStatementParser").w("Empty merchant in: $cleanRow")
+                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Empty merchant in: $cleanRow")
                 return null
             }
             
             // Clean merchant name
             val cleanedMerchant = merchantCleaner.clean(merchant)
             
-            Timber.tag("BankStatementParser").d("Parsed NBG: $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
+            if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").d("Parsed NBG: $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
             
             return ParsedTransaction(
                 amount = kotlin.math.abs(amount),
@@ -231,7 +370,7 @@ class BankStatementParser @Inject constructor(
                 date = timestamp
             )
         } catch (e: Exception) {
-            Timber.tag("BankStatementParser").w("Failed to parse NBG transaction: ${e.message} | Row: $cleanRow")
+            if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Failed to parse NBG transaction: ${e.message} | Row: $cleanRow")
         return null
     }
 }
@@ -312,6 +451,8 @@ class BankStatementParser @Inject constructor(
         
         val absAmount = kotlin.math.abs(amountStr.toDoubleOrNull() ?: return null)
         
+        if (absAmount <= 0.0 || !absAmount.isFinite()) return null
+        
         // Use more specific currency check
         var currency = "EUR"
         val currencyGroup = amountMatcher.group(1) ?: amountMatcher.group(3)
@@ -345,8 +486,10 @@ class BankStatementParser @Inject constructor(
             ?: allDates.firstDate
 
         // 5. Extract merchant - remove all dates from the row
+        val monthsRegex = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
         var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
-            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "")
+            .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // DD/MM/YYYY
+            .replace(Regex("""(?i)\b$monthsRegex\s+\d{1,2}[\s,]*\d{4}\b"""), "") // MMM d, yyyy
             .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "")
             .replace(Regex("""(?i)^(AGORA|ΑΓΟΡΑ|PURCHASE|PAYMENT)\s*[:\-]?\s*"""), "")
             .replace(Regex("""(?i)\s*(STO|ΣΤΟ|AT)\s*$"""), "")
@@ -442,7 +585,7 @@ class BankStatementParser @Inject constructor(
                     try {
                         return sdf.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year")?.time
                     } catch (e: Exception) {
-                        Timber.d("Failed to parse date: $d/$m/$year")
+                        if (BuildConfig.DEBUG) Timber.d("Failed to parse date: $d/$m/$year")
                     }
                 }
             }

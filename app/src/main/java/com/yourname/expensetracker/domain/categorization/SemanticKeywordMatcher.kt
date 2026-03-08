@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.categorization
 
+import javax.inject.Inject
+import javax.inject.Singleton
+
 data class SemanticMatch(
     val categoryName: String,
     val confidence: Double,
@@ -13,8 +16,9 @@ data class PatternMatch(
     val pattern: String
 )
 
-class SemanticKeywordMatcher(
-    private val greeklishNormalizer: GreeklishNormalizer = GreeklishNormalizer()
+@Singleton
+class SemanticKeywordMatcher @Inject constructor(
+    private val greeklishNormalizer: GreeklishNormalizer
 ) {
     
     private val categoryKeywords = CategoryKeywords.getAllKeywords()

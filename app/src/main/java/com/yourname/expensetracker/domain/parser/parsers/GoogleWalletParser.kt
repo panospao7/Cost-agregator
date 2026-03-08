@@ -50,9 +50,11 @@ class GoogleWalletParser @Inject constructor(
         subText: String?,
         packageName: String
     ): ParsedTransaction? {
-        // Fix encoding issues: € symbol sometimes becomes E before digits
-        var fullText = listOfNotNull(title, text, bigText).joinToString(" ")
-        fullText = fullText.replace(Regex("""E(\d)""")) { "€${it.groupValues[1]}" }
+        // Note: € symbol sometimes becomes E in notifications, but amountPattern
+        // already handles E as a currency prefix (see [€$£E] in pattern).
+        // CurrencyNormalizer maps "E" → "EUR". No global text replacement needed,
+        // as it would corrupt merchant names containing 'E' before digits.
+        val fullText = listOfNotNull(title, text, bigText).joinToString(" ")
         val lowerFull = fullText.lowercase()
 
         if (REJECT_PATTERNS.any { lowerFull.contains(it) }) return null

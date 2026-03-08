@@ -6,11 +6,11 @@
 
 ---
 
-## FILES COVERED: 165+ Total Kotlin Files
+## FILES COVERED: 170+ Total Kotlin Files
 
 | Segment | Files | Description |
 |---------|-------|-------------|
-| 1 | ~15 | Financial Forecast/Weather |
+| 1 | ~20 | Financial Forecast/Weather (+ Monte Carlo) |
 | 2 | ~8 | Budget Management |
 | 3 | ~20 | Notification Parsing |
 | 4 | ~8 | Receipt Scanning (OCR) |
@@ -41,21 +41,26 @@ When analyzing a specific feature, check files in this order:
 
 ## SEGMENT 1: FINANCIAL FORECAST / WEATHER
 
-**Description:** Core forecasting engine that predicts month-end spending and generates financial "weather" narratives.
+**Description:** Core forecasting engine that predicts month-end spending and generates financial "weather" narratives. Includes both deterministic (SynthesisEngine) and stochastic (Monte Carlo) forecasting.
 
 ### UI Layer
 | File | Purpose |
 |------|---------|
 | `ui/screens/home/HomeViewModel.kt` | Main VM that uses FinancialWeatherRepository |
-| `ui/screens/home/HomeScreen.kt` | Displays FinancialRunwayCard, FinancialWeatherCard |
+| `ui/screens/home/HomeScreen.kt` | Displays FinancialRunwayCard, FinancialWeatherCard, MonteCarloForecastCard |
 | `ui/components/FinancialRunwayCard.kt` | Shows days until money runs out |
 | `ui/components/FinancialWeatherCard.kt` | Shows weather narrative (clear, cloudy, stormy) |
 | `ui/components/ForecastTimeline.kt` | Visual timeline of projected spending |
+| `ui/components/MonteCarloForecastCard.kt` | Probabilistic month-end forecast (NEW Mar 2026) |
 
 ### Domain Layer
 | File | Purpose |
 |------|---------|
 | `domain/logic/SynthesisEngine.kt` | **MAIN ENGINE** - Synthesizes forecasts from budgets, recurring expenses |
+| `domain/forecasting/MonteCarloSpendingSimulator.kt` | **NEW** - Monte Carlo simulation (1000 iterations) |
+| `domain/forecasting/MonteCarloResult.kt` | **NEW** - Result models (percentiles, confidence) |
+| `domain/forecasting/HistoricalSpendingDistribution.kt` | **NEW** - Weekly aggregation + log-normal fit |
+| `domain/forecasting/DataQualityAssessor.kt` | **NEW** - Confidence scoring |
 | `domain/logic/NarrativeGenerator.kt` | Generates human-readable weather narratives |
 | `domain/analytics/InsightsEngine.kt` | Provides spending pace and insights for forecast |
 | `domain/model/FinancialForecast.kt` | Forecast data models |
@@ -68,6 +73,7 @@ When analyzing a specific feature, check files in this order:
 | `data/repository/FinancialWeatherRepository.kt` | **MAIN REPO** - Coordinates forecast data fetching |
 | `data/repository/BudgetRepository.kt` | Budget data for forecast calculations |
 | `data/repository/RecurringExpenseRepository.kt` | Recurring expenses for committed costs |
+| `data/repository/DashboardRepository.kt` | Dashboard widget configuration |
 
 ### Database Layer
 | File | Purpose |
@@ -80,6 +86,15 @@ When analyzing a specific feature, check files in this order:
 |------|---------|
 | `domain/util/TimePeriodUtils.kt` | Date range calculations |
 | `domain/util/StatisticsUtils.kt` | Statistics calculations |
+
+### Monte Carlo Design Notes (Mar 2026)
+- **Sampling unit**: Weekly totals (18-month lookback)
+- **Distribution**: Log-normal fit on weekly spending (right-skewed)
+- **Quality filter**: Weeks with < 3 transaction-days excluded
+- **Outlier handling**: Trim to middle 80% (top/bottom 10%)
+- **Simulation**: 1000 iterations, two-stage (deterministic + stochastic)
+- **Output**: P10/P25/P50/P75/P90 percentiles + probability under budget
+- **Confidence**: Weighted score (volume 40%, density 25%, fitness 20%, recency 15%)
 
 ---
 

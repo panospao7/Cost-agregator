@@ -1,13 +1,15 @@
 package com.yourname.expensetracker.domain.intelligence.ml
 
 import android.content.Context
-import android.util.Log
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,12 +32,19 @@ class HybridExpenseClassifier @Inject constructor(
     }
 
     private val featureExtractor = FeatureExtractor()
+    private val initMutex = Mutex()
+    private var initialized = false
     private var categories: List<Category> = emptyList()
     private var categoryMap: Map<String, Category> = emptyMap()
 
     suspend fun initialize() {
-        categories = categoryRepository.getAll()
-        categoryMap = categories.associateBy { it.name.lowercase() }
+        initMutex.withLock {
+            if (!initialized) {
+                categories = categoryRepository.getAll()
+                categoryMap = categories.associateBy { it.name.lowercase() }
+                initialized = true
+            }
+        }
     }
 
     suspend fun classify(
@@ -46,7 +55,7 @@ class HybridExpenseClassifier @Inject constructor(
         packageName: String = ""
     ): ClassificationResult = withContext(Dispatchers.Default) {
         
-        if (categories.isEmpty()) initialize()
+        if (!initialized) initialize()
         
         val features = featureExtractor.extractFromNotification(
             title = notificationTitle,
@@ -117,6 +126,7 @@ class HybridExpenseClassifier @Inject constructor(
     }
     
     // Keep for backward compatibility during migration
+    @Suppress("UnusedPrivateMember")
     private fun classifyWithRules(features: ExpenseFeatures): ClassificationResult? {
         return null // No longer used - replaced by classifyWithMerchantDictionary
     }

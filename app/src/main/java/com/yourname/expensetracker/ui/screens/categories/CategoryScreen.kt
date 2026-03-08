@@ -50,7 +50,7 @@ fun CategoryScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(categories) { category ->
+            items(categories, key = { it.id }) { category ->
                 CategoryItem(category)
             }
         }
