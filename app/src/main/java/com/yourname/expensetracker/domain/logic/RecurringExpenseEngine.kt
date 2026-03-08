@@ -80,7 +80,12 @@ class RecurringExpenseEngine @Inject constructor(
 
             // Thresholds: Must be a known frequency and have > 50% confidence (LOG-013 Relaxed further to catch varying bills)
             if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.50) {
-                
+
+                // Staleness check: drop patterns whose last occurrence is >6 months ago.
+                // This prevents cancelled/dormant subscriptions from appearing as active recurring items.
+                val sixMonthsAgo = timeProvider.now() - (180L * 24 * 60 * 60 * 1000)
+                if (dates.last() < sixMonthsAgo) continue
+
                 // Predict next date
                 // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)
                 val cal = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }

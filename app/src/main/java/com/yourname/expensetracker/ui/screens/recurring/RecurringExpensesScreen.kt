@@ -17,10 +17,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +30,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -44,33 +48,63 @@ import timber.log.Timber
 class RecurringExpensesViewModel @Inject constructor(
     private val repository: FinancialWeatherRepository,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val plannedExpenseRepository: PlannedExpenseRepository
+    private val plannedExpenseRepository: PlannedExpenseRepository,
+    private val recurringExpenseEngine: RecurringExpenseEngine,
+    private val expenseRepository: ExpenseRepository
 ) : ViewModel() {
 
     // Helper flow to trigger updates
     private val refreshTrigger = MutableStateFlow(0)
 
-    val allPatterns = recurringExpenseRepository.getAllFlow()
-        .map { list ->
-            list.map { entity ->
-                RecurringPattern(
-                    id = entity.id,
-                    merchantName = entity.merchant,
-                    averageAmount = entity.amount,
-                    currency = entity.currency,
-                    frequency = entity.frequency,
-                    nextExpectedDate = entity.nextDate,
-                    confidence = 1.0f,
-                    periodVarianceDays = 0,
-                    amountVariancePercent = 0.0,
-                    previousDates = emptyList()
+    /**
+     * Combines manually-confirmed recurring entries (from DB) with auto-detected patterns
+     * (from RecurringExpenseEngine). Manual entries take precedence when the same merchant
+     * appears in both lists. Re-triggers whenever the manual_recurring_expenses table changes
+     * or the refreshTrigger increments (e.g. after a confirm/delete action).
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val allPatterns: StateFlow<List<RecurringPattern>> = combine(
+        recurringExpenseRepository.getAllFlow(),
+        refreshTrigger
+    ) { manualEntities, _ -> manualEntities }
+        .flatMapLatest { manualEntities ->
+            flow {
+                // Map manual DB entries → domain model (confidence = 1.0, id set for delete)
+                val manualPatterns = manualEntities.map { entity ->
+                    RecurringPattern(
+                        id = entity.id,
+                        merchantName = entity.merchant,
+                        averageAmount = entity.amount,
+                        currency = entity.currency,
+                        frequency = entity.frequency,
+                        nextExpectedDate = entity.nextDate,
+                        confidence = 1.0f,
+                        periodVarianceDays = 0,
+                        amountVariancePercent = 0.0,
+                        previousDates = emptyList()
+                    )
+                }
+
+                // Auto-detect patterns from transaction history (engine applies 6-month staleness filter)
+                val allExpenses = expenseRepository.getExpensesSince(
+                    System.currentTimeMillis() - (365L * 24 * 60 * 60 * 1000)
                 )
+                val detectedPatterns = recurringExpenseEngine.getPatterns(allExpenses)
+
+                // Merge: manual takes precedence over auto-detected for the same merchant
+                val merged = mutableMapOf<String, RecurringPattern>()
+                // Add detected first (lower priority)
+                detectedPatterns.forEach { merged[it.merchantName.lowercase().trim()] = it }
+                // Overwrite with manual (higher priority)
+                manualPatterns.forEach { merged[it.merchantName.lowercase().trim()] = it }
+
+                emit(merged.values.sortedByDescending { it.confidence })
             }
         }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyList<RecurringPattern>()
+            initialValue = emptyList()
         )
 
     val plannedExpenses = plannedExpenseRepository.getAllPlannedExpenses()
