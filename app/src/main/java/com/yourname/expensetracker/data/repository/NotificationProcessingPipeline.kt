@@ -256,6 +256,16 @@ class NotificationProcessingPipeline @Inject constructor(
                 notification.title, notification.text, notification.bigText
             )
 
+        // Capture device GPS at review time so the reviewer sees a suggested location
+        // pre-populated in the ReviewScreen. Best-effort — null is fine, the user can
+        // set it manually or the backfill worker will geocode after approval.
+        val deviceGpsForReview = try {
+            locationProvider.getLastKnownLocation()
+        } catch (e: Exception) {
+            Timber.w(e, "GPS unavailable at review time for merchant: $correctedMerchant")
+            null
+        }
+
         val review = PendingReview(
             rawNotificationId = rawId,
             suggestedAmount = parsed.amount,
@@ -269,7 +279,9 @@ class NotificationProcessingPipeline @Inject constructor(
             notificationText = notification.text ?: notification.bigText,
             suggestedDate = parsed.date,
             suggestedDirection = direction?.name,
-            suggestedAccountName = accountName
+            suggestedAccountName = accountName,
+            suggestedLatitude = deviceGpsForReview?.first,
+            suggestedLongitude = deviceGpsForReview?.second
         )
         pendingReviewDao.insert(review)
         sourceStatsDao.incrementTotalAndPending(notification.packageName, timeProvider.now())

@@ -8,6 +8,13 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.analytics.*
+import com.yourname.expensetracker.domain.location.AreaSpending
+import com.yourname.expensetracker.domain.location.AreaSpendingEngine
+import com.yourname.expensetracker.domain.location.LocatedExpense
+import com.yourname.expensetracker.domain.location.LocationInsightsEngine
+import com.yourname.expensetracker.domain.location.PlaceInsight
+import com.yourname.expensetracker.domain.location.TravelDetectionEngine
+import com.yourname.expensetracker.domain.location.TravelInsight
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -51,6 +58,10 @@ data class AnalyticsState(
     val spendingPatterns: SpendingPatternAnalysis? = null,
     val hourOfDayPattern: List<Pair<Int, Double>> = emptyList(), // hour(0-23) -> total spent
     val currentDateRange: Pair<Long, Long>? = null, // period start/end for filter navigation
+    // Location insights (B5, B1, B2)
+    val locationInsights: List<PlaceInsight> = emptyList(),
+    val areaSpending: List<AreaSpending> = emptyList(),
+    val travelInsight: TravelInsight? = null,
     val isLoading: Boolean = true
 )
 
@@ -64,6 +75,9 @@ class AnalyticsViewModel @Inject constructor(
     private val recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine,
     private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository,
     private val advancedAnalyticsEngine: AdvancedAnalyticsEngine,
+    private val locationInsightsEngine: LocationInsightsEngine,
+    private val areaSpendingEngine: AreaSpendingEngine,
+    private val travelDetectionEngine: TravelDetectionEngine,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
 
@@ -314,6 +328,27 @@ class AnalyticsViewModel @Inject constructor(
             .map { h -> Pair(h, hourTotals[h]) }
             .filter { (_, v) -> v > 0 }
 
+        // ── Location analytics (B5 / B1 / B2) ────────────────────────────────
+        // Convert located purchases (any period) to LocatedExpense for the engine.
+        val locatedExpenses = purchases.mapNotNull { exp ->
+            val lat = exp.latitude ?: return@mapNotNull null
+            val lon = exp.longitude ?: return@mapNotNull null
+            LocatedExpense(
+                expenseId = exp.id,
+                latitude = lat,
+                longitude = lon,
+                amount = exp.effectiveAmount,
+                merchant = exp.merchant,
+                date = exp.date,
+                locationSource = exp.locationSource,
+                placeId = exp.placeId
+            )
+        }
+
+        val locationInsights = locationInsightsEngine.compute(locatedExpenses).take(10)
+        val areaSpending = areaSpendingEngine.compute(purchases)
+        val travelInsight = travelDetectionEngine.compute(purchases)
+
         return AnalyticsState(
             selectedPeriod = period,
             currentTotal = currentTotal,
@@ -337,6 +372,9 @@ class AnalyticsViewModel @Inject constructor(
             spendingPatterns = advResult.patterns,
             hourOfDayPattern = hourOfDayPattern,
             currentDateRange = Pair(currentStart, currentEnd),
+            locationInsights = locationInsights,
+            areaSpending = areaSpending,
+            travelInsight = travelInsight,
             isLoading = false
         )
     }

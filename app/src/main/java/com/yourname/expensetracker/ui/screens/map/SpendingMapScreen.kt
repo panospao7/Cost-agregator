@@ -39,6 +39,7 @@ import com.yourname.expensetracker.ui.components.LocationCorrectionSheet
 import com.yourname.expensetracker.ui.components.LocationPermissionDialog
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.NearbyShopSuggestionCard
+import com.yourname.expensetracker.ui.components.PlaceInsightCard
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -516,41 +517,6 @@ private fun LocationStatsBar(located: Int, unlocated: Int) {
             Text(
                 text = "$located located · $unlocated without location",
                 style = MaterialTheme.typography.labelMedium
-            )
-        }
-    }
-}
-
-// ── Place insight card ────────────────────────────────────────────────────────
-
-@Composable
-private fun PlaceInsightCard(insight: com.yourname.expensetracker.domain.location.PlaceInsight) {
-    val fmt = NumberFormat.getCurrencyInstance(Locale("el", "GR"))
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = insight.placeName, style = MaterialTheme.typography.bodyLarge)
-                if (insight.merchantNames.size > 1) {
-                    Text(
-                        text = insight.merchantNames.joinToString(", "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Text(
-                    text = "${insight.transactionCount} transactions · avg ${fmt.format(insight.avgTransaction)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Text(
-                text = fmt.format(insight.totalSpend),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary
             )
         }
     }

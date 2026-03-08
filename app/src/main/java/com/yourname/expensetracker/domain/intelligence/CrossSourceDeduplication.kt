@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.domain.util.GeoUtils
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,8 +53,7 @@ class CrossSourceDeduplication @Inject constructor() {
                     existingSource = source,
                     confidence = calculateConfidence(amount, merchant, date)
                 )
-            }
-        }
+            }        }
         
         return DuplicateCheckResult.NoDuplicate
     }
@@ -109,6 +109,8 @@ class CrossSourceDeduplication @Inject constructor() {
      * @param date Transaction date
      * @param expenses List of recent expenses to check against
      * @param timeWindowMs Optional time window override (default uses companion window)
+     * @param latitude Optional latitude of the new transaction (for proximity scoring)
+     * @param longitude Optional longitude of the new transaction (for proximity scoring)
      * @return The matching Expense if duplicate found, null otherwise
      */
     fun findExpenseDuplicate(
@@ -116,29 +118,37 @@ class CrossSourceDeduplication @Inject constructor() {
         merchant: String,
         date: Long,
         expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
-        timeWindowMs: Long = TIME_WINDOW_MS
+        timeWindowMs: Long = TIME_WINDOW_MS,
+        latitude: Double? = null,
+        longitude: Double? = null
     ): com.yourname.expensetracker.data.database.entity.Expense? {
         val normalizedMerchant = normalizeMerchant(merchant)
-        
+
+        // Collect all candidates that pass the hard filters (date, amount, merchant)
+        // then pick the one with the best composite confidence if location is available.
+        data class Candidate(
+            val expense: com.yourname.expensetracker.data.database.entity.Expense,
+            val confidence: Float
+        )
+
+        val candidates = mutableListOf<Candidate>()
+
         for (expense in expenses) {
             // Check date is within window
-            if (kotlin.math.abs(date - expense.date) > timeWindowMs) {
-                continue
-            }
-            
+            if (kotlin.math.abs(date - expense.date) > timeWindowMs) continue
+
             // Check amount matches
-            if (kotlin.math.abs(amount - expense.amount) > AMOUNT_TOLERANCE) {
-                continue
-            }
-            
+            if (kotlin.math.abs(amount - expense.amount) > AMOUNT_TOLERANCE) continue
+
             // Check merchant similarity
             val expenseMerchant = normalizeMerchant(expense.merchant)
-            if (isMerchantSimilar(normalizedMerchant, expenseMerchant)) {
-                return expense
-            }
+            if (!isMerchantSimilar(normalizedMerchant, expenseMerchant)) continue
+
+            val conf = calculateConfidence(amount, expense.merchant, date, latitude, longitude, expense)
+            candidates.add(Candidate(expense, conf))
         }
-        
-        return null
+
+        return candidates.maxByOrNull { it.confidence }?.expense
     }
 
     /**
@@ -237,14 +247,33 @@ class CrossSourceDeduplication @Inject constructor() {
             .trim()
     }
 
-    private fun calculateConfidence(amount: Double, merchant: String, date: Long): Float {
+    private fun calculateConfidence(
+        amount: Double,
+        merchant: String,
+        date: Long,
+        newLat: Double? = null,
+        newLon: Double? = null,
+        existing: com.yourname.expensetracker.data.database.entity.Expense? = null
+    ): Float {
         var confidence = 0.5f
-        
+
+        // Merchant name length heuristic — longer name = more specific = more confident
         if (merchant.length > 5) {
             confidence += 0.3f
         }
-        
-        return confidence.coerceAtMost(1.0f)
+
+        // Location proximity boost/penalty
+        val distKm = GeoUtils.haversineKmOrNull(newLat, newLon, existing?.latitude, existing?.longitude)
+        if (distKm != null) {
+            confidence += when {
+                distKm < 0.2  ->  0.15f  // < 200 m  — very likely same physical location
+                distKm < 1.0  ->  0.05f  // 200 m – 1 km — plausible
+                distKm < 5.0  ->  0.0f   // 1–5 km   — no effect
+                else          -> -0.15f  // > 5 km   — suspicious
+            }
+        }
+
+        return confidence.coerceIn(0f, 1f)
     }
 
     /**

@@ -40,6 +40,8 @@ import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.analytics.*
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.location.AreaSpending
+import com.yourname.expensetracker.domain.location.TravelInsight
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -171,6 +173,30 @@ fun AnalyticsScreen(
                 } else if (state.merchantBreakdown.isNotEmpty()) {
                     item { SectionHeader("Top Merchants") }
                     items(state.merchantBreakdown.take(8)) { MerchantItem(it) }
+                }
+
+                // 8.5. Top Spending Places (B5 — LocationInsightsEngine)
+                if (state.locationInsights.isNotEmpty()) {
+                    item { AnalyticsSectionHeader("Top Spending Places", "Where you spend the most") }
+                    items(state.locationInsights.take(5)) { insight ->
+                        PlaceInsightCard(insight)
+                    }
+                }
+
+                // 8.6. Spending by Area (B1 — AreaSpendingEngine)
+                if (state.areaSpending.isNotEmpty()) {
+                    item { AnalyticsSectionHeader("Spending by Area", "Neighbourhood breakdown") }
+                    items(state.areaSpending.take(6)) { area ->
+                        AreaSpendingItem(area)
+                    }
+                }
+
+                // 8.7. Travel vs Home Spending (B2 — TravelDetectionEngine)
+                state.travelInsight?.let { travel ->
+                    if (travel.travelSpend > 0 || travel.localSpend > 0) {
+                        item { AnalyticsSectionHeader("Travel vs Home Spending", "How far your money goes") }
+                        item { TravelInsightCard(travel) }
+                    }
                 }
 
                 // 9. Velocity Anomalies
@@ -1364,6 +1390,129 @@ fun SuspectTransactionCard(item: SuspectTransaction) {
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.error
             )
+        }
+    }
+}
+
+// ── Location: Area Spending Item (B1) ─────────────────────────────────
+@Composable
+fun AreaSpendingItem(area: AreaSpending) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("📍", fontSize = 18.sp)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(area.areaName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "${area.transactionCount} transactions · avg €${String.format("%.0f", area.avgTransaction)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                "€${String.format("%.2f", area.totalSpend)}",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+// ── Location: Travel vs Home Card (B2) ────────────────────────────────
+@Composable
+fun TravelInsightCard(travel: TravelInsight) {
+    val totalSpend = travel.homeSpend + travel.localSpend + travel.travelSpend
+
+    BentoCard {
+        Column {
+            Text(
+                "SPENDING ZONES",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = SemanticColors.TextSecondary,
+                letterSpacing = 1.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Three zone bars
+            listOf(
+                Triple("Home", travel.homeSpend, SemanticColors.SuccessGreen),
+                Triple("Local", travel.localSpend, SemanticColors.WarningOrange),
+                Triple("Travel", travel.travelSpend, SemanticColors.PrimaryIndigo)
+            ).forEach { (label, spend, color) ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(48.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    LinearProgressIndicator(
+                        progress = { if (totalSpend > 0) (spend / totalSpend).toFloat().coerceIn(0f, 1f) else 0f },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = color,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "€${String.format("%.0f", spend)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.width(56.dp)
+                    )
+                }
+            }
+
+            // Trip list
+            if (travel.travelTrips.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "${travel.travelTrips.size} trip${if (travel.travelTrips.size != 1) "s" else ""} detected",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                val tripFmt = java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault())
+                travel.travelTrips.take(3).forEach { trip ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        val dateRange = "${tripFmt.format(java.util.Date(trip.startDate))} – ${tripFmt.format(java.util.Date(trip.endDate))}"
+                        Text(
+                            trip.destinationHint?.let { "$it ($dateRange)" } ?: dateRange,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "€${String.format("%.0f", trip.totalSpend)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
         }
     }
 }

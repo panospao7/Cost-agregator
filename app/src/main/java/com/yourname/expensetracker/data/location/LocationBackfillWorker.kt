@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import dagger.assisted.Assisted
@@ -34,11 +35,21 @@ class LocationBackfillWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val expenseRepository: ExpenseRepository,
-    private val locationResolver: LocationResolver
+    private val locationResolver: LocationResolver,
+    private val merchantLocationRepository: MerchantLocationRepository
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         Log.d(TAG, "Backfill worker started")
+
+        // Evict stale merchant-location cache entries before geocoding new ones.
+        // This prevents the resolver from returning outdated cached coordinates.
+        try {
+            merchantLocationRepository.evictStaleCache()
+            Log.d(TAG, "Stale cache eviction complete")
+        } catch (e: Exception) {
+            Log.w(TAG, "Cache eviction failed (non-fatal)", e)
+        }
 
         // Bug #23 fix: only fetch expenses that haven't exceeded MAX_ATTEMPTS so
         // unresolvable merchants are not retried indefinitely.
