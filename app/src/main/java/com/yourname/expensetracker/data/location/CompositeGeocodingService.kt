@@ -54,6 +54,14 @@ class CompositeGeocodingService @Inject constructor(
     ): GeocodingResult? = nominatim.search(merchantName, biasLat, biasLon, cityHint, bounded)
 
     /**
+     * F2: Reverse-geocode a coordinate — delegates to Nominatim which has the
+     * full implementation. The interface default returns null, so without this
+     * override long-press pins would never resolve an address.
+     */
+    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingResult? =
+        nominatim.reverseGeocode(lat, lon)
+
+    /**
      * Interactive picker multi-result search.
      *
      * 1. Fires providers in parallel (smart-gated by query complexity).

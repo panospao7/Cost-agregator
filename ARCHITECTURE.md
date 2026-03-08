@@ -186,6 +186,11 @@ domain/
 │   └── ...
 ├── config/                     # Configuration
 │   └── AppConfig.kt           # Centralized thresholds
+├── location/                   # Location enrichment (NEW Mar 2026)
+│   ├── LocationResolver.kt    # Coordinates geocoding
+│   ├── LocationModels.kt      # Location domain models
+│   ├── GeocodingResult.kt     # Geocoding result models
+│   └── LocatedExpense.kt      # Expense with location
 ├── performance/                 # Performance utilities
 │   └── ImageCache.kt          # Bitmap caching
 ├── debug/
@@ -217,19 +222,29 @@ data/
 │   ├── RecurringExpenseRepository.kt
 │   ├── FinancialWeatherRepository.kt
 │   ├── AnalyticsRepository.kt
+│   ├── MerchantLocationRepository.kt  # Location enrichment
 │   └── ...
+├── location/                    # Geocoding services (NEW Mar 2026)
+│   ├── CompositeGeocodingService.kt   # Multi-provider fallback
+│   ├── NominatimGeocodingService.kt   # OpenStreetMap
+│   ├── GeoapifyGeocodingService.kt    # Geoapify API
+│   ├── GooglePlacesGeocodingService.kt # Google Places API
+│   └── PhotonGeocodingService.kt      # Photon API
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v23)
+│   ├── AppDatabase.kt          # Room database (v31)
 │   ├── entity/                  # Room entities
 │   │   ├── Expense.kt
 │   │   ├── Budget.kt
 │   │   ├── Category.kt
 │   │   ├── RawNotification.kt
 │   │   ├── PendingReview.kt
+│   │   ├── MerchantLocation.kt  # (NEW)
+│   │   ├── MerchantLocationCorrection.kt  # (NEW)
 │   │   └── ...
 │   ├── dao/                    # Room DAOs
 │   │   ├── ExpenseDao.kt
 │   │   ├── BudgetDao.kt
+│   │   ├── MerchantLocationDao.kt  # (NEW)
 │   │   └── ...
 │   ├── model/                  # Database models
 │   └── converter/              # Type converters
@@ -331,6 +346,33 @@ FinancialWeatherRepository
 | Distribution Builder | `HistoricalSpendingDistribution.kt` | Weekly aggregation + log-normal fitting |
 | Quality Assessor | `DataQualityAssessor.kt` | Confidence scoring (volume/density/fitness/recency) |
 | UI Card | `MonteCarloForecastCard.kt` | Dashboard widget display |
+
+### Location Enrichment System (Mar 2026) - ALL 5 FEATURES IMPLEMENTED
+| Component | File | Purpose |
+|-----------|------|---------|
+| Composite Geocoder | `CompositeGeocodingService.kt` | Multi-provider fallback chain |
+| Nominatim | `NominatimGeocodingService.kt` | OpenStreetMap (free, no API key) |
+| Geoapify | `GeoapifyGeocodingService.kt` | Geoapify API (freemium) |
+| Google Places | `GooglePlacesGeocodingService.kt` | Google Places API (paid) |
+| Photon | `PhotonGeocodingService.kt` | Photon API (free) |
+| Location Resolver | `LocationResolver.kt` | Domain layer coordinator |
+| Location Models | `LocationModels.kt`, `GeocodingResult.kt` | Domain models |
+| Location Insights | `LocationInsightsEngine.kt` | Location-based spending insights |
+| Spending Heatmap | `SpendingHeatmapEngine.kt` | Heatmap data generation |
+| Nearby POI | `NearbyPoi.kt` | Points of interest model |
+| Overpass Service | `OverpassNearbyService.kt` | OpenStreetMap POI queries |
+| Background Worker | `LocationBackfillWorker.kt` | Background location enrichment |
+| Location Provider | `AndroidForegroundLocationProvider.kt` | Foreground location tracking |
+| Map Screen | `SpendingMapScreen.kt` | Map visualization (contains OsmMapView, MarkerDetailCard, PinExpenseSheet) |
+| Location Search Picker | `LocationSearchPicker.kt` | Manual location picker UI (collapsible map) |
+| Correction Sheet | `LocationCorrectionSheet.kt` | "Correct pin" bottom sheet (uses LocationSearchPicker) |
+| Permission Dialog | `LocationPermissionDialog.kt` | Location permission request |
+
+**Feature A**: Auto-enrich from merchant name (reverse geocode from known merchant locations)
+**Feature B**: Reverse geocode from transaction address text
+**Feature C**: Forward geocode user search queries
+**Feature D**: Manual user correction
+**Feature E**: Map visualization of spending
 
 ### Advanced Analytics Features (Mar 2026) - ALL 6 FEATURES IMPLEMENTED
 
@@ -441,6 +483,15 @@ di/
 // ServiceModule
 @Singleton @Provides NotificationService → AndroidNotificationService
 
+// GeocodingService: Multi-provider cascade (Photon → Geoapify → Google → Nominatim)
+@Singleton @Provides GeocodingService → CompositeGeocodingService
+
+// NearbyPoiService: Overpass API for POI queries
+@Singleton @Provides NearbyPoiService → OverpassNearbyService
+
+// ForegroundLocationProvider: Device GPS tracking
+@Singleton @Provides ForegroundLocationProvider → AndroidForegroundLocationProvider
+
 // TimeModule
 @Binds @Singleton TimeProvider → SystemTimeProvider
 ```
@@ -449,7 +500,7 @@ di/
 
 ## Database Schema
 
-### Version: 27 (Updated Mar 2026)
+### Version: 31 (Updated Mar 2026)
 
 ### Key Entities
 ```
@@ -587,6 +638,27 @@ index_raw_notifications_packageName_timestamp_title_text UNIQUE
 | DashboardDataProvider stale timestamp | Now recomputes monthStart/monthEnd on every emission |
 | AnalyticsScreen Tab 4 | Switched to AnalyticsScreen with all 6 features |
 
+### Recent Bug Fixes (Mar 2026)
+| Issue | Fix |
+|-------|-----|
+| Cross-source Greek/Latin merchant duplicate detection | Greek→Latin transliteration in MerchantNormalizer.createSearchKey(), Expense.generateDedupeKey(), MerchantRulesRepository regex (Fix 1a-c) |
+| Revolut duplicate detection | Removed AND transactionType='PURCHASE' filter from isDuplicate() query in ExpenseDao (Fix 2) |
+| Revolut trust score inflation | Trust score denominator changed from totalNotifications to totalNotifications - autoRejected in SourceStats (Fix 3) |
+| Shared expense amounts not in totals | Added effectiveAmount computed property to Expense entity, updated all SUM queries and Kotlin sumOf calls across 15+ files (Fix 4a-c) |
+
+### Location Feature Bug Fixes (Mar 2026)
+| Issue | Fix |
+|-------|-----|
+| F1: Map always visible in LocationSearchPicker | Made map collapsible (hidden by default, toggle button, auto-expand on search results) |
+| F2: Long-press pin not resolving address | Added reverseGeocode override in CompositeGeocodingService |
+| F3: FAB centre-on-device not working | Wired FAB onClick → centreOnDeviceRequest flag → OsmMapView animateTo |
+| F4: osmdroid config loading race condition | Moved Configuration.getInstance().load() from LaunchedEffect to factory lambda |
+| F5: Map tiles not loading immediately | Added mv.onResume() in factory lambda |
+| F6: Map markers disappear on recomposition | Added key-based diff guard in OsmMapView.update |
+| F7: OSM ID not captured in Review | Captured osmId in onResult callback, added to onSave |
+| F8: Map too small | Increased map height from 200dp to 260dp |
+| F1 Regression: Map breaks dialog layouts | Map now collapsed by default, toggle to show/hide |
+
 ### Transfer Direction Detection Feature (Updated Feb 2026)
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -692,6 +764,7 @@ class SynthesisEngine @Inject constructor(
 | 2 | Review | `ReviewScreen.kt` |
 | 3 | Plan | `BudgetScreen.kt` |
 | 4 | Analytics | `AnalyticsScreen.kt` (all 6 advanced features) |
+| 5 | Map | `SpendingMapScreen.kt` (location visualization, marker details, pin expense) |
 
 ### Deep Links
 ```
@@ -700,6 +773,7 @@ expensetracker://activity   → Tab 1
 expensetracker://review     → Tab 2
 expensetracker://plan       → Tab 3
 expensetracker://analytics  → Tab 4
+expensetracker://map        → Tab 5
 ```
 
 ---
@@ -726,6 +800,9 @@ expensetracker://analytics  → Tab 4
 | `YearOverYearCard.kt` | Year-over-year comparison (Feature 3) |
 | `PostSalaryPatternCard.kt` | Post-salary spending pattern (Feature 5) |
 | `SuspectTransactionCard.kt` | Duplicate/error detection (Feature 6) |
+| `LocationSearchPicker.kt` | Location search + picker (collapsible map) |
+| `LocationCorrectionSheet.kt` | "Correct pin" bottom sheet |
+| `LocationPermissionDialog.kt` | Location permission dialog |
 
 ### Domain Models (`domain/model/`)
 | Model | Purpose |
@@ -759,6 +836,7 @@ expensetracker://analytics  → Tab 4
 | `MerchantCategoryRepository.kt` | Merchant-category mappings |
 | `MerchantNormalizationRepository.kt` | Merchant canonical storage |
 | `ManualExpenseRepository.kt` | Manual expense entry |
+| `MerchantLocationRepository.kt` | Location enrichment storage |
 
 ### Android Services & Receivers
 | Component | File | Purpose |
@@ -784,6 +862,8 @@ expensetracker://analytics  → Tab 4
 | MerchantCanonical | `data/database/entity/MerchantCanonical.kt` |
 | MerchantAlias | `data/database/entity/MerchantAlias.kt` |
 | UserCorrection | `data/database/entity/UserCorrection.kt` |
+| MerchantLocation | `data/database/entity/MerchantLocation.kt` |
+| MerchantLocationCorrection | `data/database/entity/MerchantLocationCorrection.kt` |
 
 ### Database DAOs
 | DAO | Purpose |
@@ -802,6 +882,7 @@ expensetracker://analytics  → Tab 4
 | `MerchantCategoryDao.kt` | Merchant category queries |
 | `MerchantNormalizationDao.kt` | Merchant normalization queries |
 | `UserCorrectionDao.kt` | Correction queries |
+| `MerchantLocationDao.kt` | Merchant location queries |
 
 ---
 
@@ -825,3 +906,4 @@ expensetracker://analytics  → Tab 4
 | 14: Use Cases | ~6 | ProcessReceiptUseCase, CategorizeExpenseUseCase, etc. |
 | 15: Performance | ~2 | ImageCache, ReceiptOcrService optimizations |
 | 16: Configuration | ~1 | AppConfig |
+| 17: Location | ~15 | CompositeGeocodingService, NominatimGeocodingService, LocationResolver, SpendingMapScreen |

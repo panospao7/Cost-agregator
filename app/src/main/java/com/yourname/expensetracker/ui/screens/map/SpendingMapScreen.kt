@@ -120,13 +120,14 @@ fun SpendingMapScreen(
                 merchantName = state.pendingCorrectionMerchant ?: marker.merchant,
                 initialLat = state.pendingCorrectionLat ?: marker.latitude,
                 initialLon = state.pendingCorrectionLon ?: marker.longitude,
+                geocodingService = viewModel.geocodingService,
                 onDismiss = { viewModel.onCloseCorrectionSheet() },
-                onConfirm = { lat, lon, address ->
+                onConfirm = { lat, lon, address, osmId ->
                     viewModel.onSaveCorrection(
                         merchantName = marker.merchant,
                         correctedLat = lat,
                         correctedLon = lon,
-                        osmId = state.pendingCorrectionOsmId,
+                        osmId = osmId ?: state.pendingCorrectionOsmId,
                         displayAddress = address,
                         forMarker = marker
                     )
@@ -174,20 +175,24 @@ fun SpendingMapScreen(
                     .fillMaxWidth()
                     .weight(0.55f)  // ~55% of screen height
             ) {
+                // F3: Flag to request a one-shot re-centre on the device location.
+                var centreOnDeviceRequest by remember { mutableStateOf(false) }
+
                 OsmMapView(
                     markers = state.markers,
                     heatmapPoints = state.heatmapPoints,
                     deviceLat = state.deviceLatitude,
                     deviceLon = state.deviceLongitude,
+                    centreOnDeviceRequest = centreOnDeviceRequest,
+                    onCentreHandled = { centreOnDeviceRequest = false },
                     onMarkerClick = { viewModel.onMarkerSelected(it) }
                 )
 
-                // Re-centre on device location button (#28 fix: onClick now actually animates map)
+                // Re-centre on device location button
                 if (state.locationPermissionGranted &&
                     state.deviceLatitude != null && state.deviceLongitude != null) {
-                    // Keep a remembered ref to the MapView so the FAB can animate it
                     FloatingActionButton(
-                        onClick = { /* animation handled inside OsmMapView via centreRequest */ },
+                        onClick = { centreOnDeviceRequest = true },  // F3: trigger centre
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(12.dp),
@@ -300,43 +305,51 @@ private fun OsmMapView(
     heatmapPoints: List<com.yourname.expensetracker.domain.location.HeatmapPoint>,
     deviceLat: Double?,
     deviceLon: Double?,
+    centreOnDeviceRequest: Boolean,  // F3: one-shot flag to animate to device location
+    onCentreHandled: () -> Unit,     // F3: call this after the animation is triggered
     onMarkerClick: (MapExpenseMarker) -> Unit
 ) {
     val context = LocalContext.current
-
-    // Bug #26 fix: load osmdroid Configuration before creating MapView so tile
-    // cache paths are properly initialised on all devices.
-    val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
-    LaunchedEffect(Unit) {
-        Configuration.getInstance().load(context, prefs)
-        Configuration.getInstance().userAgentValue =
-            com.yourname.expensetracker.domain.config.AppConfig.Location.NOMINATIM_USER_AGENT
-    }
 
     // Default centre: Athens, Greece
     val defaultLat = 37.9838
     val defaultLon = 23.7275
 
-    // Bug #5 fix: keep a stable reference to the MapView so we can diff
-    // overlays without clearing everything on every recomposition.
+    // Keep a stable reference to the MapView for lifecycle management.
     val mapViewRef = remember { mutableStateOf<MapView?>(null) }
 
     // Bug #6 fix: track the last device location we centred on so we only
     // re-centre when a *new* location arrives (not on every recomposition).
     val lastCentredLoc = remember { mutableStateOf<Pair<Double, Double>?>(null) }
 
+    // F6: Track the last overlay key to avoid clearing overlays when nothing changed.
+    val lastRenderKey = remember { mutableStateOf("") }
+
     AndroidView(
         factory = { ctx ->
+            // F4: Load osmdroid config synchronously before MapView construction so
+            //     tile cache paths are available when the MapView is first created.
+            Configuration.getInstance().load(ctx, PreferenceManager.getDefaultSharedPreferences(ctx))
+            Configuration.getInstance().userAgentValue =
+                com.yourname.expensetracker.domain.config.AppConfig.Location.NOMINATIM_USER_AGENT
+
             MapView(ctx).also { mv ->
                 mv.setTileSource(TileSourceFactory.MAPNIK)
                 mv.setMultiTouchControls(true)
                 mv.controller.setZoom(13.0)
                 mv.controller.setCenter(GeoPoint(defaultLat, defaultLon))
                 mv.setBuiltInZoomControls(false)
+                mv.onResume()  // F5: start tile-download threads immediately
                 mapViewRef.value = mv
             }
         },
         update = { mapView ->
+            // F3: Handle one-shot re-centre request from the MyLocation FAB.
+            if (centreOnDeviceRequest && deviceLat != null && deviceLon != null) {
+                mapView.controller.animateTo(GeoPoint(deviceLat, deviceLon))
+                onCentreHandled()
+            }
+
             // ── Bug #6 fix: re-centre when device location first arrives ──────
             if (deviceLat != null && deviceLon != null) {
                 val newLoc = Pair(deviceLat, deviceLon)
@@ -346,10 +359,13 @@ private fun OsmMapView(
                 }
             }
 
-            // ── Bug #5 fix: diff overlays instead of clearing everything ──────
-            // Remove overlays that are no longer in the data sets, add new ones.
-            // We rebuild from scratch only when the full data set changes,
-            // which is rare (triggered by DB flow emissions, not recompositions).
+            // F6: Build a render key; skip overlay rebuild if data hasn't changed.
+            //     This prevents interrupting in-progress touch events on markers.
+            val newKey = markers.joinToString("|") { "${it.latitude},${it.longitude}" } +
+                    "|" + heatmapPoints.joinToString("|") { "${it.latitude},${it.longitude},${it.weight}" }
+            if (newKey == lastRenderKey.value) return@AndroidView
+            lastRenderKey.value = newKey
+
             mapView.overlays.clear()
 
             // ── Heatmap circles ───────────────────────────────────────────────

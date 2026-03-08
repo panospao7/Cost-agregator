@@ -324,7 +324,7 @@ fun ReviewScreen(
                 review = review,
                 categories = categories,
                 onDismiss = { editingReview = null },
-                onSave = { amount, merchant, categoryId, type, applyToAll, approveAllPending, lat, lon, address ->
+                onSave = { amount, merchant, categoryId, type, applyToAll, approveAllPending, lat, lon, address, osmId ->
                     viewModel.approveReviewWithEdits(
                         reviewId = review.id,
                         finalAmount = amount,
@@ -735,7 +735,7 @@ fun EditReviewDialog(
     review: PendingReview,
     categories: List<Category>,
     onDismiss: () -> Unit,
-    onSave: (Double?, String?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?) -> Unit,
+    onSave: (Double?, String?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?, String?) -> Unit,
     geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) {
     var amount by remember { mutableStateOf(String.format("%.2f", review.suggestedAmount)) }
@@ -756,6 +756,7 @@ fun EditReviewDialog(
     var locationLat by remember { mutableStateOf<Double?>(review.suggestedLatitude) }
     var locationLon by remember { mutableStateOf<Double?>(review.suggestedLongitude) }
     var locationAddress by remember { mutableStateOf<String?>(null) }
+    var locationOsmId by remember { mutableStateOf<String?>(null) }  // F7: capture osmId
     var showLocationPicker by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -955,10 +956,11 @@ fun EditReviewDialog(
                         currentLat = locationLat,
                         currentLon = locationLon,
                         currentAddress = locationAddress,
-                        onResult = { lat, lon, address, _ ->
+                        onResult = { lat, lon, address, osmId ->
                             locationLat = lat
                             locationLon = lon
                             locationAddress = address
+                            locationOsmId = osmId  // F7: capture osmId instead of discarding it
                             if (lat != null) showLocationPicker = false
                         },
                         geocodingService = geocodingService,
@@ -984,7 +986,8 @@ fun EditReviewDialog(
                     onSave(editedAmount, editedMerchant, editedCategory, editedType, applyToAll, approveAllPending,
                         locationLat.takeIf { it != review.suggestedLatitude },
                         locationLon.takeIf { it != review.suggestedLongitude },
-                        locationAddress.takeIf { locationLat != review.suggestedLatitude || locationLon != review.suggestedLongitude }
+                        locationAddress.takeIf { locationLat != review.suggestedLatitude || locationLon != review.suggestedLongitude },
+                        locationOsmId  // F7: pass captured osmId through
                     )
                 },
                 shape = RoundedCornerShape(12.dp)

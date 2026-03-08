@@ -26,6 +26,7 @@
 | 14 | ~3 | Use Cases (NEW) |
 | 15 | ~1 | Performance (NEW) |
 | 16 | ~1 | Configuration (NEW) |
+| 17 | ~15 | Location Enrichment (NEW Mar 2026) |
 
 ---
 
@@ -403,7 +404,7 @@ When analyzing a specific feature, check files in this order:
 | `ui/theme/Theme.kt` | App theming (colors, typography) |
 | `ui/components/BentoCard.kt` | Bento grid layout card |
 | `ui/components/PulseDot.kt` | Animated pulse indicator |
-| `ui/components/AppNavigationBar.kt` | Navigation bar (NEW) |
+| `ui/components/AppNavigationBar.kt` | Navigation bar (6 tabs: Home, Activity, Review, Plan, Analytics, **Map**) |
 | `ui/components/AppFabMenu.kt` | FAB menu (NEW) |
 | `ui/components/NotificationPermissionDialog.kt` | Permission dialog (NEW) |
 
@@ -546,6 +547,22 @@ When analyzing a specific feature, check files in this order:
 ### Check Analytics/Insights Issues
 → Files: `InsightsEngine`, `AdvancedAnalyticsEngine`, `AnalyticsRepository`
 
+### Check Location Enrichment Issues
+→ Files: `CompositeGeocodingService`, `NominatimGeocodingService`, `LocationResolver`, `MerchantLocationRepository`, `LocationSearchPicker`, `LocationCorrectionSheet`
+→ **Recent Fixes**: Collapsible map (F1), reverseGeocode override (F2), FAB centre (F3), osmdroid config (F4-F6), OSM ID capture (F7), map height (F8)
+
+### Check Duplicate Detection Issues (Mar 2026)
+→ Files: `ExpenseDao.isDuplicate()`, `CrossSourceDeduplication`, `MerchantNormalizer`, `Expense.generateDedupeKey()`, `MerchantRulesRepository`
+→ **Recent Fixes**: Greek→Latin transliteration for cross-source dedupe, removed transactionType='PURCHASE' filter
+
+### Check Trust Score Issues (Mar 2026)
+→ Files: `SourceStats`, `SourceStatsRepository`
+→ **Recent Fix**: Denominator now excludes auto-rejected notifications
+
+### Check Shared Expense Calculation Issues (Mar 2026)
+→ Files: `Expense.effectiveAmount`, `ExpenseDao` SUM queries, all analytics engines
+→ **Recent Fix**: Added effectiveAmount property, updated all sumOf/SUM calls
+
 ### Check ML Training Issues
 → Files: `TransactionClassifier`, `MerchantNormalizer`, `ExpenseCategoryClassifier`, `UserCorrectionRepository`
 
@@ -587,7 +604,74 @@ When analyzing a specific feature, check files in this order:
 |------|---------|
 | `domain/config/AppConfig.kt` | All thresholds, limits, timeouts in one place |
 
----
+
+## SEGMENT 17: LOCATION ENRICHMENT (NEW Mar 2026)
+
+**Description:** Auto-enrich transactions with location data using multi-provider geocoding. Includes reverse geocoding, forward geocoding, manual correction, and map visualization.
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| `ui/screens/map/SpendingMapScreen.kt` | Map visualization (contains OsmMapView, MarkerDetailCard, PinExpenseSheet) |
+| `ui/screens/map/SpendingMapViewModel.kt` | Map data preparation |
+| `ui/components/LocationSearchPicker.kt` | Manual location search and picker (collapsible map) |
+| `ui/components/LocationCorrectionSheet.kt` | "Correct pin" bottom sheet (uses LocationSearchPicker) |
+| `ui/components/LocationPermissionDialog.kt` | Location permission request |
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/location/LocationResolver.kt` | **MAIN** - Coordinates geocoding workflow |
+| `domain/location/LocationModels.kt` | Domain models for location data |
+| `domain/location/GeocodingResult.kt` | Geocoding result models |
+| `domain/location/LocatedExpense.kt` | Expense with location wrapper |
+| `domain/location/LocationInsightsEngine.kt` | Location-based spending insights |
+| `domain/location/SpendingHeatmapEngine.kt` | Heatmap data generation |
+| `domain/location/NearbyPoi.kt` | Points of interest model |
+
+### Data Layer
+| File | Purpose |
+|------|---------|
+| `data/location/CompositeGeocodingService.kt` | **MAIN** - Multi-provider fallback chain |
+| `data/location/NominatimGeocodingService.kt` | OpenStreetMap (free, no API key) |
+| `data/location/GeoapifyGeocodingService.kt` | Geoapify API (freemium) |
+| `data/location/GooglePlacesGeocodingService.kt` | Google Places API (paid) |
+| `data/location/PhotonGeocodingService.kt` | Photon API (free) |
+| `data/location/OverpassNearbyService.kt` | OpenStreetMap POI queries |
+| `data/location/LocationBackfillWorker.kt` | Background location enrichment |
+| `data/location/AndroidForegroundLocationProvider.kt` | Foreground location tracking |
+| `data/repository/MerchantLocationRepository.kt` | Merchant location storage |
+
+### Database Layer
+| File | Purpose |
+|------|---------|
+| `data/database/entity/MerchantLocation.kt` | Merchant location entity |
+| `data/database/entity/MerchantLocationCorrection.kt` | User correction entity |
+| `data/database/dao/MerchantLocationDao.kt` | Location queries |
+
+### Location Features (A-E)
+- **Feature A**: Auto-enrich from merchant name (reverse geocode known merchant locations)
+- **Feature B**: Reverse geocode from transaction address text
+- **Feature C**: Forward geocode user search queries
+- **Feature D**: Manual user correction
+- **Feature E**: Map visualization of spending
+
+### Location UI Components (inline in SpendingMapScreen.kt)
+- `OsmMapView`: osmdroid MapView composable with marker support
+- `MarkerDetailCard`: Selected marker detail display
+- `PinExpenseSheet`: Bottom sheet for pinning unlocated expenses
+
+### Location Bug Fixes (Mar 2026)
+- **F1**: Map always visible in LocationSearchPicker → Made collapsible (hidden by default, toggle, auto-expand)
+- **F2**: Long-press pin not resolving address → Added reverseGeocode override
+- **F3**: FAB centre-on-device not working → Wired centreOnDeviceRequest flag
+- **F4**: osmdroid config loading race → Moved to factory lambda
+- **F5**: Map tiles not loading → Added onResume() in factory
+- **F6**: Markers disappear on recompose → Added key-based diff guard
+- **F7**: OSM ID not captured in Review → Added to onSave callback
+- **F8**: Map too small → Increased height to 260dp
+- **Regression**: Map breaks dialog layouts → Collapsed by default
+
 
 ## QUICK REFERENCE: Updated Segments
 

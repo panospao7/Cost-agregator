@@ -1,20 +1,25 @@
 package com.yourname.expensetracker.ui.components
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.domain.location.GeocodingService
 
 /**
- * Bottom sheet that lets the user manually enter corrected coordinates for a
+ * Bottom sheet that lets the user search for and correct the location of a
  * merchant pin on the spending map.
  *
- * The sheet is intentionally simple: lat/lon text fields plus a confirm button.
- * A future iteration could embed a small interactive map for drag-to-place.
+ * Upgraded from raw lat/lon text fields to the full [LocationSearchPicker]
+ * so the correction experience is consistent with EditLocationDialog (Transactions),
+ * EditReviewDialog (Review), and PinExpenseSheet (Map unlocated panel).
+ *
+ * @param geocodingService Used by [LocationSearchPicker] for search + reverse geocoding.
+ * @param onConfirm Delivers (lat, lon, address, osmId) when the user confirms.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -22,90 +27,75 @@ fun LocationCorrectionSheet(
     merchantName: String,
     initialLat: Double?,
     initialLon: Double?,
+    geocodingService: GeocodingService,
     onDismiss: () -> Unit,
-    onConfirm: (lat: Double, lon: Double, address: String?) -> Unit
+    onConfirm: (lat: Double, lon: Double, address: String?, osmId: String?) -> Unit
 ) {
-    var latText by remember { mutableStateOf(initialLat?.toString() ?: "") }
-    var lonText by remember { mutableStateOf(initialLon?.toString() ?: "") }
-    var addressText by remember { mutableStateOf("") }
-    var latError by remember { mutableStateOf(false) }
-    var lonError by remember { mutableStateOf(false) }
+    // Staged selection — null until the user picks something in the picker
+    var pendingLat by remember { mutableStateOf<Double?>(null) }
+    var pendingLon by remember { mutableStateOf<Double?>(null) }
+    var pendingAddress by remember { mutableStateOf<String?>(null) }
+    var pendingOsmId by remember { mutableStateOf<String?>(null) }
+    val hasSelection = pendingLat != null && pendingLon != null
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
                 .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // ── Header ──────────────────────────────────────────────────────
             Text(
                 text = "Correct location",
                 style = MaterialTheme.typography.titleLarge
             )
             Text(
-                text = "Merchant: $merchantName",
+                text = merchantName,
                 style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            OutlinedTextField(
-                value = latText,
-                onValueChange = {
-                    latText = it
-                    latError = false
+            HorizontalDivider()
+
+            // ── Location picker ──────────────────────────────────────────────
+            LocationSearchPicker(
+                currentLat = if (hasSelection) pendingLat else initialLat,
+                currentLon = if (hasSelection) pendingLon else initialLon,
+                currentAddress = if (hasSelection) pendingAddress else null,
+                onResult = { lat, lon, address, osmId ->
+                    pendingLat = lat
+                    pendingLon = lon
+                    pendingAddress = address
+                    pendingOsmId = osmId
                 },
-                label = { Text("Latitude") },
-                isError = latError,
-                supportingText = if (latError) ({ Text("Enter a valid latitude (-90 to 90)") }) else null,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                geocodingService = geocodingService,
+                biasLat = initialLat,
+                biasLon = initialLon
             )
 
-            OutlinedTextField(
-                value = lonText,
-                onValueChange = {
-                    lonText = it
-                    lonError = false
-                },
-                label = { Text("Longitude") },
-                isError = lonError,
-                supportingText = if (lonError) ({ Text("Enter a valid longitude (-180 to 180)") }) else null,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-
-            OutlinedTextField(
-                value = addressText,
-                onValueChange = { addressText = it },
-                label = { Text("Address (optional)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-
+            // ── Actions ──────────────────────────────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                TextButton(onClick = onDismiss) {
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Text("Cancel")
                 }
-                Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = {
-                        val lat = latText.toDoubleOrNull()
-                        val lon = lonText.toDoubleOrNull()
-                        val validLat = lat != null && lat in -90.0..90.0
-                        val validLon = lon != null && lon in -180.0..180.0
-                        latError = !validLat
-                        lonError = !validLon
-                        if (validLat && validLon) {
-                            onConfirm(lat!!, lon!!, addressText.ifBlank { null })
-                        }
-                    }
+                        val lat = pendingLat ?: return@Button
+                        val lon = pendingLon ?: return@Button
+                        onConfirm(lat, lon, pendingAddress, pendingOsmId)
+                    },
+                    enabled = hasSelection,
+                    modifier = Modifier.weight(1f)
                 ) {
                     Text("Save")
                 }

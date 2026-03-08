@@ -85,6 +85,9 @@ fun LocationSearchPicker(
     // Google Places toggle — off by default to conserve API quota.
     // User opts in when free-tier results don't show the specific branch they need.
     var useGoogle by remember { mutableStateOf(false) }
+    // Map visibility — collapsed by default so it doesn't crowd dialogs/sheets.
+    // Auto-expands when search results arrive; user can also toggle manually.
+    var showMap by remember { mutableStateOf(false) }
     // Tap-to-pin state: set when user long-presses the results map.
     var pinnedLat by remember { mutableStateOf<Double?>(null) }
     var pinnedLon by remember { mutableStateOf<Double?>(null) }
@@ -106,6 +109,8 @@ fun LocationSearchPicker(
                     }
                     Log.d("LocationSearch", "<== Got ${searchResults.size} results")
                     results = searchResults
+                    // Auto-expand the map when results arrive so the user can see them
+                    if (searchResults.isNotEmpty()) showMap = true
                     if (searchResults.isEmpty()) {
                         searchError = "No results found"
                         Log.d("LocationSearch", "    No results found for: $query")
@@ -297,10 +302,23 @@ fun LocationSearchPicker(
             }
         }
 
-        // ── Results map ─────────────────────────────────────────────────────
-        if (results.isNotEmpty()) {
+        // ── Map toggle + collapsible map ────────────────────────────────────
+        // Map is hidden by default to avoid crowding dialogs/sheets (F1 fix).
+        // Auto-expands when search results arrive; user can also toggle manually.
+        TextButton(
+            onClick = { showMap = !showMap },
+            modifier = Modifier.padding(top = 2.dp)
+        ) {
+            Text(if (showMap) "Hide map" else "Show map")
+        }
+
+        if (showMap) {
             ResultsMapView(
                 results = results,
+                defaultCentre = GeoPoint(
+                    biasLat ?: 37.9838,
+                    biasLon ?: 23.7275
+                ),
                 onSelect = { result ->
                     onResult(result.latitude, result.longitude, result.displayAddress, result.osmId)
                     searchQuery = ""
@@ -333,7 +351,7 @@ fun LocationSearchPicker(
                 pinnedLon = pinnedLon,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
+                    .height(260.dp)
                     .padding(top = 4.dp)
             )
             // B5: interaction hint below map
@@ -511,21 +529,13 @@ fun LocationSearchPicker(
 @Composable
 private fun ResultsMapView(
     results: List<GeocodingResult>,
+    defaultCentre: GeoPoint,   // F1: used to centre the map when no results exist yet
     onSelect: (GeocodingResult) -> Unit,
     onLongPress: (lat: Double, lon: Double) -> Unit,
     pinnedLat: Double?,
     pinnedLon: Double?,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
-
-    LaunchedEffect(Unit) {
-        Configuration.getInstance().load(context, prefs)
-        Configuration.getInstance().userAgentValue =
-            com.yourname.expensetracker.domain.config.AppConfig.Location.NOMINATIM_USER_AGENT
-    }
-
     val mapViewRef = remember { mutableStateOf<MapView?>(null) }
 
     // B3: Store MapEventsOverlay in a stable ref so overlays.clear() can't lose it
@@ -541,10 +551,17 @@ private fun ResultsMapView(
 
     AndroidView(
         factory = { ctx ->
+            // F4: Load osmdroid config synchronously before MapView construction so
+            //     tile cache paths are available when the MapView is first created.
+            Configuration.getInstance().load(ctx, android.preference.PreferenceManager.getDefaultSharedPreferences(ctx))
+            Configuration.getInstance().userAgentValue =
+                com.yourname.expensetracker.domain.config.AppConfig.Location.NOMINATIM_USER_AGENT
+
             MapView(ctx).also { mv ->
                 mv.setTileSource(TileSourceFactory.MAPNIK)
                 mv.setMultiTouchControls(true)
                 mv.setBuiltInZoomControls(false)
+                mv.onResume()  // F5: start tile-download threads immediately
 
                 // B3: Create the long-press overlay once and keep a stable reference
                 val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
@@ -571,6 +588,10 @@ private fun ResultsMapView(
             eventsOverlayRef.value?.let { mapView.overlays.add(0, it) }
 
             if (results.isEmpty()) {
+                // F1: No results yet — show the default centre so the map is useful
+                //     immediately (user can browse and long-press to drop a pin).
+                mapView.controller.setZoom(13.0)
+                mapView.controller.setCenter(defaultCentre)
                 mapView.invalidate()
                 return@AndroidView
             }
