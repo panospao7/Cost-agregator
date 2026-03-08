@@ -56,7 +56,7 @@ class BudgetRepository @Inject constructor(
                             (budget.categoryId == null || it.categoryId == budget.categoryId) && 
                             it.date >= start && it.date < end 
                         }
-                        .sumOf { it.amount }
+                        .sumOf { it.effectiveAmount }
                 }
 
                 val spent = getSpentInRange(window.start, window.end)

@@ -30,7 +30,8 @@ class ReviewViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val receiptRepository: com.yourname.expensetracker.data.repository.ReceiptRepository,
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
-    private val debugDataStorage: com.yourname.expensetracker.ui.screens.debug.DebugDataStorage
+    private val debugDataStorage: com.yourname.expensetracker.ui.screens.debug.DebugDataStorage,
+    val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) : ViewModel() {
     
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -150,7 +151,10 @@ class ReviewViewModel @Inject constructor(
                                     finalAmount = null, // Keep original amounts for identical transactions
                                     finalMerchant = finalMerchant,
                                     finalCategoryId = finalCategoryId,
-                                    finalType = finalType
+                                    finalType = finalType,
+                                    finalLatitude = finalLatitude,
+                                    finalLongitude = finalLongitude,
+                                    finalAddress = finalAddress
                                 )
                             }
                         }

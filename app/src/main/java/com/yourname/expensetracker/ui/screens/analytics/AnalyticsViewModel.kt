@@ -133,7 +133,7 @@ class AnalyticsViewModel @Inject constructor(
         val merchantBreakdown = currentExpenses
             .groupBy { it.merchant.uppercase() }
             .map { (_, exps) ->
-                val totalAmount = exps.sumOf { it.amount }
+                val totalAmount = exps.sumOf { it.effectiveAmount }
                 MerchantBreakdown(
                     name = exps.first().merchant,
                     totalSpent = totalAmount,
@@ -290,7 +290,7 @@ class AnalyticsViewModel @Inject constructor(
                 java.util.Calendar.SUNDAY -> 6
                 else -> 0
             }
-            dowTotals[idx] += exp.amount
+            dowTotals[idx] += exp.effectiveAmount
             dowCounts[idx]++
         }
         val dayOfWeekPattern = (0..6).map { idx ->
@@ -308,7 +308,7 @@ class AnalyticsViewModel @Inject constructor(
         currentExpenses.forEach { exp ->
             cal2.timeInMillis = exp.date
             val hour = cal2.get(java.util.Calendar.HOUR_OF_DAY)
-            hourTotals[hour] += exp.amount
+            hourTotals[hour] += exp.effectiveAmount
         }
         val hourOfDayPattern = (0..23)
             .map { h -> Pair(h, hourTotals[h]) }
@@ -370,7 +370,7 @@ class AnalyticsViewModel @Inject constructor(
             byDay.getOrPut(dayMs) { mutableListOf() }.add(exp)
         }
 
-        val dailyTotals = byDay.mapValues { (_, exps) -> exps.sumOf { it.amount } }
+        val dailyTotals = byDay.mapValues { (_, exps) -> exps.sumOf { it.effectiveAmount } }
         if (dailyTotals.size < 3) return emptyList()
 
         val totals = dailyTotals.values.sorted()
@@ -428,7 +428,7 @@ class AnalyticsViewModel @Inject constructor(
                     MonthlyYearTotal(
                         month = month,
                         monthLabel = monthNames[month],
-                        total = exps.sumOf { it.amount },
+                        total = exps.sumOf { it.effectiveAmount },
                         transactionCount = exps.size
                     )
                 }
@@ -552,7 +552,7 @@ class AnalyticsViewModel @Inject constructor(
             .let { if (it.isEmpty()) 0f else it.average().toFloat() }
 
         // Average total spend per cycle within 7 days
-        val avgTotalIn7Days = cycles.map { c -> c.purchasesAfter.sumOf { it.amount } }.average()
+        val avgTotalIn7Days = cycles.map { c -> c.purchasesAfter.sumOf { it.effectiveAmount } }.average()
 
         // Per-category accumulation across cycles
         data class CatAccum(var totalSpent: Double = 0.0, var cycleCount: Int = 0)
@@ -560,7 +560,7 @@ class AnalyticsViewModel @Inject constructor(
         cycles.forEach { c ->
             val spentByCategory = c.purchasesAfter
                 .groupBy { it.categoryId }
-                .mapValues { (_, exps) -> exps.sumOf { it.amount } }
+                .mapValues { (_, exps) -> exps.sumOf { it.effectiveAmount } }
             spentByCategory.forEach { (catId, spent) ->
                 val a = catAccum.getOrPut(catId) { CatAccum() }
                 a.totalSpent += spent

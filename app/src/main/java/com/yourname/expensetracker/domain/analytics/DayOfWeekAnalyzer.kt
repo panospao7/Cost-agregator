@@ -31,7 +31,7 @@ class DayOfWeekAnalyzer @Inject constructor() {
         
         return (0..6).map { dayIndex ->
             val dayExpenses = byDayOfWeek[dayIndex] ?: emptyList()
-            val total = dayExpenses.sumOf { it.amount }
+            val total = dayExpenses.sumOf { it.effectiveAmount }
             val count = dayExpenses.size
             
             DayOfWeekInsight(

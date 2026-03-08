@@ -399,7 +399,7 @@ fun TransactionsScreen(
                             stickyHeader {
                                 DateHeader(
                                     date = dateString,
-                                    totalAmount = items.sumOf { it.expense.amount },
+                                    totalAmount = items.sumOf { it.expense.effectiveAmount },
                                     itemCount = items.size
                                 )
                             }
@@ -581,7 +581,8 @@ fun TransactionsScreen(
                 onClear = {
                     expenseToEditLocation?.let { viewModel.clearLocation(it) }
                     expenseToEditLocation = null
-                }
+                },
+                geocodingService = viewModel.geocodingService
             )
         }
     }
@@ -1566,13 +1567,35 @@ private fun EditLocationDialog(
     expense: Expense,
     onDismiss: () -> Unit,
     onSave: (lat: Double, lon: Double, address: String?, osmId: String?) -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) {
     var pendingLat by remember { mutableStateOf<Double?>(null) }
     var pendingLon by remember { mutableStateOf<Double?>(null) }
     var pendingAddress by remember { mutableStateOf<String?>(null) }
     var pendingOsmId by remember { mutableStateOf<String?>(null) }
     var hasSelection by remember { mutableStateOf(false) }
+    var showClearConfirmation by remember { mutableStateOf(false) }
+
+    if (showClearConfirmation) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showClearConfirmation = false },
+            title = { Text("Clear Location?") },
+            text = { Text("This will permanently remove the location from this transaction. The backfill worker may re-resolve it later.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearConfirmation = false
+                        onClear()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = SemanticColors.DangerRed)
+                ) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirmation = false }) { Text("Cancel") }
+            }
+        )
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -1594,7 +1617,7 @@ private fun EditLocationDialog(
                 )
                 if (expense.latitude != null) {
                     TextButton(
-                        onClick = onClear,
+                        onClick = { showClearConfirmation = true },
                         colors = ButtonDefaults.textButtonColors(
                             contentColor = SemanticColors.DangerRed
                         )
@@ -1616,7 +1639,12 @@ private fun EditLocationDialog(
                 currentAddress = if (hasSelection) pendingAddress else expense.resolvedAddress,
                 onResult = { lat, lon, address, osmId ->
                     if (lat == null) {
-                        onClear()
+                        // Reset picker selection (don't clear from DB — use Clear button for that)
+                        pendingLat = null
+                        pendingLon = null
+                        pendingAddress = null
+                        pendingOsmId = null
+                        hasSelection = false
                     } else {
                         pendingLat = lat
                         pendingLon = lon
@@ -1624,7 +1652,11 @@ private fun EditLocationDialog(
                         pendingOsmId = osmId
                         hasSelection = true
                     }
-                }
+                },
+                geocodingService = geocodingService,
+                // Bias toward the expense's existing location if available
+                biasLat = expense.latitude,
+                biasLon = expense.longitude
             )
 
             if (hasSelection && pendingLat != null && pendingLon != null) {

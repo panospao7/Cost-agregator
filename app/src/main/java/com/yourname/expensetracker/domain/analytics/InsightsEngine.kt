@@ -314,7 +314,7 @@ class InsightsEngine @Inject constructor(
             val monthKey = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
             categoryMonthTotals
                 .getOrPut(catId) { mutableMapOf() }
-                .merge(monthKey, expense.amount) { a, b -> a + b }
+                .merge(monthKey, expense.effectiveAmount) { a, b -> a + b }
         }
 
         // For each category, compute average monthly spend
@@ -432,7 +432,7 @@ class InsightsEngine @Inject constructor(
         for (p in purchases) {
             cal.timeInMillis = p.date
             val key = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
-            monthTotals.merge(key, p.amount) { a, b -> a + b }
+            monthTotals.merge(key, p.effectiveAmount) { a, b -> a + b }
         }
 
         return if (monthTotals.isNotEmpty()) monthTotals.values.average() else null
@@ -628,7 +628,7 @@ class InsightsEngine @Inject constructor(
             dateObj.time = expense.date
             val key = DateFormatterUtils.dateKey().format(dateObj)
             if (result.containsKey(key)) {
-                result[key] = (result[key] ?: 0.0) + expense.amount
+                result[key] = (result[key] ?: 0.0) + expense.effectiveAmount
             }
         }
 

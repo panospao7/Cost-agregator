@@ -43,7 +43,7 @@ class MerchantLocationRepository @Inject constructor(
         if (System.currentTimeMillis() - cached.lastResolvedAt > AppConfig.Location.CACHE_TTL_MS) {
             return null
         }
-        dao.incrementHitCount(key)
+        dao.incrementHitCountForArea(key, areaKey)
         return cached
     }
 
@@ -54,8 +54,8 @@ class MerchantLocationRepository @Inject constructor(
     fun getMostLikelyArea(merchantName: String, lat: Double?, lon: Double?): String {
         val key = normalizeKey(merchantName)
         return if (lat != null && lon != null) {
-            val gridLat = Math.round(lat / 0.045)
-            val gridLon = Math.round(lon / 0.045)
+            val gridLat = kotlin.math.floor(lat / 0.045).toLong()
+            val gridLon = kotlin.math.floor(lon / 0.045).toLong()
             "$key|$gridLat|$gridLon"
         } else {
             "$key|global"
@@ -65,13 +65,13 @@ class MerchantLocationRepository @Inject constructor(
     suspend fun saveLocation(
         merchantName: String,
         result: LocationResolutionResult.Resolved,
-        areaKey: String? = null
+        areaKey: String? = "global"
     ) {
         val key = normalizeKey(merchantName)
         dao.upsertLocation(
             MerchantLocation(
                 normalizedMerchantName = key,
-                areaKey = areaKey,
+                areaKey = areaKey ?: "global",
                 displayName = merchantName,
                 latitude = result.latitude,
                 longitude = result.longitude,
@@ -122,6 +122,7 @@ class MerchantLocationRepository @Inject constructor(
         dao.upsertLocation(
             MerchantLocation(
                 normalizedMerchantName = correction.normalizedMerchantName,
+                areaKey = correction.areaKey,
                 displayName = correction.displayAddress ?: correction.normalizedMerchantName,
                 latitude = correction.correctedLatitude,
                 longitude = correction.correctedLongitude,
@@ -145,7 +146,7 @@ class MerchantLocationRepository @Inject constructor(
 
     fun normalizeKey(merchantName: String): String =
         merchantName.lowercase()
-            .replace(Regex("[^a-z0-9]"), "")
+            .replace(Regex("[^\\p{L}\\p{N}]"), "")
             .take(30)
 
     private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

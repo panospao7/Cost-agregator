@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -50,7 +51,8 @@ class NotificationProcessingPipeline @Inject constructor(
     private val budgetMonitor: BudgetMonitor,
     private val timeProvider: TimeProvider,
     private val directionDetector: TransferDirectionDetector,
-    private val analytics: TransferDirectionAnalytics
+    private val analytics: TransferDirectionAnalytics,
+    private val locationProvider: ForegroundLocationProvider
 ) {
 
     suspend fun process(notification: RawNotification) {
@@ -169,6 +171,17 @@ class NotificationProcessingPipeline @Inject constructor(
                 notification.title, notification.text, notification.bigText
             )
 
+        // Capture device GPS at notification time so the expense gets an immediate
+        // location instead of waiting for the 6-hour background backfill worker.
+        // We use "best-effort" — if GPS is unavailable the expense is created without
+        // coordinates and the backfill worker will try later via geocoding.
+        val deviceGps = try {
+            locationProvider.getLastKnownLocation()
+        } catch (e: Exception) {
+            Timber.w(e, "GPS unavailable at notification time for merchant: $correctedMerchant")
+            null
+        }
+
         val expense = Expense(
             amount = parsed.amount,
             currency = parsed.currency,
@@ -181,7 +194,10 @@ class NotificationProcessingPipeline @Inject constructor(
             isManualEntry = false,
             dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp),
             transferDirection = direction,
-            transferAccountName = accountName
+            transferAccountName = accountName,
+            latitude = deviceGps?.first,
+            longitude = deviceGps?.second,
+            locationSource = if (deviceGps != null) "DEVICE_GPS" else null
         )
 
         val expenseId = expenseDao.insertAtomic(expense)

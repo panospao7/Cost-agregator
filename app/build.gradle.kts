@@ -16,6 +16,15 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        // Geocoding API keys — read from local.properties (not committed to VCS)
+        val localProps = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(
+            rootDir, providers
+        )
+        buildConfigField("String", "GEOAPIFY_API_KEY",
+            "\"${localProps.getProperty("geoapify.api.key", "")}\"")
+        buildConfigField("String", "GOOGLE_PLACES_API_KEY",
+            "\"${localProps.getProperty("google.places.api.key", "")}\"")
     }
 
     buildTypes {

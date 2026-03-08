@@ -172,12 +172,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
         currentByCategory.mapNotNull { (categoryId, expenses) ->
             val category = categoryMap[categoryId] ?: return@mapNotNull null
             
-            val amounts = expenses.map { it.amount }
+            val amounts = expenses.map { it.effectiveAmount }
             val sortedAmounts = amounts.sorted()
             val total = amounts.sum()
             
             // Previous period comparison
-            val previousTotal = previousByCategory[categoryId]?.sumOf { it.amount }
+            val previousTotal = previousByCategory[categoryId]?.sumOf { it.effectiveAmount }
             val changePercent = calculateChangePercent(total, previousTotal)
             
             // Budget context
@@ -250,7 +250,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         currentPurchases
             .groupBy { it.merchant }
             .map { (merchant, transactions) ->
-                val amounts = transactions.map { it.amount }
+                val amounts = transactions.map { it.effectiveAmount }
                 val sortedAmounts = amounts.sorted()
                 val dates = transactions.map { it.date }.sorted()
                 
@@ -324,7 +324,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
         
         val cal = Calendar.getInstance()
-        val totalSpent = purchases.sumOf { it.amount }
+        val totalSpent = purchases.sumOf { it.effectiveAmount }
         
         // Use arrays for better performance
         val dayTotals = DoubleArray(7)
@@ -335,11 +335,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val dayIndex = calendarDayToIndex(purchase.date, cal)
             val hour = cal.get(Calendar.HOUR_OF_DAY)
             
-            dayTotals[dayIndex] += purchase.amount
+            dayTotals[dayIndex] += purchase.effectiveAmount
             dayCounts[dayIndex]++
             
             val slot = hourToTimeSlot(hour)
-            timeSlotStats[slot] = (timeSlotStats[slot] ?: 0.0) + purchase.amount
+            timeSlotStats[slot] = (timeSlotStats[slot] ?: 0.0) + purchase.effectiveAmount
         }
         
         // Build day of week stats map
@@ -450,7 +450,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val dailyTotals = purchases.groupBy { expense ->
             cal.timeInMillis = expense.date
             "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH) + 1}-${cal.get(Calendar.DAY_OF_MONTH)}"
-        }.mapValues { it.value.sumOf { e -> e.amount } }
+        }.mapValues { it.value.sumOf { e -> e.effectiveAmount } }
         
         val periodDays = ((period.endMs - period.startMs) / MILLIS_PER_DAY).toInt().coerceAtLeast(1)
         
@@ -591,7 +591,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 val catArray = dailyByCategory.getOrPut(purchase.categoryId) { 
                     DoubleArray(periodDays) 
                 }
-                catArray[dayIndex] += purchase.amount
+                catArray[dayIndex] += purchase.effectiveAmount
             }
         }
         
@@ -616,8 +616,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val firstHalf = sorted.subList(0, midpoint)
         val secondHalf = sorted.subList(midpoint, sorted.size)
         
-        val firstHalfTotal = firstHalf.sumOf { it.amount }
-        val secondHalfTotal = secondHalf.sumOf { it.amount }
+        val firstHalfTotal = firstHalf.sumOf { it.effectiveAmount }
+        val secondHalfTotal = secondHalf.sumOf { it.effectiveAmount }
         
         return secondHalfTotal - firstHalfTotal
     }
@@ -771,7 +771,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val result = mutableMapOf<Int, Double>()
         
         for (tx in transactions) {
-            result[calendarDayToIndex(tx.date, cal)] = (result[calendarDayToIndex(tx.date, cal)] ?: 0.0) + tx.amount
+            result[calendarDayToIndex(tx.date, cal)] = (result[calendarDayToIndex(tx.date, cal)] ?: 0.0) + tx.effectiveAmount
         }
         
         return result
@@ -825,7 +825,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
         
         // Impulse Buyer pattern (high transaction variance)
-        val amounts = purchases.map { it.amount }
+        val amounts = purchases.map { it.effectiveAmount }
         val avg = amounts.average()
         val stdDev = if (amounts.size > 1) {
             sqrt(amounts.sumOf { (it - avg) * (it - avg) } / amounts.size)

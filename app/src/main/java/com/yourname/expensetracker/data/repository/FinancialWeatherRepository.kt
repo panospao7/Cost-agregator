@@ -161,7 +161,7 @@ class FinancialWeatherRepository @Inject constructor(
         purchases.forEach { expense ->
              val dayIndex = ((expense.date - startOfDay) / 86400000L).toInt()
              if (dayIndex in 0..currentDay) {
-                 amountByDay[dayIndex] += expense.amount
+                 amountByDay[dayIndex] += expense.effectiveAmount
              }
         }
         

@@ -76,7 +76,8 @@ class SpendingMapViewModel @Inject constructor(
     private val locationProvider: ForegroundLocationProvider,
     private val merchantLocationRepository: MerchantLocationRepository,
     private val heatmapEngine: SpendingHeatmapEngine,
-    private val insightsEngine: LocationInsightsEngine
+    private val insightsEngine: LocationInsightsEngine,
+    val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SpendingMapState())
@@ -312,7 +313,7 @@ class SpendingMapViewModel @Inject constructor(
                 expenseId = e.id,
                 latitude = e.latitude!!,
                 longitude = e.longitude!!,
-                amount = e.amount,
+                amount = e.effectiveAmount,
                 merchant = e.merchant,
                 date = e.date,
                 locationSource = e.locationSource,

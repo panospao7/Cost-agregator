@@ -31,8 +31,8 @@ class MonthlyComparisonCalculator @Inject constructor() {
             }
         }
         
-        val currentTotal = currentExpenses.sumOf { it.amount }
-        val previousTotal = previousExpenses?.sumOf { it.amount }
+        val currentTotal = currentExpenses.sumOf { it.effectiveAmount }
+        val previousTotal = previousExpenses?.sumOf { it.effectiveAmount }
         
         val changeAmount = if (previousTotal != null && previousTotal > 0) {
             currentTotal - previousTotal

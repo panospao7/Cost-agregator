@@ -82,14 +82,67 @@ data class Expense(
     // Human-readable resolved address string (v30), e.g. "Σκλαβενίτης, Γλυφάδα, Αττική"
     val resolvedAddress: String? = null
 ) {
+    /**
+     * The amount that should be counted toward the user's own spending.
+     * - If isNotMine: 0.0 (excluded entirely — someone else's charge)
+     * - If isSharedExpense + myShareAmount set: the explicit per-person amount
+     * - If isSharedExpense + mySharePercentage set: proportional share of the full amount
+     * - Otherwise: full amount
+     *
+     * All calculations (totals, budgets, analytics, forecasting) must use this
+     * instead of `amount` to correctly handle shared and not-mine expenses.
+     */
+    val effectiveAmount: Double
+        get() = when {
+            isNotMine -> 0.0
+            isSharedExpense && myShareAmount != null -> myShareAmount
+            isSharedExpense && mySharePercentage != null -> amount * mySharePercentage / 100.0
+            else -> amount
+        }
     companion object {
         private const val DUPLICATE_WINDOW_MS = 300_000L // 5 minutes
 
+        // Minimal Greek → Latin map used only for dedupeKey generation.
+        // Keeps the Expense entity self-contained (no Hilt injection needed).
+        // Must stay in sync with GreeklishNormalizer.GREEK_TO_LATIN.
+        private val GREEK_LATIN = mapOf(
+            'α' to "a", 'ά' to "a", 'Α' to "a", 'Ά' to "a",
+            'β' to "v", 'Β' to "v",
+            'γ' to "g", 'Γ' to "g",
+            'δ' to "d", 'Δ' to "d",
+            'ε' to "e", 'έ' to "e", 'Ε' to "e", 'Έ' to "e",
+            'ζ' to "z", 'Ζ' to "z",
+            'η' to "i", 'ή' to "i", 'Η' to "i", 'Ή' to "i",
+            'θ' to "th",'Θ' to "th",
+            'ι' to "i", 'ί' to "i", 'ϊ' to "i", 'ΐ' to "i", 'Ι' to "i", 'Ί' to "i",
+            'κ' to "k", 'Κ' to "k",
+            'λ' to "l", 'Λ' to "l",
+            'μ' to "m", 'Μ' to "m",
+            'ν' to "n", 'Ν' to "n",
+            'ξ' to "x", 'Ξ' to "x",
+            'ο' to "o", 'ό' to "o", 'Ο' to "o", 'Ό' to "o",
+            'π' to "p", 'Π' to "p",
+            'ρ' to "r", 'Ρ' to "r",
+            'σ' to "s", 'ς' to "s", 'Σ' to "s",
+            'τ' to "t", 'Τ' to "t",
+            'υ' to "y", 'ύ' to "y", 'ϋ' to "y", 'ΰ' to "y", 'Υ' to "y", 'Ύ' to "y",
+            'φ' to "f", 'Φ' to "f",
+            'χ' to "ch",'Χ' to "ch",
+            'ψ' to "ps",'Ψ' to "ps",
+            'ω' to "o", 'ώ' to "o", 'Ω' to "o", 'Ώ' to "o"
+        )
+
+        private fun transliterateGreek(text: String): String =
+            text.map { c -> GREEK_LATIN[c] ?: c.toString() }.joinToString("")
+
         fun generateDedupeKey(amount: Double, merchant: String, date: Long): String {
-            val normalizedMerchant = merchant.lowercase()
+            // Transliterate Greek → Latin so cross-source duplicates (bank Greek name vs
+            // Google Wallet Latin name) land in the same dedupeKey bucket.
+            val latinMerchant = transliterateGreek(merchant)
+            val normalizedMerchant = latinMerchant.lowercase()
                 .replace(Regex("[^a-z0-9]"), "")
                 .take(20)
-            val roundedAmount = "%.2f".format(amount) // Keep decimal format to match SQL
+            val roundedAmount = "%.2f".format(amount)
             val dateBucket = date / DUPLICATE_WINDOW_MS
             return "${roundedAmount}_${normalizedMerchant}_$dateBucket"
         }

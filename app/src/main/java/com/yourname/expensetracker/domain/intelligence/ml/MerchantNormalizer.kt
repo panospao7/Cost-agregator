@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.util.StringBKTree
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -34,6 +35,7 @@ data class MerchantLookupResult(
 class MerchantNormalizer @Inject constructor(
     private val repository: MerchantNormalizationRepository,
     private val merchantRules: MerchantRulesRepository,
+    private val greeklishNormalizer: GreeklishNormalizer,
     @ApplicationContext private val context: Context,
     private val timeProvider: TimeProvider
 ) {
@@ -154,8 +156,15 @@ class MerchantNormalizer @Inject constructor(
         return merchantRules.cleanMerchantName(rawName)
     }
     private fun createSearchKey(name: String): String {
-        return name.lowercase()
-            .replace(Regex("[^a-z0-9α-ωά-ώ]"), "")
+        // Transliterate Greek → Latin so "Σκλαβενίτης" and "Sklavenitis" share the same
+        // search key and are treated as the same canonical merchant for dedup purposes.
+        val latinName = if (greeklishNormalizer.isGreekText(name)) {
+            greeklishNormalizer.toLatin(name)
+        } else {
+            name
+        }
+        return latinName.lowercase()
+            .replace(Regex("[^a-z0-9]"), "")
             .trim()
     }
 

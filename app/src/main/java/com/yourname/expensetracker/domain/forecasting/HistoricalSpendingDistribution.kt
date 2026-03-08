@@ -147,7 +147,7 @@ class HistoricalSpendingDistribution @Inject constructor(
 
         return (0 until totalWeeks).map { weekIndex ->
             val weekExpenses = weekMap[weekIndex] ?: emptyList()
-            val total = weekExpenses.sumOf { it.amount }
+            val total = weekExpenses.sumOf { it.effectiveAmount }
 
             // Count distinct calendar days with transactions
             val distinctDays = weekExpenses

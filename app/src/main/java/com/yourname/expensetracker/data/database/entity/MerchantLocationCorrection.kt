@@ -78,8 +78,8 @@ data class MerchantLocationCorrection(
             areaLon: Double?
         ): String {
             if (areaLat == null || areaLon == null) return "$normalizedMerchant|global"
-            val latBucket = (areaLat / AREA_SNAP_DEG).toLong()
-            val lonBucket = (areaLon / AREA_SNAP_DEG).toLong()
+            val latBucket = kotlin.math.floor(areaLat / AREA_SNAP_DEG).toLong()
+            val lonBucket = kotlin.math.floor(areaLon / AREA_SNAP_DEG).toLong()
             return "$normalizedMerchant|$latBucket|$lonBucket"
         }
     }

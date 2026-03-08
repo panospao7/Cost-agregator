@@ -1,8 +1,12 @@
 package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.data.location.AndroidForegroundLocationProvider
+import com.yourname.expensetracker.data.location.CompositeGeocodingService
+import com.yourname.expensetracker.data.location.GeoapifyGeocodingService
+import com.yourname.expensetracker.data.location.GooglePlacesGeocodingService
 import com.yourname.expensetracker.data.location.NominatimGeocodingService
 import com.yourname.expensetracker.data.location.OverpassNearbyService
+import com.yourname.expensetracker.data.location.PhotonGeocodingService
 import com.yourname.expensetracker.data.service.AndroidNotificationService
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.location.GeocodingService
@@ -24,11 +28,19 @@ object ServiceModule {
         service: AndroidNotificationService
     ): NotificationService = service
 
+    /**
+     * Binds the cascade geocoding service as the app-wide [GeocodingService].
+     * - Interactive picker ([searchMultiple]): Photon → Geoapify → Google Places → Nominatim
+     * - Background resolution ([search]): Nominatim only (unchanged behaviour)
+     */
     @Provides
     @Singleton
     fun provideGeocodingService(
-        service: NominatimGeocodingService
-    ): GeocodingService = service
+        photon: PhotonGeocodingService,
+        geoapify: GeoapifyGeocodingService,
+        googlePlaces: GooglePlacesGeocodingService,
+        nominatim: NominatimGeocodingService
+    ): GeocodingService = CompositeGeocodingService(photon, geoapify, googlePlaces, nominatim)
 
     @Provides
     @Singleton
@@ -42,4 +54,3 @@ object ServiceModule {
         provider: AndroidForegroundLocationProvider
     ): ForegroundLocationProvider = provider
 }
-

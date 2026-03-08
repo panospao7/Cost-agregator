@@ -33,7 +33,7 @@ class SpendingPaceCalculator @Inject constructor(
                 it.transactionType == TransactionType.PURCHASE && 
                 !it.isNotMine 
             }
-            .sumOf { it.amount }
+            .sumOf { it.effectiveAmount }
         
         val previousMonthSpent = allExpenses
             .filter { 
@@ -42,7 +42,7 @@ class SpendingPaceCalculator @Inject constructor(
                 it.transactionType == TransactionType.PURCHASE && 
                 !it.isNotMine 
             }
-            .sumOf { it.amount }
+            .sumOf { it.effectiveAmount }
         
         val previousMonthAvg = allExpenses
             .filter { 
@@ -57,7 +57,7 @@ class SpendingPaceCalculator @Inject constructor(
                 cal.get(java.util.Calendar.DAY_OF_MONTH)
             }
             .values
-            .map { dayExpenses -> dayExpenses.sumOf { it.amount } }
+            .map { dayExpenses -> dayExpenses.sumOf { it.effectiveAmount } }
             .average()
             .takeIf { !it.isNaN() }
         

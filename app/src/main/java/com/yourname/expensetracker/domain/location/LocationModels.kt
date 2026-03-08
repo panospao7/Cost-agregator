@@ -25,6 +25,37 @@ interface GeocodingService {
         cityHint: String? = null,
         bounded: Boolean = false
     ): GeocodingResult?
+
+    /**
+     * Search for [query] and return **all** matching results (up to [limit]).
+     *
+     * Used by the interactive location picker UI where the user needs to
+     * choose from multiple candidates.  The default implementation delegates
+     * to [search] for backwards compatibility.
+     *
+     * @param useGoogle If true, include Google Places in the search (costs
+     *   API quota). Defaults to false so callers opt-in explicitly.
+     */
+    suspend fun searchMultiple(
+        query: String,
+        biasLat: Double? = null,
+        biasLon: Double? = null,
+        limit: Int = 5,
+        useGoogle: Boolean = false
+    ): List<GeocodingResult> {
+        val result = search(query, biasLat, biasLon)
+        return if (result != null) listOf(result) else emptyList()
+    }
+
+    /**
+     * Reverse-geocode a coordinate to a [GeocodingResult].
+     *
+     * Used by the tap-to-pin feature: the user long-presses the results map to drop
+     * a pin at an arbitrary coordinate, and this resolves it to a human-readable address.
+     *
+     * @return The best match for the given coordinate, or null on failure.
+     */
+    suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingResult? = null
 }
 
 /**

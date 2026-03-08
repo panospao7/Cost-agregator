@@ -62,8 +62,8 @@ class AnalyticsRepository @Inject constructor(
             expenseDao.getExpensesByTypeBetweenFlow(previousStart, previousEnd, TransactionType.PURCHASE.name)
         ) { currentPurchases, previousPurchases ->
             
-            val totalSpent = currentPurchases.sumOf { it.amount }
-            val previousTotal = previousPurchases.sumOf { it.amount }
+            val totalSpent = currentPurchases.sumOf { it.effectiveAmount }
+            val previousTotal = previousPurchases.sumOf { it.effectiveAmount }
             
             val changePercent = if (previousTotal > 0) {
                 ((totalSpent - previousTotal) / previousTotal * 100).toFloat()
@@ -79,7 +79,7 @@ class AnalyticsRepository @Inject constructor(
             currentPurchases.forEach { expense ->
                 val dayIndex = ((expense.date - startOfDay) / 86400000L).toInt()
                 if (dayIndex in 0 until days) {
-                    dailyHistory[dayIndex] += expense.amount
+                    dailyHistory[dayIndex] += expense.effectiveAmount
                 }
             }
             
@@ -91,7 +91,7 @@ class AnalyticsRepository @Inject constructor(
             previousPurchases.forEach { expense ->
                 val dayIndex = ((expense.date - prevStartOfDay) / 86400000L).toInt()
                 if (dayIndex in 0 until prevDays) {
-                    previousDailyHistory[dayIndex] += expense.amount
+                    previousDailyHistory[dayIndex] += expense.effectiveAmount
                 }
             }
             
@@ -119,13 +119,13 @@ class AnalyticsRepository @Inject constructor(
              expenseDao.getExpensesByTypeBetweenFlow(start, end, TransactionType.PURCHASE.name),
              categoryRepository.allCategories
         ) { purchases, categories ->
-            val totalSpent = purchases.sumOf { it.amount }
+            val totalSpent = purchases.sumOf { it.effectiveAmount }
             val categoryMap = categories.associateBy { it.id }
             
             purchases.groupBy { it.categoryId }
                 .mapNotNull { (catId, exps) ->
                     val cat = catId?.let { categoryMap[it] } ?: return@mapNotNull null
-                    val catTotal = exps.sumOf { it.amount }
+                    val catTotal = exps.sumOf { it.effectiveAmount }
                     
                     CategoryBreakdown(
                         category = cat,

@@ -78,7 +78,7 @@ class CalculateFinancialForecastUseCase @Inject constructor(
         
         val monthSpent = expenses
             .filter { it.date >= monthStart }
-            .sumOf { it.amount }
+            .sumOf { it.effectiveAmount }
         
         val spendingPace = SpendingPace(
             currentMonthSpent = monthSpent,

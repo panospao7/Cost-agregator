@@ -24,7 +24,7 @@ class MerchantInsightEngine @Inject constructor() {
         
         return merchantGroups.map { (_, expenses) ->
             val merchantName = expenses.first().merchant
-            val amounts = expenses.map { it.amount }
+            val amounts = expenses.map { it.effectiveAmount }
             val total = amounts.sum()
             val count = amounts.size
             val avg = if (count > 0) total / count else 0.0

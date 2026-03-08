@@ -9,19 +9,63 @@ interface MerchantLocationDao {
 
     // ── MerchantLocation cache ────────────────────────────────────────────────
 
-    @Query("SELECT * FROM merchant_locations WHERE normalizedMerchantName = :key LIMIT 1")
+    /** Global cache lookup: prefers 'global' or NULL areaKey entries, falls back to any entry. */
+    @Query("SELECT * FROM merchant_locations WHERE normalizedMerchantName = :key ORDER BY CASE WHEN areaKey = 'global' OR areaKey IS NULL THEN 0 ELSE 1 END, hitCount DESC LIMIT 1")
     suspend fun getByNormalizedName(key: String): MerchantLocation?
 
     /** Area-scoped cache lookup (v30): looks up by normalized name AND area key. */
     @Query("SELECT * FROM merchant_locations WHERE normalizedMerchantName = :key AND areaKey = :areaKey LIMIT 1")
     suspend fun getByNormalizedNameAndArea(key: String, areaKey: String): MerchantLocation?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertLocation(location: MerchantLocation)
+    /**
+     * Upsert a location cache entry, preserving hitCount if the row already exists.
+     * Uses INSERT OR REPLACE but explicitly carries forward the old hitCount + 1.
+     */
+    @Transaction
+    suspend fun upsertLocation(location: MerchantLocation) {
+        val effectiveAreaKey = location.areaKey ?: "global"
+        val existing = getByNormalizedNameAndArea(location.normalizedMerchantName, effectiveAreaKey)
+        if (existing != null) {
+            updateExistingLocation(
+                id = existing.id,
+                displayName = location.displayName,
+                latitude = location.latitude,
+                longitude = location.longitude,
+                source = location.source,
+                osmId = location.osmId,
+                displayAddress = location.displayAddress,
+                confidence = location.confidence,
+                lastResolvedAt = location.lastResolvedAt,
+                hitCount = existing.hitCount + 1
+            )
+        } else {
+            insertLocation(location)
+        }
+    }
 
-    /** Increment the hit counter when we reuse a cached entry. */
-    @Query("UPDATE merchant_locations SET hitCount = hitCount + 1, lastResolvedAt = :now WHERE normalizedMerchantName = :key")
+    @Insert
+    suspend fun insertLocation(location: MerchantLocation)
+
+    @Query("""
+        UPDATE merchant_locations 
+        SET displayName = :displayName, latitude = :latitude, longitude = :longitude,
+            source = :source, osmId = :osmId, displayAddress = :displayAddress,
+            confidence = :confidence, lastResolvedAt = :lastResolvedAt, hitCount = :hitCount
+        WHERE id = :id
+    """)
+    suspend fun updateExistingLocation(
+        id: Long, displayName: String, latitude: Double, longitude: Double,
+        source: String, osmId: String?, displayAddress: String?,
+        confidence: Float, lastResolvedAt: Long, hitCount: Int
+    )
+
+    /** Increment the hit counter for a global cached entry (areaKey = 'global' or legacy NULL). */
+    @Query("UPDATE merchant_locations SET hitCount = hitCount + 1, lastResolvedAt = :now WHERE normalizedMerchantName = :key AND (areaKey = 'global' OR areaKey IS NULL)")
     suspend fun incrementHitCount(key: String, now: Long = System.currentTimeMillis())
+
+    /** Increment the hit counter for an area-scoped cached entry. */
+    @Query("UPDATE merchant_locations SET hitCount = hitCount + 1, lastResolvedAt = :now WHERE normalizedMerchantName = :key AND areaKey = :areaKey")
+    suspend fun incrementHitCountForArea(key: String, areaKey: String, now: Long = System.currentTimeMillis())
 
     /** Remove stale entries older than [cutoffMs]. Called by the backfill worker. */
     @Query("DELETE FROM merchant_locations WHERE lastResolvedAt < :cutoffMs")

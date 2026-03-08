@@ -114,7 +114,9 @@ class MerchantRulesRepository @Inject constructor() {
      * Cleans a raw merchant string by removing special characters, location markers, and corporate suffixes.
      */
     fun cleanMerchantName(raw: String): String {
-        var cleaned = raw.replace(Regex("[^a-zA-Zα-ωΑ-Ω0-9\\s&.'-]"), "").trim()
+        // Include accented Greek (ά-ώ / Ά-Ώ) so accents survive until GreeklishNormalizer can
+        // transliterate them properly. Without this, 'ί' in "Σκλαβενίτης" was silently stripped.
+        var cleaned = raw.replace(Regex("[^a-zA-Zα-ωά-ώΑ-ΩΆ-Ώ0-9\\s&.'-]"), "").trim()
         
         // Remove location patterns (Store #123)
         cleaned = LOCATION_PATTERN.replace(cleaned, "")

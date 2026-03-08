@@ -36,7 +36,8 @@ class TransactionsViewModel @Inject constructor(
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val recurringExpenseRepository: com.yourname.expensetracker.data.repository.RecurringExpenseRepository,
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+    val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) : ViewModel() {
 
     companion object {
@@ -456,6 +457,7 @@ class TransactionsViewModel @Inject constructor(
                     address = address
                 )
                 _successMessage.emit("Location saved")
+                refresh()
             } catch (e: Exception) {
                 _error.emit("Failed to save location: ${e.message}")
             }
@@ -467,6 +469,7 @@ class TransactionsViewModel @Inject constructor(
             try {
                 expenseRepository.clearExpenseLocation(expense.id)
                 _successMessage.emit("Location cleared")
+                refresh()
             } catch (e: Exception) {
                 _error.emit("Failed to clear location: ${e.message}")
             }

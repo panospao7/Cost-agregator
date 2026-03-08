@@ -136,13 +136,17 @@ fun SpendingMapScreen(
     }
 
     // ── Pin expense sheet (Feature E) ─────────────────────────────────────────
-    if (state.expenseToPin != null) {
+    val pinExpense = state.expenseToPin
+    if (pinExpense != null) {
         PinExpenseSheet(
-            expense = state.expenseToPin!!,
+            expense = pinExpense,
             onDismiss = { viewModel.onDismissPinSheet() },
             onSave = { lat, lon, address, osmId ->
-                viewModel.assignLocationToExpense(state.expenseToPin!!, lat, lon, address, osmId?.toString())
-            }
+                viewModel.assignLocationToExpense(pinExpense, lat, lon, address, osmId)
+            },
+            geocodingService = viewModel.geocodingService,
+            deviceLat = state.deviceLatitude,
+            deviceLon = state.deviceLongitude
         )
     }
 
@@ -370,8 +374,8 @@ private fun OsmMapView(
             for (expMarker in markers) {
                 val osmMarker = Marker(mapView).apply {
                     position = GeoPoint(expMarker.latitude, expMarker.longitude)
-                    title = expMarker.merchant
-                    snippet = "€%.2f".format(expMarker.amount)
+                    // B7: suppress default info-window bubble (white rectangle on tap)
+                    setInfoWindow(null)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                     setOnMarkerClickListener { _, _ ->
                         onMarkerClick(expMarker)
@@ -595,7 +599,7 @@ private fun UnlocatedExpensesPanel(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = expense.merchant ?: "Unknown",
+                                    text = expense.merchant,
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Text(
@@ -631,7 +635,10 @@ private fun UnlocatedExpensesPanel(
 private fun PinExpenseSheet(
     expense: Expense,
     onDismiss: () -> Unit,
-    onSave: (Double, Double, String, Long?) -> Unit
+    onSave: (Double, Double, String?, String?) -> Unit,
+    geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
+    deviceLat: Double? = null,
+    deviceLon: Double? = null
 ) {
     val fmt = NumberFormat.getCurrencyInstance(Locale("el", "GR"))
 
@@ -650,7 +657,7 @@ private fun PinExpenseSheet(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "${expense.merchant ?: "Unknown"} · ${fmt.format(expense.amount)}",
+                text = "${expense.merchant} · ${fmt.format(expense.amount)}",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -670,7 +677,11 @@ private fun PinExpenseSheet(
                     selectedLon = lon
                     selectedAddress = address
                     selectedOsmId = osmId
-                }
+                },
+                geocodingService = geocodingService,
+                // Bias toward device location when available, else expense's own location
+                biasLat = deviceLat ?: expense.latitude,
+                biasLon = deviceLon ?: expense.longitude
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -687,11 +698,11 @@ private fun PinExpenseSheet(
                 }
                 Button(
                     onClick = {
-                        if (selectedLat != null && selectedLon != null && selectedAddress != null) {
-                            onSave(selectedLat!!, selectedLon!!, selectedAddress!!, selectedOsmId?.toLongOrNull())
+                        if (selectedLat != null && selectedLon != null) {
+                            onSave(selectedLat!!, selectedLon!!, selectedAddress, selectedOsmId)
                         }
                     },
-                    enabled = selectedLat != null && selectedLon != null && selectedAddress != null,
+                    enabled = selectedLat != null && selectedLon != null,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Save")

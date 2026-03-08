@@ -15,12 +15,20 @@ data class SourceStats(
 ) {
     val trustScore: Float
         get() {
+            // Exclude auto-rejected notifications (promos, exchange-rate alerts, non-financial
+            // content that the parser correctly returned null for) from the denominator.
+            // Counting them would penalise high-volume sources like Revolut that send many
+            // non-financial notifications, causing real purchases to score below AUTO_ACCEPT.
+            val effectiveTotal = totalNotifications - autoRejected
             val valid = acceptedAsExpense + duplicates
-            return if (totalNotifications > 0)
-                valid.toFloat() / totalNotifications
+            return if (effectiveTotal > 0)
+                valid.toFloat() / effectiveTotal
             else 0f
         }
 
     val isLikelySpam: Boolean
-        get() = totalNotifications > 10 && trustScore < 0.05f
+        get() {
+            val effectiveTotal = totalNotifications - autoRejected
+            return effectiveTotal > 10 && trustScore < 0.05f
+        }
 }

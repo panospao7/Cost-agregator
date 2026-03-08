@@ -52,7 +52,7 @@ object AppConfig {
         const val NOMINATIM_MIN_INTERVAL_MS = 1_100L  // 1.1 sec → safe under 1 req/sec policy
 
         /** User-Agent header required by Nominatim usage policy. */
-        const val NOMINATIM_USER_AGENT = "ExpenseTrackerApp/1.0 (Android; contact@example.com)"
+        const val NOMINATIM_USER_AGENT = "ExpenseTrackerApp/1.0 (Android; panospao777@gmail.com)"
 
         /** Nominatim base URL. */
         const val NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
@@ -84,5 +84,13 @@ object AppConfig {
         const val SOURCE_OVERPASS_POI = "OVERPASS_POI"
         const val SOURCE_USER_MANUAL = "USER_MANUAL"
         const val SOURCE_DEVICE_GPS = "DEVICE_GPS"
+        const val SOURCE_PHOTON = "PHOTON"
+        const val SOURCE_GEOAPIFY = "GEOAPIFY"
+        const val SOURCE_GOOGLE_PLACES = "GOOGLE_PLACES"
+
+        // Multi-service geocoding base URLs
+        const val PHOTON_BASE_URL = "https://photon.komoot.io"
+        const val GEOAPIFY_BASE_URL = "https://api.geoapify.com"
+        const val GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com"
     }
 }

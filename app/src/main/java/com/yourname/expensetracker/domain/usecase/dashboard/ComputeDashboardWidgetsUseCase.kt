@@ -155,9 +155,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
         val deposits = expenses.filter { it.transactionType == TransactionType.DEPOSIT }
 
-        val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.amount }
+        val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.effectiveAmount }
         val todayPurchases = purchases.filter { it.date >= todayStart }
-        val todaySpent = todayPurchases.sumOf { it.amount }
+        val todaySpent = todayPurchases.sumOf { it.effectiveAmount }
         val todayTxCount = todayPurchases.size
 
         val totalSpent = summary.totalSpent
@@ -197,7 +197,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val amountByDay = DoubleArray(currentDayIdx + 1)
         purchasesThisMonth.forEach { exp ->
             val dayIndex = ((exp.date - monthStart) / 86_400_000L).toInt()
-            if (dayIndex in amountByDay.indices) amountByDay[dayIndex] += exp.amount
+            if (dayIndex in amountByDay.indices) amountByDay[dayIndex] += exp.effectiveAmount
         }
         var runningTotal = 0.0
         val pastSumDaily = amountByDay.map { runningTotal += it; runningTotal }
@@ -221,7 +221,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         val monthlyIncome = deposits
             .filter { it.date >= monthStart }
-            .sumOf { it.amount }
+            .sumOf { it.effectiveAmount }
 
         val totalRemaining = weather.discretionaryBudget.coerceAtLeast(0.0)
 
@@ -260,7 +260,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // ── Monte Carlo Forecast ─────────────────────────────────────────────
         val monteCarloWidget: DashboardWidget.MonteCarloForecast? = try {
             // spentToDate = purchases this month (same filter as everywhere else)
-            val spentToDate = purchasesThisMonth.sumOf { it.amount }
+            val spentToDate = purchasesThisMonth.sumOf { it.effectiveAmount }
             // knownUpcoming = committed + likely from SynthesisEngine
             val knownUpcoming = totalCommitted + totalLikely
             // budget = overall monthly budget (null if none set)
@@ -373,7 +373,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             val daily = DoubleArray(daysInThisMonth)
             monthExpenses.forEach { exp ->
                 val dayIdx = ((exp.date - mStart) / 86_400_000L).toInt().coerceIn(0, daysInThisMonth - 1)
-                daily[dayIdx] += exp.amount
+                daily[dayIdx] += exp.effectiveAmount
             }
             var running = 0.0
             val cumulative = daily.map { d -> running += d; running.toFloat() }

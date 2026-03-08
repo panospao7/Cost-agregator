@@ -83,28 +83,13 @@ class LocationResolver @Inject constructor(
             )
         }
 
-        // ── Step 4: Check merchant cache ──────────────────────────────────────
-        if (!forceRefresh) {
-            val cached = locationRepository.getCachedLocation(cleanedName)
-            if (cached != null) {
-                Log.d(TAG, "Cache hit for '$cleanedName'")
-                return LocationResolutionResult.Resolved(
-                    latitude = cached.latitude,
-                    longitude = cached.longitude,
-                    source = cached.source,
-                    osmId = cached.osmId,
-                    displayAddress = cached.displayAddress,
-                    confidence = cached.confidence
-                )
-            }
-        }
-
-        // ── Step 4.5: History-biased Nominatim (Merchant Location Affinity) ──────
+        // ── Step 4: History-biased lookup (Merchant Location Affinity) ──────────
         // Query past located expenses for this merchant, find the top cluster,
-        // and use it to bias Nominatim with bounded=1.
-        val normalizedKey = locationRepository.normalizeKey(cleanedName)
+        // and use it to bias cache lookup and Nominatim with bounded=1.
+        // This runs BEFORE global cache so area-scoped results take priority.
+        // Use rawMerchantName because expenses.merchant stores the raw string.
         val clusters = try {
-            expenseRepository.getMerchantLocationClusters(cleanedName)
+            expenseRepository.getMerchantLocationClusters(rawMerchantName)
         } catch (e: Exception) {
             Log.w(TAG, "Cluster query failed for '$cleanedName'", e)
             emptyList()
@@ -112,20 +97,21 @@ class LocationResolver @Inject constructor(
         val topCluster = clusters.firstOrNull { it.count >= 2 }
         if (topCluster != null) {
             val areaKey = locationRepository.getMostLikelyArea(cleanedName, topCluster.centerLat, topCluster.centerLon)
-            val cachedForArea = locationRepository.getCachedLocationForArea(cleanedName, areaKey)
-            if (cachedForArea != null) {
-                Log.d(TAG, "Area-cache hit for '$cleanedName' in area $areaKey")
-                return LocationResolutionResult.Resolved(
-                    latitude = cachedForArea.latitude,
-                    longitude = cachedForArea.longitude,
-                    source = cachedForArea.source,
-                    osmId = cachedForArea.osmId,
-                    displayAddress = cachedForArea.displayAddress,
-                    confidence = cachedForArea.confidence
-                )
+            if (!forceRefresh) {
+                val cachedForArea = locationRepository.getCachedLocationForArea(cleanedName, areaKey)
+                if (cachedForArea != null) {
+                    Log.d(TAG, "Area-cache hit for '$cleanedName' in area $areaKey")
+                    return LocationResolutionResult.Resolved(
+                        latitude = cachedForArea.latitude,
+                        longitude = cachedForArea.longitude,
+                        source = cachedForArea.source,
+                        osmId = cachedForArea.osmId,
+                        displayAddress = cachedForArea.displayAddress,
+                        confidence = cachedForArea.confidence
+                    )
+                }
             }
-            // Build ~5 km viewbox around cluster centre and call Nominatim bounded
-            val delta = 0.045  // ~5 km
+            // Call Nominatim bounded around cluster centre
             val clusterResult = geocodeWithRateLimit(
                 name = latinName,
                 biasLat = topCluster.centerLat,
@@ -142,6 +128,22 @@ class LocationResolver @Inject constructor(
                 val resolved = clusterResult.toResolved()
                 locationRepository.saveLocation(cleanedName, resolved, areaKey)
                 return resolved
+            }
+        }
+
+        // ── Step 4b: Global cache fallback ────────────────────────────────────
+        if (!forceRefresh) {
+            val cached = locationRepository.getCachedLocation(cleanedName)
+            if (cached != null) {
+                Log.d(TAG, "Cache hit for '$cleanedName'")
+                return LocationResolutionResult.Resolved(
+                    latitude = cached.latitude,
+                    longitude = cached.longitude,
+                    source = cached.source,
+                    osmId = cached.osmId,
+                    displayAddress = cached.displayAddress,
+                    confidence = cached.confidence
+                )
             }
         }
 

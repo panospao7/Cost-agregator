@@ -338,7 +338,8 @@ fun ReviewScreen(
                         finalAddress = address
                     )
                     editingReview = null
-                }
+                },
+                geocodingService = viewModel.geocodingService
             )
         }
 
@@ -734,7 +735,8 @@ fun EditReviewDialog(
     review: PendingReview,
     categories: List<Category>,
     onDismiss: () -> Unit,
-    onSave: (Double?, String?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?) -> Unit
+    onSave: (Double?, String?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?) -> Unit,
+    geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) {
     var amount by remember { mutableStateOf(String.format("%.2f", review.suggestedAmount)) }
     var merchant by remember { mutableStateOf(review.suggestedMerchant) }
@@ -958,7 +960,11 @@ fun EditReviewDialog(
                             locationLon = lon
                             locationAddress = address
                             if (lat != null) showLocationPicker = false
-                        }
+                        },
+                        geocodingService = geocodingService,
+                        // Bias toward the review's existing location if available
+                        biasLat = locationLat,
+                        biasLon = locationLon
                     )
                 }
             }
@@ -975,7 +981,11 @@ fun EditReviewDialog(
                         try { TransactionType.valueOf(review.suggestedType) != it }
                         catch (e: Exception) { true }
                     }
-                    onSave(editedAmount, editedMerchant, editedCategory, editedType, applyToAll, approveAllPending, locationLat, locationLon, locationAddress)
+                    onSave(editedAmount, editedMerchant, editedCategory, editedType, applyToAll, approveAllPending,
+                        locationLat.takeIf { it != review.suggestedLatitude },
+                        locationLon.takeIf { it != review.suggestedLongitude },
+                        locationAddress.takeIf { locationLat != review.suggestedLatitude || locationLon != review.suggestedLongitude }
+                    )
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {

@@ -33,17 +33,17 @@ class CategoryInsightEngine @Inject constructor() {
             }
         }
         
-        val totalCurrent = currentExpenses.sumOf { it.amount }
+        val totalCurrent = currentExpenses.sumOf { it.effectiveAmount }
         
         val categoryTotals = currentExpenses.groupBy { it.categoryId }
         
         return categoryTotals.map { (categoryId, expenses) ->
             val category = categoryMap[categoryId]
-            val currentTotal = expenses.sumOf { it.amount }
+            val currentTotal = expenses.sumOf { it.effectiveAmount }
             val currentCount = expenses.size
             
             val previousCategoryExpenses = previousExpenses?.filter { it.categoryId == categoryId }
-            val previousTotal = previousCategoryExpenses?.sumOf { it.amount }
+            val previousTotal = previousCategoryExpenses?.sumOf { it.effectiveAmount }
             val previousCount = previousCategoryExpenses?.size
             
             val changeFromPrevious = if (previousTotal != null && previousTotal > 0) {
