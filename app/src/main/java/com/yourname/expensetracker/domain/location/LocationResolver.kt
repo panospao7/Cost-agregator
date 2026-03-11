@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -48,18 +49,28 @@ class LocationResolver @Inject constructor(
      * @param rawMerchantName  Raw merchant string (as stored in Expense).
      * @param transactionDateMs  Epoch ms of the transaction — used to decide GPS bias.
      * @param forceRefresh  If true, skip the cache and re-geocode.
+     * @param merchantKey  Pre-computed canonical key from [MerchantKeyGenerator] (i.e.
+     *   [Expense.merchantKey]).  When provided, used directly for cache/correction lookups,
+     *   eliminating the redundant clean → canonicalize → transliterate chain.
+     *   When null (legacy callers or not-yet-backfilled rows), falls back to computing
+     *   the key from [rawMerchantName] at call time.
      * @return  A [LocationResolutionResult].
      */
     suspend fun resolve(
         rawMerchantName: String,
         transactionDateMs: Long,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        merchantKey: String? = null
     ): LocationResolutionResult {
 
         // ── Step 1: Prepare name variants ─────────────────────────────────────
+        // cacheKey  — used for DB lookups (must match what was written by normalizeKey())
+        // latinName — used as the *search query* sent to Nominatim (still needs cleaning)
+        // cleanedName — human-readable fallback for logs and Overpass text search
         val cleanedName = merchantCleaner.clean(rawMerchantName)
         val canonicalResult = canonicalizer.canonicalize(cleanedName)
         val latinName = greeklishNormalizer.normalize(canonicalResult.canonicalName)
+        val cacheKey = merchantKey ?: MerchantKeyGenerator.generate(rawMerchantName)
 
         // ── Step 2: Get device location (if available) ─────────────────────────
         val deviceLocation: Pair<Double, Double>? = locationProvider.getLastKnownLocation()
@@ -67,12 +78,12 @@ class LocationResolver @Inject constructor(
 
         // ── Step 3: Check user corrections ────────────────────────────────────
         val correction = locationRepository.getCorrection(
-            merchantName = cleanedName,
+            merchantName = cacheKey,
             deviceLat = deviceLocation?.first,
             deviceLon = deviceLocation?.second
         )
         if (correction != null) {
-            Log.d(TAG, "Correction hit for '$cleanedName'")
+            Log.d(TAG, "Correction hit for '$cacheKey'")
             return LocationResolutionResult.Resolved(
                 latitude = correction.correctedLatitude,
                 longitude = correction.correctedLongitude,
@@ -96,11 +107,11 @@ class LocationResolver @Inject constructor(
         }
         val topCluster = clusters.firstOrNull { it.count >= 2 }
         if (topCluster != null) {
-            val areaKey = locationRepository.getMostLikelyArea(cleanedName, topCluster.centerLat, topCluster.centerLon)
+            val areaKey = locationRepository.getMostLikelyArea(cacheKey, topCluster.centerLat, topCluster.centerLon)
             if (!forceRefresh) {
-                val cachedForArea = locationRepository.getCachedLocationForArea(cleanedName, areaKey)
+                val cachedForArea = locationRepository.getCachedLocationForArea(cacheKey, areaKey)
                 if (cachedForArea != null) {
-                    Log.d(TAG, "Area-cache hit for '$cleanedName' in area $areaKey")
+                    Log.d(TAG, "Area-cache hit for '$cacheKey' in area $areaKey")
                     return LocationResolutionResult.Resolved(
                         latitude = cachedForArea.latitude,
                         longitude = cachedForArea.longitude,
@@ -124,18 +135,18 @@ class LocationResolver @Inject constructor(
                 bounded = true
             )
             if (clusterResult != null) {
-                Log.d(TAG, "History-biased Nominatim resolved '$cleanedName' (cluster count=${topCluster.count})")
+                Log.d(TAG, "History-biased Nominatim resolved '$cacheKey' (cluster count=${topCluster.count})")
                 val resolved = clusterResult.toResolved()
-                locationRepository.saveLocation(cleanedName, resolved, areaKey)
+                locationRepository.saveLocation(cacheKey, resolved, areaKey)
                 return resolved
             }
         }
 
         // ── Step 4b: Global cache fallback ────────────────────────────────────
         if (!forceRefresh) {
-            val cached = locationRepository.getCachedLocation(cleanedName)
+            val cached = locationRepository.getCachedLocation(cacheKey)
             if (cached != null) {
-                Log.d(TAG, "Cache hit for '$cleanedName'")
+                Log.d(TAG, "Cache hit for '$cacheKey'")
                 return LocationResolutionResult.Resolved(
                     latitude = cached.latitude,
                     longitude = cached.longitude,
@@ -159,9 +170,9 @@ class LocationResolver @Inject constructor(
                 biasLon = deviceLocation.second
             )
             if (result != null) {
-                Log.d(TAG, "Nominatim GPS-bias resolved '$cleanedName'")
+                Log.d(TAG, "Nominatim GPS-bias resolved '$cacheKey'")
                 val resolved = result.toResolved()
-                locationRepository.saveLocation(cleanedName, resolved)
+                locationRepository.saveLocation(cacheKey, resolved)
                 return resolved
             }
         }
@@ -170,9 +181,9 @@ class LocationResolver @Inject constructor(
         val nameOnlyResult = geocodeWithRateLimit(latinName)
             ?: geocodeWithRateLimit(cleanedName)
         if (nameOnlyResult != null) {
-            Log.d(TAG, "Nominatim name-only resolved '$cleanedName'")
+            Log.d(TAG, "Nominatim name-only resolved '$cacheKey'")
             val resolved = nameOnlyResult.toResolved()
-            locationRepository.saveLocation(cleanedName, resolved)
+            locationRepository.saveLocation(cacheKey, resolved)
             return resolved
         }
 
@@ -197,7 +208,7 @@ class LocationResolver @Inject constructor(
                         displayAddress = poi.displayAddress,
                         confidence = 0.7f
                     )
-                    locationRepository.saveLocation(cleanedName, resolved)
+                    locationRepository.saveLocation(cacheKey, resolved)
                     resolved
                 } else {
                     LocationResolutionResult.NeedsUserSelection(pois)
@@ -206,7 +217,7 @@ class LocationResolver @Inject constructor(
         }
 
         // ── Step 8: Give up ───────────────────────────────────────────────────
-        Log.d(TAG, "Could not resolve location for '$cleanedName'")
+        Log.d(TAG, "Could not resolve location for '$cacheKey'")
         return LocationResolutionResult.Unresolved
     }
 

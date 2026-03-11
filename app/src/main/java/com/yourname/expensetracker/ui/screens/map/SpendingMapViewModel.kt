@@ -33,6 +33,7 @@ data class MapExpenseMarker(
     val longitude: Double,
     val amount: Double,
     val merchant: String,
+    val merchantKey: String?,
     val date: Long,
     val locationSource: String?,
     val placeId: String?
@@ -135,7 +136,8 @@ class SpendingMapViewModel @Inject constructor(
             val result = locationResolver.resolve(
                 rawMerchantName = marker.merchant,
                 transactionDateMs = marker.date,
-                forceRefresh = true
+                forceRefresh = true,
+                merchantKey = marker.merchantKey
             )
             when (result) {
                 is LocationResolutionResult.Resolved -> {
@@ -308,6 +310,7 @@ class SpendingMapViewModel @Inject constructor(
                 longitude = lon,
                 amount = e.amount,
                 merchant = e.merchant,
+                merchantKey = e.merchantKey,
                 date = e.date,
                 locationSource = e.locationSource,
                 placeId = e.placeId

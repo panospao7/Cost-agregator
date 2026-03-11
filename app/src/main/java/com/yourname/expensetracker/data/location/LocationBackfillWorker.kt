@@ -75,7 +75,8 @@ class LocationBackfillWorker @AssistedInject constructor(
             val result = try {
                 locationResolver.resolve(
                     rawMerchantName = expense.merchant,
-                    transactionDateMs = expense.date
+                    transactionDateMs = expense.date,
+                    merchantKey = expense.merchantKey
                 )
             } catch (e: Exception) {
                 Log.w(TAG, "Resolver threw for '${expense.merchant}'", e)
