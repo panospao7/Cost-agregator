@@ -60,8 +60,10 @@ object AppConfig {
         /** Overpass API base URL. */
         const val OVERPASS_BASE_URL = "https://overpass-api.de/api/interpreter"
 
-        /** Radius in metres for Overpass POI lookup around device location. */
-        const val OVERPASS_SEARCH_RADIUS_M = 150
+        /** Radius in metres for Overpass POI lookup around device location.
+         *  150 m was too small for typical urban GPS accuracy (~50 m CEP);
+         *  250 m covers the 95th-percentile scatter without returning too many POIs. */
+        const val OVERPASS_SEARCH_RADIUS_M = 250
 
         /** Haversine radius (km) within which a user correction is considered area-local. */
         const val CORRECTION_AREA_RADIUS_KM = 5.0f

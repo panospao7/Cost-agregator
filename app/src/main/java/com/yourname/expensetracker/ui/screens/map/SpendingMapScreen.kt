@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.ui.screens.map
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.preference.PreferenceManager
+import android.view.MotionEvent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -299,6 +301,7 @@ fun SpendingMapScreen(
 
 // ── osmdroid MapView composable ───────────────────────────────────────────────
 
+@SuppressLint("ClickableViewAccessibility")
 @Suppress("DEPRECATION") // PreferenceManager.getDefaultSharedPreferences is fine for osmdroid config
 @Composable
 private fun OsmMapView(
@@ -341,6 +344,22 @@ private fun OsmMapView(
                 mv.controller.setCenter(GeoPoint(defaultLat, defaultLon))
                 mv.setBuiltInZoomControls(false)
                 mv.onResume()  // F5: start tile-download threads immediately
+
+                // B9: Tell parent containers (Column weight, Scaffold, etc.) to stop
+                // intercepting touch events when the user is interacting with the map.
+                mv.setOnTouchListener { v, event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
+                        MotionEvent.ACTION_UP,
+                        MotionEvent.ACTION_CANCEL -> {
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                        }
+                    }
+                    false
+                }
+
                 mapViewRef.value = mv
             }
         },

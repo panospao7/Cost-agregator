@@ -90,7 +90,18 @@ class LocationInsightsEngine @Inject constructor() {
     }
 
     private companion object {
-        /** Must match [SpendingHeatmapEngine.CLUSTER_RADIUS_DEG]. */
+        /**
+         * Fine-grained clustering grid size ≈ 167 m at the equator.
+         * Must match [SpendingHeatmapEngine.CLUSTER_RADIUS_DEG].
+         *
+         * NOTE: This is intentionally much finer than the 0.045 deg (≈ 5 km)
+         * grid used in [ExpenseDao.getMerchantLocationClusters].
+         * - Here we cluster for map display, where each pin should represent a
+         *   distinct physical location (e.g., separate branches of a chain).
+         * - [ExpenseDao] clusters at city-district scale to determine which
+         *   *area* a merchant is most commonly visited in, for biasing
+         *   geocoding searches.
+         */
         const val CLUSTER_RADIUS_DEG = 0.0015
     }
 }

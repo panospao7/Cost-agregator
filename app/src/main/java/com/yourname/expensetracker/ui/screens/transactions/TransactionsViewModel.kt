@@ -36,6 +36,7 @@ class TransactionsViewModel @Inject constructor(
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val recurringExpenseRepository: com.yourname.expensetracker.data.repository.RecurringExpenseRepository,
+    private val merchantLocationRepository: com.yourname.expensetracker.data.repository.MerchantLocationRepository,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
     val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) : ViewModel() {
@@ -448,14 +449,31 @@ class TransactionsViewModel @Inject constructor(
     fun updateLocation(expense: Expense, lat: Double, lon: Double, address: String?, osmId: String?) {
         viewModelScope.launch {
             try {
+                // B18 fix: use AppConfig constant instead of hardcoded string
+                val source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_MANUAL
                 expenseRepository.updateExpenseLocation(
                     expenseId = expense.id,
                     latitude = lat,
                     longitude = lon,
-                    source = "USER_MANUAL",
+                    source = source,
                     placeId = osmId,
                     address = address
                 )
+                // B14 fix: also save to merchant location cache so future expenses
+                // for the same merchant benefit from this correction, consistent
+                // with SpendingMapViewModel.onSaveCorrection().
+                val correction = com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection(
+                    normalizedMerchantName = merchantLocationRepository.normalizeKey(expense.merchant),
+                    correctedLatitude = lat,
+                    correctedLongitude = lon,
+                    // B15 note: use the corrected location itself as the area center
+                    // (the user chose this location for this merchant at this place)
+                    areaLatitude = lat,
+                    areaLongitude = lon,
+                    osmId = osmId,
+                    displayAddress = address
+                )
+                merchantLocationRepository.saveCorrection(correction)
                 _successMessage.emit("Location saved")
                 refresh()
             } catch (e: Exception) {

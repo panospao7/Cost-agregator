@@ -1,11 +1,15 @@
 package com.yourname.expensetracker.ui.components
 
+import android.annotation.SuppressLint
 import android.preference.PreferenceManager
 import android.util.Log
+import android.view.MotionEvent
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
@@ -16,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -524,7 +529,10 @@ fun LocationSearchPicker(
  *  - B4: pin marker has setInfoWindow(null) + no-op click listener
  *  - B5: hint text rendered by the caller (see below map in LocationSearchPicker)
  *  - B6: bounding box includes the pinned coordinate when present
+ *  - B9: requestDisallowInterceptTouchEvent so parent scroll/sheet doesn't steal map touches
+ *  - B10: zoomToBoundingBox deferred with addOnLayoutChangeListener for reliable sizing
  */
+@SuppressLint("ClickableViewAccessibility")
 @Suppress("DEPRECATION") // PreferenceManager.getDefaultSharedPreferences is fine for osmdroid config
 @Composable
 private fun ResultsMapView(
@@ -562,6 +570,24 @@ private fun ResultsMapView(
                 mv.setMultiTouchControls(true)
                 mv.setBuiltInZoomControls(false)
                 mv.onResume()  // F5: start tile-download threads immediately
+
+                // B9: Tell parent containers (ModalBottomSheet, verticalScroll, etc.)
+                // to stop intercepting touch events when the user is interacting with
+                // the map. Without this, vertical drags are stolen by the sheet/scroll
+                // and the map cannot be panned or zoomed.
+                mv.setOnTouchListener { v, event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
+                        MotionEvent.ACTION_UP,
+                        MotionEvent.ACTION_CANCEL -> {
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                        }
+                    }
+                    // Return false so osmdroid still processes the event normally
+                    false
+                }
 
                 // B3: Create the long-press overlay once and keep a stable reference
                 val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
@@ -636,12 +662,32 @@ private fun ResultsMapView(
                     allLats.max(), allLons.max(),
                     allLats.min(), allLons.min()
                 )
-                mapView.post { mapView.zoomToBoundingBox(box, false, 80) }
+                // B10: Use post with a layout-ready check instead of bare post.
+                // The MapView may not have measured yet when update{} fires for the
+                // first time (especially inside ModalBottomSheet / AlertDialog).
+                // If width/height are 0, defer until the next layout pass.
+                if (mapView.width > 0 && mapView.height > 0) {
+                    mapView.post { mapView.zoomToBoundingBox(box, true, 80) }
+                } else {
+                    mapView.addOnLayoutChangeListener(object : android.view.View.OnLayoutChangeListener {
+                        override fun onLayoutChange(
+                            v: android.view.View, l: Int, t: Int, r: Int, b: Int,
+                            ol: Int, ot: Int, or2: Int, ob: Int
+                        ) {
+                            if (r - l > 0 && b - t > 0) {
+                                mapView.removeOnLayoutChangeListener(this)
+                                mapView.post { mapView.zoomToBoundingBox(box, true, 80) }
+                            }
+                        }
+                    })
+                }
             }
 
             mapView.invalidate()
         },
         modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
     )
 
     DisposableEffect(Unit) {

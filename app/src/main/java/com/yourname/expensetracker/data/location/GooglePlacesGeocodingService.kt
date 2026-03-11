@@ -73,14 +73,15 @@ class GooglePlacesGeocodingService @Inject constructor() : GeocodingService {
             .build()
 
         return try {
-            val response = client.newCall(request).execute()
-            Log.d(TAG, "    HTTP ${response.code}")
-            if (!response.isSuccessful) {
-                Log.w(TAG, "    Google Places HTTP ${response.code}: ${response.body?.string()?.take(200)}")
-                return emptyList()
+            client.newCall(request).execute().use { response ->
+                Log.d(TAG, "    HTTP ${response.code}")
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "    Google Places HTTP ${response.code}: ${response.body?.string()?.take(200)}")
+                    return@use emptyList()
+                }
+                val body = response.body?.string() ?: return@use emptyList()
+                parseResults(body).also { Log.d(TAG, "    <== ${it.size} results") }
             }
-            val body = response.body?.string() ?: return emptyList()
-            parseResults(body).also { Log.d(TAG, "    <== ${it.size} results") }
         } catch (e: IOException) {
             Log.e(TAG, "    Google Places network error: ${e.message}")
             emptyList()

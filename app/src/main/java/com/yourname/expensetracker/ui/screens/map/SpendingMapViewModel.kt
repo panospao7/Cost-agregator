@@ -224,15 +224,17 @@ class SpendingMapViewModel @Inject constructor(
         forMarker: MapExpenseMarker
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            // Use cached location so we don't trigger a new GPS fix here (#11)
-            val deviceLoc = cachedDeviceLoc
+            // B15 fix: use the corrected location as the area center, not the
+            // device's current GPS. If the user is at home correcting a remote
+            // transaction, the device location would produce the wrong area key
+            // and the correction wouldn't match future transactions near the store.
             merchantLocationRepository.saveCorrection(
                 MerchantLocationCorrection(
                     normalizedMerchantName = merchantLocationRepository.normalizeKey(merchantName),
                     correctedLatitude = correctedLat,
                     correctedLongitude = correctedLon,
-                    areaLatitude = deviceLoc?.first,
-                    areaLongitude = deviceLoc?.second,
+                    areaLatitude = correctedLat,
+                    areaLongitude = correctedLon,
                     osmId = osmId,
                     displayAddress = displayAddress
                 )
@@ -294,11 +296,16 @@ class SpendingMapViewModel @Inject constructor(
      * Bug #7 fix: maps to [LocatedExpense] before passing to domain engines.
      */
     private fun recomputeMapData(locatedExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>) {
-        val markers = locatedExpenses.map { e ->
+        // B11 fix: use safe-call instead of force-unwrap (!!). The Flow query
+        // filters for non-null coordinates, but if a location is cleared between
+        // emission and this mapping, force-unwrap would NPE-crash the app.
+        val markers = locatedExpenses.mapNotNull { e ->
+            val lat = e.latitude ?: return@mapNotNull null
+            val lon = e.longitude ?: return@mapNotNull null
             MapExpenseMarker(
                 expenseId = e.id,
-                latitude = e.latitude!!,
-                longitude = e.longitude!!,
+                latitude = lat,
+                longitude = lon,
                 amount = e.amount,
                 merchant = e.merchant,
                 date = e.date,
@@ -308,11 +315,13 @@ class SpendingMapViewModel @Inject constructor(
         }
 
         // Map to domain LocatedExpense before calling domain engines
-        val domainExpenses = locatedExpenses.map { e ->
+        val domainExpenses = locatedExpenses.mapNotNull { e ->
+            val lat = e.latitude ?: return@mapNotNull null
+            val lon = e.longitude ?: return@mapNotNull null
             LocatedExpense(
                 expenseId = e.id,
-                latitude = e.latitude!!,
-                longitude = e.longitude!!,
+                latitude = lat,
+                longitude = lon,
                 amount = e.effectiveAmount,
                 merchant = e.merchant,
                 date = e.date,

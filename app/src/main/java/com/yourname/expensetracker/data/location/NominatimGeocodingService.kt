@@ -4,6 +4,9 @@ import android.util.Log
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -16,9 +19,10 @@ import javax.inject.Singleton
 /**
  * Nominatim (OpenStreetMap) implementation of [GeocodingService].
  *
- * Rate-limit: enforced by the caller ([LocationResolver]) which uses a
- * token-bucket / delay strategy.  This class does not sleep itself so it
- * can be tested synchronously.
+ * Rate-limit: B13 fix — rate limiting is now enforced at the service level
+ * via [rateLimitMutex], ensuring compliance with Nominatim's 1 req/sec
+ * usage policy regardless of which caller invokes the service (LocationResolver
+ * for background resolution, CompositeGeocodingService for interactive search).
  *
  * Nominatim usage policy: must send a unique User-Agent header.
  * See [AppConfig.Location.NOMINATIM_USER_AGENT].
@@ -31,15 +35,34 @@ class NominatimGeocodingService @Inject constructor() : GeocodingService {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
+    // B13 fix: rate-limit all Nominatim requests at the service level.
+    // Ensures max 1 request per 1.1s regardless of caller.
+    private val rateLimitMutex = Mutex()
+    private var lastRequestAt = 0L
+
+    /**
+     * Enforce Nominatim's 1 req/sec policy before executing a request.
+     * Wraps [block] with a mutex + delay to guarantee minimum spacing.
+     */
+    private suspend fun <T> withRateLimit(block: suspend () -> T): T = rateLimitMutex.withLock {
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastRequestAt
+        if (elapsed < AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS) {
+            delay(AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS - elapsed)
+        }
+        lastRequestAt = System.currentTimeMillis()
+        block()
+    }
+
     override suspend fun search(
         merchantName: String,
         biasLat: Double?,
         biasLon: Double?,
         cityHint: String?,
         bounded: Boolean
-    ): GeocodingResult? {
+    ): GeocodingResult? = withRateLimit {
         val url = buildUrl(merchantName, biasLat, biasLon, cityHint, bounded)
-        return executeRequest(url, merchantName, biasLat != null).firstOrNull()
+        executeRequest(url, merchantName, biasLat != null).firstOrNull()
     }
 
     override suspend fun searchMultiple(
@@ -48,16 +71,16 @@ class NominatimGeocodingService @Inject constructor() : GeocodingService {
         biasLon: Double?,
         limit: Int,
         useGoogle: Boolean
-    ): List<GeocodingResult> {
+    ): List<GeocodingResult> = withRateLimit {
         Log.d(TAG, "searchMultiple() OVERRIDE called — query=\"$query\", biasLat=$biasLat, biasLon=$biasLon, limit=$limit")
         // No country filter for the interactive picker — the user may search for
         // any merchant by name and should not be restricted to Greece-only results.
         // The Greece viewbox is still sent as a soft bias so local results rank first.
         val url = buildUrl(query, biasLat, biasLon, cityHint = null, bounded = false, useCountryFilter = false)
-        return executeRequest(url, query, biasLat != null)
+        executeRequest(url, query, biasLat != null)
     }
 
-    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingResult? {
+    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingResult? = withRateLimit {
         val encoded = "%.7f".format(lat)
         val encodedLon = "%.7f".format(lon)
         val url = "${AppConfig.Location.NOMINATIM_BASE_URL}/reverse" +
@@ -68,37 +91,39 @@ class NominatimGeocodingService @Inject constructor() : GeocodingService {
             .header("User-Agent", AppConfig.Location.NOMINATIM_USER_AGENT)
             .header("Accept-Language", "el,en")
             .build()
-        return try {
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                Log.w(TAG, "reverseGeocode HTTP ${response.code}")
-                return null
+        try {
+            // B16 fix: use response.use {} to ensure body is closed even on exceptions
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "reverseGeocode HTTP ${response.code}")
+                    return@withRateLimit null
+                }
+                val body = response.body?.string() ?: return@withRateLimit null
+                val obj = org.json.JSONObject(body)
+                if (obj.has("error")) {
+                    Log.w(TAG, "reverseGeocode error: ${obj.optString("error")}")
+                    return@withRateLimit null
+                }
+                val resultLat = obj.optString("lat").toDoubleOrNull() ?: lat
+                val resultLon = obj.optString("lon").toDoubleOrNull() ?: lon
+                val displayAddress = obj.optString("display_name").ifBlank { null }
+                val nameVal = obj.optString("name").ifBlank {
+                    displayAddress?.substringBefore(",")?.trim()
+                }
+                val osmType = obj.optString("osm_type", "")
+                val osmId = if (osmType.isNotEmpty()) {
+                    "${osmType.uppercase().firstOrNull() ?: 'N'}${obj.optLong("osm_id", 0)}"
+                } else null
+                GeocodingResult(
+                    latitude = resultLat,
+                    longitude = resultLon,
+                    osmId = osmId,
+                    name = nameVal,
+                    displayAddress = displayAddress,
+                    confidence = 1.0f,
+                    source = AppConfig.Location.SOURCE_NOMINATIM_GPS_BIAS
+                )
             }
-            val body = response.body?.string() ?: return null
-            val obj = org.json.JSONObject(body)
-            if (obj.has("error")) {
-                Log.w(TAG, "reverseGeocode error: ${obj.optString("error")}")
-                return null
-            }
-            val resultLat = obj.optString("lat").toDoubleOrNull() ?: lat
-            val resultLon = obj.optString("lon").toDoubleOrNull() ?: lon
-            val displayAddress = obj.optString("display_name").ifBlank { null }
-            val nameVal = obj.optString("name").ifBlank {
-                displayAddress?.substringBefore(",")?.trim()
-            }
-            val osmType = obj.optString("osm_type", "")
-            val osmId = if (osmType.isNotEmpty()) {
-                "${osmType.uppercase().firstOrNull() ?: 'N'}${obj.optLong("osm_id", 0)}"
-            } else null
-            GeocodingResult(
-                latitude = resultLat,
-                longitude = resultLon,
-                osmId = osmId,
-                name = nameVal,
-                displayAddress = displayAddress,
-                confidence = 1.0f,
-                source = AppConfig.Location.SOURCE_NOMINATIM_GPS_BIAS
-            )
         } catch (e: Exception) {
             Log.e(TAG, "reverseGeocode error: ${e.message}", e)
             null
@@ -121,26 +146,28 @@ class NominatimGeocodingService @Inject constructor() : GeocodingService {
             .build()
 
         return try {
-            val response = client.newCall(request).execute()
-            Log.d(TAG, "    HTTP response code: ${response.code}")
-            
-            if (!response.isSuccessful) {
-                Log.w(TAG, "    <== Nominatim HTTP ${response.code} for query: $queryForLog")
-                if (response.code == 403) {
-                    throw IOException("NOMINATIM_403")
+            // B16 fix: use response.use {} to ensure body is closed even on exceptions
+            client.newCall(request).execute().use { response ->
+                Log.d(TAG, "    HTTP response code: ${response.code}")
+                
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "    <== Nominatim HTTP ${response.code} for query: $queryForLog")
+                    if (response.code == 403) {
+                        throw IOException("NOMINATIM_403")
+                    }
+                    return emptyList()
                 }
-                return emptyList()
+                val body = response.body?.string() ?: run {
+                    Log.w(TAG, "    <== Empty response body")
+                    return emptyList()
+                }
+                Log.d(TAG, "    Response body length: ${body.length} chars")
+                Log.d(TAG, "    Body preview: ${body.take(500)}")
+                
+                val results = parseAllResults(body, hadGpsBias)
+                Log.d(TAG, "    <== Nominatim request END - ${results.size} results")
+                results
             }
-            val body = response.body?.string() ?: run {
-                Log.w(TAG, "    <== Empty response body")
-                return emptyList()
-            }
-            Log.d(TAG, "    Response body length: ${body.length} chars")
-            Log.d(TAG, "    Body preview: ${body.take(500)}")
-            
-            val results = parseAllResults(body, hadGpsBias)
-            Log.d(TAG, "    <== Nominatim request END - ${results.size} results")
-            results
         } catch (e: IOException) {
             Log.e(TAG, "    <== Nominatim network error: ${e.message}", e)
             emptyList()

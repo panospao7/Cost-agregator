@@ -488,6 +488,8 @@ interface ExpenseDao {
      * Update the location fields for a single expense.
      * Called by [LocationResolver] after a successful geocode, and by the
      * user when they correct a pin.
+     * Also resets [backfillAttempts] so that if the location is later cleared,
+     * the backfill worker can retry from scratch.
      */
     @Query("""
         UPDATE expenses
@@ -495,7 +497,8 @@ interface ExpenseDao {
             longitude = :longitude,
             locationSource = :source,
             placeId = :placeId,
-            resolvedAddress = :resolvedAddress
+            resolvedAddress = :resolvedAddress,
+            backfillAttempts = 0
         WHERE id = :expenseId
     """)
     suspend fun updateLocation(
@@ -565,6 +568,13 @@ interface ExpenseDao {
      * (≈ 5 km cells), matching floor().toLong() used in Kotlin code.
      * Returns clusters ordered by count DESC so the caller can bias toward the
      * most-common area.
+     *
+     * NOTE: This grid size (0.045 deg ≈ 5 km) is intentionally much coarser than
+     * [LocationInsightsEngine.CLUSTER_RADIUS_DEG] (0.0015 deg ≈ 167 m).
+     * - Here we group at city-district scale to find the *area* a merchant is
+     *   most often visited in, for biasing geocoding searches.
+     * - [LocationInsightsEngine] uses fine-grained clusters to show distinct
+     *   map pins for branches of the same chain within a neighbourhood.
      */
     @Query("""
         SELECT
@@ -572,14 +582,14 @@ interface ExpenseDao {
             AVG(longitude) AS centerLon,
             COUNT(*)       AS count
         FROM expenses
-        WHERE merchant = :normalizedMerchant
+        WHERE UPPER(REPLACE(merchant, ' ', '')) = UPPER(REPLACE(:merchantName, ' ', ''))
           AND latitude IS NOT NULL
           AND longitude IS NOT NULL
         GROUP BY CAST(latitude / 0.045 AS INTEGER), CAST(longitude / 0.045 AS INTEGER)
         ORDER BY count DESC
         LIMIT 5
     """)
-    suspend fun getMerchantLocationClusters(normalizedMerchant: String): List<LocationCluster>
+    suspend fun getMerchantLocationClusters(merchantName: String): List<LocationCluster>
 }
 
 data class MerchantSuggestion(

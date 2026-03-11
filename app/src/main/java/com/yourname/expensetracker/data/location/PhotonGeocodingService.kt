@@ -51,14 +51,16 @@ class PhotonGeocodingService @Inject constructor() : GeocodingService {
             .build()
 
         return try {
-            val response = client.newCall(request).execute()
-            Log.d(TAG, "    HTTP ${response.code}")
-            if (!response.isSuccessful) {
-                Log.w(TAG, "    Photon HTTP ${response.code}")
-                return emptyList()
+            // B16 fix: use response.use {} to ensure body is closed even on exceptions
+            client.newCall(request).execute().use { response ->
+                Log.d(TAG, "    HTTP ${response.code}")
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "    Photon HTTP ${response.code}")
+                    return emptyList()
+                }
+                val body = response.body?.string() ?: return emptyList()
+                parseResults(body).also { Log.d(TAG, "    <== ${it.size} results") }
             }
-            val body = response.body?.string() ?: return emptyList()
-            parseResults(body).also { Log.d(TAG, "    <== ${it.size} results") }
         } catch (e: IOException) {
             Log.e(TAG, "    Photon network error: ${e.message}")
             emptyList()

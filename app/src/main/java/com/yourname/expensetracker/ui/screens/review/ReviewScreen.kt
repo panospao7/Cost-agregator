@@ -729,7 +729,16 @@ fun ReviewCard(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/**
+ * EditReviewDialog — converted from AlertDialog to ModalBottomSheet (B9 fix).
+ *
+ * AlertDialog constrains its content height, which made the embedded
+ * LocationSearchPicker map (260dp) effectively unusable — it was either
+ * clipped or unreachable. ModalBottomSheet with skipPartiallyExpanded = true
+ * gives the content full screen height, consistent with EditLocationDialog,
+ * LocationCorrectionSheet, and PinExpenseSheet.
+ */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun EditReviewDialog(
     review: PendingReview,
@@ -759,249 +768,270 @@ fun EditReviewDialog(
     var locationOsmId by remember { mutableStateOf<String?>(null) }  // F7: capture osmId
     var showLocationPicker by remember { mutableStateOf(false) }
 
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("Fix Extraction Details") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Transaction Type Selector
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Title
+            Text(
+                "Fix Extraction Details",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
+            // Transaction Type Selector
+            Text(
+                "Transaction Type",
+                style = MaterialTheme.typography.labelMedium
+            )
+            
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                TransactionType.values().filter { it != TransactionType.UNKNOWN }.forEach { type ->
+                    val isSelected = selectedType == type
+                    val typeColor = when (type) {
+                        TransactionType.PURCHASE -> SemanticColors.DangerRed
+                        TransactionType.DEPOSIT -> SemanticColors.SuccessGreen
+                        TransactionType.WITHDRAWAL -> SemanticColors.WarningOrange
+                        TransactionType.TRANSFER -> SemanticColors.PrimaryIndigo
+                        else -> SemanticColors.TextSecondary
+                    }
+                    val typeIcon = when (type) {
+                        TransactionType.PURCHASE -> "💸"
+                        TransactionType.DEPOSIT -> "💰"
+                        TransactionType.WITHDRAWAL -> "🏧"
+                        TransactionType.TRANSFER -> "🔄"
+                        else -> "❓"
+                    }
+                    Surface(
+                        onClick = { 
+                            haptic(HapticType.Standard)
+                            selectedType = type
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) typeColor.copy(alpha = 0.2f) else Color.Transparent,
+                        border = BorderStroke(1.dp, if (isSelected) typeColor else SemanticColors.GlassBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(typeIcon)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                type.name,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (isSelected) typeColor else SemanticColors.TextSecondary
+                            )
+                        }
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = merchant,
+                onValueChange = { merchant = it },
+                label = { Text("Merchant Name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { amount = it },
+                label = { Text("Amount (€)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Text(
+                "Assign Category",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+
+            val scrollState = rememberScrollState()
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 240.dp)
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                categories.forEach { category ->
+                    Surface(
+                        onClick = { 
+                            haptic(HapticType.Standard)
+                            selectedCategoryId = category.id 
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selectedCategoryId == category.id)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                        border = BorderStroke(1.dp, if (selectedCategoryId == category.id) MaterialTheme.colorScheme.primary else Color.Transparent)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(category.icon, fontSize = 20.sp)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(category.name, style = MaterialTheme.typography.bodyMedium)
+                            if (selectedCategoryId == category.id) {
+                                Spacer(modifier = Modifier.weight(1f))
+                                Icon(Icons.Rounded.Check, null, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { applyToAll = !applyToAll }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = applyToAll,
+                    onCheckedChange = { applyToAll = it }
+                )
                 Text(
-                    "Transaction Type",
+                    text = "Apply to all past transactions for $merchant",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { approveAllPending = !approveAllPending }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = approveAllPending,
+                    onCheckedChange = { approveAllPending = it },
+                    colors = CheckboxDefaults.colors(checkedColor = SemanticColors.SuccessGreen)
+                )
+                Text(
+                    text = "Approve all identical pending transactions",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 4.dp),
+                    color = SemanticColors.SuccessGreen,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            // Location section
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Location",
                     style = MaterialTheme.typography.labelMedium
                 )
-                
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    TransactionType.values().filter { it != TransactionType.UNKNOWN }.forEach { type ->
-                        val isSelected = selectedType == type
-                        val typeColor = when (type) {
-                            TransactionType.PURCHASE -> SemanticColors.DangerRed
-                            TransactionType.DEPOSIT -> SemanticColors.SuccessGreen
-                            TransactionType.WITHDRAWAL -> SemanticColors.WarningOrange
-                            TransactionType.TRANSFER -> SemanticColors.PrimaryIndigo
-                            else -> SemanticColors.TextSecondary
-                        }
-                        val typeIcon = when (type) {
-                            TransactionType.PURCHASE -> "💸"
-                            TransactionType.DEPOSIT -> "💰"
-                            TransactionType.WITHDRAWAL -> "🏧"
-                            TransactionType.TRANSFER -> "🔄"
-                            else -> "❓"
-                        }
-                        Surface(
-                            onClick = { 
-                                haptic(HapticType.Standard)
-                                selectedType = type
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) typeColor.copy(alpha = 0.2f) else Color.Transparent,
-                            border = BorderStroke(1.dp, if (isSelected) typeColor else SemanticColors.GlassBorder)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(typeIcon)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    type.name,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (isSelected) typeColor else SemanticColors.TextSecondary
-                                )
-                            }
-                        }
-                    }
+                TextButton(onClick = { showLocationPicker = !showLocationPicker }) {
+                    Text(if (showLocationPicker) "Hide" else if (locationLat != null) "Edit" else "Add")
                 }
-
-                OutlinedTextField(
-                    value = merchant,
-                    onValueChange = { merchant = it },
-                    label = { Text("Merchant Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
-
-                OutlinedTextField(
-                    value = amount,
-                    onValueChange = { amount = it },
-                    label = { Text("Amount (€)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
-
-                Text(
-                    "Assign Category",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-
-                val scrollState = rememberScrollState()
-                Column(
-                    modifier = Modifier
-                        .heightIn(max = 240.dp)
-                        .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    categories.forEach { category ->
-                        Surface(
-                            onClick = { 
-                                haptic(HapticType.Standard)
-                                selectedCategoryId = category.id 
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            color = if (selectedCategoryId == category.id)
-                                MaterialTheme.colorScheme.primaryContainer
-                            else
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                            border = BorderStroke(1.dp, if (selectedCategoryId == category.id) MaterialTheme.colorScheme.primary else Color.Transparent)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(category.icon, fontSize = 20.sp)
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(category.name, style = MaterialTheme.typography.bodyMedium)
-                                if (selectedCategoryId == category.id) {
-                                    Spacer(modifier = Modifier.weight(1f))
-                                    Icon(Icons.Rounded.Check, null, modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-
+            }
+            if (locationLat != null && locationLon != null && !showLocationPicker) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { applyToAll = !applyToAll }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Checkbox(
-                        checked = applyToAll,
-                        onCheckedChange = { applyToAll = it }
+                    Icon(
+                        imageVector = Icons.Filled.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = SemanticColors.PrimaryIndigo
                     )
                     Text(
-                        text = "Apply to all past transactions for $merchant",
+                        text = locationAddress ?: "%.4f, %.4f".format(locationLat, locationLon),
                         style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(start = 4.dp)
-                    )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { approveAllPending = !approveAllPending }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = approveAllPending,
-                        onCheckedChange = { approveAllPending = it },
-                        colors = CheckboxDefaults.colors(checkedColor = SemanticColors.SuccessGreen)
-                    )
-                    Text(
-                        text = "Approve all identical pending transactions",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(start = 4.dp),
-                        color = SemanticColors.SuccessGreen,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Location section
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Location",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    TextButton(onClick = { showLocationPicker = !showLocationPicker }) {
-                        Text(if (showLocationPicker) "Hide" else if (locationLat != null) "Edit" else "Add")
-                    }
-                }
-                if (locationLat != null && locationLon != null && !showLocationPicker) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.LocationOn,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                            tint = SemanticColors.PrimaryIndigo
-                        )
-                        Text(
-                            text = locationAddress ?: "%.4f, %.4f".format(locationLat, locationLon),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = SemanticColors.PrimaryIndigo
-                        )
-                    }
-                }
-                if (showLocationPicker) {
-                    LocationSearchPicker(
-                        currentLat = locationLat,
-                        currentLon = locationLon,
-                        currentAddress = locationAddress,
-                        onResult = { lat, lon, address, osmId ->
-                            locationLat = lat
-                            locationLon = lon
-                            locationAddress = address
-                            locationOsmId = osmId  // F7: capture osmId instead of discarding it
-                            if (lat != null) showLocationPicker = false
-                        },
-                        geocodingService = geocodingService,
-                        // Bias toward the review's existing location if available
-                        biasLat = locationLat,
-                        biasLon = locationLon
+                        color = SemanticColors.PrimaryIndigo
                     )
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    haptic(HapticType.Success)
-                    val parsedAmount = AmountUtils.parseAmount(amount)
-                    val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - review.suggestedAmount) > 0.001) parsedAmount else null
-                    val editedMerchant = merchant.takeIf { it != review.suggestedMerchant }
-                    val editedCategory = selectedCategoryId.takeIf { it != review.suggestedCategoryId }
-                    val editedType = selectedType.takeIf { 
-                        try { TransactionType.valueOf(review.suggestedType) != it }
-                        catch (e: Exception) { true }
-                    }
-                    onSave(editedAmount, editedMerchant, editedCategory, editedType, applyToAll, approveAllPending,
-                        locationLat.takeIf { it != review.suggestedLatitude },
-                        locationLon.takeIf { it != review.suggestedLongitude },
-                        locationAddress.takeIf { locationLat != review.suggestedLatitude || locationLon != review.suggestedLongitude },
-                        locationOsmId  // F7: pass captured osmId through
-                    )
-                },
-                shape = RoundedCornerShape(12.dp)
+            if (showLocationPicker) {
+                LocationSearchPicker(
+                    currentLat = locationLat,
+                    currentLon = locationLon,
+                    currentAddress = locationAddress,
+                    onResult = { lat, lon, address, osmId ->
+                        locationLat = lat
+                        locationLon = lon
+                        locationAddress = address
+                        locationOsmId = osmId  // F7: capture osmId instead of discarding it
+                        if (lat != null) showLocationPicker = false
+                    },
+                    geocodingService = geocodingService,
+                    // Bias toward the review's existing location if available
+                    biasLat = locationLat,
+                    biasLon = locationLon
+                )
+            }
+
+            // Action buttons
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Confirm Fix")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = {
-                haptic(HapticType.Standard)
-                onDismiss()
-            }) {
-                Text("Cancel")
+                TextButton(onClick = {
+                    haptic(HapticType.Standard)
+                    onDismiss()
+                }) {
+                    Text("Cancel")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        haptic(HapticType.Success)
+                        val parsedAmount = AmountUtils.parseAmount(amount)
+                        val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - review.suggestedAmount) > 0.001) parsedAmount else null
+                        val editedMerchant = merchant.takeIf { it != review.suggestedMerchant }
+                        val editedCategory = selectedCategoryId.takeIf { it != review.suggestedCategoryId }
+                        val editedType = selectedType.takeIf { 
+                            try { TransactionType.valueOf(review.suggestedType) != it }
+                            catch (e: Exception) { true }
+                        }
+                        onSave(editedAmount, editedMerchant, editedCategory, editedType, applyToAll, approveAllPending,
+                            locationLat.takeIf { it != review.suggestedLatitude },
+                            locationLon.takeIf { it != review.suggestedLongitude },
+                            locationAddress.takeIf { locationLat != review.suggestedLatitude || locationLon != review.suggestedLongitude },
+                            locationOsmId  // F7: pass captured osmId through
+                        )
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Confirm Fix")
+                }
             }
         }
-    )
+    }
 }

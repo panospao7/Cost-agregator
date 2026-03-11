@@ -183,7 +183,7 @@ class LocationResolver @Inject constructor(
                 lon = deviceLocation.second,
                 merchantName = cleanedName,
                 radiusMetres = AppConfig.Location.OVERPASS_SEARCH_RADIUS_M
-            )
+            ).filter { !isNullIsland(it.latitude, it.longitude) }
             if (pois.isNotEmpty()) {
                 Log.d(TAG, "Overpass found ${pois.size} candidates for '$cleanedName'")
                 return if (pois.size == 1) {
@@ -226,6 +226,7 @@ class LocationResolver @Inject constructor(
         }
         lastRequestAt = System.currentTimeMillis()
         geocodingService.search(name, biasLat, biasLon, cityHint, bounded)
+            ?.takeUnless { isNullIsland(it.latitude, it.longitude) }
     }
 
     private fun GeocodingResult.toResolved() = LocationResolutionResult.Resolved(
@@ -236,6 +237,14 @@ class LocationResolver @Inject constructor(
         displayAddress = displayAddress,
         confidence = confidence
     )
+
+    /**
+     * Reject coordinates at or very near (0.0, 0.0) — "Null Island".
+     * GPS hardware, uninitialised DB fields, and some geocoders can emit
+     * (0, 0) which is in the Gulf of Guinea, not a real merchant location.
+     */
+    private fun isNullIsland(lat: Double, lon: Double): Boolean =
+        Math.abs(lat) < 0.01 && Math.abs(lon) < 0.01
 
     private companion object {
         const val TAG = "LocationResolver"

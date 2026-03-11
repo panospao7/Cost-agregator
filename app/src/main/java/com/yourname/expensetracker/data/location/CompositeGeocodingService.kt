@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import java.text.Normalizer
@@ -89,16 +90,20 @@ class CompositeGeocodingService @Inject constructor(
         val allResults: List<Pair<String, List<GeocodingResult>>> = coroutineScope {
             val jobs = mutableListOf<Deferred<Pair<String, List<GeocodingResult>>>>()
 
+            // B12 fix: Use Dispatchers.IO for each async job. The geocoding services
+            // use blocking OkHttp .execute() calls. Without an explicit IO dispatcher,
+            // if the caller is on Main, the UI thread would be blocked.
+
             // Always fire Photon + Nominatim (free, no quota concerns)
-            jobs += async { "Photon" to safeSearch("Photon") { photon.searchMultiple(query, biasLat, biasLon, limit) } }
-            jobs += async { "Nominatim" to safeSearch("Nominatim") { nominatim.searchMultiple(query, biasLat, biasLon, limit) } }
+            jobs += async(Dispatchers.IO) { "Photon" to safeSearch("Photon") { photon.searchMultiple(query, biasLat, biasLon, limit) } }
+            jobs += async(Dispatchers.IO) { "Nominatim" to safeSearch("Nominatim") { nominatim.searchMultiple(query, biasLat, biasLon, limit) } }
 
             // Geoapify fires for complex queries (free tier 3000/day, generous)
             // Google Places fires only when explicitly enabled by the user
             if (complex) {
-                jobs += async { "Geoapify" to safeSearch("Geoapify") { geoapify.searchMultiple(query, biasLat, biasLon, limit) } }
+                jobs += async(Dispatchers.IO) { "Geoapify" to safeSearch("Geoapify") { geoapify.searchMultiple(query, biasLat, biasLon, limit) } }
                 if (useGoogle) {
-                    jobs += async { "GooglePlaces" to safeSearch("GooglePlaces") { googlePlaces.searchMultiple(query, biasLat, biasLon, limit) } }
+                    jobs += async(Dispatchers.IO) { "GooglePlaces" to safeSearch("GooglePlaces") { googlePlaces.searchMultiple(query, biasLat, biasLon, limit) } }
                 }
             }
 

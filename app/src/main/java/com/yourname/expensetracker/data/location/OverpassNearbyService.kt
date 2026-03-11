@@ -45,13 +45,14 @@ class OverpassNearbyService @Inject constructor() : NearbyPoiService {
             .build()
 
         return try {
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                Log.w(TAG, "Overpass HTTP ${response.code}")
-                return emptyList()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "Overpass HTTP ${response.code}")
+                    return@use emptyList()
+                }
+                val responseBody = response.body?.string() ?: return@use emptyList()
+                parseAndRank(responseBody, lat, lon, merchantName)
             }
-            val responseBody = response.body?.string() ?: return emptyList()
-            parseAndRank(responseBody, lat, lon, merchantName)
         } catch (e: IOException) {
             Log.w(TAG, "Overpass network error: ${e.message}")
             emptyList()

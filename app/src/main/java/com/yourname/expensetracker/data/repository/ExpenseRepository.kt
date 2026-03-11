@@ -402,8 +402,10 @@ class ExpenseRepository @Inject constructor(
 
     /**
      * Returns location clusters for a merchant based on historically located expenses.
+     * Uses case-insensitive, whitespace-normalized matching so variant raw
+     * merchant strings (from different SMS sources) still cluster together.
      * Used by Feature A (Merchant Location Affinity) in the resolver.
      */
-    suspend fun getMerchantLocationClusters(normalizedMerchant: String): List<LocationCluster> =
-        expenseDao.getMerchantLocationClusters(normalizedMerchant)
+    suspend fun getMerchantLocationClusters(merchantName: String): List<LocationCluster> =
+        expenseDao.getMerchantLocationClusters(merchantName)
 }

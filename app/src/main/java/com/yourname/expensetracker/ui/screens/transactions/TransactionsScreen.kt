@@ -1597,7 +1597,12 @@ private fun EditLocationDialog(
         )
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        // B9: Open fully expanded so the embedded map has enough room and the
+        // sheet's partial-expand swipe gesture doesn't compete with map panning.
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
