@@ -524,23 +524,6 @@ interface ExpenseDao {
     fun getUnlocatedExpensesFlow(limit: Int = 100): Flow<List<Expense>>
 
     /**
-     * Aggregate spend by merchant for expenses that have coordinates.
-     * Used by [SpendingHeatmapEngine] to weight heatmap intensity.
-     */
-    @Query("""
-        SELECT merchant, SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                                  WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                                  ELSE amount END) as total, COUNT(*) as cnt
-        FROM expenses
-        WHERE latitude IS NOT NULL
-          AND transactionType = 'PURCHASE'
-          AND isNotMine = 0
-        GROUP BY merchant
-        ORDER BY total DESC
-    """)
-    suspend fun getLocatedMerchantTotals(): List<MerchantTotal>
-
-    /**
      * Expenses within a geographic bounding box.
      * SQLite has no native geo math so we use a lat/lon bounding box pre-filter;
      * callers can apply an exact Haversine filter if needed.
@@ -609,12 +592,6 @@ data class MerchantSuggestion(
     val categoryId: Long?,
     val avgAmount: Double,
     val txCount: Int
-)
-
-data class MerchantTotal(
-    val merchant: String,
-    val total: Double,
-    val cnt: Int
 )
 
 data class CategoryTotal(

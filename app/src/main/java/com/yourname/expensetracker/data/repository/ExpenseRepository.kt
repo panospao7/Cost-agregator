@@ -397,8 +397,6 @@ class ExpenseRepository @Inject constructor(
     /** Reactive flow of unlocated expenses — used by Map tab unlocated panel. */
     fun getUnlocatedExpensesFlow(limit: Int = 100) = expenseDao.getUnlocatedExpensesFlow(limit)
 
-    suspend fun getLocatedMerchantTotals() = expenseDao.getLocatedMerchantTotals()
-
     suspend fun getExpensesInBoundingBox(
         minLat: Double, maxLat: Double,
         minLon: Double, maxLon: Double
