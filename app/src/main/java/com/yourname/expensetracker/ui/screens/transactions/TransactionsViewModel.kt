@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import javax.inject.Inject
@@ -349,7 +350,8 @@ class TransactionsViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 if (applyToAll) {
-                    expenseRepository.updateExpenseCategoryBulk(expense.merchant, categoryId)
+                    val key = expense.merchantKey ?: MerchantKeyGenerator.generate(expense.merchant)
+                    expenseRepository.updateExpenseCategoryBulk(key, categoryId)
                     _successMessage.emit("Category updated for all ${expense.merchant} transactions")
                 } else {
                     expenseRepository.updateExpenseCategory(expense, categoryId)

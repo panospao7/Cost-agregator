@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -332,20 +333,22 @@ class InsightsEngine @Inject constructor(
     ): List<MerchantInsight> {
         val stats = expenseRepository.getAllMerchantStats()
 
-        // For std deviation, compute from raw data grouped by merchant
-        val purchasesByMerchant = allExpenses
+        // For std deviation, compute from raw data grouped by canonical merchantKey
+        // so that variant spellings ("Σκλαβενίτης" vs "sklavenitis") merge correctly.
+        val purchasesByKey = allExpenses
             .filter { it.transactionType == TransactionType.PURCHASE }
-            .groupBy { it.merchant }
+            .groupBy { it.merchantKey ?: MerchantKeyGenerator.generate(it.merchant) }
 
         return stats.map { ms ->
-            val amounts = purchasesByMerchant[ms.merchantName]?.map { it.amount } ?: emptyList()
+            // ms.merchantName is the canonical key (GROUP BY merchantKey)
+            val amounts = purchasesByKey[ms.merchantName]?.map { it.amount } ?: emptyList()
             val stdDev = if (amounts.size >= 3) calculateStdDev(amounts) else null
 
             val isRecurring = ms.transactionCount >= 2 &&
                     (ms.maxAmount - ms.minAmount) < (ms.averageAmount * 0.15)
 
             MerchantInsight(
-                merchant = ms.merchantName,
+                merchant = ms.displayName,  // human-readable name for UI
                 avgAmount = ms.averageAmount,
                 minAmount = ms.minAmount,
                 maxAmount = ms.maxAmount,

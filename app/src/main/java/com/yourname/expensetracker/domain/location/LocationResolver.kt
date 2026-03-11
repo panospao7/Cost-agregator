@@ -98,9 +98,10 @@ class LocationResolver @Inject constructor(
         // Query past located expenses for this merchant, find the top cluster,
         // and use it to bias cache lookup and Nominatim with bounded=1.
         // This runs BEFORE global cache so area-scoped results take priority.
-        // Use rawMerchantName because expenses.merchant stores the raw string.
+        // Use cacheKey (canonical merchantKey) so all spelling variants of a
+        // merchant name resolve to the same cluster bucket.
         val clusters = try {
-            expenseRepository.getMerchantLocationClusters(rawMerchantName)
+            expenseRepository.getMerchantLocationClusters(cacheKey)
         } catch (e: Exception) {
             Log.w(TAG, "Cluster query failed for '$cleanedName'", e)
             emptyList()

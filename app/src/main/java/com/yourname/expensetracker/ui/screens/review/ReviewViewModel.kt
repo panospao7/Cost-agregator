@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import timber.log.Timber
 // ...
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -122,7 +123,8 @@ class ReviewViewModel @Inject constructor(
                     val categoryId = finalCategoryId
                     
                     if (merchantName != null && categoryId != null) {
-                        expenseRepository.updateExpenseCategoryBulk(merchantName, categoryId)
+                        val merchantKey = MerchantKeyGenerator.generate(merchantName)
+                        expenseRepository.updateExpenseCategoryBulk(merchantKey, categoryId)
                         // Propagation to other pending reviews
                         reviewQueueRepository.updatePendingReviewCategoryBulk(merchantName, categoryId)
                     }

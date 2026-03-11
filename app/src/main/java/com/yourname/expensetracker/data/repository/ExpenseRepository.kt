@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.MonthlyDepositTotal
 import com.yourname.expensetracker.data.database.dao.LocationCluster
@@ -198,15 +199,15 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
-    suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) {
+    suspend fun updateExpenseCategoryBulk(merchantKey: String, newCategoryId: Long) {
         categoryUpdateMutex.withLock {
-            expenseDao.updateCategoryForMerchant(merchant, newCategoryId)
-            merchantCategoryRepository.learnPattern(merchant, newCategoryId)
+            expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
+            merchantCategoryRepository.learnPattern(merchantKey, newCategoryId)
 
             // Record as a bulk correction for learning
             val correction = UserCorrection(
                 packageName = "bulk_edit",
-                originalMerchant = merchant,
+                originalMerchant = merchantKey,
                 correctedMerchant = null,
                 originalAmount = 0.0,
                 correctedAmount = null,
@@ -217,7 +218,7 @@ class ExpenseRepository @Inject constructor(
                 wasRejected = false,
                 wasApproved = true,
                 notificationTitle = "Bulk category update",
-                notificationText = "Applied to all transactions for $merchant"
+                notificationText = "Applied to all transactions for $merchantKey"
             )
             userCorrectionDao.insert(correction)
         }
@@ -225,8 +226,9 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun updateExpenseMerchantBulk(oldMerchant: String, newMerchant: String) {
         if (oldMerchant == newMerchant) return
-        
-        expenseDao.updateMerchantForMerchant(oldMerchant, newMerchant)
+        val oldKey = MerchantKeyGenerator.generate(oldMerchant)
+        val newKey = MerchantKeyGenerator.generate(newMerchant)
+        expenseDao.updateMerchantForMerchant(oldKey, newMerchant, newKey)
         merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
     }
 
@@ -236,8 +238,10 @@ class ExpenseRepository @Inject constructor(
         val oldMerchant = expense.merchant
         
         if (applyToAll) {
-            // Update all approved expenses with this name
-            expenseDao.updateMerchantForMerchant(oldMerchant, newMerchant)
+            // Update all approved expenses with this canonical key
+            val oldKey = expense.merchantKey ?: MerchantKeyGenerator.generate(oldMerchant)
+            val newKey = MerchantKeyGenerator.generate(newMerchant)
+            expenseDao.updateMerchantForMerchant(oldKey, newMerchant, newKey)
             // Also update any pending reviews with this name
             pendingReviewDao.bulkRenameMerchant(oldMerchant, newMerchant)
         } else {
@@ -402,12 +406,13 @@ class ExpenseRepository @Inject constructor(
 
     /**
      * Returns location clusters for a merchant based on historically located expenses.
-     * Uses case-insensitive, whitespace-normalized matching so variant raw
-     * merchant strings (from different SMS sources) still cluster together.
+     * Matches by [merchantKey] (the canonical key from [MerchantKeyGenerator]) so that
+     * variant raw merchant strings ("Σκλαβενίτης", "sklavenitis", etc.) all resolve
+     * to the same cluster bucket.
      * Used by Feature A (Merchant Location Affinity) in the resolver.
      */
-    suspend fun getMerchantLocationClusters(merchantName: String): List<LocationCluster> =
-        expenseDao.getMerchantLocationClusters(merchantName)
+    suspend fun getMerchantLocationClusters(merchantKey: String): List<LocationCluster> =
+        expenseDao.getMerchantLocationClusters(merchantKey)
 
     // -------------------------------------------------------------------------
     // Merchant key backfill (v32)

@@ -85,11 +85,11 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE id = :expenseId")
     suspend fun updateCategory(expenseId: Long, categoryId: Long)
 
-    @Query("UPDATE expenses SET categoryId = :categoryId WHERE merchant = :merchant")
-    suspend fun updateCategoryForMerchant(merchant: String, categoryId: Long)
+    @Query("UPDATE expenses SET categoryId = :categoryId WHERE merchantKey = :merchantKey")
+    suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: Long)
 
-    @Query("UPDATE expenses SET merchant = :newMerchant WHERE merchant = :oldMerchant")
-    suspend fun updateMerchantForMerchant(oldMerchant: String, newMerchant: String)
+    @Query("UPDATE expenses SET merchant = :newMerchant, merchantKey = :newMerchantKey WHERE merchantKey = :oldMerchantKey")
+    suspend fun updateMerchantForMerchant(oldMerchantKey: String, newMerchant: String, newMerchantKey: String)
 
     @Query("UPDATE expenses SET merchant = :merchant WHERE id = :expenseId")
     suspend fun updateMerchant(expenseId: Long, merchant: String)
@@ -171,7 +171,7 @@ interface ExpenseDao {
         SELECT merchant, categoryId, AVG(amount) as avgAmount, COUNT(*) as txCount
         FROM expenses
         WHERE UPPER(merchant) LIKE '%' || UPPER(:query) || '%'
-        GROUP BY UPPER(merchant)
+        GROUP BY merchantKey
         ORDER BY txCount DESC
         LIMIT 10
     """)
@@ -208,19 +208,6 @@ interface ExpenseDao {
         AND isNotMine = 0
     """)
     suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
-
-    @Query("""
-        SELECT merchant, SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                                  WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                                  ELSE amount END) as total, COUNT(*) as cnt 
-        FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
-        AND date >= :startDate AND date <= :endDate
-        AND isNotMine = 0
-        GROUP BY UPPER(merchant)
-        ORDER BY total DESC
-    """)
-    suspend fun getMerchantTotalsBetween(startDate: Long, endDate: Long): List<MerchantTotal>
 
     @Query("""
         SELECT categoryId, SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
@@ -281,7 +268,8 @@ interface ExpenseDao {
 
     // Merchant averages (merchants with 2+ transactions)
     @Query("""
-        SELECT merchant as merchantName, 
+        SELECT merchantKey as merchantName, 
+               MIN(merchant) as displayName,
                SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                         ELSE amount END) as totalAmount,
@@ -294,7 +282,8 @@ interface ExpenseDao {
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
         AND isNotMine = 0
-        GROUP BY merchant
+        AND merchantKey IS NOT NULL
+        GROUP BY merchantKey
         HAVING transactionCount >= 2
         ORDER BY totalAmount DESC
     """)
@@ -302,7 +291,8 @@ interface ExpenseDao {
 
     // All merchant stats (including single-transaction merchants)
     @Query("""
-        SELECT merchant as merchantName, 
+        SELECT merchantKey as merchantName, 
+               MIN(merchant) as displayName,
                SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                         ELSE amount END) as totalAmount,
@@ -315,14 +305,16 @@ interface ExpenseDao {
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
         AND isNotMine = 0
-        GROUP BY merchant
+        AND merchantKey IS NOT NULL
+        GROUP BY merchantKey
         ORDER BY totalAmount DESC
     """)
     suspend fun getAllMerchantStats(): List<MerchantStats>
 
     // Top merchants by total spending for a period
     @Query("""
-        SELECT merchant as merchantName, 
+        SELECT merchantKey as merchantName, 
+               MIN(merchant) as displayName,
                SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                         ELSE amount END) as totalAmount,
@@ -336,7 +328,8 @@ interface ExpenseDao {
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
-        GROUP BY merchant
+        AND merchantKey IS NOT NULL
+        GROUP BY merchantKey
         ORDER BY totalAmount DESC
         LIMIT :limit
     """)
@@ -358,12 +351,12 @@ interface ExpenseDao {
         SELECT * FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
-        AND merchant = :merchant
+        AND merchantKey = :merchantKey
         AND isNotMine = 0
         ORDER BY amount DESC
         LIMIT 1
     """)
-    suspend fun getLargestExpenseForMerchant(merchant: String, startMs: Long, endMs: Long): Expense?
+    suspend fun getLargestExpenseForMerchant(merchantKey: String, startMs: Long, endMs: Long): Expense?
 
     // Daily spending totals for a period (for pace calculation)
     @Query("""
@@ -381,7 +374,8 @@ interface ExpenseDao {
 
     // Recurring candidates: merchants that appear in multiple distinct months
     @Query("""
-        SELECT merchant as merchantName, 
+        SELECT merchantKey as merchantName, 
+               MIN(merchant) as displayName,
                SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                         ELSE amount END) as totalAmount,
@@ -394,7 +388,8 @@ interface ExpenseDao {
         FROM expenses 
         WHERE transactionType = 'PURCHASE'
         AND isNotMine = 0
-        GROUP BY merchant
+        AND merchantKey IS NOT NULL
+        GROUP BY merchantKey
         HAVING transactionCount >= 2 
         AND (maxAmount - minAmount) < (averageAmount * 0.15)
         ORDER BY transactionCount DESC
@@ -582,14 +577,14 @@ interface ExpenseDao {
             AVG(longitude) AS centerLon,
             COUNT(*)       AS count
         FROM expenses
-        WHERE UPPER(REPLACE(merchant, ' ', '')) = UPPER(REPLACE(:merchantName, ' ', ''))
+        WHERE merchantKey = :merchantKey
           AND latitude IS NOT NULL
           AND longitude IS NOT NULL
         GROUP BY CAST(latitude / 0.045 AS INTEGER), CAST(longitude / 0.045 AS INTEGER)
         ORDER BY count DESC
         LIMIT 5
     """)
-    suspend fun getMerchantLocationClusters(merchantName: String): List<LocationCluster>
+    suspend fun getMerchantLocationClusters(merchantKey: String): List<LocationCluster>
 
     // -------------------------------------------------------------------------
     // Merchant key backfill (v32)
@@ -629,7 +624,8 @@ data class CategoryTotal(
 )
 
 data class MerchantStats(
-    val merchantName: String,
+    val merchantName: String,  // canonical merchantKey — used for grouping and DB lookups
+    val displayName: String,   // MIN(merchant) — human-readable name for UI display
     val totalAmount: Double,
     val transactionCount: Int,
     val averageAmount: Double,
