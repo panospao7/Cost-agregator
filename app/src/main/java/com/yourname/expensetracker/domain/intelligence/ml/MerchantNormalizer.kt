@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.StringBKTree
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -95,7 +96,7 @@ class MerchantNormalizer @Inject constructor(
         val fuzzyResult = fuzzyMatch(cleaned, normalizedKey)
         if (fuzzyResult != null && fuzzyResult.confidence >= 0.95f) {
             // Only auto-learn very high confidence fuzzy matches (95%+)
-            repository.linkAliasToCanonical(rawName, fuzzyResult.canonical.id, isUserDefined = false, timestamp = timeProvider.now())
+            repository.linkAliasToCanonical(rawName, normalizedKey, fuzzyResult.canonical.id, isUserDefined = false, timestamp = timeProvider.now())
             return@withContext fuzzyResult
         } else if (fuzzyResult != null) {
             // Lower confidence fuzzy matches - use result but don't auto-learn
@@ -105,7 +106,7 @@ class MerchantNormalizer @Inject constructor(
         // 4. Create new
         if (autoCreate) {
             val newCanonical = createNewMerchant(cleaned, normalizedKey, categoryId)
-            repository.linkAliasToCanonical(rawName, newCanonical.id, isUserDefined = false, timestamp = timeProvider.now())
+            repository.linkAliasToCanonical(rawName, normalizedKey, newCanonical.id, isUserDefined = false, timestamp = timeProvider.now())
             invalidateTreeCache()
             
             return@withContext MerchantLookupResult(
@@ -146,7 +147,8 @@ class MerchantNormalizer @Inject constructor(
         }
 
         // 3. Link the original POS name to this brand ID (just in case it wasn't a canonical)
-        repository.linkAliasToCanonical(rawName, brandId, isUserDefined = true, timestamp = timeProvider.now())
+        val rawNameKey = MerchantKeyGenerator.generate(rawName)
+        repository.linkAliasToCanonical(rawName, rawNameKey, brandId, isUserDefined = true, timestamp = timeProvider.now())
         
         Timber.i("Learned alias: $rawName -> $brandName")
         invalidateTreeCache()
@@ -155,18 +157,7 @@ class MerchantNormalizer @Inject constructor(
     fun cleanMerchantName(rawName: String): String {
         return merchantRules.cleanMerchantName(rawName)
     }
-    private fun createSearchKey(name: String): String {
-        // Transliterate Greek → Latin so "Σκλαβενίτης" and "Sklavenitis" share the same
-        // search key and are treated as the same canonical merchant for dedup purposes.
-        val latinName = if (greeklishNormalizer.isGreekText(name)) {
-            greeklishNormalizer.toLatin(name)
-        } else {
-            name
-        }
-        return latinName.lowercase()
-            .replace(Regex("[^a-z0-9]"), "")
-            .trim()
-    }
+    private fun createSearchKey(name: String): String = MerchantKeyGenerator.generate(name)
 
     private suspend fun fuzzyMatch(cleaned: String, normalizedKey: String): MerchantLookupResult? {
         val tree = getOrBuildTree()

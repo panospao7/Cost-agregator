@@ -62,8 +62,8 @@ class MerchantNormalizationRepository @Inject constructor(
     suspend fun deleteUnusedAliasesOlderThan(olderThan: Long): Int =
         dao.deleteUnusedAliasesOlderThan(olderThan)
 
-    suspend fun linkAliasToCanonical(rawName: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) =
-        dao.linkAliasToCanonical(rawName, canonicalId, isUserDefined, timestamp)
+    suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) =
+        dao.linkAliasToCanonical(rawName, normalizedKey, canonicalId, isUserDefined, timestamp)
 
     suspend fun getCanonicalCount(): Int =
         dao.getCanonicalCount()
