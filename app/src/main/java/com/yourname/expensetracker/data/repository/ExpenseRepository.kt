@@ -342,9 +342,6 @@ class ExpenseRepository @Inject constructor(
     suspend fun getDailyTotalsForPeriod(startMs: Long, endMs: Long): List<DailyTotal> =
         expenseDao.getDailyTotalsForPeriod(startMs, endMs)
 
-    suspend fun getRecurringCandidates(): List<MerchantStats> =
-        expenseDao.getRecurringCandidates()
-
     suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long, timeZoneOffset: Int): List<DayOfWeekTotal> =
         expenseDao.getDayOfWeekPattern(startMs, endMs, timeZoneOffset)
 

@@ -372,30 +372,6 @@ interface ExpenseDao {
     """)
     suspend fun getDailyTotalsForPeriod(startMs: Long, endMs: Long): List<DailyTotal>
 
-    // Recurring candidates: merchants that appear in multiple distinct months
-    @Query("""
-        SELECT merchantKey as merchantName, 
-               MIN(merchant) as displayName,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                        ELSE amount END) as totalAmount,
-               COUNT(*) as transactionCount,
-               AVG(amount) as averageAmount,
-               MIN(amount) as minAmount,
-               MAX(amount) as maxAmount,
-               MIN(date) as firstDate, 
-               MAX(date) as lastDate
-        FROM expenses 
-        WHERE transactionType = 'PURCHASE'
-        AND isNotMine = 0
-        AND merchantKey IS NOT NULL
-        GROUP BY merchantKey
-        HAVING transactionCount >= 2 
-        AND (maxAmount - minAmount) < (averageAmount * 0.15)
-        ORDER BY transactionCount DESC
-    """)
-    suspend fun getRecurringCandidates(): List<MerchantStats>
-
     // Day-of-week spending pattern
     @Query("""
         SELECT 

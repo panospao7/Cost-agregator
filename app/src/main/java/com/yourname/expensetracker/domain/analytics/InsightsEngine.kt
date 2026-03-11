@@ -29,7 +29,6 @@ class InsightsEngine @Inject constructor(
     private val anomalyDetector: AnomalyDetector,
     private val monthlyComparisonCalculator: MonthlyComparisonCalculator,
     private val categoryInsightEngine: CategoryInsightEngine,
-    private val merchantInsightEngine: MerchantInsightEngine,
     private val dayOfWeekAnalyzer: DayOfWeekAnalyzer
 ) {
 

@@ -23,7 +23,6 @@ class InsightsEngineTest {
         val anomalyDetector = mockk<AnomalyDetector>(relaxed = true)
         val monthlyComparisonCalculator = mockk<MonthlyComparisonCalculator>(relaxed = true)
         val categoryInsightEngine = mockk<CategoryInsightEngine>(relaxed = true)
-        val merchantInsightEngine = mockk<MerchantInsightEngine>(relaxed = true)
         val dayOfWeekAnalyzer = mockk<DayOfWeekAnalyzer>(relaxed = true)
         
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
@@ -37,7 +36,6 @@ class InsightsEngineTest {
             anomalyDetector = anomalyDetector,
             monthlyComparisonCalculator = monthlyComparisonCalculator,
             categoryInsightEngine = categoryInsightEngine,
-            merchantInsightEngine = merchantInsightEngine,
             dayOfWeekAnalyzer = dayOfWeekAnalyzer
         )
     }
