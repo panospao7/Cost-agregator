@@ -154,7 +154,7 @@ class ExpenseRepository @Inject constructor(
                    e.transferAccountName, e.isNotMine, e.ownerName, 
                    e.isSharedExpense, e.sharedWithName, e.mySharePercentage, e.myShareAmount,
                    e.latitude, e.longitude, e.locationSource, e.placeId,
-                   e.backfillAttempts, e.resolvedAddress
+                   e.backfillAttempts, e.resolvedAddress, e.merchantKey
             FROM expenses e
             $whereClause
             ORDER BY e.${sortOrder.sql}
