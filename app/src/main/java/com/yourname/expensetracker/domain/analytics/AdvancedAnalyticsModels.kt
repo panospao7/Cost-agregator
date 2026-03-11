@@ -76,6 +76,7 @@ enum class CategoryTrendDirection {
 @Immutable
 data class EnhancedMerchantAnalytics(
     val merchant: String,
+    val merchantKey: String,
     val period: PeriodRange,
     
     // Core metrics

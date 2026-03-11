@@ -51,7 +51,7 @@ interface ExpenseDao {
         WHERE date >= :startMs AND date <= :endMs 
         AND (:type IS NULL OR transactionType = :type)
         AND (:categoryId IS NULL OR categoryId = :categoryId)
-        AND (:merchant IS NULL OR merchant = :merchant)
+        AND (:merchantKey IS NULL OR merchantKey = :merchantKey)
         ORDER BY date DESC
     """)
     fun getExpensesWithCategoryFilteredFlow(
@@ -59,7 +59,7 @@ interface ExpenseDao {
         endMs: Long, 
         type: String?,
         categoryId: Long?, 
-        merchant: String?
+        merchantKey: String?
     ): Flow<List<ExpenseWithCategory>>
 
     @Transaction

@@ -136,7 +136,7 @@ class TransactionsViewModel @Inject constructor(
                     endMs = end,
                     type = params.filter.transactionType,
                     categoryId = params.filter.categoryId,
-                    merchant = params.filter.merchantName
+                    merchantKey = params.filter.merchantKey
                 )
             } else if (params.tab == TransactionTab.ALL) {
                 _pagedExpenses

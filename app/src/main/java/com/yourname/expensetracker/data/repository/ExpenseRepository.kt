@@ -61,14 +61,14 @@ class ExpenseRepository @Inject constructor(
         endMs: Long, 
         type: TransactionType?,
         categoryId: Long?, 
-        merchant: String?
+        merchantKey: String?
     ): Flow<List<ExpenseWithCategory>> =
         expenseDao.getExpensesWithCategoryFilteredFlow(
             startMs = startMs,
             endMs = endMs,
             type = type?.name,
             categoryId = categoryId,
-            merchant = merchant
+            merchantKey = merchantKey
         )
 
     suspend fun getExpensesPaged(limit: Int, offset: Int): List<ExpenseWithCategory> =

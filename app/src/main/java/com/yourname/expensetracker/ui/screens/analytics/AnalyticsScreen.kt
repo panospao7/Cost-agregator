@@ -164,6 +164,7 @@ fun AnalyticsScreen(
                                 onNavigateToTransactions?.invoke(
                                     TransactionFilter(
                                         merchantName = merch.merchant,
+                                        merchantKey = merch.merchantKey,
                                         dateRange = state.currentDateRange
                                     )
                                 )
