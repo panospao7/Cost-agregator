@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -102,7 +103,8 @@ class ReviewQueueRepository @Inject constructor(
                 review.suggestedLatitude != null -> AppConfig.Location.SOURCE_DEVICE_GPS
                 else -> null
             },
-            resolvedAddress = finalAddress
+            resolvedAddress = finalAddress,
+            merchantKey = MerchantKeyGenerator.generate(merchant)
         )
 
         // Wrap all DB mutations in a real Room transaction
@@ -280,7 +282,8 @@ class ReviewQueueRepository @Inject constructor(
                     paymentMethod = PaymentMethod.CARD,
                     isManualEntry = false,
                     notes = "Manually recovered from debug log",
-                    dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp)
+                    dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp),
+                    merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
                 )
 
                 val expenseId = database.withTransaction {

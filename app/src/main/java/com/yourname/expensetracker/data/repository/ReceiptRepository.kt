@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -244,7 +245,8 @@ class ReceiptRepository @Inject constructor(
             dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date),
             latitude = latitude,
             longitude = longitude,
-            locationSource = locationSource
+            locationSource = locationSource,
+            merchantKey = MerchantKeyGenerator.generate(normalizedMerchant)
         )
 
         val expenseId = expenseDao.insertAtomic(expense)

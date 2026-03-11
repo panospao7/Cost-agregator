@@ -590,6 +590,23 @@ interface ExpenseDao {
         LIMIT 5
     """)
     suspend fun getMerchantLocationClusters(merchantName: String): List<LocationCluster>
+
+    // -------------------------------------------------------------------------
+    // Merchant key backfill (v32)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Fetch a batch of expenses whose [merchantKey] has not yet been populated.
+     * Used by [com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker].
+     */
+    @Query("SELECT * FROM expenses WHERE merchantKey IS NULL LIMIT :limit")
+    suspend fun getExpensesWithNullMerchantKey(limit: Int): List<Expense>
+
+    /**
+     * Write the computed canonical key back for a single expense row.
+     */
+    @Query("UPDATE expenses SET merchantKey = :merchantKey WHERE id = :expenseId")
+    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String)
 }
 
 data class MerchantSuggestion(

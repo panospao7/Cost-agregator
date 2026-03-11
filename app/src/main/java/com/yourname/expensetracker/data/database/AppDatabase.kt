@@ -24,7 +24,7 @@ import androidx.room.*
         MerchantLocation::class,
         MerchantLocationCorrection::class
     ],
-        version = 31,
+        version = 32,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -630,6 +630,25 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt " +
                     "ON merchant_locations (lastResolvedAt)"
+                )
+            }
+        }
+
+        // Migration 31 -> 32: Add merchantKey column to expenses.
+        // merchantKey is the unified canonical key produced by MerchantKeyGenerator:
+        //   Greek → Latin (diphthong-aware) → lowercase → strip [^a-z0-9].
+        // The column is added as NULL so the migration is instant (no table rebuild).
+        // MerchantKeyBackfillWorker runs asynchronously on first launch after upgrade
+        // to populate the column for all existing rows using the real Kotlin logic
+        // (SQLite cannot replicate the diphthong-aware transliteration accurately).
+        val MIGRATION_31_32 = object : androidx.room.migration.Migration(31, 32) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE expenses ADD COLUMN merchantKey TEXT DEFAULT NULL"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_expenses_merchantKey " +
+                    "ON expenses (merchantKey)"
                 )
             }
         }

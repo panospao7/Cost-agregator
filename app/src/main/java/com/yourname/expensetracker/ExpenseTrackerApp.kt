@@ -7,6 +7,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.location.LocationBackfillWorker
+import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import dagger.hilt.android.HiltAndroidApp
@@ -57,6 +58,9 @@ class ExpenseTrackerApp : Application(), Configuration.Provider {
 
         // Schedule the background geocoding backfill (runs on Wi-Fi every 6 hrs)
         LocationBackfillWorker.schedule(this)
+
+        // Schedule the one-time merchantKey column backfill for pre-v32 rows
+        MerchantKeyBackfillWorker.schedule(this)
     }
 }
 

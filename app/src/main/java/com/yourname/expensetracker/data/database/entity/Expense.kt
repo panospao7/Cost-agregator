@@ -30,7 +30,8 @@ import androidx.room.PrimaryKey
         Index(value = ["merchant", "date"]),
         Index(value = ["transactionType", "merchant", "date"]),
         Index(value = ["dedupeKey"], unique = true), // Atomic duplicate prevention
-        Index(value = ["latitude", "longitude"])      // Location queries (v28)
+        Index(value = ["latitude", "longitude"]),     // Location queries (v28)
+        Index(value = ["merchantKey"])                // Unified merchant identity key (v32)
     ]
 )
 data class Expense(
@@ -80,7 +81,11 @@ data class Expense(
     val backfillAttempts: Int = 0,
 
     // Human-readable resolved address string (v30), e.g. "Σκλαβενίτης, Γλυφάδα, Αττική"
-    val resolvedAddress: String? = null
+    val resolvedAddress: String? = null,
+
+    // Canonical merchant identity key (v32) — computed by MerchantKeyGenerator.
+    // Nullable on legacy rows; backfilled asynchronously by MerchantKeyBackfillWorker.
+    val merchantKey: String? = null
 ) {
     /**
      * The amount that should be counted toward the user's own spending.

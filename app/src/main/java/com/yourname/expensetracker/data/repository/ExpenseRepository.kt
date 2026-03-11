@@ -408,4 +408,16 @@ class ExpenseRepository @Inject constructor(
      */
     suspend fun getMerchantLocationClusters(merchantName: String): List<LocationCluster> =
         expenseDao.getMerchantLocationClusters(merchantName)
+
+    // -------------------------------------------------------------------------
+    // Merchant key backfill (v32)
+    // -------------------------------------------------------------------------
+
+    /** Returns a batch of expenses whose merchantKey has not yet been populated. */
+    suspend fun getExpensesWithNullMerchantKey(limit: Int = 500): List<Expense> =
+        expenseDao.getExpensesWithNullMerchantKey(limit)
+
+    /** Persist the computed canonical key for a single expense. */
+    suspend fun updateMerchantKey(expenseId: Long, merchantKey: String) =
+        expenseDao.updateMerchantKey(expenseId, merchantKey)
 }
