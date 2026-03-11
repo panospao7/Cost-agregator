@@ -24,7 +24,7 @@ import androidx.room.*
         MerchantLocation::class,
         MerchantLocationCorrection::class
     ],
-        version = 32,
+        version = 33,
     exportSchema = false
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -650,6 +650,25 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_expenses_merchantKey " +
                     "ON expenses (merchantKey)"
                 )
+            }
+        }
+
+        // Migration 32 -> 33: Re-key merchant location tables.
+        // MerchantLocationRepository.normalizeKey() previously used a Greek-preserving
+        // charset ([\p{L}\p{N}], take 30) so rows for Greek-named merchants were keyed
+        // as e.g. "σκλαβενίτης". The unified MerchantKeyGenerator now produces Latin keys
+        // ("sklavenitis") so all existing rows become unreachable.
+        //
+        // merchant_locations is a pure cache — wiping it causes a one-time re-geocode
+        // on next backfill run (no data loss).
+        //
+        // merchant_location_corrections stores user pins — wiping means users will need
+        // to re-pin merchants they corrected. Acceptable trade-off: the old pins were
+        // keyed with a different strategy and would silently fail lookups anyway.
+        val MIGRATION_32_33 = object : androidx.room.migration.Migration(32, 33) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("DELETE FROM merchant_locations")
+                database.execSQL("DELETE FROM merchant_location_corrections")
             }
         }
     }

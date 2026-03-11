@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantLocation
 import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.*
@@ -13,8 +14,8 @@ import kotlin.math.*
  * Repository for the merchant-location cache ([MerchantLocation]) and
  * user-location corrections ([MerchantLocationCorrection]).
  *
- * All cache-key lookups normalise the merchant name the same way as the
- * resolver: lowercase + strip non-alphanumeric, take first 30 chars.
+ * All cache-key lookups normalise the merchant name via [MerchantKeyGenerator]
+ * (Greek → Latin, lowercase, strip non-alphanumeric — no length cap).
  */
 @Singleton
 class MerchantLocationRepository @Inject constructor(
@@ -144,10 +145,7 @@ class MerchantLocationRepository @Inject constructor(
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    fun normalizeKey(merchantName: String): String =
-        merchantName.lowercase()
-            .replace(Regex("[^\\p{L}\\p{N}]"), "")
-            .take(30)
+    fun normalizeKey(merchantName: String): String = MerchantKeyGenerator.generate(merchantName)
 
     private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val r = 6371.0
