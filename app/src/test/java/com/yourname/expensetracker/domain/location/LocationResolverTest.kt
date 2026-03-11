@@ -8,10 +8,12 @@ import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import android.util.Log
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -47,6 +49,12 @@ class LocationResolverTest {
 
     @Before
     fun setup() {
+        // android.util.Log is not available in JVM unit tests — mock the static methods.
+        mockkStatic(android.util.Log::class)
+        every { android.util.Log.d(any(), any()) } returns 0
+        every { android.util.Log.w(any(), any<String>()) } returns 0
+        every { android.util.Log.w(any(), any<String>(), any()) } returns 0
+
         // MerchantCleaner.clean() and MerchantCanonicalizer.canonicalize() are NOT
         // suspend functions — use every{} not coEvery{}.
         every { merchantCleaner.clean(any()) } answers { firstArg() }

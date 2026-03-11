@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
@@ -21,6 +22,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReviewQueueRepositoryTest {
 
+    private val database = mockk<AppDatabase>(relaxed = true)
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
     private val rawNotificationDao = mockk<RawNotificationDao>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
@@ -43,6 +45,7 @@ class ReviewQueueRepositoryTest {
         every { timeProvider.now() } returns 1700000000000L
         
         repository = ReviewQueueRepository(
+            database,
             pendingReviewDao,
             rawNotificationDao,
             expenseDao,

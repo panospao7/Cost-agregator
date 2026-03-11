@@ -167,7 +167,7 @@ class SemanticKeywordMatcherTest {
     
     @Before
     fun setup() {
-        matcher = SemanticKeywordMatcher()
+        matcher = SemanticKeywordMatcher(GreeklishNormalizer())
     }
     
     @Test
