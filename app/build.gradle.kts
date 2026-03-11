@@ -144,5 +144,6 @@ dependencies {
     androidTestImplementation("androidx.room:room-testing:2.6.1")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     androidTestImplementation("io.mockk:mockk-android:1.13.8")
+    androidTestImplementation("androidx.work:work-testing:2.9.1")
     debugImplementation(libs.androidx.ui.test.manifest)
 }
