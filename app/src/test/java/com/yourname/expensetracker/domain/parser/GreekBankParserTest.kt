@@ -14,7 +14,15 @@ class GreekBankParserTest {
     @Before
     fun setup() {
         currencyNormalizer = io.mockk.mockk {
-            io.mockk.every { normalize(any()) } answers { firstArg() ?: "EUR" }
+            io.mockk.every { normalize(any()) } answers {
+                when (firstArg<String?>()) {
+                    "€", "E", "e", "EUR" -> "EUR"
+                    "$", "USD" -> "USD"
+                    "£", "GBP" -> "GBP"
+                    null -> "EUR"
+                    else -> firstArg<String?>()?.takeIf { it.matches(Regex("^[A-Z]{3}$")) } ?: "EUR"
+                }
+            }
         }
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }

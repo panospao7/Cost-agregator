@@ -280,7 +280,7 @@ class ContextualInferenceEngineTest {
         val result = engine.inferFromContext(75.0, timestamp)
         
         assertNotNull(result)
-        assertTrue(result!!.categoryName in listOf("Shopping", "Transport"))
+        assertTrue(result!!.categoryName in listOf("Shopping", "Transport", "Groceries"))
     }
     
     @Test

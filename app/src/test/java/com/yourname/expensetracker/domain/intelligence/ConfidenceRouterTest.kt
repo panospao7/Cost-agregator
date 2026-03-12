@@ -70,8 +70,10 @@ class ConfidenceRouterTest {
 
     @Test
     fun `high merchant rejection rate reduces confidence`() = runBlocking {
-        coEvery { userCorrectionRepository.getMerchantTotalCorrections("TestMerchant") } returns 10
-        coEvery { userCorrectionRepository.getMerchantRejectionCount("TestMerchant") } returns 8
+        coEvery { userCorrectionRepository.getMerchantStats("TestMerchant") } returns
+            com.yourname.expensetracker.data.database.dao.UserCorrectionDao.MerchantCorrectionStats(
+                total = 10, rejections = 8
+            )
 
         val result = router.route(makeParsed(0.90f), "com.test")
         assertTrue(result.adjustedConfidence < 0.90f)

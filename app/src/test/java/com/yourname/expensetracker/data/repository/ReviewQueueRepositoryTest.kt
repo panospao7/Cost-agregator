@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.RoomDatabase
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
@@ -15,6 +17,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -43,6 +46,13 @@ class ReviewQueueRepositoryTest {
     @Before
     fun setup() {
         every { timeProvider.now() } returns 1700000000000L
+
+        // Mock Room's withTransaction extension to immediately execute the lambda,
+        // so that DAO calls inside transactions are reachable in unit tests.
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(captureLambda<suspend () -> Any>()) } coAnswers {
+            lambda<suspend () -> Any>().coInvoke()
+        }
         
         repository = ReviewQueueRepository(
             database,
@@ -61,6 +71,11 @@ class ReviewQueueRepositoryTest {
             timeProvider,
             confidenceRouter
         )
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     @Test

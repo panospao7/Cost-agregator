@@ -68,7 +68,7 @@ class InsightsEngineEdgeCaseTest {
 
     @Test
     fun `single expense does not crash engine`() = runBlocking {
-        val categories = listOf(Category(id = 1L, name = "Food", icon = "food", color = "#FFF"))
+        val categories = listOf(Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF"))
         val expenses = listOf(
             makeExpense(merchant = "Test", amount = 10.0, daysAgo = 5)
         )

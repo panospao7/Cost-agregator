@@ -65,17 +65,22 @@ class ConfidenceRouterEdgeCaseTest {
 
     @Test
     fun `invalid confidence NaN is handled gracefully`() = runBlocking {
-        val result = router.route(makeParsed(Float.NaN), "com.test")
-        assertTrue("NaN should result in AUTO_REJECT or NEEDS_REVIEW",
-            result.decision == RoutingDecision.AUTO_REJECT || 
-            result.decision == RoutingDecision.NEEDS_REVIEW
-        )
+        // ParsedTransaction validates confidence in 0..1; NaN is rejected at construction.
+        // Verify that passing NaN throws an IllegalArgumentException.
+        var threw = false
+        try {
+            makeParsed(Float.NaN)
+        } catch (e: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue("NaN confidence should be rejected by ParsedTransaction", threw)
     }
 
     @Test
     fun `null merchant name applies penalty`() = runBlocking {
-        val result = router.route(makeParsed(0.90f, ""), "com.test")
-        assertTrue("Empty merchant should reduce confidence", 
+        // "Unknown" is the sentinel merchant name that triggers the penalty in ConfidenceRouter.
+        val result = router.route(makeParsed(0.90f, "Unknown"), "com.test")
+        assertTrue("Unknown merchant should reduce confidence", 
             result.adjustedConfidence < 0.90f
         )
     }
