@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MLMatchType
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -15,10 +16,14 @@ import org.junit.Test
 
 class CategorizationEngineDebugTest {
     private val context = mockk<Context>(relaxed = true)
-    private val merchantCategoryDao = mockk<com.yourname.expensetracker.data.database.dao.MerchantCategoryDao>(relaxed = true)
+    private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private val merchantNormalizer = mockk<NewMerchantNormalizer>(relaxed = true)
     private val categoryRepository = mockk<CategoryRepository>(relaxed = true)
     private val categoryRepositoryProvider = mockk<javax.inject.Provider<CategoryRepository>>()
+    private val canonicalizer = mockk<MerchantCanonicalizer>(relaxed = true)
+    private val greeklishNormalizer = mockk<GreeklishNormalizer>(relaxed = true)
+    private val semanticMatcher = mockk<SemanticKeywordMatcher>(relaxed = true)
+    private val contextEngine = mockk<ContextualInferenceEngine>(relaxed = true)
     private lateinit var engine: CategorizationEngine
 
     @Before
@@ -35,13 +40,21 @@ class CategorizationEngineDebugTest {
         }
         every { categoryRepositoryProvider.get() } returns categoryRepository
         coEvery { categoryRepository.getAll() } returns emptyList()
-        engine = CategorizationEngine(merchantCategoryDao, merchantNormalizer, categoryRepositoryProvider)
+        engine = CategorizationEngine(
+            merchantCategoryRepository,
+            merchantNormalizer,
+            categoryRepositoryProvider,
+            canonicalizer,
+            greeklishNormalizer,
+            semanticMatcher,
+            contextEngine
+        )
     }
 
     @Test
     fun `debugCategorize returns trace with correct layer results for canonical match`() = runBlocking {
         // Setup mock data for Canonical hit
-        coEvery { merchantCategoryDao.getAll() } returns listOf(
+        coEvery { merchantCategoryRepository.getAll() } returns listOf(
             MerchantCategory("sklavenitis", 1L)
         )
         
@@ -70,7 +83,7 @@ class CategorizationEngineDebugTest {
     @Test
     fun `learnMerchantCategory invalidates cache and allows immediate re-categorization`() = runBlocking {
         // 1. Initial state: Unknown merchant
-        coEvery { merchantCategoryDao.getAll() } returns emptyList()
+        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
         var result = engine.categorize("NEW_MERCHANT")
         assertEquals(MatchType.UNKNOWN, result.matchType)
 
@@ -80,8 +93,8 @@ class CategorizationEngineDebugTest {
         
         // Mock the DAO to return the new mapping after insertion
         val newMapping = MerchantCategory(merchantName.lowercase(), categoryId)
-        coEvery { merchantCategoryDao.getAll() } returns listOf(newMapping)
-        coEvery { merchantCategoryDao.insert(any()) } just runs
+        coEvery { merchantCategoryRepository.getAll() } returns listOf(newMapping)
+        coEvery { merchantCategoryRepository.insert(any()) } just runs
         
         // This should trigger invalidateCache()
         engine.learnMerchantCategory(merchantName, categoryId)
@@ -93,6 +106,6 @@ class CategorizationEngineDebugTest {
         assertEquals(categoryId, result.categoryId)
         
         // Verify DAO was called
-        coVerify { merchantCategoryDao.insert(any()) }
+        coVerify { merchantCategoryRepository.insert(any()) }
     }
 }

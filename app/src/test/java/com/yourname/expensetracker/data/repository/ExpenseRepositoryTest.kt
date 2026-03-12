@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -21,6 +22,7 @@ class ExpenseRepositoryTest {
 
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
+    private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
     private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
 
@@ -34,6 +36,7 @@ class ExpenseRepositoryTest {
         repository = ExpenseRepository(
             expenseDao,
             userCorrectionDao,
+            pendingReviewDao,
             merchantCategoryRepository,
             merchantNormalizer
         )

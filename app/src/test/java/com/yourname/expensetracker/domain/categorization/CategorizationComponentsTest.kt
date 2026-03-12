@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.categorization
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import io.mockk.mockk
 
 class MerchantCanonicalizerTest {
     
@@ -167,7 +168,8 @@ class SemanticKeywordMatcherTest {
     
     @Before
     fun setup() {
-        matcher = SemanticKeywordMatcher()
+        val greeklishNormalizer = mockk<GreeklishNormalizer>()
+        matcher = SemanticKeywordMatcher(greeklishNormalizer)
     }
     
     @Test
