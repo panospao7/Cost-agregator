@@ -84,8 +84,7 @@ class ContextualInferenceEngine @Inject constructor() {
         
         if (words.size == 1) {
             val word = words[0]
-            // Only use endings of length >= 2 to avoid false positives (e.g., "e", "a", "i")
-            return GREEK_SURNAME_ENDINGS.filter { it.length >= 2 }.any { word.endsWith(it) } ||
+            return GREEK_SURNAME_ENDINGS.any { word.endsWith(it) } ||
                    GREEK_SURNAME_PREFIXES.any { word.startsWith(it) }
         }
         

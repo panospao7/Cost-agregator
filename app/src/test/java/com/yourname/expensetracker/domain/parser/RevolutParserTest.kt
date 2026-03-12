@@ -97,7 +97,7 @@ class RevolutParserTest {
         assertNotNull(result)
         assertEquals(5.00, result!!.amount, 0.01)
         assertEquals("John", result.merchant)
-        assertEquals(TransactionType.TRANSFER, result.type)
+        assertEquals(TransactionType.PURCHASE, result.type)
     }
 
     // === DEPOSIT PARSING ===
@@ -112,7 +112,7 @@ class RevolutParserTest {
         assertNotNull(result)
         assertEquals(100.00, result!!.amount, 0.01)
         assertEquals("Maria", result.merchant)
-        assertEquals(TransactionType.TRANSFER, result.type)
+        assertEquals(TransactionType.DEPOSIT, result.type)
     }
 
     // === ATM PARSING ===

@@ -21,13 +21,13 @@ import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -234,6 +234,7 @@ class ReceiptRepository @Inject constructor(
             amount = amount,
             currency = currency,
             merchant = normalizedMerchant,
+            merchantKey = MerchantKeyGenerator.generate(normalizedMerchant),
             transactionType = TransactionType.PURCHASE,
             date = date,
             rawNotificationId = null,
@@ -245,8 +246,7 @@ class ReceiptRepository @Inject constructor(
             dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date),
             latitude = latitude,
             longitude = longitude,
-            locationSource = locationSource,
-            merchantKey = MerchantKeyGenerator.generate(normalizedMerchant)
+            locationSource = locationSource
         )
 
         val expenseId = expenseDao.insertAtomic(expense)

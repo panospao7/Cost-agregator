@@ -142,7 +142,7 @@ class RevolutParser @Inject constructor(
                     return ParsedTransaction(
                         amount = amount, 
                         currency = currency, 
-                        merchant = "ATM", 
+                        merchant = "ATM Withdrawal", 
                         type = TransactionType.WITHDRAWAL, 
                         confidence = 0.95f
                     )

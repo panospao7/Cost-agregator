@@ -77,50 +77,40 @@ class MerchantCanonicalizer @Inject constructor() {
             }
         } while (strippedPrefix)
         
-        // Interleave location and business type suffix stripping until neither makes progress.
-        // This ensures "Sklavenitis Lagka SA" correctly strips both "sa" and "lagka".
-        var anyStripped: Boolean
+        // Keep stripping location suffixes until no more matches
+        var strippedLocation: Boolean
         do {
-            anyStripped = false
-
-            // Strip location suffixes (one pass)
-            var strippedLocation: Boolean
-            do {
-                strippedLocation = false
-                for (suffix in LOCATION_SUFFIXES) {
-                    if (normalized.endsWith(" $suffix")) {
-                        normalized = normalized.removeSuffix(" $suffix").trim()
-                        strippedParts.add(suffix)
-                        strippedLocation = true
-                        anyStripped = true
-                        break
-                    } else if (normalized.endsWith(suffix) && normalized.length > suffix.length) {
-                        normalized = normalized.removeSuffix(suffix).trim()
-                        strippedParts.add(suffix)
-                        strippedLocation = true
-                        anyStripped = true
-                        break
-                    }
+            strippedLocation = false
+            for (suffix in LOCATION_SUFFIXES) {
+                if (normalized.endsWith(" $suffix")) {
+                    normalized = normalized.removeSuffix(" $suffix").trim()
+                    strippedParts.add(suffix)
+                    strippedLocation = true
+                    break // Restart the loop after a successful strip
+                } else if (normalized.endsWith(suffix) && normalized.length > suffix.length) {
+                    // Make sure we're not removing the entire string
+                    normalized = normalized.removeSuffix(suffix).trim()
+                    strippedParts.add(suffix)
+                    strippedLocation = true
+                    break
                 }
-            } while (strippedLocation)
-
-            // Strip business type suffixes (one pass)
-            var strippedBusiness: Boolean
-            do {
-                strippedBusiness = false
-                for (suffix in BUSINESS_TYPE_SUFFIXES) {
-                    val pattern = Regex("""\b$suffix\s*$""", RegexOption.IGNORE_CASE)
-                    if (pattern.containsMatchIn(normalized)) {
-                        normalized = normalized.replace(pattern, "").trim()
-                        strippedParts.add(suffix)
-                        strippedBusiness = true
-                        anyStripped = true
-                        break
-                    }
+            }
+        } while (strippedLocation)
+        
+        // Keep stripping business type suffixes until no more matches
+        var strippedBusiness: Boolean
+        do {
+            strippedBusiness = false
+            for (suffix in BUSINESS_TYPE_SUFFIXES) {
+                val pattern = Regex("""\b$suffix\s*$""", RegexOption.IGNORE_CASE)
+                if (pattern.containsMatchIn(normalized)) {
+                    normalized = normalized.replace(pattern, "").trim()
+                    strippedParts.add(suffix)
+                    strippedBusiness = true
+                    break
                 }
-            } while (strippedBusiness)
-
-        } while (anyStripped)
+            }
+        } while (strippedBusiness)
         
         normalized = normalized.trim()
         

@@ -167,7 +167,7 @@ class SemanticKeywordMatcherTest {
     
     @Before
     fun setup() {
-        matcher = SemanticKeywordMatcher(GreeklishNormalizer())
+        matcher = SemanticKeywordMatcher()
     }
     
     @Test
@@ -280,7 +280,7 @@ class ContextualInferenceEngineTest {
         val result = engine.inferFromContext(75.0, timestamp)
         
         assertNotNull(result)
-        assertTrue(result!!.categoryName in listOf("Shopping", "Transport", "Groceries"))
+        assertTrue(result!!.categoryName in listOf("Shopping", "Transport"))
     }
     
     @Test

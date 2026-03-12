@@ -21,8 +21,8 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
-import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -187,6 +187,7 @@ class NotificationProcessingPipeline @Inject constructor(
             amount = parsed.amount,
             currency = parsed.currency,
             merchant = correctedMerchant,
+            merchantKey = MerchantKeyGenerator.generate(correctedMerchant),
             transactionType = parsed.type,
             date = notification.timestamp,
             rawNotificationId = rawId,
@@ -198,8 +199,7 @@ class NotificationProcessingPipeline @Inject constructor(
             transferAccountName = accountName,
             latitude = deviceGps?.first,
             longitude = deviceGps?.second,
-            locationSource = if (deviceGps != null) "DEVICE_GPS" else null,
-            merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
+            locationSource = if (deviceGps != null) "DEVICE_GPS" else null
         )
 
         val expenseId = expenseDao.insertAtomic(expense)

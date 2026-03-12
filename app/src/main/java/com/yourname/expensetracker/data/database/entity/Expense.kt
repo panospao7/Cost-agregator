@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -86,6 +87,7 @@ data class Expense(
 
     // Canonical merchant identity key (v32) — computed by MerchantKeyGenerator.
     // Nullable on legacy rows; backfilled asynchronously by MerchantKeyBackfillWorker.
+    @ColumnInfo(name = "merchantKey")
     val merchantKey: String? = null
 ) {
     /**

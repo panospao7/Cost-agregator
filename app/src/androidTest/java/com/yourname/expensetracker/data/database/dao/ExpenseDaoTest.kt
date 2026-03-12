@@ -36,15 +36,13 @@ class ExpenseDaoTest {
     private fun makeExpense(
         amount: Double = 10.0,
         merchant: String = "Test",
-        date: Long = System.currentTimeMillis(),
-        merchantKey: String? = null
+        date: Long = System.currentTimeMillis()
     ) = Expense(
         amount = amount,
         currency = "EUR",
         merchant = merchant,
         transactionType = TransactionType.PURCHASE,
-        date = date,
-        merchantKey = merchantKey
+        date = date
     )
 
     @Test
@@ -173,79 +171,5 @@ class ExpenseDaoTest {
         // IGNORE strategy: id2 should be -1 (not inserted)
         assertEquals(-1L, id2)
         assertEquals(1, expenseDao.getAll().size)
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // merchantKey unification — P1 instrumented tests
-    // ──────────────────────────────────────────────────────────────────────────
-
-    @Test
-    fun getAllMerchantStats_groupsByMerchantKey() = runBlocking {
-        val key = "sklavenitis"
-        // Two expenses — different raw merchant string, same canonical merchantKey
-        expenseDao.insert(makeExpense(amount = 30.0, merchant = "Σκλαβενίτης", merchantKey = key))
-        expenseDao.insert(makeExpense(amount = 60.0, merchant = "ΣΚΛΑΒΕΝΙΤΗΣ",  merchantKey = key))
-
-        val stats = expenseDao.getAllMerchantStats()
-
-        // Must collapse to one row
-        assertEquals(1, stats.size)
-        assertEquals(key, stats.first().merchantName)
-        assertEquals(90.0, stats.first().totalAmount, 0.01)
-        assertEquals(2, stats.first().transactionCount)
-    }
-
-    @Test
-    fun getTopMerchantsForPeriod_groupsByMerchantKey() = runBlocking {
-        val key = "mymerchant"
-        val now = System.currentTimeMillis()
-        val start = now - 86_400_000L * 7
-        val end   = now + 1L
-
-        expenseDao.insert(makeExpense(amount = 20.0, merchant = "MyMerchant",   date = now - 1000, merchantKey = key))
-        expenseDao.insert(makeExpense(amount = 40.0, merchant = "MYMERCHANT",   date = now - 2000, merchantKey = key))
-        // A different merchant that should be separate
-        expenseDao.insert(makeExpense(amount = 10.0, merchant = "Other",        date = now - 3000, merchantKey = "other"))
-
-        val top = expenseDao.getTopMerchantsForPeriod(start, end, limit = 10)
-
-        // Two distinct keys → two rows; the key group leads by total
-        assertEquals(2, top.size)
-        assertEquals(key, top.first().merchantName)
-        assertEquals(60.0, top.first().totalAmount, 0.01)
-    }
-
-    @Test
-    fun getExpensesWithCategoryFilteredFlow_filtersByMerchantKey() = runBlocking {
-        val targetKey = "targetmerchant"
-        val now = System.currentTimeMillis()
-
-        expenseDao.insert(makeExpense(merchant = "Target",  merchantKey = targetKey, date = now - 1000))
-        expenseDao.insert(makeExpense(merchant = "Other",   merchantKey = "other",   date = now - 2000))
-
-        val results = expenseDao.getExpensesWithCategoryFilteredFlow(
-            startMs     = now - 86_400_000L,
-            endMs       = now + 1L,
-            type        = null,
-            categoryId  = null,
-            merchantKey = targetKey
-        ).first()
-
-        assertEquals(1, results.size)
-        assertEquals(targetKey, results.first().expense.merchantKey)
-    }
-
-    @Test
-    fun searchMerchants_groupsByMerchantKey() = runBlocking {
-        val key = "supermarket"
-        // Two expenses — different raw names but same canonical key
-        expenseDao.insert(makeExpense(merchant = "Supermarket A", merchantKey = key))
-        expenseDao.insert(makeExpense(merchant = "Supermarket B", merchantKey = key))
-
-        val suggestions = expenseDao.searchMerchants("Supermarket")
-
-        // GROUP BY merchantKey → one suggestion row, count = 2
-        assertEquals(1, suggestions.size)
-        assertEquals(2, suggestions.first().txCount)
     }
 }

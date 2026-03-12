@@ -11,8 +11,8 @@ import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.model.Result
-import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -75,6 +75,7 @@ class ManualExpenseRepository @Inject constructor(
                 amount = amount,
                 currency = currency,
                 merchant = normalizedMerchant,
+                merchantKey = MerchantKeyGenerator.generate(normalizedMerchant),
                 transactionType = transactionType,
                 date = date,
                 rawNotificationId = null,
@@ -94,8 +95,7 @@ class ManualExpenseRepository @Inject constructor(
                 myShareAmount = myShareAmount,
                 latitude = latitude,
                 longitude = longitude,
-                locationSource = locationSource,
-                merchantKey = MerchantKeyGenerator.generate(normalizedMerchant)
+                locationSource = locationSource
             )
 
             val id = expenseDao.insertAtomic(expense)

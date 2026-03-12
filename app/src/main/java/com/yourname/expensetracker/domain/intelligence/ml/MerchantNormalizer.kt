@@ -147,7 +147,7 @@ class MerchantNormalizer @Inject constructor(
         }
 
         // 3. Link the original POS name to this brand ID (just in case it wasn't a canonical)
-        val rawNameKey = MerchantKeyGenerator.generate(rawName)
+        val rawNameKey = createSearchKey(cleanMerchantName(rawName))
         repository.linkAliasToCanonical(rawName, rawNameKey, brandId, isUserDefined = true, timestamp = timeProvider.now())
         
         Timber.i("Learned alias: $rawName -> $brandName")

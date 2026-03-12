@@ -27,6 +27,20 @@ data class SpendingSummary(
     val transactionCount: Int
 )
 
+data class LocationSpendSummary(
+    /** Top spending places sorted by total spend descending. */
+    val topMerchants: List<LocationMerchantStat>,
+    /** Total number of expenses with coordinates. */
+    val locatedCount: Int,
+    /** Total number of expenses without coordinates. */
+    val unlocatedCount: Int
+)
+
+data class LocationMerchantStat(
+    val merchant: String,
+    val totalSpend: Double,
+    val transactionCount: Int
+)
 
 @Singleton
 class AnalyticsRepository @Inject constructor(
@@ -122,5 +136,31 @@ class AnalyticsRepository @Inject constructor(
                 }
                 .sortedByDescending { it.total }
         }
+    }
+
+    // ── Location-aware analytics (v28) ────────────────────────────────────────
+
+    /**
+     * Returns a summary of spending grouped by located vs un-located expenses,
+     * and the top merchants that have been geocoded.
+     */
+    suspend fun getLocationSpendSummary(): LocationSpendSummary {
+        val merchantTotals = expenseDao.getLocatedMerchantTotals()
+        val locatedCount = expenseDao.countLocated()
+        val unlocatedCount = expenseDao.countUnlocated()
+
+        val topMerchants = merchantTotals.take(20).map { mt ->
+            LocationMerchantStat(
+                merchant = mt.merchant,
+                totalSpend = mt.total,
+                transactionCount = mt.cnt
+            )
+        }
+
+        return LocationSpendSummary(
+            topMerchants = topMerchants,
+            locatedCount = locatedCount,
+            unlocatedCount = unlocatedCount
+        )
     }
 }

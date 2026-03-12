@@ -8,7 +8,6 @@ import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MLMatchTy
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.categorization.MatchType
 import com.yourname.expensetracker.data.repository.CategoryRepository
-import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -17,14 +16,10 @@ import org.junit.Test
 
 class CategorizationEngineTest {
     private val context = mockk<Context>(relaxed = true)
-    private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
+    private val merchantCategoryDao = mockk<com.yourname.expensetracker.data.database.dao.MerchantCategoryDao>(relaxed = true)
     private val merchantNormalizer = mockk<NewMerchantNormalizer>(relaxed = true)
     private val categoryRepository = mockk<CategoryRepository>(relaxed = true)
     private val categoryRepositoryProvider = mockk<javax.inject.Provider<CategoryRepository>>()
-    private val canonicalizer = MerchantCanonicalizer()
-    private val greeklishNormalizer = GreeklishNormalizer()
-    private val semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer)
-    private val contextEngine = ContextualInferenceEngine()
     private lateinit var engine: CategorizationEngine
 
     @Before
@@ -40,16 +35,7 @@ class CategorizationEngineTest {
         }
         every { categoryRepositoryProvider.get() } returns categoryRepository
         coEvery { categoryRepository.getAll() } returns emptyList()
-        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
-        engine = CategorizationEngine(
-            merchantCategoryRepository,
-            merchantNormalizer,
-            categoryRepositoryProvider,
-            canonicalizer,
-            greeklishNormalizer,
-            semanticMatcher,
-            contextEngine
-        )
+        engine = CategorizationEngine(merchantCategoryDao, merchantNormalizer, categoryRepositoryProvider)
     }
 
     @Test
@@ -66,7 +52,7 @@ class CategorizationEngineTest {
 
     @Test
     fun `exact match returns category`() = runBlocking {
-        coEvery { merchantCategoryRepository.getAll() } returns listOf(
+        coEvery { merchantCategoryDao.getAll() } returns listOf(
             MerchantCategory("starbucks", 5L)
         )
 
@@ -77,7 +63,8 @@ class CategorizationEngineTest {
 
     @Test
     fun `substring match finds pattern within merchant name`() = runBlocking {
-        coEvery { merchantCategoryRepository.getAll() } returns listOf(
+        coEvery { merchantCategoryDao.getCategoryForMerchant("UBER EATS DELIVERY 1234") } returns null
+        coEvery { merchantCategoryDao.getAll() } returns listOf(
             MerchantCategory("uber eats", 3L),
             MerchantCategory("uber", 4L)
         )
@@ -89,7 +76,8 @@ class CategorizationEngineTest {
 
     @Test
     fun `returns unknown when no match found`() = runBlocking {
-        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
+        coEvery { merchantCategoryDao.getCategoryForMerchant(any()) } returns null
+        coEvery { merchantCategoryDao.getAll() } returns emptyList()
 
         val result = engine.categorize("COMPLETELY UNKNOWN MERCHANT")
         assertNull(result.categoryId)

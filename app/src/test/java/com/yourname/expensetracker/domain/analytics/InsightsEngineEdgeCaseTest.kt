@@ -25,6 +25,7 @@ class InsightsEngineEdgeCaseTest {
         val anomalyDetector = mockk<AnomalyDetector>(relaxed = true)
         val monthlyComparisonCalculator = mockk<MonthlyComparisonCalculator>(relaxed = true)
         val categoryInsightEngine = mockk<CategoryInsightEngine>(relaxed = true)
+        val merchantInsightEngine = mockk<MerchantInsightEngine>(relaxed = true)
         val dayOfWeekAnalyzer = mockk<DayOfWeekAnalyzer>(relaxed = true)
         
         every { timeProvider.now() } returns System.currentTimeMillis()
@@ -38,6 +39,7 @@ class InsightsEngineEdgeCaseTest {
             anomalyDetector = anomalyDetector,
             monthlyComparisonCalculator = monthlyComparisonCalculator,
             categoryInsightEngine = categoryInsightEngine,
+            merchantInsightEngine = merchantInsightEngine,
             dayOfWeekAnalyzer = dayOfWeekAnalyzer
         )
         
@@ -46,6 +48,7 @@ class InsightsEngineEdgeCaseTest {
         coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
         coEvery { expenseRepository.getMerchantStats() } returns emptyList()
+        coEvery { expenseRepository.getRecurringCandidates() } returns emptyList()
         coEvery { expenseRepository.getDayOfWeekPattern(any(), any(), any()) } returns emptyList()
         coEvery { expenseRepository.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
         coEvery { expenseRepository.getLargestExpenseForPeriod(any(), any()) } returns null
@@ -68,7 +71,7 @@ class InsightsEngineEdgeCaseTest {
 
     @Test
     fun `single expense does not crash engine`() = runBlocking {
-        val categories = listOf(Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF"))
+        val categories = listOf(Category(id = 1L, name = "Food", icon = "food", color = "#FFF"))
         val expenses = listOf(
             makeExpense(merchant = "Test", amount = 10.0, daysAgo = 5)
         )

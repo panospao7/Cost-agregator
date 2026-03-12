@@ -9,7 +9,6 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
 import com.yourname.expensetracker.domain.analytics.PeriodRange
 import com.yourname.expensetracker.domain.analytics.SpendingPatternType
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -97,76 +96,5 @@ class AdvancedAnalyticsEngineTest {
         assertEquals(30.0, stats.maxDailySpend, 0.01) // Assuming different days or same day summation
         assertEquals(10.0, stats.smallestTransaction!!.amount, 0.01)
         assertEquals(30.0, stats.largestTransaction!!.amount, 0.01)
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // getMerchantAnalytics — merchantKey unification tests (P1)
-    // ──────────────────────────────────────────────────────────────────────────
-
-    private fun makePeriod(startMs: Long = 0L, endMs: Long = Long.MAX_VALUE) =
-        PeriodRange(AnalyticsPeriod.MONTH, startMs, endMs, "Test", null)
-
-    private fun makeMerchantExpense(
-        id: Long,
-        merchant: String,
-        merchantKey: String?,
-        amount: Double,
-        date: Long = 1_000_000L
-    ) = Expense(
-        id = id,
-        amount = amount,
-        currency = "EUR",
-        merchant = merchant,
-        merchantKey = merchantKey,
-        transactionType = TransactionType.PURCHASE,
-        date = date
-    )
-
-    @Test
-    fun `getMerchantAnalytics groups different raw merchant names with the same merchantKey into one entry`() = runTest {
-        val sharedKey = "sklavenitis"
-        val expense1 = makeMerchantExpense(1L, "Σκλαβενίτης", sharedKey, 30.0, date = 1_000_000L)
-        val expense2 = makeMerchantExpense(2L, "ΣΚΛΑΒΕΝΙΤΗΣ",  sharedKey, 50.0, date = 2_000_000L)
-
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(expense1, expense2)
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(expense1, expense2)
-
-        val result = engine.getMerchantAnalytics(makePeriod())
-
-        // Both expenses share the same merchantKey → must collapse to exactly one entry
-        assertEquals(1, result.size)
-        assertEquals(sharedKey, result.first().merchantKey)
-        assertEquals(80.0, result.first().totalSpent, 0.01)
-    }
-
-    @Test
-    fun `getMerchantAnalytics falls back to MerchantKeyGenerator when merchantKey is null`() = runTest {
-        val expense = makeMerchantExpense(1L, "Costa Coffee", null, 4.5)
-        val expectedKey = MerchantKeyGenerator.generate("Costa Coffee") // "costacoffee"
-
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(expense)
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(expense)
-
-        val result = engine.getMerchantAnalytics(makePeriod())
-
-        assertEquals(1, result.size)
-        assertEquals(expectedKey, result.first().merchantKey)
-    }
-
-    @Test
-    fun `getMerchantAnalytics uses most-frequent raw spelling as display name`() = runTest {
-        val key = "sklavenitis"
-        // 2x Greek spelling, 1x ALL-CAPS -- most frequent wins
-        val e1 = makeMerchantExpense(1L, "Σκλαβενίτης", key, 10.0, date = 1_000_000L)
-        val e2 = makeMerchantExpense(2L, "Σκλαβενίτης", key, 20.0, date = 2_000_000L)
-        val e3 = makeMerchantExpense(3L, "ΣΚΛΑΒΕΝΙΤΗΣ",  key, 30.0, date = 3_000_000L)
-
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(e1, e2, e3)
-        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(e1, e2, e3)
-
-        val result = engine.getMerchantAnalytics(makePeriod())
-
-        assertEquals(1, result.size)
-        assertEquals("Σκλαβενίτης", result.first().merchant)
     }
 }

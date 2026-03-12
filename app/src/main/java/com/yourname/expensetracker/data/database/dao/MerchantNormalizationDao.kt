@@ -3,7 +3,6 @@ package com.yourname.expensetracker.data.database.dao
 import androidx.room.*
 import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 
 /**
  * DAO for merchant normalization tables.
@@ -73,22 +72,8 @@ interface MerchantNormalizationDao {
 
     // ==================== Combined Operations ====================
     
-    /**
-     * Upsert a merchant alias pointing to [canonicalId].
-     *
-     * [normalizedKey] must be pre-computed by the caller using
-     * [MerchantKeyGenerator.generate] so every layer uses the identical key.
-     * Removing the inline computation here was Phase 4 of the Merchant Identity
-     * Unification refactoring.
-     */
     @Transaction
-    suspend fun linkAliasToCanonical(
-        rawName: String,
-        normalizedKey: String,
-        canonicalId: Long,
-        isUserDefined: Boolean = false,
-        timestamp: Long
-    ) {
+    suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) {
         val existing = getAliasByRawName(rawName)
         if (existing != null) {
             updateAlias(existing.copy(

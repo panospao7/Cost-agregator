@@ -7,7 +7,6 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MLMatchType
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
-import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -16,14 +15,10 @@ import org.junit.Test
 
 class CategorizationEngineDebugTest {
     private val context = mockk<Context>(relaxed = true)
-    private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
+    private val merchantCategoryDao = mockk<com.yourname.expensetracker.data.database.dao.MerchantCategoryDao>(relaxed = true)
     private val merchantNormalizer = mockk<NewMerchantNormalizer>(relaxed = true)
     private val categoryRepository = mockk<CategoryRepository>(relaxed = true)
     private val categoryRepositoryProvider = mockk<javax.inject.Provider<CategoryRepository>>()
-    private val canonicalizer = MerchantCanonicalizer()
-    private val greeklishNormalizer = GreeklishNormalizer()
-    private val semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer)
-    private val contextEngine = ContextualInferenceEngine()
     private lateinit var engine: CategorizationEngine
 
     @Before
@@ -40,22 +35,13 @@ class CategorizationEngineDebugTest {
         }
         every { categoryRepositoryProvider.get() } returns categoryRepository
         coEvery { categoryRepository.getAll() } returns emptyList()
-        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
-        engine = CategorizationEngine(
-            merchantCategoryRepository,
-            merchantNormalizer,
-            categoryRepositoryProvider,
-            canonicalizer,
-            greeklishNormalizer,
-            semanticMatcher,
-            contextEngine
-        )
+        engine = CategorizationEngine(merchantCategoryDao, merchantNormalizer, categoryRepositoryProvider)
     }
 
     @Test
     fun `debugCategorize returns trace with correct layer results for canonical match`() = runBlocking {
         // Setup mock data for Canonical hit
-        coEvery { merchantCategoryRepository.getAll() } returns listOf(
+        coEvery { merchantCategoryDao.getAll() } returns listOf(
             MerchantCategory("sklavenitis", 1L)
         )
         
@@ -84,7 +70,7 @@ class CategorizationEngineDebugTest {
     @Test
     fun `learnMerchantCategory invalidates cache and allows immediate re-categorization`() = runBlocking {
         // 1. Initial state: Unknown merchant
-        coEvery { merchantCategoryRepository.getAll() } returns emptyList()
+        coEvery { merchantCategoryDao.getAll() } returns emptyList()
         var result = engine.categorize("NEW_MERCHANT")
         assertEquals(MatchType.UNKNOWN, result.matchType)
 
@@ -92,10 +78,10 @@ class CategorizationEngineDebugTest {
         val merchantName = "NEW_MERCHANT"
         val categoryId = 5L
         
-        // Mock the repository to return the new mapping after insertion
+        // Mock the DAO to return the new mapping after insertion
         val newMapping = MerchantCategory(merchantName.lowercase(), categoryId)
-        coEvery { merchantCategoryRepository.getAll() } returns listOf(newMapping)
-        coEvery { merchantCategoryRepository.insert(any()) } just runs
+        coEvery { merchantCategoryDao.getAll() } returns listOf(newMapping)
+        coEvery { merchantCategoryDao.insert(any()) } just runs
         
         // This should trigger invalidateCache()
         engine.learnMerchantCategory(merchantName, categoryId)
@@ -106,7 +92,7 @@ class CategorizationEngineDebugTest {
         assertEquals(MatchType.EXACT, result.matchType)
         assertEquals(categoryId, result.categoryId)
         
-        // Verify repository was called
-        coVerify { merchantCategoryRepository.insert(any()) }
+        // Verify DAO was called
+        coVerify { merchantCategoryDao.insert(any()) }
     }
 }

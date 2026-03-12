@@ -57,7 +57,7 @@ class BudgetMonitorTest {
         
         val status = BudgetStatus(
             budget = budget,
-            category = Category(id=1, name="Groceries", icon="", color="#4CAF50"),
+            category = Category(id=1, name="Groceries", icon="", color=""),
             spentAmount = 60.0, // 60%
             remainingAmount = 40.0,
             percentUsed = 0.6f,
@@ -95,7 +95,7 @@ class BudgetMonitorTest {
         
         val status = BudgetStatus(
             budget = budget,
-            category = Category(id=1, name="Groceries", icon="", color="#4CAF50"),
+            category = Category(id=1, name="Groceries", icon="", color=""),
             spentAmount = 60.0, // 60%
             remainingAmount = 40.0,
             percentUsed = 0.6f,

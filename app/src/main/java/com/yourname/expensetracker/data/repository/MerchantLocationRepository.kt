@@ -14,8 +14,9 @@ import kotlin.math.*
  * Repository for the merchant-location cache ([MerchantLocation]) and
  * user-location corrections ([MerchantLocationCorrection]).
  *
- * All cache-key lookups normalise the merchant name via [MerchantKeyGenerator]
- * (Greek → Latin, lowercase, strip non-alphanumeric — no length cap).
+ * All cache-key lookups normalise the merchant name via
+ * [com.yourname.expensetracker.domain.util.MerchantKeyGenerator] — the single
+ * canonical key generator shared across all layers of the app.
  */
 @Singleton
 class MerchantLocationRepository @Inject constructor(

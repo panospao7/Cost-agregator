@@ -49,11 +49,6 @@ class LocationResolver @Inject constructor(
      * @param rawMerchantName  Raw merchant string (as stored in Expense).
      * @param transactionDateMs  Epoch ms of the transaction — used to decide GPS bias.
      * @param forceRefresh  If true, skip the cache and re-geocode.
-     * @param merchantKey  Pre-computed canonical key from [MerchantKeyGenerator] (i.e.
-     *   [Expense.merchantKey]).  When provided, used directly for cache/correction lookups,
-     *   eliminating the redundant clean → canonicalize → transliterate chain.
-     *   When null (legacy callers or not-yet-backfilled rows), falls back to computing
-     *   the key from [rawMerchantName] at call time.
      * @return  A [LocationResolutionResult].
      */
     suspend fun resolve(
@@ -64,12 +59,11 @@ class LocationResolver @Inject constructor(
     ): LocationResolutionResult {
 
         // ── Step 1: Prepare name variants ─────────────────────────────────────
-        // cacheKey  — used for DB lookups (must match what was written by normalizeKey())
-        // latinName — used as the *search query* sent to Nominatim (still needs cleaning)
-        // cleanedName — human-readable fallback for logs and Overpass text search
         val cleanedName = merchantCleaner.clean(rawMerchantName)
         val canonicalResult = canonicalizer.canonicalize(cleanedName)
         val latinName = greeklishNormalizer.normalize(canonicalResult.canonicalName)
+        // cacheKey: prefer a pre-computed canonical key (e.g. from Expense.merchantKey)
+        // to avoid double-normalization; fall back to generating it from the raw name.
         val cacheKey = merchantKey ?: MerchantKeyGenerator.generate(rawMerchantName)
 
         // ── Step 2: Get device location (if available) ─────────────────────────
@@ -98,12 +92,11 @@ class LocationResolver @Inject constructor(
         // Query past located expenses for this merchant, find the top cluster,
         // and use it to bias cache lookup and Nominatim with bounded=1.
         // This runs BEFORE global cache so area-scoped results take priority.
-        // Use cacheKey (canonical merchantKey) so all spelling variants of a
-        // merchant name resolve to the same cluster bucket.
+        // Use MerchantKeyGenerator so the query matches the merchantKey column.
         val clusters = try {
             expenseRepository.getMerchantLocationClusters(cacheKey)
         } catch (e: Exception) {
-            Log.w(TAG, "Cluster query failed for '$cleanedName'", e)
+            Log.w(TAG, "Cluster query failed for '$cacheKey'", e)
             emptyList()
         }
         val topCluster = clusters.firstOrNull { it.count >= 2 }
@@ -197,7 +190,7 @@ class LocationResolver @Inject constructor(
                 radiusMetres = AppConfig.Location.OVERPASS_SEARCH_RADIUS_M
             ).filter { !isNullIsland(it.latitude, it.longitude) }
             if (pois.isNotEmpty()) {
-                Log.d(TAG, "Overpass found ${pois.size} candidates for '$cleanedName'")
+                Log.d(TAG, "Overpass found ${pois.size} candidates for '$cacheKey'")
                 return if (pois.size == 1) {
                     // Single match — auto-resolve
                     val poi = pois.first()

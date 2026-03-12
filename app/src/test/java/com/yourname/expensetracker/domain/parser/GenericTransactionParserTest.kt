@@ -14,23 +14,12 @@ class GenericTransactionParserTest {
     @Before
     fun setup() {
         currencyNormalizer = io.mockk.mockk {
-            io.mockk.every { normalize(any()) } answers {
-                when (firstArg<String?>()) {
-                    "€", "E", "e", "EUR" -> "EUR"
-                    "$", "USD" -> "USD"
-                    "£", "GBP" -> "GBP"
-                    null -> "EUR"
-                    else -> firstArg<String?>()?.takeIf { it.matches(Regex("^[A-Z]{3}$")) } ?: "EUR"
-                }
-            }
+            io.mockk.every { normalize(any()) } answers { firstArg() }
         }
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() }
         }
-        directionDetector = io.mockk.mockk(relaxed = true) {
-            io.mockk.every { detectDirection(any(), any(), any(), any()) } returns null
-            io.mockk.every { extractAccountName(any(), any(), any()) } returns null
-        }
+        directionDetector = io.mockk.mockk(relaxed = true)
         parser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector)
     }
 

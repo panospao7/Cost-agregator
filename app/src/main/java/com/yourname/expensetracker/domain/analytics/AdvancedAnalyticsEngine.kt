@@ -10,7 +10,6 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -249,18 +248,15 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
         
         currentPurchases
-            .groupBy { it.merchantKey ?: MerchantKeyGenerator.generate(it.merchant) }
-            .map { (key, transactions) ->
-                // Use most-frequent raw spelling as the display name
-                val merchant = transactions.groupingBy { it.merchant }.eachCount()
-                    .maxByOrNull { it.value }?.key ?: transactions.first().merchant
+            .groupBy { it.merchant }
+            .map { (merchant, transactions) ->
                 val amounts = transactions.map { it.effectiveAmount }
                 val sortedAmounts = amounts.sorted()
                 val dates = transactions.map { it.date }.sorted()
                 
-                // Historical context for price trends — match by canonical key
+                // Historical context for price trends
                 val historicalForMerchant = historicalExpenses
-                    .filter { (it.merchantKey ?: MerchantKeyGenerator.generate(it.merchant)) == key }
+                    .filter { it.merchant.equals(merchant, ignoreCase = true) }
                     .sortedBy { it.date }
                 
                 // Visit frequency analysis
@@ -287,7 +283,6 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 
                 EnhancedMerchantAnalytics(
                     merchant = merchant,
-                    merchantKey = key,
                     period = period,
                     totalSpent = amounts.sum(),
                     transactionCount = transactions.size,

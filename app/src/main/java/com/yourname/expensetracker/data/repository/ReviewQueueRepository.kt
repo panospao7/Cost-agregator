@@ -13,8 +13,8 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.model.Result
-import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -86,6 +86,7 @@ class ReviewQueueRepository @Inject constructor(
             amount = amount,
             currency = review.suggestedCurrency,
             merchant = merchant,
+            merchantKey = MerchantKeyGenerator.generate(merchant),
             transactionType = type,
             date = transactionDate,
             rawNotificationId = review.rawNotificationId,
@@ -103,8 +104,7 @@ class ReviewQueueRepository @Inject constructor(
                 review.suggestedLatitude != null -> AppConfig.Location.SOURCE_DEVICE_GPS
                 else -> null
             },
-            resolvedAddress = finalAddress,
-            merchantKey = MerchantKeyGenerator.generate(merchant)
+            resolvedAddress = finalAddress
         )
 
         // Wrap all DB mutations in a real Room transaction
@@ -274,6 +274,7 @@ class ReviewQueueRepository @Inject constructor(
                     amount = parsed.amount,
                     currency = parsed.currency,
                     merchant = correctedMerchant,
+                    merchantKey = MerchantKeyGenerator.generate(correctedMerchant),
                     transactionType = parsed.type,
                     date = notification.timestamp,
                     rawNotificationId = id,
@@ -282,8 +283,7 @@ class ReviewQueueRepository @Inject constructor(
                     paymentMethod = PaymentMethod.CARD,
                     isManualEntry = false,
                     notes = "Manually recovered from debug log",
-                    dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp),
-                    merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
+                    dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp)
                 )
 
                 val expenseId = database.withTransaction {

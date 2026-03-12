@@ -42,7 +42,6 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import timber.log.Timber
 
 @HiltViewModel
@@ -237,10 +236,7 @@ fun RecurringExpensesScreen(
                                 onConfirm = { viewModel.confirmPattern(pattern) },
                                 onMerchantClick = { 
                                     onNavigateToTransactions(
-                                        TransactionFilter(
-                                            merchantName = pattern.merchantName,
-                                            merchantKey = MerchantKeyGenerator.generate(pattern.merchantName)
-                                        )
+                                        TransactionFilter(merchantName = pattern.merchantName)
                                     ) 
                                 }
                             )

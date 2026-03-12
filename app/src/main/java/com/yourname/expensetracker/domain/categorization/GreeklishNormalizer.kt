@@ -8,12 +8,7 @@ import javax.inject.Singleton
 class GreeklishNormalizer @Inject constructor() {
 
     companion object {
-        /**
-         * Static diphthong replacements shared between the instance methods and
-         * [MerchantKeyGenerator].  Diphthongs must be applied BEFORE single-char
-         * mapping so that e.g. "μπ" → "b" (not "m"+"p").
-         */
-        internal val DIPHTHONG_REPLACEMENTS_STATIC = listOf(
+        val DIPHTHONG_REPLACEMENTS_STATIC = listOf(
             "ου" to "ou",
             "ευ" to "ev",
             "αυ" to "av",
@@ -26,10 +21,7 @@ class GreeklishNormalizer @Inject constructor() {
             "γξ" to "nx"
         )
 
-        /**
-         * Static single-character Greek → Latin map shared with [MerchantKeyGenerator].
-         */
-        internal val GREEK_TO_LATIN_STATIC = mapOf(
+        val GREEK_TO_LATIN_STATIC = mapOf(
             'α' to "a", 'ά' to "a", 'Α' to "A", 'Ά' to "A",
             'β' to "v", 'Β' to "V",
             'γ' to "g", 'Γ' to "G",
@@ -56,15 +48,12 @@ class GreeklishNormalizer @Inject constructor() {
         )
 
         /**
-         * Transliterate a Greek (or mixed) string to Latin characters using the
-         * canonical diphthong-aware pipeline.  Pure function — no instance state.
-         *
-         * This is the single authoritative transliteration entry point used by
-         * [MerchantKeyGenerator] so that all normalization strategies share
-         * exactly the same Greek→Latin rules.
+         * Static (no-instance) transliteration of [text] from Greek to Latin.
+         * Applies the diphthong-aware pipeline shared with the instance [toLatin].
+         * Called by [com.yourname.expensetracker.domain.util.MerchantKeyGenerator].
          */
         fun toLatinStatic(text: String): String {
-            var result = stripAccentsStatic(text)
+            var result = text
             for ((gr, lat) in DIPHTHONG_REPLACEMENTS_STATIC) {
                 result = result.replace(gr, lat, ignoreCase = true)
             }
@@ -72,22 +61,13 @@ class GreeklishNormalizer @Inject constructor() {
                 GREEK_TO_LATIN_STATIC[char] ?: char.toString()
             }.joinToString("")
         }
-
-        private fun stripAccentsStatic(text: String): String {
-            return try {
-                val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD)
-                normalized.replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
-            } catch (e: Exception) {
-                text
-            }
-        }
     }
 
     private val DIPHTHONG_REPLACEMENTS = DIPHTHONG_REPLACEMENTS_STATIC
 
     private val GREEK_TO_LATIN = GREEK_TO_LATIN_STATIC
-    
-    private val LATIN_TO_GREEK = GREEK_TO_LATIN.entries
+
+    private val LATIN_TO_GREEK = GREEK_TO_LATIN_STATIC.entries
         .groupBy { it.value }
         .mapValues { it.value.first().key }
     
@@ -121,7 +101,6 @@ class GreeklishNormalizer @Inject constructor() {
         "wolt" to listOf("βολτ", "WOLT")
     )
 
-    /** Instance convenience — delegates to the static canonical implementation. */
     fun toLatin(greek: String): String = toLatinStatic(greek)
     
     fun toGreek(latin: String): String {
@@ -143,7 +122,7 @@ class GreeklishNormalizer @Inject constructor() {
     }
     
     private fun processGreekText(text: String): String {
-        var result = stripAccentsStatic(text)
+        var result = stripAccents(text)
         
         result = processDiphthongs(result)
         
@@ -154,7 +133,14 @@ class GreeklishNormalizer @Inject constructor() {
         return result
     }
     
-    private fun stripAccents(text: String): String = stripAccentsStatic(text)
+    private fun stripAccents(text: String): String {
+        return try {
+            val normalized = Normalizer.normalize(text, Normalizer.Form.NFD)
+            normalized.replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+        } catch (e: Exception) {
+            text
+        }
+    }
     
     private fun processDiphthongs(text: String): String {
         var result = text

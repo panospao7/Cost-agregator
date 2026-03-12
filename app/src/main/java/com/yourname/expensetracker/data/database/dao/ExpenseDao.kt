@@ -210,6 +210,21 @@ interface ExpenseDao {
     suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
 
     @Query("""
+        SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
+               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
+                         ELSE amount END) as total, COUNT(*) as cnt 
+        FROM expenses 
+        WHERE transactionType = 'PURCHASE' 
+        AND date >= :startDate AND date <= :endDate
+        AND isNotMine = 0
+        AND merchantKey IS NOT NULL
+        GROUP BY merchantKey
+        ORDER BY total DESC
+    """)
+    suspend fun getMerchantTotalsBetween(startDate: Long, endDate: Long): List<MerchantTotal>
+
+    @Query("""
         SELECT categoryId, SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                                     WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                                     ELSE amount END) as total, COUNT(*) as txCount
@@ -372,6 +387,30 @@ interface ExpenseDao {
     """)
     suspend fun getDailyTotalsForPeriod(startMs: Long, endMs: Long): List<DailyTotal>
 
+    // Recurring candidates: merchants that appear in multiple distinct months
+    @Query("""
+        SELECT merchantKey as merchantName,
+               MIN(merchant) as displayName,
+               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
+                        ELSE amount END) as totalAmount,
+               COUNT(*) as transactionCount,
+               AVG(amount) as averageAmount,
+               MIN(amount) as minAmount,
+               MAX(amount) as maxAmount,
+               MIN(date) as firstDate, 
+               MAX(date) as lastDate
+        FROM expenses 
+        WHERE transactionType = 'PURCHASE'
+        AND isNotMine = 0
+        AND merchantKey IS NOT NULL
+        GROUP BY merchantKey
+        HAVING transactionCount >= 2 
+        AND (maxAmount - minAmount) < (averageAmount * 0.15)
+        ORDER BY transactionCount DESC
+    """)
+    suspend fun getRecurringCandidates(): List<MerchantStats>
+
     // Day-of-week spending pattern
     @Query("""
         SELECT 
@@ -500,6 +539,25 @@ interface ExpenseDao {
     fun getUnlocatedExpensesFlow(limit: Int = 100): Flow<List<Expense>>
 
     /**
+     * Aggregate spend by merchant for expenses that have coordinates.
+     * Used by [SpendingHeatmapEngine] to weight heatmap intensity.
+     */
+    @Query("""
+        SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
+               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
+                         ELSE amount END) as total, COUNT(*) as cnt
+        FROM expenses
+        WHERE latitude IS NOT NULL
+          AND transactionType = 'PURCHASE'
+          AND isNotMine = 0
+          AND merchantKey IS NOT NULL
+        GROUP BY merchantKey
+        ORDER BY total DESC
+    """)
+    suspend fun getLocatedMerchantTotals(): List<MerchantTotal>
+
+    /**
      * Expenses within a geographic bounding box.
      * SQLite has no native geo math so we use a lat/lon bounding box pre-filter;
      * callers can apply an exact Haversine filter if needed.
@@ -568,6 +626,13 @@ data class MerchantSuggestion(
     val categoryId: Long?,
     val avgAmount: Double,
     val txCount: Int
+)
+
+data class MerchantTotal(
+    val merchantKey: String,  // canonical key — used for grouping and DB lookups
+    val merchant: String,     // MIN(merchant) — human-readable display name for UI
+    val total: Double,
+    val cnt: Int
 )
 
 data class CategoryTotal(
