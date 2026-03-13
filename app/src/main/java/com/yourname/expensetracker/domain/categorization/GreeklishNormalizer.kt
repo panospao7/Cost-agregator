@@ -57,9 +57,12 @@ class GreeklishNormalizer @Inject constructor() {
             for ((gr, lat) in DIPHTHONG_REPLACEMENTS_STATIC) {
                 result = result.replace(gr, lat, ignoreCase = true)
             }
-            return result.map { char ->
+            val mapped = result.map { char ->
                 GREEK_TO_LATIN_STATIC[char] ?: char.toString()
             }.joinToString("")
+            // Strip Latin diacritics (e.g. é → e) via NFD decomposition
+            val normalized = java.text.Normalizer.normalize(mapped, java.text.Normalizer.Form.NFD)
+            return normalized.replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
         }
     }
 

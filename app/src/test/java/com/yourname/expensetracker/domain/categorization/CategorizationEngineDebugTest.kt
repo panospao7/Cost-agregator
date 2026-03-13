@@ -58,6 +58,13 @@ class CategorizationEngineDebugTest {
             MerchantCategory("sklavenitis", 1L)
         )
         
+        // Mock canonicalizer to actually return "sklavenitis" for "sklavenitis lagka"
+        every { canonicalizer.canonicalize("sklavenitis lagka") } returns CanonicalResult(
+            canonicalName = "sklavenitis",
+            strippedParts = listOf("lagka"),
+            confidencePenalty = 0.05
+        )
+        
         // Sklavenitis Lagka -> normalized: "sklavenitis lagka" -> canonical: "sklavenitis"
         // This should fail Layer 1 (Exact), but pass Layer 2 (Canonical)
         val trace = engine.debugCategorize("Sklavenitis Lagka")

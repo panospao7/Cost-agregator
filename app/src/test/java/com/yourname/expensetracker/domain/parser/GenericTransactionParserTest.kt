@@ -14,12 +14,15 @@ class GenericTransactionParserTest {
     @Before
     fun setup() {
         currencyNormalizer = io.mockk.mockk {
-            io.mockk.every { normalize(any()) } answers { firstArg() }
+            io.mockk.every { normalize(any()) } returns "EUR"
         }
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() }
         }
-        directionDetector = io.mockk.mockk(relaxed = true)
+        directionDetector = io.mockk.mockk {
+            io.mockk.every { detectDirection(any(), any(), any(), any()) } returns null
+            io.mockk.every { extractAccountName(any(), any(), any()) } returns null
+        }
         parser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector)
     }
 
@@ -222,16 +225,36 @@ class GenericTransactionParserTest {
 
     @Test
     fun `fallback to Unknown when no merchant found`() {
+        io.mockk.every { merchantCleaner.clean(any()) } answers { firstArg() ?: "Unknown" }
         val result = parser.parse(
-            title = "Payment",
+            title = "Alert",
             text = "You paid €10.00",
             bigText = null, subText = null,
             packageName = "com.unknown.app"
         )
-        // Might be null or Unknown depending on whether "Payment" title passes isGenericTitle
-        if (result != null) {
-            // title contains "payment" so it's generic, merchant should be "Unknown"
-            assertEquals("Unknown", result.merchant)
-        }
+        assertNotNull(result)
+        assertEquals("Unknown", result!!.merchant)
+    }
+
+    @Test
+    fun `enriches transfer metadata when detector returns direction and account`() {
+        io.mockk.every {
+            directionDetector.detectDirection(any(), any(), any(), any())
+        } returns com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING
+        io.mockk.every {
+            directionDetector.extractAccountName(any(), any(), any())
+        } returns "Payroll Account"
+
+        val result = parser.parse(
+            title = "Salary credited",
+            text = "Deposit €1500.00",
+            bigText = null, subText = null,
+            packageName = "com.unknown.app"
+        )
+
+        assertNotNull(result)
+        assertEquals(TransactionType.DEPOSIT, result!!.type)
+        assertEquals(com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING, result.transferDirection)
+        assertEquals("From: Payroll Account", result.transferAccountName)
     }
 }

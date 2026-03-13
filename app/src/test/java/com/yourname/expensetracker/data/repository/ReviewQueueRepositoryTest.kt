@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
@@ -42,6 +43,12 @@ class ReviewQueueRepositoryTest {
 
     @Before
     fun setup() {
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        val dbBlock = slot<suspend () -> Any>()
+        coEvery { database.withTransaction(capture(dbBlock)) } coAnswers {
+            dbBlock.captured.invoke()
+        }
+
         every { timeProvider.now() } returns 1700000000000L
         
         repository = ReviewQueueRepository(

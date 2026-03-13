@@ -32,7 +32,7 @@ class ContextualInferenceEngine @Inject constructor() {
         const val BOOST_MEDIUM = 0.35
         const val BOOST_LARGE = 0.30
         const val BOOST_XL = 0.25
-        const val BOOST_XXL = 0.20
+        const val BOOST_XXL = 0.35
         
         // Grocery-specific boosts
         const val BOOST_GROCERY_RANGE = 0.45
@@ -58,7 +58,7 @@ class ContextualInferenceEngine @Inject constructor() {
     private val GREEK_SURNAME_ENDINGS = listOf(
         "is", "as", "os", "ou", "akis", "idis", "idis", "opoulos", 
         "atos", "itou", "ellis", "eas", "oudis", "akos", "ikos",
-        "aros", "ou", "i", "atos", "iti", "e", "a", "oy",
+        "aros", "oy", "iti", "ates",
         // Feminine endings
         "poulou", "dou", "idou", "opoulou", "aki", "ara", "ea"
     )
@@ -73,7 +73,7 @@ class ContextualInferenceEngine @Inject constructor() {
     private val BUSINESS_INDICATORS = listOf(
         "shop", "store", "cafe", "restaurant", "bar", "grill",
         "pizza", "bakery", "market", "mini market", "kafeneio",
-        "taverna", "souvlaki", "gyros", "kebab", "ltd", "sa", "ae"
+        "taverna", "souvlaki", "gyros", "kebab", "ltd", "sa", "ae", "ab"
     )
     
     fun isLikelySurname(merchant: String): Boolean {
@@ -88,7 +88,12 @@ class ContextualInferenceEngine @Inject constructor() {
                    GREEK_SURNAME_PREFIXES.any { word.startsWith(it) }
         }
         
-        return !words.any { it in BUSINESS_INDICATORS }
+        // For multi-word input, require all terms to look surname-like and reject business terms.
+        return words.none { it in BUSINESS_INDICATORS } &&
+            words.all { word ->
+                GREEK_SURNAME_ENDINGS.any { word.endsWith(it) } ||
+                    GREEK_SURNAME_PREFIXES.any { word.startsWith(it) }
+            }
     }
     
     fun inferFromContext(
@@ -121,7 +126,7 @@ class ContextualInferenceEngine @Inject constructor() {
                 scores["Food"] = (scores["Food"] ?: 0.0) + BOOST_TINY
             }
             amount in XL_AMOUNT..XXL_AMOUNT -> {
-                scores["Shopping"] = (scores["Shopping"] ?: 0.0) + BOOST_XL
+                scores["Shopping"] = (scores["Shopping"] ?: 0.0) + BOOST_XXL
                 scores["Transport"] = (scores["Transport"] ?: 0.0) + BOOST_LARGE
             }
             amount > XXL_AMOUNT -> {

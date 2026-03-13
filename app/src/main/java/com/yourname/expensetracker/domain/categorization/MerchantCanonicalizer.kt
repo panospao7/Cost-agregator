@@ -77,40 +77,41 @@ class MerchantCanonicalizer @Inject constructor() {
             }
         } while (strippedPrefix)
         
-        // Keep stripping location suffixes until no more matches
-        var strippedLocation: Boolean
+        // Strip location and business type suffixes iteratively until no more can be stripped
+        var strippedAny: Boolean
         do {
-            strippedLocation = false
+            strippedAny = false
+            
+            // Try to strip location suffix
             for (suffix in LOCATION_SUFFIXES) {
                 if (normalized.endsWith(" $suffix")) {
                     normalized = normalized.removeSuffix(" $suffix").trim()
                     strippedParts.add(suffix)
-                    strippedLocation = true
-                    break // Restart the loop after a successful strip
-                } else if (normalized.endsWith(suffix) && normalized.length > suffix.length) {
-                    // Make sure we're not removing the entire string
-                    normalized = normalized.removeSuffix(suffix).trim()
-                    strippedParts.add(suffix)
-                    strippedLocation = true
+                    strippedAny = true
                     break
+                } else if (normalized.endsWith(suffix) && normalized.length > suffix.length) {
+                    val prevChar = normalized[normalized.length - suffix.length - 1]
+                    if (!prevChar.isLetterOrDigit()) {
+                        normalized = normalized.removeSuffix(suffix).dropLast(1).trim()
+                        strippedParts.add(suffix)
+                        strippedAny = true
+                        break
+                    }
                 }
             }
-        } while (strippedLocation)
-        
-        // Keep stripping business type suffixes until no more matches
-        var strippedBusiness: Boolean
-        do {
-            strippedBusiness = false
+            
+            // Try to strip business suffix
             for (suffix in BUSINESS_TYPE_SUFFIXES) {
-                val pattern = Regex("""\b$suffix\s*$""", RegexOption.IGNORE_CASE)
+                val escapedSuffix = Regex.escape(suffix)
+                val pattern = Regex("""\b$escapedSuffix[\s\.]*$""", RegexOption.IGNORE_CASE)
                 if (pattern.containsMatchIn(normalized)) {
                     normalized = normalized.replace(pattern, "").trim()
                     strippedParts.add(suffix)
-                    strippedBusiness = true
+                    strippedAny = true
                     break
                 }
             }
-        } while (strippedBusiness)
+        } while (strippedAny)
         
         normalized = normalized.trim()
         

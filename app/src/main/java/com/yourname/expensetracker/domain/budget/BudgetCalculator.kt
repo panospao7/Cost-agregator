@@ -65,30 +65,21 @@ class BudgetCalculator @Inject constructor(
             }
             BudgetPeriod.MONTHLY -> {
                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-                val anchorMonth = anchorCal.get(Calendar.MONTH)
-                val anchorYear = anchorCal.get(Calendar.YEAR)
                 
                 // Set to start of current month
                 cal.set(Calendar.DAY_OF_MONTH, 1)
-                val currentMonth = cal.get(Calendar.MONTH)
-                val currentYear = cal.get(Calendar.YEAR)
+                // Evaluate if we are currently past the anchor day
+                val evalCal = Calendar.getInstance().apply { timeInMillis = evaluationTime }
                 
-                // Determine if we've passed the anchor day this month
-                val currentDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                val hasPassedAnchorThisMonth = when {
-                    currentYear > anchorYear -> true
-                    currentYear == anchorYear && currentMonth > anchorMonth -> true
-                    currentYear == anchorYear && currentMonth == anchorMonth -> {
-                        // Check day within current month using evaluationTime
-                        val evalCal = Calendar.getInstance().apply { timeInMillis = evaluationTime }
-                        val today = evalCal.get(Calendar.DAY_OF_MONTH)
-                        today >= anchorDay
-                    }
-                    else -> false
-                }
+                val evalDay = evalCal.get(Calendar.DAY_OF_MONTH)
                 
-                // If we haven't passed anchor this month, cycle started last month
-                if (!hasPassedAnchorThisMonth && currentYear == anchorYear && currentMonth == anchorMonth) {
+                // Determine the correct month start
+                // If today is before the anchor day, the period actually started last month
+                // Note: we must also coerce the anchor day by the max days of the evaluated month
+                val adjustedAnchorDay = anchorDay.coerceAtMost(evalCal.getActualMaximum(Calendar.DAY_OF_MONTH))
+                val hasPassedAnchorThisMonth = evalDay >= adjustedAnchorDay
+                
+                if (!hasPassedAnchorThisMonth) {
                     cal.add(Calendar.MONTH, -1)
                 }
                 

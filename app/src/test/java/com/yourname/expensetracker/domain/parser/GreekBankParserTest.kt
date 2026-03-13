@@ -14,7 +14,7 @@ class GreekBankParserTest {
     @Before
     fun setup() {
         currencyNormalizer = io.mockk.mockk {
-            io.mockk.every { normalize(any()) } answers { firstArg() ?: "EUR" }
+            io.mockk.every { normalize(any()) } returns "EUR"
         }
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }

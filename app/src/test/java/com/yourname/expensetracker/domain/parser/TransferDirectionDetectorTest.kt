@@ -218,6 +218,20 @@ class TransferDirectionDetectorTest {
         assertEquals(TransferDirection.OUTGOING, result)
     }
 
+    @Test
+    fun `detect direction - transfer to wins in mixed incoming wording`() {
+        val text = "Refund processed. Transfer to John €40"
+        val result = detector.detectDirection(null, text, null, TransactionType.TRANSFER)
+        assertEquals(TransferDirection.OUTGOING, result)
+    }
+
+    @Test
+    fun `detect direction - greek transfer se wins in mixed wording`() {
+        val text = "Επιστροφή χρημάτων, μεταφορά σε Μαρία 20,00€"
+        val result = detector.detectDirection(null, text, null, TransactionType.TRANSFER)
+        assertEquals(TransferDirection.OUTGOING, result)
+    }
+
     // ==================== ACCOUNT NAME EXTRACTION ====================
 
     @Test

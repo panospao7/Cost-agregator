@@ -48,6 +48,13 @@ class MerchantCanonicalizerTest {
         assertEquals("sklavenitis", result.canonicalName)
         assertTrue(result.strippedParts.size >= 2)
     }
+
+    @Test
+    fun `does not treat dotted suffix as wildcard regex`() {
+        val result = canonicalizer.canonicalize("Acme mXiXkXeX")
+        assertEquals("acme mxixkxex", result.canonicalName)
+        assertFalse(result.strippedParts.contains("m.i.k.e."))
+    }
     
     @Test
     fun `handles region prefix`() {
@@ -168,7 +175,9 @@ class SemanticKeywordMatcherTest {
     
     @Before
     fun setup() {
-        val greeklishNormalizer = mockk<GreeklishNormalizer>()
+        val greeklishNormalizer = mockk<GreeklishNormalizer> {
+            io.mockk.every { normalize(any()) } answers { firstArg<String>().lowercase() }
+        }
         matcher = SemanticKeywordMatcher(greeklishNormalizer)
     }
     
@@ -282,7 +291,7 @@ class ContextualInferenceEngineTest {
         val result = engine.inferFromContext(75.0, timestamp)
         
         assertNotNull(result)
-        assertTrue(result!!.categoryName in listOf("Shopping", "Transport"))
+        assertEquals("Shopping", result!!.categoryName)
     }
     
     @Test
@@ -290,7 +299,7 @@ class ContextualInferenceEngineTest {
         val timestamp = getTimestampForHour(15)
         // Amount 0 should give low confidence
         val result = engine.inferFromContext(0.0, timestamp)
-        // May or may not return null depending on implementation
+        assertNull(result)
     }
     
     @Test
@@ -299,7 +308,13 @@ class ContextualInferenceEngineTest {
         val result = engine.inferFromContext(5.0, timestamp)
         
         assertNotNull(result)
-        assertTrue(result!!.reason.contains("small amount") || result.reason.contains("morning"))
+        assertTrue(result!!.reason.contains("amount"))
+        assertTrue(result.reason.contains("morning"))
+    }
+
+    @Test
+    fun `does not classify arbitrary multiword merchant as surname`() {
+        assertFalse(engine.isLikelySurname("coffee roasters"))
     }
     
     private fun getTimestampForHour(hour: Int): Long {

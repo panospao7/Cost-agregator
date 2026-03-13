@@ -13,12 +13,15 @@ import org.junit.Test
 class AppParserRegistryTest {
 
     private val currencyNormalizer = io.mockk.mockk<com.yourname.expensetracker.domain.util.CurrencyNormalizer> {
-        io.mockk.every { normalize(any()) } answers { firstArg() ?: "EUR" }
+        io.mockk.every { normalize(any()) } returns "EUR"
     }
     private val merchantCleaner = io.mockk.mockk<com.yourname.expensetracker.domain.util.MerchantCleaner> {
         io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }
     }
-    private val directionDetector = io.mockk.mockk<com.yourname.expensetracker.domain.parser.TransferDirectionDetector>(relaxed = true)
+    private val directionDetector = io.mockk.mockk<com.yourname.expensetracker.domain.parser.TransferDirectionDetector> {
+        io.mockk.every { detectDirection(any(), any(), any(), any()) } returns null
+        io.mockk.every { extractAccountName(any(), any(), any()) } returns null
+    }
 
     private val registry = AppParserRegistry(
         greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner),

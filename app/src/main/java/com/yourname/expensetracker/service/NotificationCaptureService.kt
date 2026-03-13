@@ -73,48 +73,6 @@ class NotificationCaptureService : NotificationListenerService() {
         private const val CACHE_MAX_AGE_MS = 60_000L
         private const val RESTART_INTERVAL_MS = 60_000L // Restart every minute to keep service alive
         
-        // Packages filtering logic...
-        private val MONITORED_PACKAGES = setOf(
-            "com.revolut.revolut",
-            "com.google.android.apps.walletnfcrel",
-            "com.google.android.apps.nbu.paisa.user", // Google Pay (old/new variants)
-            "gr.nbg.mobilebanking", // National Bank of Greece
-            "com.eurobank.mobile",
-            "gr.alpha.mobile",
-            "com.winbank.mobile", // Piraeus
-            "com.viber.voip",
-            "com.google.android.gm", // Gmail
-            "com.android.mms", // SMS (generic)
-            "com.google.android.apps.messaging", // Google Messages
-            "com.samsung.android.messaging" // Samsung Messages
-        )
-
-        private val IGNORED_PACKAGES = setOf(
-            "android",
-            "com.android.systemui",
-            "com.android.settings",
-            "com.whatsapp",
-            "com.facebook.orca",
-            "com.instagram.android",
-            "com.snapchat.android",
-            "com.google.android.youtube"
-        )
-
-        // Heuristic detection patterns
-        private val REGEX_CURRENCY = Regex("""[€$£¥]|(EUR|USD|GBP|CHF)""")
-        private val REGEX_AMOUNT = Regex("""\d+[.,]\d{2}""")
-        
-        private val FINANCIAL_KEYWORDS = setOf(
-            "paid", "spent", "purchase", "charged", "payment", "transaction", "amount", 
-            "card", "debit", "credit", "bank", "wallet",
-            // Greek Keywords (Properly Encoded)
-            "πληρωμ",   // πληρωμή
-            "αγορ",     // αγορά
-            "χρέωσ",    // χρέωση
-            "συναλλαγ", // συναλλαγή
-            "κάρτα",    // κάρτα
-            "μεταφορ"   // μεταφορά
-        )
     }
 
     override fun onCreate() {
@@ -252,7 +210,7 @@ class NotificationCaptureService : NotificationListenerService() {
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
 
-        if (!shouldCapture(packageName, title, text, bigText)) return
+        if (!NotificationFilter.shouldCapture(packageName, title, text, bigText)) return
         
         // Better deduplication using notification key + content
         // sbn.key is unique to the notification slot
@@ -362,7 +320,7 @@ class NotificationCaptureService : NotificationListenerService() {
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
 
-        if (!shouldCapture(packageName, title, text, bigText)) {
+        if (!NotificationFilter.shouldCapture(packageName, title, text, bigText)) {
             Timber.d("Skipping (shouldCapture=false): $packageName")
             return
         }
@@ -372,20 +330,6 @@ class NotificationCaptureService : NotificationListenerService() {
         serviceScope.launch {
             processNotification(sbn, packageName, title, text, bigText, extras)
         }
-    }
-
-    private fun shouldCapture(packageName: String, title: String, text: String, bigText: String): Boolean {
-        if (IGNORED_PACKAGES.contains(packageName)) return false
-        if (MONITORED_PACKAGES.contains(packageName)) return true
-
-        // Discovery Mode: Heuristic check for unmonitored packages
-        val content = (title + " " + text + " " + bigText).lowercase()
-        
-        // Must contain an amount or currency, PLUS a financial keyword
-        val hasAmount = REGEX_CURRENCY.containsMatchIn(content) || REGEX_AMOUNT.containsMatchIn(content)
-        if (!hasAmount) return false
-
-        return FINANCIAL_KEYWORDS.any { content.contains(it) }
     }
 
     private fun buildExtrasJson(extras: android.os.Bundle): String {

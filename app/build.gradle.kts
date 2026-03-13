@@ -17,6 +17,8 @@ android {
         versionCode = 1
         versionName = "1.0"
 
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         // Geocoding API keys — read from local.properties (not committed to VCS)
         val localProps = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(
             rootDir, providers
@@ -136,13 +138,26 @@ dependencies {
     testImplementation("io.mockk:mockk:1.13.8")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("org.json:json:20231013")
+    // Hilt Testing
+    testImplementation("com.google.dagger:hilt-android-testing:2.51.1")
+    kspTest("com.google.dagger:hilt-android-compiler:2.51.1")
+    // Robolectric
+    testImplementation("org.robolectric:robolectric:4.11.1")
+    testImplementation("androidx.arch.core:core-testing:2.2.0")
+    // Turbine - Flow testing
+    testImplementation("app.cash.turbine:turbine:1.2.0")
+    // Truth - readable assertions
+    testImplementation("com.google.truth:truth:1.4.4")
 
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation("androidx.test:runner:1.5.2")
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     androidTestImplementation("androidx.room:room-testing:2.6.1")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     androidTestImplementation("io.mockk:mockk-android:1.13.8")
+    // WorkManager testing
+    androidTestImplementation("androidx.work:work-testing:2.9.1")
     debugImplementation(libs.androidx.ui.test.manifest)
 }

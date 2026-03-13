@@ -16,6 +16,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExpenseRepositoryTest {
@@ -99,8 +100,57 @@ class ExpenseRepositoryTest {
         
         // Assert
         coVerify { expenseDao.updateMerchant(expenseId, newMerchant) }
+        coVerify { expenseDao.updateMerchantKey(expenseId, MerchantKeyGenerator.generate(newMerchant)) }
         coVerify { merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant) }
         coVerify { merchantCategoryRepository.learnPattern(newMerchant, 1L) }
+    }
+
+    @Test
+    fun `updateExpenseMerchant applyToAll updates merchant and key in bulk and pending reviews`() = runTest {
+        val oldMerchant = "ΑΒ Βασιλόπουλος"
+        val newMerchant = "AB Vassilopoulos"
+        val expense = Expense(
+            id = 202L,
+            amount = 12.5,
+            merchant = oldMerchant,
+            categoryId = 3L,
+            transactionType = TransactionType.PURCHASE,
+            date = System.currentTimeMillis()
+        )
+
+        repository.updateExpenseMerchant(expense, newMerchant, applyToAll = true)
+
+        coVerify {
+            expenseDao.updateMerchantForMerchant(
+                MerchantKeyGenerator.generate(oldMerchant),
+                newMerchant,
+                MerchantKeyGenerator.generate(newMerchant)
+            )
+        }
+        coVerify { pendingReviewDao.bulkRenameMerchant(oldMerchant, newMerchant) }
+        coVerify(exactly = 0) { expenseDao.updateMerchant(expense.id, any()) }
+        coVerify(exactly = 0) { expenseDao.updateMerchantKey(expense.id, any()) }
+    }
+
+    @Test
+    fun `updateExpenseMerchant noops when merchant unchanged`() = runTest {
+        val merchant = "Same Merchant"
+        val expense = Expense(
+            id = 303L,
+            amount = 9.99,
+            merchant = merchant,
+            categoryId = 2L,
+            transactionType = TransactionType.PURCHASE,
+            date = System.currentTimeMillis()
+        )
+
+        repository.updateExpenseMerchant(expense, merchant, applyToAll = false)
+
+        coVerify(exactly = 0) { expenseDao.updateMerchant(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.updateMerchantKey(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.updateMerchantForMerchant(any(), any(), any()) }
+        coVerify(exactly = 0) { pendingReviewDao.bulkRenameMerchant(any(), any()) }
+        coVerify(exactly = 0) { merchantNormalizer.learnMerchantAlias(any(), any()) }
     }
 
     @Test

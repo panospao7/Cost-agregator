@@ -248,7 +248,9 @@ class ExpenseRepository @Inject constructor(
             pendingReviewDao.bulkRenameMerchant(oldMerchant, newMerchant)
         } else {
             // Just update this single record
+            val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
             expenseDao.updateMerchant(expense.id, newMerchant)
+            expenseDao.updateMerchantKey(expense.id, newMerchantKey)
         }
         
         // Catch the rename for future auto-correction
