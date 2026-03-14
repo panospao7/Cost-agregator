@@ -95,8 +95,9 @@ class TimePeriodUtilsStressTest {
         val start2 = TimePeriodUtils.getStartOfDay(march31)
         val start3 = TimePeriodUtils.getStartOfDay(april1)
         
-        assertTrue(start2 - start1 in 85000000..90000000) // ~86-90 million ms (23-25 hours)
-        assertTrue(start3 - start2 in 85000000..90000000)
+        // Around DST transitions, a day can be 23h, 24h, or 25h.
+        assertTrue(start2 - start1 in 82_000_000..90_500_000)
+        assertTrue(start3 - start2 in 82_000_000..90_500_000)
     }
 
     // ============================================================================
@@ -384,21 +385,23 @@ class TimePeriodUtilsStressTest {
 
     @Test
     fun `stress - getLastNDaysRange assumes 24h days`() {
-        // This test documents the bug: getLastNDaysRange uses magic constant 86400000L
-        // which is incorrect during DST transitions
-        
-        // Test during a non-DST period
+        // Range should end at "now" and start at the start of the day exactly N days earlier.
         val june15 = Calendar.getInstance().apply {
             set(2024, Calendar.JUNE, 15, 12, 0, 0)
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
         
         val range = TimePeriodUtils.getLastNDaysRange(june15, 7)
-        
-        // Should be approximately 7 days apart
-        val diff = range.second - range.first
-        // Allow some tolerance due to DST
-        assertTrue(diff in 600000000..610000000) // ~6.9-7.1 days in ms
+        assertEquals(june15, range.second)
+        val expectedStart = Calendar.getInstance().apply {
+            timeInMillis = june15
+            add(Calendar.DAY_OF_MONTH, -7)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        assertEquals(expectedStart, range.first)
     }
 
     @Test

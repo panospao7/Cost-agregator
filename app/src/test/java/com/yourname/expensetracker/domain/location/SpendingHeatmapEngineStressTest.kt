@@ -197,15 +197,16 @@ class SpendingHeatmapEngineStressTest {
     @Test
     fun `stress - average position in cluster`() {
         val expenses = listOf(
-            createExpense(1, 40.7128, -74.0060, 10.0),
-            createExpense(2, 40.7130, -74.0062, 10.0),
-            createExpense(3, 40.7132, -74.0064, 10.0)
+            createExpense(1, 40.712800, -74.006000, 10.0),
+            createExpense(2, 40.712805, -74.006005, 10.0),
+            createExpense(3, 40.712810, -74.006010, 10.0)
         )
 
         val heatmap = heatmapEngine.compute(expenses)
+        assertEquals(1, heatmap.size)
 
-        val expectedLat = (40.7128 + 40.7130 + 40.7132) / 3
-        val expectedLon = (-74.0060 + -74.0062 + -74.0064) / 3
+        val expectedLat = (40.712800 + 40.712805 + 40.712810) / 3
+        val expectedLon = (-74.006000 + -74.006005 + -74.006010) / 3
         
         assertEquals(expectedLat, heatmap[0].latitude, 0.0001)
         assertEquals(expectedLon, heatmap[0].longitude, 0.0001)

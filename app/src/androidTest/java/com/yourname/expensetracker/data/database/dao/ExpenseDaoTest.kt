@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import kotlinx.coroutines.flow.first
@@ -134,21 +135,26 @@ class ExpenseDaoTest {
     @Test
     fun updateCategory() = runBlocking {
         val id = expenseDao.insert(makeExpense())
-        expenseDao.updateCategory(id, 5L)
+        val categoryId = database.categoryDao().insert(
+            Category(name = "Food", icon = "🍔", color = "#FF0000")
+        )
+        expenseDao.updateCategory(id, categoryId)
 
         val updated = expenseDao.getAll().first()
-        assertEquals(5L, updated.categoryId)
+        assertEquals(categoryId, updated.categoryId)
     }
 
     @Test
     fun getExpensesBetweenReturnsCorrectRange() = runBlocking {
-        val now = System.currentTimeMillis()
-        expenseDao.insert(makeExpense(date = now - 86400000 * 2)) // 2 days ago
-        expenseDao.insert(makeExpense(date = now - 86400000))     // 1 day ago
-        expenseDao.insert(makeExpense(date = now))                 // now
+        val now = 1_700_000_000_000L
+        val twoDaysAgo = now - 2L * 86_400_000L
+        val oneDayAgo = now - 86_400_000L
+        expenseDao.insert(makeExpense(date = twoDaysAgo))
+        expenseDao.insert(makeExpense(date = oneDayAgo))
+        expenseDao.insert(makeExpense(date = now))
 
-        val between = expenseDao.getExpensesBetween(now - 86400000 * 3, now - 86400000 + 1)
-        assertEquals(1, between.size) // only the 2-days-ago one, depending on exact timing
+        val between = expenseDao.getExpensesBetween(now - 3L * 86_400_000L, oneDayAgo + 1L)
+        assertEquals(2, between.size)
     }
 
     @Test

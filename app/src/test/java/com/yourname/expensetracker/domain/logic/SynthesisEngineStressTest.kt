@@ -1230,8 +1230,8 @@ class SynthesisEngineStressTest {
             )
         )
 
-        // Should be CRITICAL due to low buffer + over pace
-        assertEquals(RiskLevel.CRITICAL, forecast.components.riskLevel)
+        // Buffer remains above critical threshold, so over-pace maps to HIGH.
+        assertEquals(RiskLevel.HIGH, forecast.components.riskLevel)
     }
 
     @Test
@@ -1376,9 +1376,9 @@ class SynthesisEngineStressTest {
             budgetLimit = 1000.0
         )
 
-        // All future days should have NO_DATA status
+        // Future days should remain forecast states (not past NO_DATA).
         val futureDays = blockParty.filter { !it.isToday && it.dayOfMonth > 15 }
-        assertTrue(futureDays.all { it.status == BlockPartyStatus.NO_DATA })
+        assertTrue(futureDays.all { it.status in listOf(BlockPartyStatus.FUTURE, BlockPartyStatus.BILL_DAY) })
     }
 
     // ============================================================================

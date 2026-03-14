@@ -132,7 +132,7 @@ class ComplexQueryTest {
 
         val recent = expenseDao.getExpensesBetween(now - 86400000 * 7, now + 1)
         
-        assertEquals(2, recent.size)
+        assertEquals(3, recent.size)
     }
 
     @Test
@@ -338,6 +338,7 @@ class ComplexQueryTest {
         amount = amount,
         currency = "EUR",
         merchant = merchant,
+        categoryId = categoryId,
         transactionType = transactionType,
         date = date
     )

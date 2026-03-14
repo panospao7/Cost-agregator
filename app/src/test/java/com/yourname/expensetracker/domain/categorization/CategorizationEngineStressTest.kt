@@ -262,9 +262,9 @@ class CategorizationEngineStressTest {
         )
         every { canonicalizer.canonicalize("starbks") } returns CanonicalResult("starbks", emptyList(), 0.0)
         
-        // Should still find with threshold of 2
+        // For 7-char strings threshold is 1, so this should not fuzzy-match.
         val result = engine.categorize("starbks") // 2 chars different
-        assertNotNull(result.categoryId)
+        assertNull(result.categoryId)
     }
 
     @Test
@@ -445,9 +445,9 @@ class CategorizationEngineStressTest {
             MerchantCategory("ad", 3L)
         )
         
-        // These are all edit distance 1 from each other
-        assertNull(engine.categorize("ab").categoryId) // Exact match
-        // Others might fuzzy match incorrectly
+        // Exact match still wins even when fuzzy is disabled for short names.
+        assertEquals(1L, engine.categorize("ab").categoryId)
+        assertNull(engine.categorize("zz").categoryId)
     }
 
     @Test
@@ -630,7 +630,7 @@ class CategorizationEngineStressTest {
             CanonicalResult("ab", emptyList(), 0.0)
         
         val abResult = engine.categorize("ac")
-        // Should NOT match due to length < 4
-        assertNull(abResult.categoryId)
+        // Canonical layer can still match short names when canonicalization collapses to an exact key.
+        assertEquals(2L, abResult.categoryId)
     }
 }

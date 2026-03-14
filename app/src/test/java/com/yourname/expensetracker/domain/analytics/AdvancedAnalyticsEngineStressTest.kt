@@ -137,7 +137,8 @@ class AdvancedAnalyticsEngineStressTest {
         
         val outliers = values.filter { Math.abs((it - mean) / stdDev) > 1.5 }
         
-        assertEquals(2, outliers.size)
+        assertEquals(1, outliers.size)
+        assertEquals(200.0, outliers[0], 0.1)
     }
 
     // ============================================================================

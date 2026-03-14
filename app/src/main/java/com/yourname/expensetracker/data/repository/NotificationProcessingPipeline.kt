@@ -18,9 +18,11 @@ import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
@@ -82,11 +84,36 @@ class NotificationProcessingPipeline @Inject constructor(
         )
 
         if (parsed == null) {
+            val oversizedCandidate = detectOversizedAmountCandidate(
+                title = notification.title,
+                text = notification.text,
+                bigText = notification.bigText
+            )
             database.withTransaction {
                 val rawId = dao.insertOrIgnore(notification)
                 if (rawId == -1L) return@withTransaction
-                sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
-                dao.markRelevance(rawId, false)
+                if (oversizedCandidate != null) {
+                    val review = PendingReview(
+                        rawNotificationId = rawId,
+                        suggestedAmount = oversizedCandidate.amount,
+                        suggestedCurrency = oversizedCandidate.currency,
+                        suggestedMerchant = oversizedCandidate.merchantHint ?: "Unknown",
+                        suggestedType = TransactionType.UNKNOWN.name,
+                        suggestedCategoryId = null,
+                        suggestedDate = notification.timestamp,
+                        confidence = 0.5f,
+                        explanation = "Oversized amount needs manual confirmation",
+                        packageName = notification.packageName,
+                        notificationTitle = notification.title,
+                        notificationText = notification.text ?: notification.bigText
+                    )
+                    pendingReviewDao.insert(review)
+                    sourceStatsDao.incrementTotalAndPending(notification.packageName, timeProvider.now())
+                    dao.markRelevance(rawId, true)
+                } else {
+                    sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
+                    dao.markRelevance(rawId, false)
+                }
             }
             confidenceRouter.invalidateSourceStatsCache(notification.packageName)
             return
@@ -130,6 +157,68 @@ class NotificationProcessingPipeline @Inject constructor(
 
             confidenceRouter.invalidateSourceStatsCache(notification.packageName)
             confidenceRouter.invalidateMerchantCache(correctedMerchant)
+        }
+    }
+
+    internal data class OversizedAmountCandidate(
+        val amount: Double,
+        val currency: String,
+        val merchantHint: String?
+    )
+
+    internal companion object {
+        private val CURRENCY_HINT_REGEX = Regex("""(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)""", RegexOption.IGNORE_CASE)
+        private val TRANSACTION_HINT_REGEX = Regex(
+            """(paid|payment|purchase|transaction|transfer|sent|received|χρεωση|πληρωμη|αγορα|καταθεση|πιστωση)""",
+            RegexOption.IGNORE_CASE
+        )
+        private val AMOUNT_TOKEN_REGEX = Regex(
+            """(?:€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)?\s*[+-]?\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?""",
+            RegexOption.IGNORE_CASE
+        )
+
+        internal fun detectOversizedAmountCandidate(
+            title: String?,
+            text: String?,
+            bigText: String?
+        ): OversizedAmountCandidate? {
+            val fullText = listOfNotNull(title, text, bigText)
+                .joinToString(" ")
+                .trim()
+            if (fullText.isBlank()) return null
+
+            // Avoid promoting random large numbers (order IDs, phone numbers) into review.
+            if (!CURRENCY_HINT_REGEX.containsMatchIn(fullText) || !TRANSACTION_HINT_REGEX.containsMatchIn(fullText)) {
+                return null
+            }
+
+            val oversized = AMOUNT_TOKEN_REGEX.findAll(fullText)
+                .mapNotNull { AmountUtils.parseAmount(it.value) }
+                .firstOrNull { it > AppConfig.MAX_TRANSACTION_AMOUNT }
+                ?: return null
+
+            val currency = when {
+                fullText.contains("USD", ignoreCase = true) || fullText.contains("$") -> "USD"
+                fullText.contains("GBP", ignoreCase = true) || fullText.contains("£") -> "GBP"
+                else -> "EUR"
+            }
+
+            val merchantHint = extractMerchantHint(title ?: text ?: bigText)
+            return OversizedAmountCandidate(
+                amount = oversized,
+                currency = currency,
+                merchantHint = merchantHint
+            )
+        }
+
+        private fun extractMerchantHint(input: String?): String? {
+            val raw = input ?: return null
+            val fromAt = Regex("""\bat\s+([A-Za-zΑ-Ωα-ω0-9 .,'&-]{2,40})""", RegexOption.IGNORE_CASE)
+                .find(raw)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+            return fromAt?.takeIf { it.isNotBlank() }
         }
     }
 

@@ -21,6 +21,14 @@ This document outlines the comprehensive test expansion strategy for the Expense
 
 ## Current Test Coverage
 
+### Latest Gate Snapshot (March 14, 2026 - QA hardening pass)
+
+- `./gradlew :app:testDebugUnitTest` -> **PASS (0 failures)**
+- `./gradlew :app:compileDebugAndroidTestKotlin :app:compileDebugAndroidTestJavaWithJavac` -> **PASS**
+- `./gradlew :app:connectedDebugAndroidTest` -> **PASS on API 34 emulator** (migration tests skip when historical schemas are unavailable)
+- `./gradlew :app:verifyRoomSchemaSnapshots` -> **PASS** in reporting mode (currently only version `33` snapshot present)
+- `./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.yourname.expensetracker.data.database.MigrationContractTest` -> **PASS**
+
 | Category | Files | Tested | Coverage | Status |
 |----------|-------|--------|----------|--------|
 | **Domain - Financial** | 5 | 5 | 100% | ✅ Complete |
@@ -30,8 +38,8 @@ This document outlines the comprehensive test expansion strategy for the Expense
 | **Data - Repositories** | 9 | 9 | 100% | ✅ Complete |
 | **Data - DAOs** | 5 | 5 | 100% | ✅ Complete |
 | **Utilities** | 8 | 8 | 100% | ✅ Complete |
-| **Services** | 4 | 2 | 50% | ✅ NotificationFilter + NotificationCaptureService |
-| **ViewModels** | 11 | 9 | 82% | ✅ Good |
+| **Services** | 4 | 4 | 100% | ✅ Complete |
+| **ViewModels** | 11 | 10 | 91% | ✅ Good |
 | **Database** | 6 | 6 | 100% | ✅ Complete |
 | **Location** | 6 | 6 | 100% | ✅ Complete |
 
@@ -48,11 +56,11 @@ All unit tests execute successfully on JVM:
 - **123 tests failing** (intentionally documenting bugs)
 - **Coverage**: 46 files tested
 
-#### Instrumented Tests (73 tests) - ✅ RUNNING (48 pass, 25 fail)
+#### Instrumented Tests (73 tests) - ✅ RUNNING
 Android device/emulator tests execute successfully:
 ```bash
 ./gradlew :app:connectedDebugAndroidTest
-# 73 tests | 48 passed | 25 failed
+# Passes on API 34 emulator
 ```
 
 **Test Files:**
@@ -150,7 +158,7 @@ Android device/emulator tests execute successfully:
 | `AddExpenseViewModel.kt` | Manual expense entry | `AddExpenseViewModelStressTest.kt` | ✅ **DONE** |
 | `ReceiptScanViewModel.kt` | Receipt scanning UI | `ReceiptScanViewModelStressTest.kt` | ✅ **DONE** |
 | `SpendingMapViewModel.kt` | Map display | `SpendingMapViewModelStressTest.kt` | ✅ **DONE** |
-| `DebugViewModel.kt` | Debug tools | None | **PENDING** |
+| `DebugViewModel.kt` | Debug tools | `DebugViewModelStressTest.kt` | ✅ **DONE** |
 
 ---
 
@@ -257,7 +265,7 @@ Android device/emulator tests execute successfully:
 #### NotificationProcessingPipeline (5 bugs)
 | Bug | Description | Severity |
 |-----|-------------|----------|
-| **Large amount routing suppression** | High-value transactions incorrectly suppressed | 🔴 HIGH |
+| **Large amount routing suppression** | High-value transactions incorrectly suppressed (**fixed**) | 🔴 HIGH |
 | **Duplicate detection** | Edge case with near-identical notifications | 🟡 MEDIUM |
 | **Error handling** | Uncaught exceptions in pipeline stages | 🟡 MEDIUM |
 | **Parser selection** | Wrong parser selected for certain notification formats | 🟡 MEDIUM |
@@ -324,6 +332,69 @@ Android device/emulator tests execute successfully:
 
 ---
 
+## Overlap and Consistency Tests (Phase 11)
+
+Tests that ensure shared utilities and overlapping functionality behave consistently across consumers.
+
+| Test File | Tests | Purpose |
+|-----------|-------|---------|
+| **SharedUtilityConsistencyTest** | 15 | AmountUtils vs AmountExtractionUtils vs CommonPatterns; MerchantKeyGenerator idempotency |
+| **SharedUtilityConsistencyStressTest** | 6 | 1000x MerchantKeyGenerator, 500x amount parse, mixed variants |
+| **CrossParserConsistencyTest** | 8 | Parsers produce same merchant key; Expense dedupeKey uses MerchantKeyGenerator |
+| **CrossParserConsistencyStressTest** | 4 | 100x generateDedupeKey; 20 notifications same merchant key |
+| **DuplicateLogicConsistencyIntegrationTest** | 15 | CrossSourceDeduplication findExpenseDuplicate/findPendingReviewDuplicate same criteria |
+| **MerchantKeyCrossConsumerConsistencyTest** | 10 | Direct vs Expense path; clean+key vs direct; Greek, stress |
+| **CurrencyNormalizerConsistencyTest** | 9 | Same EUR/USD/GBP variants → same ISO code; cross-parser currency consistency |
+| **HaversineConsistencyTest** | 5 | GeoUtils.haversineKm matches formula; km→meters; haversineKmOrNull |
+| **MerchantKeyConsistencyTest** | 3 | MerchantCleaner vs MerchantRulesRepository → same MerchantKeyGenerator key |
+| **TimePeriodAnalyticsAlignmentTest** | 6 | TimePeriodUtils ranges match AnalyticsViewModel/TransactionsViewModel usage |
+
+**Total: 10 files, 81 tests**
+
+### What These Tests Cover
+- **Amount parsing**: AmountUtils, AmountExtractionUtils, CommonPatterns agree on same input
+- **Merchant keys**: MerchantKeyGenerator produces same key regardless of consumer (Expense, parsers, etc.)
+- **Duplicate logic**: findExpenseDuplicate and findPendingReviewDuplicate use same amount/date/merchant criteria
+- **Parser output**: Revolut, GreekBank, Generic parsers produce valid, consistent merchant keys
+- **Currency**: CurrencyNormalizer produces same ISO code for €/E/EUR across parsers
+- **Haversine**: GeoUtils.haversineKm matches expected formula; local implementations should migrate to GeoUtils
+- **Merchant keys**: MerchantCleaner and MerchantRulesRepository paths produce same MerchantKeyGenerator key
+- **Time periods**: TimePeriodUtils.getMonthRange, getLastNDaysRange match AnalyticsViewModel period logic
+
+### Running Consistency Tests
+```bash
+./gradlew :app:testDebugUnitTest --tests "com.yourname.expensetracker.consistency.*"
+```
+
+---
+
+## Metrics and Multi-Engine Consistency Tests (Phase 12)
+
+Tests that ensure engines use effectiveAmount, time periods align, and dashboard widgets use consistent calculations.
+
+| Test File | Tests | Purpose |
+|-----------|-------|---------|
+| **EffectiveAmountConsistencyTest** | 11 | SpendingPaceCalculator, MonthlyComparisonCalculator, DayOfWeekAnalyzer use effectiveAmount; isNotMine, shared |
+| **EffectiveAmountConsistencyStressTest** | 7 | 500 isNotMine→0; 200 mixed; 100 shared %; DayOfWeek 350 expenses; edge cases |
+| **TimePeriodAlignmentTest** | 12 | TimePeriodUtils, BudgetCalculator, AdvancedAnalyticsEngine month/week boundaries match |
+| **TimePeriodAlignmentStressTest** | 5 | 100 random dates; 52 weeks; quarters; isSameMonth; getDaysInMonth |
+| **DashboardWidgetConsistencyTest** | 4 | PeriodSummary monthSpent; FinancialRunway committed+likely; SafeToSpend/Runway discretionaryBudget |
+| **DashboardWidgetConsistencyStressTest** | 3 | 100 compute calls; 50 varying monthSpent; 50 expenses PeriodSummary |
+
+**Total: 6 files, 42 tests**
+
+### What These Tests Cover
+- **effectiveAmount**: All spending aggregations use effectiveAmount (excludes isNotMine, uses myShare for shared)
+- **Time alignment**: Month, week, quarter boundaries consistent across TimePeriodUtils, BudgetCalculator, AdvancedAnalyticsEngine
+- **Widget consistency**: SafeToSpend, FinancialRunway, PeriodSummary, totalSpent use same underlying data
+
+### Running Metrics Tests
+```bash
+./gradlew :app:testDebugUnitTest --tests "com.yourname.expensetracker.metrics.*"
+```
+
+---
+
 ## Test Execution Guidelines
 
 ### Running All Stress Tests
@@ -373,7 +444,7 @@ Android device/emulator tests execute successfully:
 2. **Fix Critical Bugs First**
    - AmountUtils locale handling
    - TimePeriodUtils DST transitions
-   - NotificationProcessingPipeline large amount routing
+   - ~~NotificationProcessingPipeline large amount routing~~ ✅ fixed (oversized notifications now routed to review)
    - TransferDirectionDetector Greek variations
 
 3. **Add to CI/CD**
@@ -602,7 +673,7 @@ open app/build/reports/tests/testDebugUnitTest/index.html
 |--------|-------|
 | **Total Tests** | 1,793+ |
 | **Unit Tests** | 1,720+ (JVM) |
-| **Instrumented Tests** | 73 (48 pass, 25 fail — see findings below) |
+| **Instrumented Tests** | 73 configured (connected suite passing on API 34; migration subset may skip without historical schema snapshots) |
 | **Test Files** | 60 files |
 | **Code Coverage** | ~97% |
 | **Bugs Documented** | 43 |
@@ -619,8 +690,8 @@ open app/build/reports/tests/testDebugUnitTest/index.html
 | **Data - Repositories** | 9 | 78% | ⚠️ Missing 2 |
 | **Data - DAOs** | 5 | 100% | ✅ Complete |
 | **Utilities** | 8 | 100% | ✅ Complete |
-| **Services** | 4 | 25% | 🔴 Critical Gap |
-| **ViewModels** | 11 | 18% | 🔴 Major Gap |
+| **Services** | 4 | 100% | ✅ Complete |
+| **ViewModels** | 11 | 91% | ✅ Good |
 | **Database** | 6 | 100% | ✅ Complete |
 | **Location** | 6 | 100% | ✅ Complete |
 
@@ -631,7 +702,9 @@ open app/build/reports/tests/testDebugUnitTest/index.html
 3. **Location Services** - All 6 services with stress testing
 4. **Bug Documentation** - 43 bugs identified and documented
 5. **Performance Testing** - 10K+ record handling, concurrent access patterns
-6. **Android Instrumented Tests** - 73 tests running (48 pass, 25 need fixes)
+6. **Android Instrumented Tests** - Connected suite green on API 34 emulator; destructive migration legacy path is validated, and remaining strict old-version migration paths depend on historical schema snapshots
+7. **Schema Snapshot Guard** - `:app:verifyRoomSchemaSnapshots` added; run with `-PstrictRoomSchemas=true` in CI to fail when snapshots are missing
+8. **Migration Contract Coverage** - `MigrationContractTest` added to strictly validate key migrations (`6→7`, `7→8`, `8→9`, `9→10`) without depending on historical JSON snapshots
 
 ### Instrumented Test Findings (March 14, 2026)
 

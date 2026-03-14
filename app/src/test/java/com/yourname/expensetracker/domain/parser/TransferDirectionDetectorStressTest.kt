@@ -266,7 +266,16 @@ class TransferDirectionDetectorStressTest {
     private fun detectDirection(text: String?): Direction {
         if (text.isNullOrBlank()) return Direction.UNKNOWN
         
-        val lowerText = text.toLowerCase()
+        val lowerText = text.lowercase()
+        val greekNormalizedText = lowerText
+            .replace('a', 'α')
+            .replace(Regex("""[άὰ]"""), "α")
+            .replace(Regex("""[έὲ]"""), "ε")
+            .replace(Regex("""[ήὴ]"""), "η")
+            .replace(Regex("""[ίὶϊΐ]"""), "ι")
+            .replace(Regex("""[όὸ]"""), "ο")
+            .replace(Regex("""[ύὺϋΰ]"""), "υ")
+            .replace(Regex("""[ώὼ]"""), "ω")
         
         // Incoming patterns
         val incomingPatterns = listOf(
@@ -274,6 +283,7 @@ class TransferDirectionDetectorStressTest {
             "reversal", "cashback", "interest", "dividend",
             "κατάθεση", "έλαβε", "πίστωση", "μισθός", "επιστροφή"
         )
+        val incomingGreekNormalized = listOf("καταθεση", "ελαβε", "πιστωση", "μισθος", "επιστροφη")
         
         // Outgoing patterns
         val outgoingPatterns = listOf(
@@ -281,14 +291,17 @@ class TransferDirectionDetectorStressTest {
             "transfer to", "paid", "charge",
             "πληρωμή", "αγορά", "ανάληψη", "χρέωση", "μεταφορά σε"
         )
+        val outgoingGreekNormalized = listOf("πληρωμη", "αγορα", "αναληψη", "χρεωση", "μεταφορα σε")
         
         // Check for incoming first
-        if (incomingPatterns.any { lowerText.contains(it) }) {
+        if (incomingPatterns.any { lowerText.contains(it) } ||
+            incomingGreekNormalized.any { greekNormalizedText.contains(it) }) {
             return Direction.INCOMING
         }
         
         // Check for outgoing
-        if (outgoingPatterns.any { lowerText.contains(it) }) {
+        if (outgoingPatterns.any { lowerText.contains(it) } ||
+            outgoingGreekNormalized.any { greekNormalizedText.contains(it) }) {
             return Direction.OUTGOING
         }
         

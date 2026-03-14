@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.util
 
 import java.util.Calendar
-import java.util.TimeZone
 
 /**
  * Utility to standardize date range calculations across the app.
@@ -70,7 +69,8 @@ object TimePeriodUtils {
         val dayOfWeek = cal2.get(Calendar.DAY_OF_WEEK) // Sun=1, Mon=2...
         val daysFromMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
         
-        return cal2.timeInMillis - (daysFromMonday * 86400000L)
+        cal2.add(Calendar.DAY_OF_MONTH, -daysFromMonday)
+        return cal2.timeInMillis
     }
 
     /**
@@ -126,7 +126,9 @@ object TimePeriodUtils {
      * @param days Number of days to look back
      */
     fun getLastNDaysRange(now: Long, days: Int): Pair<Long, Long> {
-        val start = getStartOfDay(now - (days * 86400000L))
+        val cal = Calendar.getInstance().apply { timeInMillis = now }
+        cal.add(Calendar.DAY_OF_MONTH, -days)
+        val start = getStartOfDay(cal.timeInMillis)
         return start to now
     }
     /**
@@ -217,8 +219,8 @@ object TimePeriodUtils {
      * getDayIndexFromMonthStart - Returns the day index from start of month (0-based).
      */
     fun getDayIndexFromMonthStart(timestamp: Long): Int {
-        val monthStart = getStartOfMonth(timestamp)
-        return ((timestamp - monthStart) / 86400000L).toInt().coerceAtLeast(0)
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return (cal.get(Calendar.DAY_OF_MONTH) - 1).coerceAtLeast(0)
     }
 
     /**

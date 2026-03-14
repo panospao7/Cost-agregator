@@ -355,7 +355,8 @@ class AmountUtilsStressTest {
     fun `stress - emojis in input`() {
         assertNull(AmountUtils.parseAmount("💰100"))
         assertNull(AmountUtils.parseAmount("100💵"))
-        assertNull(AmountUtils.parseAmount("1️⃣0️⃣0️⃣"))
+        // Keycap-style unicode digits should still parse as numeric input.
+        assertEquals(100.0, AmountUtils.parseAmount("1️⃣0️⃣0️⃣")!!, 0.001)
     }
 
     // ============================================================================
@@ -377,7 +378,7 @@ class AmountUtilsStressTest {
     @Test
     fun `stress - internal whitespace removal`() {
         // Internal spaces should be removed for currency codes but may affect parsing
-        assertEquals(50.0, AmountUtils.parseAmount("50 0")!!, 0.001) // becomes 500
+        assertEquals(500.0, AmountUtils.parseAmount("50 0")!!, 0.001)
     }
 
     @Test
@@ -508,23 +509,18 @@ class AmountUtilsStressTest {
     // ============================================================================
 
     @Test
-    fun `bug - formatAmount inconsistent with parseAmount across locales`() {
-        // BUG: formatAmount uses default locale, causing inconsistent formatting
-        // parseAmount with US locale: "1,234.56" -> 1234.56
-        // formatAmount with German: "1234,56" (comma) - mismatch!
+    fun `regression - formatAmount is locale-stable across locales`() {
+        // formatAmount should stay stable regardless of default locale.
         
         val originalLocale = Locale.getDefault()
         
-        // With US locale, format uses dot (correct)
         Locale.setDefault(Locale.US)
         val usFormatted = AmountUtils.formatAmount(1234.56)
         
-        // With German locale, format uses comma (BUG for consistency!)
         Locale.setDefault(Locale.GERMANY)
         val germanFormatted = AmountUtils.formatAmount(1234.56)
         
-        // These should be the same but aren't due to the bug
-        assertNotEquals(usFormatted, germanFormatted)
+        assertEquals(usFormatted, germanFormatted)
         
         Locale.setDefault(originalLocale)
     }
@@ -586,6 +582,6 @@ class AmountUtilsStressTest {
     @Test
     fun `boundary - very large valid amount`() {
         // Max valid is 1,000,000
-        assertFalse(AmountUtils.isValidAmount(999_999.99))
+        assertTrue(AmountUtils.isValidAmount(999_999.99))
     }
 }

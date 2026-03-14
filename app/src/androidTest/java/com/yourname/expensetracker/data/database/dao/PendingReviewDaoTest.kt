@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -66,7 +67,7 @@ class PendingReviewDaoTest {
 
         val pending = pendingReviewDao.getPending()
         assertEquals(1, pending.size)
-        assertEquals("PENDING", pending[0].review.status)
+        assertEquals(PendingReviewStatus.PENDING, pending[0].review.status)
     }
 
     @Test
@@ -87,7 +88,7 @@ class PendingReviewDaoTest {
         assertEquals(1, rows)
 
         val review = pendingReviewDao.getById(id)
-        assertEquals("APPROVED", review?.status)
+        assertEquals(PendingReviewStatus.APPROVED, review?.status)
     }
 
     @Test
@@ -125,7 +126,7 @@ class PendingReviewDaoTest {
 
         val all = pendingReviewDao.getAllFlow().first()
         assertEquals(1, all.size)
-        assertEquals("PENDING", all[0].status)
+        assertEquals(PendingReviewStatus.PENDING, all[0].status)
     }
 
     @Test
@@ -142,7 +143,7 @@ class PendingReviewDaoTest {
 
         val all = pendingReviewDao.getAllFlow().first()
         assertEquals(2, all.size)
-        assertEquals("APPROVED", all[0].status)
-        assertEquals("APPROVED", all[1].status)
+        assertEquals(PendingReviewStatus.APPROVED, all[0].status)
+        assertEquals(PendingReviewStatus.APPROVED, all[1].status)
     }
 }

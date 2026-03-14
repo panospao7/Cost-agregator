@@ -212,18 +212,59 @@ class TransferDirectionDetector @Inject constructor() {
         val outgoingScore = outgoingPatterns.count { pattern ->
             pattern.matcher(allText).find()
         }
+        val fallbackScore = greekKeywordFallbackScore(allText)
 
         val explicitDirection = detectExplicitDirectionalPhrasing(allText)
-        if (explicitDirection != null && (incomingScore > 0 || outgoingScore > 0)) {
+        if (explicitDirection != null && (incomingScore > 0 || outgoingScore > 0 || fallbackScore.first > 0 || fallbackScore.second > 0)) {
             return explicitDirection
         }
         
         return when {
-            incomingScore > outgoingScore -> TransferDirection.INCOMING
-            outgoingScore > incomingScore -> TransferDirection.OUTGOING
-            incomingScore > 0 && outgoingScore > 0 -> resolveAmbiguousCase(allText)
+            incomingScore + fallbackScore.first > outgoingScore + fallbackScore.second -> TransferDirection.INCOMING
+            outgoingScore + fallbackScore.second > incomingScore + fallbackScore.first -> TransferDirection.OUTGOING
+            (incomingScore > 0 || fallbackScore.first > 0) && (outgoingScore > 0 || fallbackScore.second > 0) -> resolveAmbiguousCase(allText)
             else -> null
         }
+    }
+
+    private fun greekKeywordFallbackScore(text: String): Pair<Int, Int> {
+        val normalized = normalizeMixedGreek(text)
+        val incomingHits = listOf("καταθεση", "πιστωση", "μισθος", "εισπραξη", "εμβασμα", "πιστωτικο")
+            .count { normalized.contains(it) }
+        val outgoingHits = listOf("πληρωμη", "αναληψη", "μεταφορα", "χρεωση", "χρεωστικο")
+            .count { normalized.contains(it) }
+        return incomingHits to outgoingHits
+    }
+
+    private fun normalizeMixedGreek(text: String): String {
+        val mapped = text.lowercase().map { ch ->
+            when (ch) {
+                // Latin lookalikes frequently found in mixed-script notifications.
+                'a' -> 'α'
+                'b' -> 'β'
+                'e' -> 'ε'
+                'h' -> 'η'
+                'i' -> 'ι'
+                'k' -> 'κ'
+                'm' -> 'μ'
+                'n' -> 'ν'
+                'o' -> 'ο'
+                'p' -> 'ρ'
+                't' -> 'τ'
+                'v' -> 'ν'
+                'x' -> 'χ'
+                'y' -> 'γ'
+                else -> ch
+            }
+        }.joinToString("")
+        return mapped
+            .replace(Regex("""[άὰ]"""), "α")
+            .replace(Regex("""[έὲ]"""), "ε")
+            .replace(Regex("""[ήὴ]"""), "η")
+            .replace(Regex("""[ίὶϊΐ]"""), "ι")
+            .replace(Regex("""[όὸ]"""), "ο")
+            .replace(Regex("""[ύὺϋΰ]"""), "υ")
+            .replace(Regex("""[ώὼ]"""), "ω")
     }
 
     private fun detectExplicitDirectionalPhrasing(text: String): TransferDirection? {

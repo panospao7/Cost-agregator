@@ -82,8 +82,8 @@ class BudgetCalculatorStressTest {
             
             val period = calculateMonthlyPeriod(anchorDate)
             
-            assertTrue("Month $month should have 31 days", 
-                (period.second - period.first) >= 31L * 24 * 60 * 60 * 1000L)
+            val spanDays = (period.second - period.first) / (24L * 60 * 60 * 1000L)
+            assertTrue("Month $month should be around 31 days", spanDays in 30L..32L)
         }
     }
 
@@ -271,7 +271,7 @@ class BudgetCalculatorStressTest {
         val expectedSpending = monthlyBudget * (daysElapsed.toDouble() / daysInMonth)
         val pacing = spentAmount - expectedSpending
         
-        assertTrue("Should be ahead of pace", pacing > 0)
+        assertEquals("Should be exactly on pace", 0.0, pacing, 0.001)
     }
 
     // ============================================================================

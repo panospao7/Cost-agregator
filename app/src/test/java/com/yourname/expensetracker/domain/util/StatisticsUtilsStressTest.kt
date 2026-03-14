@@ -73,8 +73,8 @@ class StatisticsUtilsStressTest {
         val values = listOf(10.0, 20.0)
         val stdDev = StatisticsUtils.calculateStdDev(values)
         
-        // Sample stddev uses N-1 = 1, so stddev = |20-10| = 10
-        assertEquals(10.0, stdDev, 0.0001)
+        // Sample stddev = sqrt(((10-15)^2 + (20-15)^2) / (2-1)) = sqrt(50)
+        assertEquals(7.0710678118654755, stdDev, 0.0001)
     }
 
     @Test
@@ -257,10 +257,10 @@ class StatisticsUtilsStressTest {
         // Test against known statistical values
         val testCases = listOf(
             // (values, expectedStdDev)
-            Pair(listOf(2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0), 2.0),
+            Pair(listOf(2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0), 2.138089935299395),
             Pair(listOf(1.0, 1.0, 1.0, 1.0), 0.0),
-            Pair(listOf(0.0, 10.0), 10.0),
-            Pair(listOf(-5.0, 5.0), 10.0)
+            Pair(listOf(0.0, 10.0), 7.0710678118654755),
+            Pair(listOf(-5.0, 5.0), 7.0710678118654755)
         )
         
         testCases.forEach { (values, expected) ->
@@ -336,8 +336,9 @@ class StatisticsUtilsStressTest {
         val values = (1..100).map { it.toDouble() }
         val stdDev = StatisticsUtils.calculateStdDev(values)
         
-        // Known formula: stddev of 1..N = sqrt((N^2-1)/12)
-        val expected = kotlin.math.sqrt((100.0 * 100.0 - 1) / 12)
+        // Sample stddev for 1..N = sqrt((N^2 - 1) / 12 * N/(N-1))
+        val n = 100.0
+        val expected = kotlin.math.sqrt(((n * n - 1) / 12.0) * (n / (n - 1.0)))
         assertEquals(expected, stdDev, 0.01)
     }
 

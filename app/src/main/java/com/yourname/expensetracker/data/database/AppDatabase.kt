@@ -25,7 +25,7 @@ import androidx.room.*
         MerchantLocationCorrection::class
     ],
         version = 33,
-    exportSchema = false
+    exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
 abstract class AppDatabase : RoomDatabase() {

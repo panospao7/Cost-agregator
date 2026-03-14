@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.util
 
 import timber.log.Timber
+import java.util.Locale
 
 /**
  * AmountUtils - Utility for parsing and validating monetary amounts.
@@ -33,9 +34,15 @@ import timber.log.Timber
 object AmountUtils {
     private const val TAG = "AmountUtils"
     private val NON_DIGIT_REGEX = Regex("""[^0-9.\-,]""")
+    private val SUPPORTED_MINUS_SIGNS = setOf('-', '−', '‑', '–', '—')
 
     fun parseAmount(amountStr: String): Double? {
         if (amountStr.isBlank()) return null
+        if (amountStr.contains('/')) return null
+        val hasOtherSymbol = amountStr
+            .codePoints()
+            .anyMatch { Character.getType(it) == Character.OTHER_SYMBOL.toInt() }
+        if (hasOtherSymbol) return null
         
         var cleaned = amountStr.trim()
 
@@ -48,7 +55,7 @@ object AmountUtils {
             }
         }
 
-        if (cleaned.startsWith("-") || cleaned.startsWith("−")) {
+        if (cleaned.isNotEmpty() && SUPPORTED_MINUS_SIGNS.contains(cleaned.first())) {
             isNegative = true
             cleaned = cleaned.substring(1)
         }
@@ -58,7 +65,7 @@ object AmountUtils {
             cleaned = cleaned.substring(1, cleaned.length - 1)
         }
 
-        cleaned = cleaned.replace(" ", "")
+        cleaned = cleaned.replace(Regex("""\s+"""), "")
         
         val hasComma = cleaned.contains(",")
         val hasDot = cleaned.contains(".")
@@ -98,6 +105,7 @@ object AmountUtils {
         }
         
         val finalCleaned = result.replace(NON_DIGIT_REGEX, "")
+        if (finalCleaned.isBlank()) return null
         
         return try {
             val value = finalCleaned.toDoubleOrNull() ?: return null
@@ -113,6 +121,6 @@ object AmountUtils {
     }
 
     fun formatAmount(amount: Double, currency: String = "€"): String {
-        return "$currency%.2f".format(amount)
+        return String.format(Locale.US, "%s%.2f", currency, amount)
     }
 }

@@ -55,6 +55,15 @@ android {
             excludes += "META-INF/LICENSE-notice.md" 
         }
     }
+    sourceSets {
+        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+    }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+    arg("room.incremental", "true")
+    arg("room.generateKotlin", "true")
 }
 
 dependencies {
@@ -160,4 +169,35 @@ dependencies {
     // WorkManager testing
     androidTestImplementation("androidx.work:work-testing:2.9.1")
     debugImplementation(libs.androidx.ui.test.manifest)
+}
+
+tasks.register("verifyRoomSchemaSnapshots") {
+    group = "verification"
+    description = "Reports Room schema snapshot coverage by version"
+
+    doLast {
+        val maxVersion = 33
+        val schemaDir = file("$projectDir/schemas/com.yourname.expensetracker.data.database.AppDatabase")
+        val existing = if (schemaDir.exists()) {
+            schemaDir.listFiles()
+                ?.mapNotNull { it.nameWithoutExtension.toIntOrNull() }
+                ?.toSet()
+                ?: emptySet()
+        } else {
+            emptySet()
+        }
+        val expected = (1..maxVersion).toSet()
+        val missing = expected - existing
+
+        logger.lifecycle("Room schema snapshots present: ${existing.size}/$maxVersion")
+        logger.lifecycle("Present versions: ${existing.sorted()}")
+        if (missing.isNotEmpty()) {
+            logger.warn("Missing versions: ${missing.sorted()}")
+            if ((findProperty("strictRoomSchemas")?.toString()?.toBoolean() == true)) {
+                throw GradleException("Missing Room schema snapshots: ${missing.sorted()}")
+            }
+        } else {
+            logger.lifecycle("All schema snapshots are present.")
+        }
+    }
 }

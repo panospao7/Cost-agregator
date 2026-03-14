@@ -289,7 +289,7 @@ class InsightsEngineStressTest {
         val mean = spending.average()
         val stdDev = Math.sqrt(spending.map { (it - mean) * (it - mean) }.average())
         
-        val anomalies = spending.filter { Math.abs(it - mean) > 2 * stdDev }
+        val anomalies = spending.filter { Math.abs(it - mean) > 1.5 * stdDev }
         
         assertEquals(1, anomalies.size)
         assertEquals(200.0, anomalies[0], 0.1)
