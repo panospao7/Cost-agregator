@@ -63,14 +63,15 @@ class RecurringExpenseEngine @Inject constructor(
             val sorted = expenses.sortedBy { it.date }
             
             // 1. Amount Stability Check
-            val amounts = sorted.map { it.amount }
+            val amounts = sorted.map { it.effectiveAmount }
             val avgAmount = amounts.average()
+            if (avgAmount < 0.01) continue
             val stdDevAmount = calculateStdDev(amounts)
             // Coefficient of variation: stdDev / mean
             val amountVariance = if (avgAmount > 0) stdDevAmount / avgAmount else 0.0
 
-            // If amount varies by more than 35%, likely not a fixed subscription/bill
-            if (amountVariance > 0.35) continue 
+            // If amount varies by more than 40%, likely not a fixed subscription/bill (LOW: relax from 35% to group similar amounts)
+            if (amountVariance > 0.40) continue 
 
             // 2. Interval Analysis
             val dates = sorted.map { it.date }
@@ -78,8 +79,10 @@ class RecurringExpenseEngine @Inject constructor(
             
             val (frequency, confidence, varianceDays) = determineFrequency(intervals, dates)
 
-            // Thresholds: Must be a known frequency and have > 50% confidence (LOG-013 Relaxed further to catch varying bills)
-            if (frequency != RecurrenceFrequency.IRREGULAR && confidence > 0.50) {
+            // Thresholds: Must be a known frequency and have >=50% confidence.
+            // Using >= preserves valid monthly patterns with day-length drift
+            // (e.g., Jan->Feb->Mar gives two intervals where one still matches).
+            if (frequency != RecurrenceFrequency.IRREGULAR && confidence >= 0.50) {
 
                 // Staleness check: drop patterns whose last occurrence is >6 months ago.
                 // This prevents cancelled/dormant subscriptions from appearing as active recurring items.
@@ -200,9 +203,11 @@ class RecurringExpenseEngine @Inject constructor(
             return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
         }
 
-        // Calculate Confidence
-        // Score based on how many intervals are "close" to the mode (within ±20% or ±1 day)
-        val tolerance = (mode * 0.2).coerceAtLeast(1.0)
+        // Calculate Confidence: intervals "close" to mode. For monthly (28-31), use ±3 days (LOW: date boundary fix)
+        val tolerance = when {
+            mode in 28..31 -> 3.0  // Month-length variation (28-31 days)
+            else -> (mode * 0.2).coerceAtLeast(1.0)
+        }
         val matchingIntervals = intervalsDays.count { abs(it - mode) <= tolerance }
         val consistencyScore = matchingIntervals.toDouble() / intervalsDays.size
 

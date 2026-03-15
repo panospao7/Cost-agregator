@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -126,6 +127,41 @@ class InsightsEngineEdgeCaseTest {
         
         val totals = engine.buildDailyTotals(expenses, 7)
         assertNotNull("Large amounts should not cause crash", totals)
+    }
+
+    @Test
+    fun `anomaly detection skips merchants with zero historical average`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val expense = Expense(
+            id = 99L,
+            amount = 120.0,
+            currency = "EUR",
+            merchant = "Zero Avg Merchant",
+            transactionType = TransactionType.PURCHASE,
+            date = now - 86_400_000L
+        )
+        val stats = MerchantStats(
+            merchantName = "zero_avg_merchant",
+            displayName = "Zero Avg Merchant",
+            totalAmount = 0.0,
+            transactionCount = 5,
+            averageAmount = 0.0,
+            minAmount = 0.0,
+            maxAmount = 0.0,
+            firstDate = now - 10 * 86_400_000L,
+            lastDate = now - 2 * 86_400_000L
+        )
+        val topCurrent = stats.copy(maxAmount = 120.0)
+
+        coEvery { expenseRepository.getMerchantStats() } returns listOf(stats)
+        coEvery { expenseRepository.getTopMerchantsForPeriod(any(), any(), any()) } returns listOf(topCurrent)
+        coEvery { expenseRepository.getLargestExpenseForMerchant(any(), any(), any()) } returns expense
+
+        val snapshot = engine.generateInsights(
+            categories = listOf(Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")),
+            allExpenses = listOf(expense)
+        )
+        assertTrue("Zero-average merchants must not generate divide-by-zero anomalies", snapshot.anomalies.isEmpty())
     }
 
     private fun makeExpense(merchant: String, amount: Double, daysAgo: Int) = Expense(

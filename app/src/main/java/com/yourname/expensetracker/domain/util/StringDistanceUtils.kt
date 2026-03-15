@@ -119,10 +119,12 @@ object StringDistanceUtils {
         if (ocrString == null) return false
         if (ocrString.contains(targetAnchor, ignoreCase = true)) return true
         
-        // Strip out non-alphabetic noise before checking distance to prevent geometric shapes 
-        // from instantly failing the distance threshold.
-        val cleanedOcr = ocrString.replace(Regex("[^\\p{L}0-9]"), "").trim().uppercase()
-        val cleanedTarget = targetAnchor.replace(Regex("[^\\p{L}0-9]"), "").trim().uppercase()
+        // Strip out non-alphabetic noise before checking distance to prevent geometric shapes,
+        // emojis, and symbols from skewing the distance (e.g. "Starbucks" vs "Starbucks😀").
+        val stripNoise = Regex("[^\\p{L}0-9]")
+        val stripEmoji = Regex("[\\p{So}]+")
+        val cleanedOcr = ocrString.replace(stripEmoji, "").replace(stripNoise, "").trim().uppercase()
+        val cleanedTarget = targetAnchor.replace(stripEmoji, "").replace(stripNoise, "").trim().uppercase()
         
         return levenshteinDistance(cleanedOcr, cleanedTarget) <= maxDistance
     }

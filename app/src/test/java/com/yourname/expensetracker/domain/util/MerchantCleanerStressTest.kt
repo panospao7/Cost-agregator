@@ -264,24 +264,27 @@ class MerchantCleanerStressTest {
     @Test
     fun `bug - date with dots not removed`() {
         val result = cleaner.clean("Buy 2024.03.15")
-        assertTrue("BUG: Date with dots (2024.03.15) not removed, got: $result", true)
+        assertFalse("Date with dots (2024.03.15) should be removed", result.contains("2024.03.15"))
+        assertEquals("Buy", result)
     }
 
     @Test
     fun `bug - trailing punctuation not removed`() {
         val result = cleaner.clean("Shop!.")
-        assertTrue("BUG: Trailing punctuation not removed, got: $result", true)
+        assertFalse("Trailing punctuation should be removed", result.endsWith("!") || result.endsWith("."))
+        assertEquals("Shop", result)
     }
 
     @Test
     fun `bug - only stop words should become Unknown`() {
-        val result = cleaner.clean("confirmed")
-        assertTrue("BUG: Only stop words should become Unknown, got: $result", true)
+        assertEquals("Unknown", cleaner.clean("confirmed"))
+        assertEquals("Unknown", cleaner.clean("at"))
     }
 
     @Test
     fun `bug - emoji handling inconsistent`() {
         val result = cleaner.clean("Store👋")
-        assertTrue("BUG: Emoji handling inconsistent, got: $result", true)
+        assertFalse("Emoji should be stripped", result.contains("👋"))
+        assertEquals("Store", result)
     }
 }

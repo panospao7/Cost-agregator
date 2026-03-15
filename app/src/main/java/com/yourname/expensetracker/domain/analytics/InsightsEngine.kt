@@ -263,7 +263,8 @@ class InsightsEngine @Inject constructor(
         // Calculate multi-month averages per category
         val monthlyAverages = calculateCategoryMonthlyAverages(allExpenses, current)
 
-        currentTotals.mapNotNull { ct ->
+        // Build insights; normalize percentageOfTotal so they sum to 100 (fixes off-by-one rounding)
+        val insights = currentTotals.mapNotNull { ct ->
             val category = categoryMap[ct.categoryId]
             if (category == null) {
                 Timber.tag("InsightsEngine").w("Category ${ct.categoryId} not found for expense integration")
@@ -278,6 +279,8 @@ class InsightsEngine @Inject constructor(
             val changeFromAvg = if (avgData != null && avgData.first > 0)
                 ((ct.total - avgData.first) / avgData.first * 100).toFloat() else null
 
+            val rawPct = if (currentGrandTotal > 0) (ct.total / currentGrandTotal * 100).toFloat() else 0f
+
             CategoryInsight(
                 category = category,
                 currentTotal = ct.total,
@@ -286,12 +289,21 @@ class InsightsEngine @Inject constructor(
                 previousCount = prev?.txCount,
                 averageOverMonths = avgData?.first,
                 monthsOfData = avgData?.second ?: 0,
-                percentageOfTotal = if (currentGrandTotal > 0)
-                    (ct.total / currentGrandTotal * 100).toFloat() else 0f,
+                percentageOfTotal = rawPct,
                 changeFromPrevious = changeFromPrev,
                 changeFromAverage = changeFromAvg
             )
         }.sortedByDescending { it.currentTotal }
+        // Normalize last category's percentage so total = 100 (fixes aggregation off-by-one)
+        return@coroutineScope if (insights.size > 1 && currentGrandTotal > 0) {
+            val sumPct = insights.sumOf { it.percentageOfTotal.toDouble() }.toFloat()
+            if (kotlin.math.abs(sumPct - 100f) > 0.01f) {
+                val adjusted = insights.dropLast(1) + insights.last().let { last ->
+                    last.copy(percentageOfTotal = (100f - insights.dropLast(1).sumOf { it.percentageOfTotal.toDouble() }.toFloat()).coerceIn(0f, 100f))
+                }
+                adjusted
+            } else insights
+        } else insights
     }
 
     private fun calculateCategoryMonthlyAverages(
@@ -475,6 +487,9 @@ class InsightsEngine @Inject constructor(
         val candidates: List<AnomalyCandidate?> = topMerchants.mapNotNull { merchantStat ->
             val historicalStats = statsMap[merchantStat.merchantName]
             if (historicalStats == null || historicalStats.transactionCount < 3) return@mapNotNull null
+            if (!historicalStats.averageAmount.isFinite() || historicalStats.averageAmount <= 0.0) {
+                return@mapNotNull null
+            }
 
             val multiplier = when {
                 historicalStats.transactionCount < 5  -> 5.0

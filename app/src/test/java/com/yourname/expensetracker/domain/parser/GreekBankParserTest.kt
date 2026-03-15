@@ -61,6 +61,18 @@ class GreekBankParserTest {
     }
 
     @Test
+    fun `parse amount with single decimal digit`() {
+        val result = parser.parse(
+            title = "Ειδοποίηση",
+            text = "Αγορά 12,5 EUR στο SKLAVENITIS",
+            bigText = null, subText = null,
+            packageName = "gr.nbg.mobilebanking"
+        )
+        assertNotNull(result)
+        assertEquals(12.5, result!!.amount, 0.01)
+    }
+
+    @Test
     fun `reject balance notification`() {
         assertNull(parser.parse(
             title = "Υπόλοιπο",

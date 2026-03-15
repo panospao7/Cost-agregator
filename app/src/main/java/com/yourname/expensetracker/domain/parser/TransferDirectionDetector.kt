@@ -138,7 +138,14 @@ class TransferDirectionDetector @Inject constructor() {
         // Payment-specific
         Pattern.compile("""purchase\s+(?:at|from)""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""bought\s+(?:at|from)""", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("""card\s+payment""", Pattern.CASE_INSENSITIVE)
+        Pattern.compile("""card\s+payment""", Pattern.CASE_INSENSITIVE),
+        // Withdrawal edge cases (LOW bug fix)
+        Pattern.compile("""ATM\s+withdrawal""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""cash\s+withdrawal""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""withdrawal\s+from\s+ATM""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""withdrew\s+(?:€|\$|£)?\s*\d""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""(?:ανάληψη|αναληψη)\s+(?:από|απο)\s+ATM""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+        Pattern.compile("""(?:ανάληψη|αναληψη)\s+μετρητών""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)  // cash withdrawal
     )
     
     // ==================== ACCOUNT NAME EXTRACTION ====================
@@ -310,6 +317,7 @@ class TransferDirectionDetector @Inject constructor() {
                     .replace(Regex("""[\n\r\t]"""), " ")  // Remove newlines
                     .replace(Regex("""\s+"""), " ")       // Normalize whitespace
                     .trim()
+                    .let { stripTrailingTransactionNoise(it) }
                 
                 // Validate length
                 if (cleanedName.length in 2..50) {
@@ -319,6 +327,21 @@ class TransferDirectionDetector @Inject constructor() {
         }
         
         return null
+    }
+
+    private fun stripTrailingTransactionNoise(input: String): String {
+        return input
+            // Remove obvious trailing amount expressions.
+            .replace(Regex("""\s+[€$£¥]\s*\d[0-9.,]*.*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s+\d[0-9.,]*\s*(?:€|EUR|USD|GBP|£|\$|¥)\b.*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s+(?:ποσ[όο]|amount)[:\s].*$""", RegexOption.IGNORE_CASE), "")
+            // Strip common trailing banking identifiers often appended after names.
+            .replace(Regex("""\s+(?:iban|λογαριασμ(?:ο[ύυ]|ου)?|account)[:\s].*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s+GR\d{2}[A-Z0-9\s]{8,}$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s+\*{2,}\d{2,6}$""", RegexOption.IGNORE_CASE), "")
+            .trim()
+            .trimEnd(',', '.', ':', ';', '-', '–', '—')
+            .trim()
     }
     
     /**

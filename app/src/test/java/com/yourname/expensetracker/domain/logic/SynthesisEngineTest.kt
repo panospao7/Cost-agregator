@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
@@ -162,6 +163,50 @@ class SynthesisEngineTest {
         // Assert
         // budget: 2000 - spent: 500 - committed: 300 - likely: 102.5 (50 + 52.5) - goals: 500 = 597.5
         assertEquals(597.5, forecast.components.discretionaryBudget, 1.0)
+    }
+
+    @Test
+    fun `calculateBlockPartyData falls back to expenses when daily history is empty`() {
+        val pace = SpendingPace(
+            currentMonthSpent = 100.0,
+            daysElapsed = 15,
+            daysInMonth = 31,
+            projectedTotal = 200.0,
+            previousMonthTotal = null,
+            averageMonthlyTotal = null,
+            pacePercentage = 100.0f,
+            paceStatus = PaceStatus.ON_PACE
+        )
+
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
+            spendingPace = pace
+        )
+
+        val calendar = Calendar.getInstance().apply { timeInMillis = 1705320000000L } // Jan 15, 2024
+        calendar.set(Calendar.DAY_OF_MONTH, 10)
+        calendar.set(Calendar.HOUR_OF_DAY, 12)
+        val expenseOnDay10 = com.yourname.expensetracker.data.database.entity.Expense(
+            amount = 42.0,
+            merchant = "Test Merchant",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = calendar.timeInMillis
+        )
+
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = listOf(expenseOnDay10),
+            dailySpending = emptyList(),
+            budgetLimit = 1000.0
+        )
+
+        val day10 = blockParty.first { it.dayOfMonth == 10 }
+        assertEquals(42.0, day10.actualSpent, 0.01)
+        assertTrue(day10.status != BlockPartyStatus.NO_DATA)
     }
 
     private fun createRecurringPattern(amount: Double, confidence: Float, date: Long) = RecurringPattern(

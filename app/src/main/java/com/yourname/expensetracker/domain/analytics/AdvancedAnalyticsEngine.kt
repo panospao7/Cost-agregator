@@ -425,8 +425,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val sortedAmounts = amounts.sorted()
         
         val mean = amounts.average()
+        // Use sample variance (N-1) for stdDev; single value => 0 (LOW bug fix)
         val variance = if (amounts.size > 1) {
-            amounts.sumOf { (it - mean) * (it - mean) } / amounts.size
+            amounts.sumOf { (it - mean) * (it - mean) } / (amounts.size - 1)
         } else 0.0
         val stdDev = sqrt(variance)
         val cv = if (mean > 0) (stdDev / mean).toFloat() else 0f
@@ -554,8 +555,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
     private fun getPercentile(sorted: List<Double>, percentile: Double): Double {
         if (sorted.isEmpty()) return 0.0
         if (sorted.size == 1) return sorted.first()
+        // Edge case: 0th and 100th percentile (LOW bug fix)
+        val p = percentile.coerceIn(0.0, 1.0)
+        if (p <= 0.0) return sorted.first()
+        if (p >= 1.0) return sorted.last()
         
-        val index = (sorted.size - 1) * percentile
+        val index = (sorted.size - 1) * p
         val lowerIndex = index.toInt()
         val upperIndex = (lowerIndex + 1).coerceAtMost(sorted.size - 1)
         
@@ -667,8 +672,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val last = sorted.last().amount
         val change = if (first > 0) ((last - first) / first * 100).toFloat() else null
         
+        // Collinear points (all same amount): treat as STABLE (LOW bug fix)
+        val allSame = sorted.all { kotlin.math.abs(it.amount - first) < 0.001 }
         val trend = when {
             change == null -> MerchantPriceTrend.INSUFFICIENT_DATA
+            allSame -> MerchantPriceTrend.STABLE
             change > 10 -> MerchantPriceTrend.INCREASING_FAST
             change > 3 -> MerchantPriceTrend.INCREASING
             change < -10 -> MerchantPriceTrend.DECREASING_FAST

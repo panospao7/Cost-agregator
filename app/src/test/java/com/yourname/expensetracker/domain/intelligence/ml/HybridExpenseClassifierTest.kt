@@ -94,4 +94,110 @@ class HybridExpenseClassifierTest {
         assertEquals(uncategorizedCategory.id, result.categoryId)
         assertEquals(MatchType.FALLBACK, result.matchType)
     }
+
+    @Test
+    fun `ml threshold boundary is inclusive`() = runBlocking {
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = null,
+            categoryName = null,
+            confidence = 0.0,
+            matchType = CategorizationMatchType.UNKNOWN,
+            explanation = "No match found"
+        )
+        coEvery { nbClassifier.isReady() } returns true
+        coEvery { nbClassifier.classify(any()) } returns listOf(
+            CategoryScore(foodCategory.id, "Food", HybridExpenseClassifier.ML_THRESHOLD)
+        )
+
+        val result = hybridClassifier.classify(
+            merchantName = "BoundaryMerchant",
+            amount = 12.0
+        )
+
+        assertEquals(foodCategory.id, result.categoryId)
+        assertEquals(MatchType.ML_PREDICTION, result.matchType)
+    }
+
+    @Test
+    fun `gracefully falls back when category list is empty`() = runBlocking {
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier)
+
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = null,
+            categoryName = null,
+            confidence = 0.0,
+            matchType = CategorizationMatchType.UNKNOWN,
+            explanation = "No match found"
+        )
+        coEvery { nbClassifier.isReady() } returns false
+
+        val result = hybridClassifier.classify(
+            merchantName = "",
+            amount = 0.0
+        )
+
+        assertEquals(-1L, result.categoryId)
+        assertEquals(MatchType.FALLBACK, result.matchType)
+    }
+
+    @Test
+    fun `dictionary confidence is clamped to valid range`() = runBlocking {
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = foodCategory.id,
+            categoryName = foodCategory.name,
+            confidence = 1.7,
+            matchType = CategorizationMatchType.EXACT,
+            explanation = "Overconfident"
+        )
+
+        val result = hybridClassifier.classify(
+            merchantName = "Starbucks",
+            amount = 10.0
+        )
+
+        assertEquals(MatchType.RULE_MATCH, result.matchType)
+        assertEquals(1.0f, result.confidence, 0.0f)
+    }
+
+    @Test
+    fun `ml scores are clamped to valid range`() = runBlocking {
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = null,
+            categoryName = null,
+            confidence = 0.0,
+            matchType = CategorizationMatchType.UNKNOWN,
+            explanation = "No match found"
+        )
+        coEvery { nbClassifier.isReady() } returns true
+        coEvery { nbClassifier.classify(any()) } returns listOf(
+            CategoryScore(foodCategory.id, "Food", 1.2f),
+            CategoryScore(groceriesCategory.id, "Groceries", -0.1f)
+        )
+
+        val result = hybridClassifier.classify(
+            merchantName = "NoisyScoreMerchant",
+            amount = 10.0
+        )
+
+        assertEquals(MatchType.ML_PREDICTION, result.matchType)
+        assertEquals(1.0f, result.confidence, 0.0f)
+        assertTrue(result.alternatives.all { it.score in 0.0f..1.0f })
+    }
+
+    @Test
+    fun `blank merchant and empty text immediately falls back`() = runBlocking {
+        coEvery { nbClassifier.isReady() } returns true
+
+        val result = hybridClassifier.classify(
+            merchantName = "   ",
+            amount = 0.0,
+            notificationTitle = null,
+            notificationText = null
+        )
+
+        assertEquals(MatchType.FALLBACK, result.matchType)
+        coVerify(exactly = 0) { categorizationEngine.categorize(any()) }
+        coVerify(exactly = 0) { nbClassifier.classify(any()) }
+    }
 }

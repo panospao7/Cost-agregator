@@ -25,7 +25,10 @@ import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import kotlin.math.abs
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -57,23 +60,36 @@ class NotificationProcessingPipeline @Inject constructor(
     private val analytics: TransferDirectionAnalytics,
     private val locationProvider: ForegroundLocationProvider
 ) {
+    private val processMutex = Mutex()
 
     suspend fun process(notification: RawNotification) {
-        try {
-            processInternal(notification)
-        } catch (e: Exception) {
-            Timber.e(e, "Error processing notification: ${notification.packageName}")
+        processMutex.withLock {
+            try {
+                processInternal(notification, initializeClassifier = true)
+            } catch (e: Exception) {
+                Timber.e(e, "Error processing notification: ${notification.packageName}")
+            }
         }
     }
 
     suspend fun processBatch(notifications: List<RawNotification>) {
         if (notifications.isEmpty()) return
-        classifier.initialize()
-        notifications.forEach { process(it) }
+        processMutex.withLock {
+            classifier.initialize()
+            notifications.forEach { notification ->
+                try {
+                    processInternal(notification, initializeClassifier = false)
+                } catch (e: Exception) {
+                    Timber.e(e, "Error processing notification in batch: ${notification.packageName}")
+                }
+            }
+        }
     }
 
-    private suspend fun processInternal(notification: RawNotification) {
-        classifier.initialize()
+    private suspend fun processInternal(notification: RawNotification, initializeClassifier: Boolean) {
+        if (initializeClassifier) {
+            classifier.initialize()
+        }
 
         val parsed = parserRegistry.parse(
             title = notification.title,
@@ -220,6 +236,18 @@ class NotificationProcessingPipeline @Inject constructor(
                 ?.trim()
             return fromAt?.takeIf { it.isNotBlank() }
         }
+
+        internal fun hasNearDuplicatePendingReview(
+            existing: List<PendingReview>,
+            amount: Double,
+            currency: String
+        ): Boolean {
+            return existing.any { review ->
+                review.status == com.yourname.expensetracker.data.database.entity.PendingReviewStatus.PENDING &&
+                    review.suggestedCurrency.equals(currency, ignoreCase = true) &&
+                    abs(review.suggestedAmount - amount) < 0.01
+            }
+        }
     }
 
     private suspend fun handleAutoAccept(
@@ -272,18 +300,19 @@ class NotificationProcessingPipeline @Inject constructor(
             null
         }
 
+        val expenseDate = parsed.date ?: notification.timestamp
         val expense = Expense(
             amount = parsed.amount,
             currency = parsed.currency,
             merchant = correctedMerchant,
             merchantKey = MerchantKeyGenerator.generate(correctedMerchant),
             transactionType = parsed.type,
-            date = notification.timestamp,
+            date = expenseDate,
             rawNotificationId = rawId,
             categoryId = categoryId,
             paymentMethod = PaymentMethod.CARD,
             isManualEntry = false,
-            dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp),
+            dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, expenseDate),
             transferDirection = direction,
             transferAccountName = accountName,
             latitude = deviceGps?.first,
@@ -323,6 +352,17 @@ class NotificationProcessingPipeline @Inject constructor(
             windowMs = 300_000
         )
         if (isDuplicate) {
+            dao.markRelevance(rawId, false)
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            classifier.train(fullText, isTransaction = true)
+            return
+        }
+        val nearbyPending = pendingReviewDao.getPendingReviewsByMerchantAndDateRange(
+            merchantPattern = correctedMerchant,
+            startDate = notification.timestamp - 300_000,
+            endDate = notification.timestamp + 300_000
+        )
+        if (hasNearDuplicatePendingReview(nearbyPending, parsed.amount, parsed.currency)) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
             classifier.train(fullText, isTransaction = true)
@@ -382,4 +422,5 @@ class NotificationProcessingPipeline @Inject constructor(
             else analytics.recordUnknownDirection()
         }
     }
+
 }

@@ -432,11 +432,48 @@ class BankStatementParser @Inject constructor(
         
         // 2. Look for amount patterns
         val amountMatcher = com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX.matcher(cleanRow)
-        
-        if (!amountMatcher.find()) return null
+        data class AmountCandidate(
+            val rawToken: String,
+            val parsed: Double,
+            val fullMatch: String,
+            val leadingCurrency: String?,
+            val trailingCurrency: String?,
+            val startIndex: Int,
+            val score: Int
+        )
+        val candidates = mutableListOf<AmountCandidate>()
+        while (amountMatcher.find()) {
+            val rawToken = amountMatcher.group(2)?.replace(" ", "") ?: continue
+            val parsed = AmountUtils.parseAmount(rawToken) ?: continue
+            if (parsed == 0.0 || !parsed.isFinite()) continue
+            val leadingCurrency = amountMatcher.group(1)
+            val trailingCurrency = amountMatcher.group(3)
+            var score = 0
+            if (!leadingCurrency.isNullOrBlank() || !trailingCurrency.isNullOrBlank()) score += 3
+            if (rawToken.contains(",") || rawToken.contains(".")) score += 2
+            if (rawToken.contains("-") || rawToken.contains("+")) score += 1
+            if (amountMatcher.start() > cleanRow.length / 2) score += 1
+            candidates.add(
+                AmountCandidate(
+                    rawToken = rawToken,
+                    parsed = parsed,
+                    fullMatch = amountMatcher.group(0) ?: continue,
+                    leadingCurrency = leadingCurrency,
+                    trailingCurrency = trailingCurrency,
+                    startIndex = amountMatcher.start(),
+                    score = score
+                )
+            )
+        }
+        if (candidates.isEmpty()) return null
+        val bestCandidate = candidates.maxWithOrNull(
+            compareBy<AmountCandidate> { it.score }
+                .thenBy { kotlin.math.abs(it.parsed) }
+                .thenBy { it.startIndex }
+        ) ?: return null
         
         // Robust European & US decimal parsing
-        val rawAmount = amountMatcher.group(2)?.replace(" ", "") ?: return null
+        val rawAmount = bestCandidate.rawToken
         
         val lastSep = rawAmount.findLastAnyOf(listOf(".", ","))
         
@@ -455,7 +492,7 @@ class BankStatementParser @Inject constructor(
         
         // Use more specific currency check
         var currency = "EUR"
-        val currencyGroup = amountMatcher.group(1) ?: amountMatcher.group(3)
+        val currencyGroup = bestCandidate.leadingCurrency ?: bestCandidate.trailingCurrency
         if (currencyGroup != null && currencyGroup.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
             currency = currencyNormalizer.normalize(currencyGroup)
         }
@@ -487,7 +524,7 @@ class BankStatementParser @Inject constructor(
 
         // 5. Extract merchant - remove all dates from the row
         val monthsRegex = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
-        var merchant = cleanRow.replace(amountMatcher.group(0)!!, "")
+        var merchant = cleanRow.replace(bestCandidate.fullMatch, "")
             .replace(Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?"""), "") // DD/MM/YYYY
             .replace(Regex("""(?i)\b$monthsRegex\s+\d{1,2}[\s,]*\d{4}\b"""), "") // MMM d, yyyy
             .replace(Regex("""\d{2}:\d{2}(:\d{2})?"""), "")

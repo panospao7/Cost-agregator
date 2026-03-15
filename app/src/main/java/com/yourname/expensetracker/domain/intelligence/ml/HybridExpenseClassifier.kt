@@ -56,52 +56,59 @@ class HybridExpenseClassifier @Inject constructor(
     ): ClassificationResult = withContext(Dispatchers.Default) {
         
         if (!initialized) initialize()
+
+        val merchantNormalized = merchantName.trim()
+        if (merchantNormalized.isBlank() &&
+            notificationTitle.isNullOrBlank() &&
+            notificationText.isNullOrBlank()
+        ) {
+            return@withContext fallbackResult()
+        }
         
         val features = featureExtractor.extractFromNotification(
             title = notificationTitle,
             text = notificationText,
             packageName = packageName,
             amount = amount,
-            merchant = merchantName
+            merchant = merchantNormalized
         )
 
         // 1. Merchant Dictionary (single source of truth)
-        val dictionaryResult = classifyWithMerchantDictionary(merchantName)
+        val dictionaryResult = classifyWithMerchantDictionary(merchantNormalized)
         if (dictionaryResult != null) {
             return@withContext dictionaryResult
         }
 
-        // 2. ML Prediction
-        if (nbClassifier.isReady()) {
-            val mlResults = nbClassifier.classify(features)
-            if (mlResults.isNotEmpty()) {
-                val best = mlResults.first()
-                if (best.score >= ML_THRESHOLD) {
-                    val category = categories.find { it.id == best.categoryId }
-                    return@withContext ClassificationResult(
-                        categoryId = best.categoryId,
-                        categoryName = category?.name ?: "Unknown",
-                        confidence = best.score,
-                        alternatives = mlResults.take(3).map { res ->
-                            res.copy(categoryName = categories.find { it.id == res.categoryId }?.name ?: "Unknown")
-                        },
-                        matchType = MatchType.ML_PREDICTION
-                    )
+        // 2. ML Prediction (with fallback when model unavailable - LOW bug fix)
+        try {
+            if (nbClassifier.isReady()) {
+                val mlResults = nbClassifier.classify(features)
+                if (mlResults.isNotEmpty()) {
+                    val best = mlResults.first()
+                    // Use > for strict boundary; >= ensures exactly-at-threshold is accepted
+                    if (best.score >= ML_THRESHOLD) {
+                        val category = categories.find { it.id == best.categoryId }
+                        return@withContext ClassificationResult(
+                            categoryId = best.categoryId,
+                            categoryName = category?.name ?: "Unknown",
+                            confidence = best.score.coerceIn(0.0f, 1.0f),
+                            alternatives = mlResults.take(3).map { res ->
+                                res.copy(
+                                    categoryName = categories.find { it.id == res.categoryId }?.name ?: "Unknown",
+                                    score = res.score.coerceIn(0.0f, 1.0f)
+                                )
+                            },
+                            matchType = MatchType.ML_PREDICTION
+                        )
+                    }
                 }
             }
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "ML classifier failed, using fallback")
         }
 
-        // 3. Fallback
-        val defaultCategory = categories.find { it.name.equals("Uncategorized", ignoreCase = true) }
-            ?: categories.find { it.name.contains("Other", ignoreCase = true) }
-            ?: categories.firstOrNull()
-
-        ClassificationResult(
-            categoryId = defaultCategory?.id ?: -1,
-            categoryName = defaultCategory?.name ?: "Uncategorized",
-            confidence = 0.0f,
-            matchType = MatchType.FALLBACK
-        )
+        // 3. Fallback (dictionary miss or ML unavailable)
+        fallbackResult()
     }
 
     /**
@@ -117,12 +124,24 @@ class HybridExpenseClassifier @Inject constructor(
                 return ClassificationResult(
                     categoryId = category.id,
                     categoryName = category.name,
-                    confidence = result.confidence.toFloat(),
+                    confidence = result.confidence.toFloat().coerceIn(0.0f, 1.0f),
                     matchType = MatchType.RULE_MATCH
                 )
             }
         }
         return null
+    }
+
+    private fun fallbackResult(): ClassificationResult {
+        val defaultCategory = categories.find { it.name.equals("Uncategorized", ignoreCase = true) }
+            ?: categories.find { it.name.contains("Other", ignoreCase = true) }
+            ?: categories.firstOrNull()
+        return ClassificationResult(
+            categoryId = defaultCategory?.id ?: -1,
+            categoryName = defaultCategory?.name ?: "Uncategorized",
+            confidence = 0.0f,
+            matchType = MatchType.FALLBACK
+        )
     }
     
     // Keep for backward compatibility during migration

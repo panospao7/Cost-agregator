@@ -1,0 +1,68 @@
+package com.yourname.expensetracker.domain.analytics
+
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.util.Calendar
+
+class AnomalyDetectorTest {
+
+    private val detector = AnomalyDetector()
+
+    @Test
+    fun `shared expenses use effective amount for anomaly detection`() {
+        val now = System.currentTimeMillis()
+        val month = monthPeriodFor(now)
+        val category = Category(id = 1L, name = "Shared", icon = "group", color = "#FFFFFF")
+
+        val expenses = listOf(
+            sharedExpense(id = 1, amount = 500.0, myShareAmount = 10.0, date = now - 1_000),
+            sharedExpense(id = 2, amount = 600.0, myShareAmount = 11.0, date = now - 2_000),
+            sharedExpense(id = 3, amount = 700.0, myShareAmount = 12.0, date = now - 3_000),
+            sharedExpense(id = 4, amount = 800.0, myShareAmount = 13.0, date = now - 4_000),
+            // Raw amount is extreme, but user share remains in-range.
+            sharedExpense(id = 5, amount = 5000.0, myShareAmount = 14.0, date = now - 5_000)
+        )
+
+        val anomalies = detector.detect(
+            monthPeriod = month,
+            categoryMap = mapOf(1L to category),
+            allExpenses = expenses
+        )
+
+        assertTrue("No anomaly expected when effective amounts are in-range", anomalies.isEmpty())
+    }
+
+    private fun sharedExpense(id: Long, amount: Double, myShareAmount: Double, date: Long): Expense =
+        Expense(
+            id = id,
+            amount = amount,
+            currency = "EUR",
+            merchant = "Shared Merchant",
+            transactionType = TransactionType.PURCHASE,
+            date = date,
+            categoryId = 1L,
+            isSharedExpense = true,
+            myShareAmount = myShareAmount
+        )
+
+    private fun monthPeriodFor(now: Long): MonthPeriod {
+        val cal = Calendar.getInstance().apply { timeInMillis = now }
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val start = cal.timeInMillis
+        cal.add(Calendar.MONTH, 1)
+        val end = cal.timeInMillis
+        return MonthPeriod(
+            year = Calendar.getInstance().apply { timeInMillis = start }.get(Calendar.YEAR),
+            month = Calendar.getInstance().apply { timeInMillis = start }.get(Calendar.MONTH),
+            startMs = start,
+            endMs = end
+        )
+    }
+}

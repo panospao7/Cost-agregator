@@ -109,7 +109,11 @@ class SemanticKeywordMatcher @Inject constructor(
                 val bestMatch = categoryMatches.maxByOrNull { it.confidence }!!
                 bestMatch
             }
-            .sortedByDescending { it.confidence }
+            // Tiebreaker: when confidences are equal, prefer category with more keyword matches (more specific)
+            .sortedWith(
+                compareByDescending<SemanticMatch> { it.confidence }
+                    .thenByDescending { m -> scores[m.categoryName]?.size ?: 0 }
+            )
     }
     
     fun findBestMatch(merchant: String, minConfidence: Double = 0.50): SemanticMatch? {

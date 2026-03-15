@@ -294,6 +294,17 @@ class CategorizationEngineStressTest {
         assertNull(result.categoryId)
     }
 
+    @Test
+    fun `stress - three character merchants can use fuzzy matching`() = runBlocking {
+        coEvery { merchantCategoryRepository.getAll() } returns listOf(
+            MerchantCategory("abc", 1L)
+        )
+        every { canonicalizer.canonicalize("abd") } returns CanonicalResult("abd", emptyList(), 0.0)
+
+        val result = engine.categorize("abd")
+        assertEquals(1L, result.categoryId)
+    }
+
     // ============================================================================
     // SECTION 5: RACE CONDITION TESTS
     // ============================================================================

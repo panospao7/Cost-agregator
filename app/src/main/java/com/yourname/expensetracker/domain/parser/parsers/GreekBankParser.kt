@@ -37,42 +37,52 @@ class GreekBankParser @Inject constructor(
         // "Αγορά 12,50 EUR στο MERCHANT" or "Πληρωμή €6.30 σε..."
         // Also handles: "Πληρώσατε €7,50 από την κάρτα *1554 σε BOX FOOD APP"
         Pattern.compile(
-            """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:EUR|€|USD|GBP)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
+            """(?:αγορ[άα]|χρ[έε]ωσ|συναλλαγ[ήη]|πληρ[ώω]σ?(?:ατε|μ[ήη])?|payment|purchase)\s+(?:[€$£]|EUR|USD|GBP)?\s*(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:EUR|€|USD|GBP)?\s*(?:απ[όο]\s+τ[ηι]ν?\s+κ[άα]ρτ[αά]\s*[*0-9]*\s*)?(?:στ[οη]ν?|σε|at|-)?\s*(.+?)(?:\s*(?:με|with)\s*κ[άα]ρτ|$)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         ),
         // "€12.50 at MERCHANT" or "12,50€ MERCHANT"
         Pattern.compile(
-            """([€$£])\s*(\d+[.,]\d{2})\s*(?:at|στ[οη]ν?|σε|-)\s+(.+?)(?:\s*(?:με|with)|$)""",
+            """([€$£])\s*(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:at|στ[οη]ν?|σε|-)\s+(.+?)(?:\s*(?:με|with)|$)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         ),
         // "MERCHANT 12,50 EUR"
         Pattern.compile(
-            """(?:χρ[έε]ωσ[ηη]?\s*κ[άα]ρτ[αά]ς?\s*\*?\d*:?\s*)(\d+[.,]\d{2})\s*(EUR|€)?\s*[-–]\s*(.+)""",
+            """(?:χρ[έε]ωσ[ηη]?\s*κ[άα]ρτ[αά]ς?\s*\*?\d*:?\s*)(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(EUR|€)?\s*[-–]\s*(.+)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     )
 
     private val DEPOSIT_PATTERNS = listOf(
         // Greek deposit keywords
-        Pattern.compile("""(?:κατάθεση|πίστωση|μισθοδοσία|καταθέσεις|πιστώσεις|επιστροφή)[\p{L}]*\s*[€$£]?\s*(\d+[.,]\d{2})""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+        Pattern.compile("""(?:κατάθεση|πίστωση|μισθοδοσία|καταθέσεις|πιστώσεις|επιστροφή)[\p{L}]*\s*[€$£]?\s*(\d+(?:[.,]\d{1,2})?)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
         // English deposit keywords
-        Pattern.compile("""(?:deposit|credited|received|transfer\s*received|incoming)[\p{L}]*\s*[€$£]?\s*(\d+[.,]\d{2})""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""(?:deposit|credited|received|transfer\s*received|incoming)[\p{L}]*\s*[€$£]?\s*(\d+(?:[.,]\d{1,2})?)""", Pattern.CASE_INSENSITIVE),
         // Salary patterns
-        Pattern.compile("""(?:μισθ[όό]ς|salary|wages)[\p{L}]*\s*[€$£]?\s*(\d+[.,]\d{2})""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+        Pattern.compile("""(?:μισθ[όό]ς|salary|wages)[\p{L}]*\s*[€$£]?\s*(\d+(?:[.,]\d{1,2})?)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
         // Amount followed by deposit keywords
-        Pattern.compile("""(\d+[.,]\d{2})\s*[€$£]?\s*(?:κατάθεση|πίστωση|deposit|credited)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)
+        Pattern.compile("""(\d+(?:[.,]\d{1,2})?)\s*[€$£]?\s*(?:κατάθεση|πίστωση|deposit|credited)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)
     )
     
     // Transfer patterns (specific to bank transfers, not purchases)
     private val TRANSFER_PATTERNS = listOf(
         // "Μεταφορά 100€ σε Λογαριασμό" (Transfer to account)
         Pattern.compile(
-            """(?:μεταφορ[άα]|μεταφορά|transfer)\s*(?:[€$£])?\s*(\d+[.,]\d{2})\s*(?:EUR|€|σε|to|στον?)?\s*(.+)""",
+            """(?:μεταφορ[άα]|μεταφορά|transfer)\s*(?:[€$£])?\s*(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:EUR|€|σε|to|στον?)?\s*(.+)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         ),
         // Transaction code patterns: "Χ 50,00" or "Π 100,00"
         Pattern.compile(
-            """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*(\d+[.,]\d{2})\s*(?:EUR|€)?\s*(.*)""",
+            """(?:^|\s)([ΧΠXDP])\s*[:\-\s]?\s*(\d+(?:[.,]\d{1,2})?)\s*(?:EUR|€)?\s*(.*)""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        ),
+        // Format variations: "50,00 € Χρέωση" or "Πίστωση 100.00 EUR" (statement-style)
+        Pattern.compile(
+            """(\d+(?:[.,]\d{1,2})?)\s*[€$£]?\s*(?:EUR|USD|GBP)?\s*(?:χρ[έε]ωση|π[ίι]στωση|ανάληψη|κατάθεση)""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        ),
+        // "€12,50 στο MERCHANT" (amount first, then location - common Greek format)
+        Pattern.compile(
+            """[€$£]?\s*(\d+(?:[.,]\d{1,2})?)\s*(?:EUR|€)?\s*(?:στ[οη]ν?|σε|at)\s+(.+?)(?:\s*(?:με|with)|$)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
     )
@@ -117,6 +127,15 @@ class GreekBankParser @Inject constructor(
                     if (result != null) return result
                 }
             }
+
+            // Finally try explicit transfer patterns
+            for (pattern in TRANSFER_PATTERNS) {
+                val matcher = pattern.matcher(field)
+                if (matcher.find()) {
+                    val result = tryExtractTransfer(matcher, field)
+                    if (result != null) return result
+                }
+            }
         }
 
         return null
@@ -132,7 +151,7 @@ class GreekBankParser @Inject constructor(
             val group = matcher.group(i) ?: continue
             
             // Fix (BUG-010): Use more specific currency check to avoid partial merchant matches
-            if (group.matches(Regex("""^\d+[.,]\d{2}$"""))) {
+            if (looksLikeAmountToken(group)) {
                 amountStr = group
             } else if (group.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
                 currency = currencyNormalizer.normalize(group)
@@ -161,7 +180,7 @@ class GreekBankParser @Inject constructor(
         for (i in 1..matcher.groupCount()) {
             val group = matcher.group(i) ?: continue
             
-            if (group.matches(Regex("""^\d+[.,]\d{2}$"""))) {
+            if (looksLikeAmountToken(group)) {
                 amountStr = group
             } else if (group.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
                 currency = currencyNormalizer.normalize(group)
@@ -175,7 +194,14 @@ class GreekBankParser @Inject constructor(
         val merchant = extractDepositSource(fullText)
         
         // Detect direction based on keywords
-        val direction = detectGreekDirection(fullText)
+        val normalizedText = fullText.lowercase()
+        val direction = when {
+            normalizedText.contains(" σε ") || normalizedText.contains(" προς ") || normalizedText.contains(" to ") ->
+                TransferDirection.OUTGOING
+            normalizedText.contains(" από ") || normalizedText.contains(" απο ") || normalizedText.contains(" from ") ->
+                TransferDirection.INCOMING
+            else -> detectGreekDirection(fullText)
+        }
         
         // Determine if it's a transfer or deposit based on context
         val isTransfer = fullText.contains(Regex("""(?:μεταφορ[άα]|transfer|από\s+λογαρ)""", RegexOption.IGNORE_CASE))
@@ -194,6 +220,61 @@ class GreekBankParser @Inject constructor(
                 }
             }
         )
+    }
+
+    private fun tryExtractTransfer(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
+        var amountStr: String? = null
+        var currency = "EUR"
+        var merchant = "Transfer"
+
+        for (i in 1..matcher.groupCount()) {
+            val group = matcher.group(i)?.trim().orEmpty()
+            if (group.isEmpty()) continue
+
+            if (looksLikeAmountToken(group)) {
+                amountStr = group
+                continue
+            }
+
+            if (group.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
+                currency = currencyNormalizer.normalize(group)
+                continue
+            }
+
+            // Single-letter bank code group (Χ/Π) is direction metadata, not merchant.
+            if (group.length == 1 && (group.equals("Χ", true) || group.equals("Π", true) || group.equals("D", true) || group.equals("C", true))) {
+                continue
+            }
+
+            if (group.length > 2) {
+                merchant = merchantCleaner.clean(group)
+            }
+        }
+
+        val amount = amountStr?.let { AmountUtils.parseAmount(it) } ?: return null
+        if (amount < 0.01 || amount > 50000) return null
+
+        val direction = detectGreekDirection(fullText)
+        return ParsedTransaction(
+            amount = amount,
+            currency = currency,
+            merchant = merchant,
+            type = TransactionType.TRANSFER,
+            confidence = 0.9f,
+            transferDirection = direction,
+            transferAccountName = direction?.let {
+                when (it) {
+                    TransferDirection.INCOMING -> "From: $merchant"
+                    TransferDirection.OUTGOING -> "To: $merchant"
+                }
+            }
+        )
+    }
+
+    private fun looksLikeAmountToken(value: String): Boolean {
+        val token = value.trim()
+        if (token.none { it.isDigit() }) return false
+        return AmountUtils.parseAmount(token) != null
     }
     
     /**
@@ -239,7 +320,7 @@ class GreekBankParser @Inject constructor(
         // Try to extract sender/source from deposit notification
         val patterns = listOf(
             // "από" (from) pattern
-            Pattern.compile("""(?:απ[όο]|from)\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{3,30})""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+            Pattern.compile("""(?:απ[όο]|from)\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,/\-()]{3,40})""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
             // "σε λογαριασμό" pattern (to account)
             Pattern.compile("""(?:σ[εά])\s+λογαριασμ[όό]\s*(?:[\u002A\u0030-\u0039]+)?\s*(.*)""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)
         )

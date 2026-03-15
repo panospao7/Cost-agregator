@@ -144,15 +144,18 @@ class AppParserRegistry @Inject constructor(
         // 1. O(1) lookup for app-specific parser
         val specificParser = packageToParserMap[packageName]
         if (specificParser != null) {
-            return try {
+            val specificResult = try {
                 specificParser.parse(title, text, bigText, subText, packageName)
             } catch (e: Exception) {
                 Timber.w(e, "Parser failed for package: $packageName")
                 null
             }
+            if (specificResult != null) {
+                return specificResult
+            }
         }
 
-        // 2. Fallback to generic parser with HIGH threshold
+        // 2. Fallback to generic parser when package parser fails or cannot parse this format.
         return try {
             genericParser.parse(title, text, bigText, subText, packageName)
         } catch (e: Exception) {

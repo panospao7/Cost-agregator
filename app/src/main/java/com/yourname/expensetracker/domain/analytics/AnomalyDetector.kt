@@ -114,7 +114,7 @@ class AnomalyDetector @Inject constructor() {
 
         for ((categoryId, expenses) in byCategory) {
             val category = categoryMap[categoryId]
-            val amounts = expenses.map { it.amount }
+            val amounts = expenses.map { it.effectiveAmount }
 
             if (amounts.size < 2) continue
 
@@ -188,11 +188,11 @@ class AnomalyDetector @Inject constructor() {
 
         val upperFence = q3 + IQR_FENCE * iqr
 
-        return expenses.filter { it.amount > upperFence }.map { expense ->
+        return expenses.filter { it.effectiveAmount > upperFence }.map { expense ->
             AnomalyTransaction(
                 expense = expense,
                 merchantAvg = categoryAvg,
-                deviationMultiple = if (categoryAvg > 0) (expense.amount / categoryAvg).toFloat() else 0f,
+                deviationMultiple = if (categoryAvg > 0) (expense.effectiveAmount / categoryAvg).toFloat() else 0f,
                 category = category,
                 detectionMethod = AnomalyMethod.IQR,
                 categoryAvg = categoryAvg
@@ -225,13 +225,13 @@ class AnomalyDetector @Inject constructor() {
         if (mad == 0.0) return emptyList()
 
         return expenses.filter { expense ->
-            val modifiedZ = MAD_SCALE * (expense.amount - median) / mad
+            val modifiedZ = MAD_SCALE * (expense.effectiveAmount - median) / mad
             modifiedZ > MAD_ZSCORE_THRESHOLD
         }.map { expense ->
             AnomalyTransaction(
                 expense = expense,
                 merchantAvg = categoryAvg,
-                deviationMultiple = if (categoryAvg > 0) (expense.amount / categoryAvg).toFloat() else 0f,
+                deviationMultiple = if (categoryAvg > 0) (expense.effectiveAmount / categoryAvg).toFloat() else 0f,
                 category = category,
                 detectionMethod = AnomalyMethod.MAD,
                 categoryAvg = categoryAvg
@@ -264,7 +264,7 @@ class AnomalyDetector @Inject constructor() {
             if (contextExpenses.size < MIN_SAMPLES_CONTEXTUAL) continue
 
             val (day, slot) = context
-            val amounts = contextExpenses.map { it.amount }.sorted()
+            val amounts = contextExpenses.map { it.effectiveAmount }.sorted()
             val q1 = percentile(amounts, 25.0)
             val q3 = percentile(amounts, 75.0)
             val iqr = q3 - q1
@@ -273,14 +273,14 @@ class AnomalyDetector @Inject constructor() {
             val upperFence = q3 + IQR_FENCE * iqr
 
             contextExpenses
-                .filter { it.amount > upperFence }
+                .filter { it.effectiveAmount > upperFence }
                 .forEach { expense ->
                     val contextAvg = amounts.average()
                     result.add(
                         AnomalyTransaction(
                             expense = expense,
                             merchantAvg = contextAvg,
-                            deviationMultiple = if (contextAvg > 0) (expense.amount / contextAvg).toFloat() else 0f,
+                            deviationMultiple = if (contextAvg > 0) (expense.effectiveAmount / contextAvg).toFloat() else 0f,
                             category = category,
                             detectionMethod = AnomalyMethod.CONTEXTUAL,
                             contextualNote = "Unusual for a $day ${slot.label}",

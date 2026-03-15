@@ -221,6 +221,7 @@ class AmountUtilsStressTest {
     fun `stress - negative with unicode minus`() {
         assertEquals(-50.0, AmountUtils.parseAmount("−50")!!, 0.001)
         assertEquals(-50.0, AmountUtils.parseAmount("‑50")!!, 0.001) // non-breaking hyphen
+        assertEquals(-50.0, AmountUtils.parseAmount("€−50")!!, 0.001)
     }
 
     @Test
@@ -379,6 +380,13 @@ class AmountUtilsStressTest {
     fun `stress - internal whitespace removal`() {
         // Internal spaces should be removed for currency codes but may affect parsing
         assertEquals(500.0, AmountUtils.parseAmount("50 0")!!, 0.001)
+    }
+
+    @Test
+    fun `stress - unicode whitespace nbsp and narrow nbsp`() {
+        // Non-breaking space (U+00A0) and narrow no-break space (U+202F) as thousands separators
+        assertEquals(1234.56, AmountUtils.parseAmount("1\u00A0234\u00A0,56")!!, 0.001)
+        assertEquals(1234.56, AmountUtils.parseAmount("1\u202F234\u202F,56")!!, 0.001)
     }
 
     @Test

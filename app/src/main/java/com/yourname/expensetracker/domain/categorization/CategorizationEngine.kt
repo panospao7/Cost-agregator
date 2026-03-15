@@ -493,7 +493,9 @@ class CategorizationEngine @Inject constructor(
         normalized: String,
         mappings: List<MerchantCategory>
     ): MerchantCategory? {
-        if (normalized.length < 4) return null
+        // Keep fuzzy disabled only for 1-2 character merchants to avoid noisy matches.
+        // 3-character tokens still benefit from edit-distance=1 correction.
+        if (normalized.length < 3) return null
         
         val threshold = if (normalized.length > 8) 2 else 1
         

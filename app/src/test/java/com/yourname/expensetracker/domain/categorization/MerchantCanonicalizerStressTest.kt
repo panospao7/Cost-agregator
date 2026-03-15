@@ -28,6 +28,13 @@ class MerchantCanonicalizerStressTest {
     }
 
     @Test
+    fun `removes greek corporate suffixes in greek script`() {
+        val result = canonicalizer.canonicalize("Παπαδόπουλος ΙΚΕ")
+        assertEquals("παπαδόπουλος", result.canonicalName)
+        assertTrue(result.strippedParts.contains("ικε"))
+    }
+
+    @Test
     fun `keeps merchant text when no suffix exists`() {
         val result = canonicalizer.canonicalize("Starbucks")
         assertEquals("starbucks", result.canonicalName)

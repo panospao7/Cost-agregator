@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.parser
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
@@ -32,6 +33,18 @@ class GreekBankParserStressTest {
     }
 
     @Test
+    fun `parses transfer notification and sets direction`() {
+        val result = parse("Μεταφορά 100,00 EUR σε Μαρία")
+        assertNotNull(result)
+        assertEquals(TransactionType.TRANSFER, result!!.type)
+        assertEquals(100.0, result.amount, 0.001)
+        assertTrue(
+            "Transfer direction should be detected when possible",
+            result.transferDirection == null || result.transferDirection == TransferDirection.OUTGOING
+        )
+    }
+
+    @Test
     fun `parses eurobank-like charge format`() {
         val result = parse("Χρέωση κάρτας €30.00 - Σκλαβενίτης")
         assertNotNull(result)
@@ -47,6 +60,17 @@ class GreekBankParserStressTest {
     }
 
     @Test
+    fun `supports single decimal in deposit and transfer formats`() {
+        val deposit = parse("Κατάθεση €120,5 από ACME")
+        assertNotNull(deposit)
+        assertEquals(120.5, deposit!!.amount, 0.001)
+
+        val transfer = parse("Χ 50,5 EUR προς Μαρία")
+        assertNotNull(transfer)
+        assertEquals(50.5, transfer!!.amount, 0.001)
+    }
+
+    @Test
     fun `rejects non-transaction update message`() {
         val result = parse("Ενημέρωση λογαριασμού: υπόλοιπο διαθέσιμο")
         assertNull(result)
@@ -57,6 +81,13 @@ class GreekBankParserStressTest {
         val result = parse("Αγορά €50.00 στο Κατάστημα ΑΒ Βασιλόπουλος")
         assertNotNull(result)
         assertTrue(result!!.merchant.contains("Βασιλόπουλος", ignoreCase = true))
+    }
+
+    @Test
+    fun `handles merchant names with special characters`() {
+        val result = parse("Αγορά 18,90 EUR στο H&M / 7-Eleven")
+        assertNotNull(result)
+        assertTrue(result!!.merchant.contains("h&m", ignoreCase = true))
     }
 
     @Test

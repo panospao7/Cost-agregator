@@ -25,11 +25,14 @@ class MerchantCanonicalizer @Inject constructor() {
     )
     
     private val BUSINESS_TYPE_SUFFIXES = listOf(
-        // English
-        "ae", "sa", "ltd", "llc", "inc", "corp", "oy", "gmbh",
+        // English (including full forms for consistent removal)
+        "ae", "sa", "ltd", "limited", "llc", "inc", "incorporated", "corp", "corporation",
+        "oy", "gmbh", "company", "plc",
         "m.i.k.e.", "mike", "a.e.", "aebe", "s.a.",
         // Greek corporate structures (after Greeklish normalization)
         "epe", "ike", "oe", "ee", "monoprosopi", "mp", "koinoperi",
+        // Greek corporate structures in Greek script
+        "ικε", "επε", "οε", "εε", "μονοπροσωπη",
         "etaireia", "koinon", "idiwtik", "eteria"
     )
     
@@ -103,23 +106,30 @@ class MerchantCanonicalizer @Inject constructor() {
             // Try to strip business suffix
             for (suffix in BUSINESS_TYPE_SUFFIXES) {
                 val escapedSuffix = Regex.escape(suffix)
-                val pattern = Regex("""\b$escapedSuffix[\s\.]*$""", RegexOption.IGNORE_CASE)
+                val pattern = Regex("""(?:^|\s)$escapedSuffix[\s\.]*$""", RegexOption.IGNORE_CASE)
                 if (pattern.containsMatchIn(normalized)) {
-                    normalized = normalized.replace(pattern, "").trim()
-                    strippedParts.add(suffix)
-                    strippedAny = true
-                    break
+                    val afterStrip = normalized.replace(pattern, "").trim()
+                    if (afterStrip.isNotEmpty()) {
+                        // Don't strip "company"/"corporation" if it would leave a single word (e.g. "My Company AE" -> "my company")
+                        if (suffix in listOf("company", "corporation") && afterStrip.split(" ").size < 2) continue
+                        normalized = afterStrip
+                        strippedParts.add(suffix)
+                        strippedAny = true
+                        break
+                    }
                 }
             }
         } while (strippedAny)
         
         normalized = normalized.trim()
         
+        // Cap penalty at 0.10 to avoid over-penalizing partial matches (e.g. "Store Ltd Athens" -> "store")
         val penalty = when (strippedParts.size) {
             0 -> 0.0
             1 -> 0.03
             2 -> 0.05
-            else -> 0.08
+            3 -> 0.07
+            else -> 0.10
         }
         
         return CanonicalResult(

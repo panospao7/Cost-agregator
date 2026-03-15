@@ -161,6 +161,20 @@ class RecurringExpenseEngineTest {
     }
 
     @Test
+    fun `monthly pattern tolerates variable month length`() = runTest {
+        val expenses = listOf(
+            createExpense("Rent", 800.0, "2026-01-31"),
+            createExpense("Rent", 800.0, "2026-02-28"),
+            createExpense("Rent", 800.0, "2026-03-31")
+        )
+        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+
+        val patterns = engine.getPatterns()
+        assertEquals("Expected one recurring pattern", 1, patterns.size)
+        assertEquals(RecurrenceFrequency.MONTHLY, patterns.first().frequency)
+    }
+
+    @Test
     fun `exactly 2 occurrences should not detect`() = runTest {
         val expenses = listOf(
             createExpense("Test", 10.0, "2026-01-01"),
@@ -186,8 +200,26 @@ class RecurringExpenseEngineTest {
         assertEquals("Should group case variations into 1 pattern", 1, patterns.size)
     }
 
+    @Test
+    fun `should ignore recurring candidates marked not mine`() = runTest {
+        val expenses = listOf(
+            createExpense("Streaming", 20.0, "2026-01-01", isNotMine = true),
+            createExpense("Streaming", 20.0, "2026-02-01", isNotMine = true),
+            createExpense("Streaming", 20.0, "2026-03-01", isNotMine = true)
+        )
+        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
 
-    private fun createExpense(merchant: String, amount: Double, dateStr: String): Expense {
+        val patterns = engine.getPatterns()
+        assertTrue("Not-mine expenses should not produce recurring patterns", patterns.isEmpty())
+    }
+
+
+    private fun createExpense(
+        merchant: String,
+        amount: Double,
+        dateStr: String,
+        isNotMine: Boolean = false
+    ): Expense {
         // Simple parser for test dates
         val parts = dateStr.split("-")
         val calendar = Calendar.getInstance()
@@ -197,7 +229,8 @@ class RecurringExpenseEngineTest {
             amount = amount,
             merchant = merchant,
             transactionType = TransactionType.PURCHASE,
-            date = calendar.timeInMillis
+            date = calendar.timeInMillis,
+            isNotMine = isNotMine
         )
     }
 }

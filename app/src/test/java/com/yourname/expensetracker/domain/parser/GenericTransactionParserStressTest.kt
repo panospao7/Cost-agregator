@@ -33,6 +33,14 @@ class GenericTransactionParserStressTest {
     }
 
     @Test
+    fun `does not reject greek deposit messages containing apo`() {
+        val result = parse("Κατάθεση €120,00 από ACME LTD")
+        assertNotNull(result)
+        assertEquals(TransactionType.DEPOSIT, result!!.type)
+        assertEquals(120.0, result.amount, 0.001)
+    }
+
+    @Test
     fun `rejects non-financial notification`() {
         val result = parse("Reminder: meeting at 3 PM")
         assertNull(result)
@@ -54,6 +62,20 @@ class GenericTransactionParserStressTest {
     @Test
     fun `accepts supported european amount format`() {
         val result = parse("Πληρωμή 12,50 EUR στο Μασούτης")
+        assertNotNull(result)
+        assertEquals(12.5, result!!.amount, 0.001)
+    }
+
+    @Test
+    fun `accepts one decimal place amount with currency adjacent`() {
+        val result = parse("Payment of €12,5 at Cafe")
+        assertNotNull(result)
+        assertEquals(12.5, result!!.amount, 0.001)
+    }
+
+    @Test
+    fun `prefers transaction amount when multiple amounts are present`() {
+        val result = parse("Available €1.245,00. Payment of €12,5 at Cafe")
         assertNotNull(result)
         assertEquals(12.5, result!!.amount, 0.001)
     }

@@ -263,6 +263,20 @@ class TransferDirectionDetectorTest {
     }
 
     @Test
+    fun `extract account name - strips trailing greek amount details`() {
+        val text = "Μεταφορά από Ιωάννης Παπαδόπουλος ποσό 20,00€"
+        val result = detector.extractAccountName(null, text, null)
+        assertEquals("Ιωάννης Παπαδόπουλος", result)
+    }
+
+    @Test
+    fun `extract account name - strips trailing iban details`() {
+        val text = "Μεταφορά από Ιωάννης Παπαδόπουλος IBAN GR1601101250000000012300695"
+        val result = detector.extractAccountName(null, text, null)
+        assertEquals("Ιωάννης Παπαδόπουλος", result)
+    }
+
+    @Test
     fun `extract account name - no match returns null`() {
         val text = "Transaction completed: €50"
         val result = detector.extractAccountName(null, text, null)

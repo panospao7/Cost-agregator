@@ -16,7 +16,7 @@ class FeatureExtractor {
             "και", "το", "η", "τα", "του", "την", "των", "με", "σε", "για"
         )
         
-        private val WORD_PATTERN = Regex("[a-zA-Zα-ωά-ώΑ-ΩΆ-Ώ]+")
+        private val WORD_PATTERN = Regex("""[\p{L}\p{N}]+""")
     }
 
     /**
@@ -87,7 +87,13 @@ class FeatureExtractor {
      * Tokenize text into words.
      */
     fun tokenize(text: String): List<String> {
-        return WORD_PATTERN.findAll(text.lowercase())
+        val normalized = text
+            .lowercase()
+            .replace("&", " ")
+            .replace("/", " ")
+            .replace("-", " ")
+            .replace("'", "")
+        return WORD_PATTERN.findAll(normalized)
             .map { it.value }
             .filter { it.length >= 2 && it !in STOP_WORDS }
             .toList()

@@ -389,7 +389,10 @@ class SynthesisEngine @Inject constructor(
             val plannedNames = plannedItemsOnDay.map { it.description }
 
             val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
-            val actual = dailySpending.getOrNull(day - 1)?.toDouble()
+            val actualFromHistory = dailySpending.getOrNull(day - 1)?.toDouble()
+            val actualFromExpenses = expensesByDay[day]?.sumOf { it.effectiveAmount }
+            // Fallback to per-day expense aggregation when daily history is unavailable.
+            val actual = actualFromHistory ?: actualFromExpenses
             val actualOrZero = actual ?: 0.0
 
             val dayTransactions = (expensesByDay[day] ?: emptyList())
@@ -505,14 +508,14 @@ class SynthesisEngine @Inject constructor(
         return when {
             // Priority 1: Critical Budget Issues or Severe Overspending with no buffer
             criticalBudgets > 0 -> RiskLevel.CRITICAL
-            overPace && bufferRatio < 0.05 -> RiskLevel.CRITICAL
+            overPace && bufferRatio <= 0.05 -> RiskLevel.CRITICAL
             
             // Priority 2: High Risk (Overspending or Low Buffer)
             overPace -> RiskLevel.HIGH // If overPace but buffer > 0.05
-            bufferRatio < 0.1 -> RiskLevel.HIGH
+            bufferRatio <= 0.1 -> RiskLevel.HIGH
             
             // Priority 3: Medium Risk
-            bufferRatio < 0.2 -> RiskLevel.MEDIUM
+            bufferRatio <= 0.2 -> RiskLevel.MEDIUM
             
             // Priority 4: Low Risk
             else -> RiskLevel.LOW

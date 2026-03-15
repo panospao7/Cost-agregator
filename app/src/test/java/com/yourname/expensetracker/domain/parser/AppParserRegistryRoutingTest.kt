@@ -82,6 +82,20 @@ class AppParserRegistryRoutingTest {
     }
 
     @Test
+    fun `falls back to generic when package parser returns null`() {
+        val result = registry.parse(
+            title = "Payment update",
+            text = "Payment of €12,5 at Cafe",
+            bigText = null,
+            subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull(result)
+        assertEquals(com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, result!!.type)
+        assertEquals(12.5, result.amount, 0.01)
+    }
+
+    @Test
     fun `returns null when no parser matches`() {
         val result = registry.parse(
             title = "Hello",

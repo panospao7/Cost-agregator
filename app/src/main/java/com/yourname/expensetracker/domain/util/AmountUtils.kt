@@ -59,13 +59,22 @@ object AmountUtils {
             isNegative = true
             cleaned = cleaned.substring(1)
         }
+
+        val firstDigitIdx = cleaned.indexOfFirst { it.isDigit() }
+        if (!isNegative && firstDigitIdx > 0) {
+            val prefix = cleaned.substring(0, firstDigitIdx)
+            if (prefix.any { SUPPORTED_MINUS_SIGNS.contains(it) }) {
+                isNegative = true
+            }
+        }
         
         if (cleaned.startsWith("(") && cleaned.endsWith(")")) {
             isNegative = true
             cleaned = cleaned.substring(1, cleaned.length - 1)
         }
 
-        cleaned = cleaned.replace(Regex("""\s+"""), "")
+        // Normalize all Unicode whitespace (including nbsp U+00A0, narrow nbsp U+202F) to empty
+        cleaned = cleaned.replace(Regex("""[\s\u00A0\u202F\u2007\u3000]+"""), "")
         
         val hasComma = cleaned.contains(",")
         val hasDot = cleaned.contains(".")

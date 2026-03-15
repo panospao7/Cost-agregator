@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.util
 
-import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -13,6 +12,7 @@ class MerchantCleaner @Inject constructor() {
 
     private val timeRegex = Regex("""\s\d{1,2}:\d{2}(?::\d{2})?.*$""")
     private val dateRegex = Regex("""\s\d{1,2}[/.-]\d{1,2}(?:[/.-]\d{2,4})?.*$""")
+    private val dateWithDotsRegex = Regex("""\s\d{1,4}\.\d{1,2}\.\d{1,4}.*$""")
     private val cardInfoRegex = Regex("""\s*(?:(?:Mastercard|Visa|Amex|card|κάρτα|•|·|-)+\s*)+\*?\.?\d+.*$""", RegexOption.IGNORE_CASE)
     private val stopWords = listOf(
         "confirmed", "successful", "completed", "declined", "pending",
@@ -26,6 +26,7 @@ class MerchantCleaner @Inject constructor() {
             .replace('\u00A0', ' ') // Non-breaking space
             .replace(timeRegex, "")
             .replace(dateRegex, "")
+            .replace(dateWithDotsRegex, "") // Dates like 2024.03.15 or 15.03.2024
             .replace(cardInfoRegex, "")
 
         // Remove stop words from the end
@@ -39,11 +40,17 @@ class MerchantCleaner @Inject constructor() {
             }
         }
 
-        return candidate
+        var result = candidate
             .replace(Regex("""\s{2,}"""), " ") // Standardize whitespace
-            .replace(Regex("""[.!;]$"""), "") // Remove trailing punctuation
+            .replace(Regex("""[.!;?!,:]+$"""), "") // Remove trailing punctuation (one or more)
             .trim()
             .take(AppConstants.Parser.MAX_MERCHANT_LENGTH)
-            .let { if (it.isEmpty()) "Unknown" else it }
+        // Strip emojis and other symbols that can cause display/parsing issues
+        result = result.replace(Regex("""[\p{So}]+"""), "").trim() // Strip emojis and symbol-other
+        return when {
+            result.isEmpty() -> "Unknown"
+            stopWords.any { result.equals(it, ignoreCase = true) } -> "Unknown"
+            else -> result
+        }
     }
 }
