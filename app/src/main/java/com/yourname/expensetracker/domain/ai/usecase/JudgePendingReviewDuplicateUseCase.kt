@@ -4,11 +4,13 @@ import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
@@ -22,6 +24,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val dedupeJudgeService: DedupeJudgeService,
+    private val aiCapabilityRouter: AiCapabilityRouter,
     private val inputBuilder: DedupeJudgeInputBuilder,
     private val timeProvider: TimeProvider
 ) {
@@ -41,6 +44,10 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
         }
 
         val input = (buildResult as DedupeJudgeBuildResult.Ready).input
+        val routeDecision = aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, settings)
+        if (routeDecision.route == AiRoute.DISABLED) {
+            return DedupeJudgeGenerationResult.Disabled(routeDecision.reason)
+        }
         val targetKey = "pending_review:${item.review.id}"
         val now = timeProvider.now()
         val sourceHash = input.hashCode().toString()
@@ -65,7 +72,14 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
             targetKey = targetKey,
             capability = AiCapability.DEDUPE_JUDGE,
             status = AiArtifactStatus.RUNNING,
-            mode = AiMode.AUTO,
+            mode = when (routeDecision.route) {
+                AiRoute.ON_DEVICE -> AiMode.ON_DEVICE
+                AiRoute.CLOUD -> AiMode.CLOUD
+                AiRoute.DETERMINISTIC_FALLBACK,
+                AiRoute.DISABLED -> AiMode.AUTO
+            },
+            provider = routeDecision.providerName,
+            modelName = routeDecision.modelName,
             promptVersion = AppConfig.Ai.PROMPT_VERSION_DEDUPE,
             sourceHash = sourceHash,
             createdAt = now,
@@ -80,7 +94,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
                 aiArtifactRepository.upsert(
                     baseEntity.copy(
                         status = AiArtifactStatus.FAILED,
-                        errorMessage = "AI duplicate assist returned no verdict.",
+                        errorMessage = routeDecision.reason,
                         updatedAt = timeProvider.now()
                     )
                 )

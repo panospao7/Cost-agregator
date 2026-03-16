@@ -8,8 +8,10 @@ import com.yourname.expensetracker.data.ai.provider.CloudReviewExplanationServic
 import com.yourname.expensetracker.data.ai.provider.CloudReceiptAssistService
 import com.yourname.expensetracker.data.ai.provider.NoOpDashboardBriefingService
 import com.yourname.expensetracker.data.ai.provider.CloudCategorizationAssistService
+import com.yourname.expensetracker.data.ai.provider.CloudDedupeJudgeService
 import com.yourname.expensetracker.data.ai.provider.DefaultAiEnvironmentMonitor
 import com.yourname.expensetracker.data.ai.provider.HybridCategorizationAssistService
+import com.yourname.expensetracker.data.ai.provider.HybridDedupeJudgeService
 import com.yourname.expensetracker.data.ai.provider.HybridReceiptAssistService
 import com.yourname.expensetracker.data.ai.provider.HybridReviewExplanationService
 import com.yourname.expensetracker.data.ai.provider.NoOpCategorizationAssistService
@@ -119,7 +121,7 @@ abstract class AiModule {
     @Binds
     @Singleton
     abstract fun bindDedupeJudgeService(
-        impl: NoOpDedupeJudgeService
+        impl: HybridDedupeJudgeService
     ): DedupeJudgeService
 
     @Binds

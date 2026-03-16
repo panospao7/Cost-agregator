@@ -178,7 +178,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.QUERY_INTERPRETATION -> "gemini-cloud-query"
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL
-        AiCapability.DEDUPE_JUDGE -> "gemini-cloud-dedupe"
+        AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL
         AiCapability.LOCATION_SUMMARY -> "gemini-cloud-location"
     }
 

@@ -5,6 +5,9 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
@@ -13,6 +16,8 @@ import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.model.DedupeCandidateSummary
 import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
@@ -32,6 +37,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var dedupeJudgeService: DedupeJudgeService
+    private lateinit var aiCapabilityRouter: AiCapabilityRouter
     private lateinit var inputBuilder: DedupeJudgeInputBuilder
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var useCase: JudgePendingReviewDuplicateUseCase
@@ -41,6 +47,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
         aiSettingsRepository = mockk()
         aiArtifactRepository = mockk(relaxed = true)
         dedupeJudgeService = mockk()
+        aiCapabilityRouter = mockk()
         inputBuilder = mockk()
         timeProvider = FakeTimeProvider(1_000L)
 
@@ -48,8 +55,17 @@ class JudgePendingReviewDuplicateUseCaseTest {
             aiSettingsRepository,
             aiArtifactRepository,
             dedupeJudgeService,
+            aiCapabilityRouter,
             inputBuilder,
             timeProvider
+        )
+        every {
+            aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, any())
+        } returns AiRouteDecision(
+            route = AiRoute.CLOUD,
+            reason = "cloud allowed",
+            providerName = AppConfig.Ai.DEDUPE_JUDGE_CLOUD_PROVIDER,
+            modelName = AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL
         )
     }
 
@@ -80,6 +96,9 @@ class JudgePendingReviewDuplicateUseCaseTest {
         assertTrue(result is DedupeJudgeGenerationResult.Success)
         assertEquals(AiArtifactStatus.READY, captured.last().status)
         assertEquals(AiCapability.DEDUPE_JUDGE, captured.last().capability)
+        assertEquals(AiMode.CLOUD, captured.first().mode)
+        assertEquals(AppConfig.Ai.DEDUPE_JUDGE_CLOUD_PROVIDER, captured.first().provider)
+        assertEquals(AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL, captured.first().modelName)
     }
 
     private fun makeItem() = PendingReviewWithReceipt(
