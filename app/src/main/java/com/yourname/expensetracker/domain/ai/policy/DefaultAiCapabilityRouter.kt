@@ -176,7 +176,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.DASHBOARD_BRIEFING -> "gemini-cloud-briefing"
         AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_MODEL
         AiCapability.QUERY_INTERPRETATION -> "gemini-cloud-query"
-        AiCapability.RECEIPT_EXTRACTION -> "gemini-cloud-receipt"
+        AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> "gemini-cloud-category"
         AiCapability.DEDUPE_JUDGE -> "gemini-cloud-dedupe"
         AiCapability.LOCATION_SUMMARY -> "gemini-cloud-location"

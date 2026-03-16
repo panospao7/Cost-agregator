@@ -5,10 +5,12 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
@@ -23,6 +25,7 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val receiptAssistService: ReceiptAssistService,
+    private val aiCapabilityRouter: AiCapabilityRouter,
     private val inputBuilder: ReceiptAssistInputBuilder,
     private val receiptRepository: ReceiptRepository,
     private val timeProvider: TimeProvider
@@ -53,6 +56,10 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         }
 
         val input = inputBuilder.build(receipt, settings)
+        val routeDecision = aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings)
+        if (routeDecision.route == AiRoute.DISABLED) {
+            return ReceiptAssistGenerationResult.Disabled(routeDecision.reason)
+        }
         val targetKey = "scanned_receipt:$receiptId"
         val now = timeProvider.now()
         val sourceHash = input.hashCode().toString()
@@ -76,7 +83,14 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
             targetKey = targetKey,
             capability = AiCapability.RECEIPT_EXTRACTION,
             status = AiArtifactStatus.RUNNING,
-            mode = AiMode.AUTO,
+            mode = when (routeDecision.route) {
+                AiRoute.ON_DEVICE -> AiMode.ON_DEVICE
+                AiRoute.CLOUD -> AiMode.CLOUD
+                AiRoute.DETERMINISTIC_FALLBACK,
+                AiRoute.DISABLED -> AiMode.AUTO
+            },
+            provider = routeDecision.providerName,
+            modelName = routeDecision.modelName,
             promptVersion = AppConfig.Ai.PROMPT_VERSION_RECEIPT,
             sourceHash = sourceHash,
             createdAt = now,
@@ -91,7 +105,7 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
                 aiArtifactRepository.upsert(
                     baseEntity.copy(
                         status = AiArtifactStatus.FAILED,
-                        errorMessage = "AI receipt assist returned no usable suggestions.",
+                        errorMessage = routeDecision.reason,
                         updatedAt = timeProvider.now()
                     )
                 )

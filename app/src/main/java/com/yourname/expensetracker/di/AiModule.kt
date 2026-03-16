@@ -5,8 +5,10 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
 import com.yourname.expensetracker.data.database.dao.AiChatMessageDao
 import com.yourname.expensetracker.data.database.dao.AiChatSessionDao
 import com.yourname.expensetracker.data.ai.provider.CloudReviewExplanationService
+import com.yourname.expensetracker.data.ai.provider.CloudReceiptAssistService
 import com.yourname.expensetracker.data.ai.provider.NoOpDashboardBriefingService
 import com.yourname.expensetracker.data.ai.provider.DefaultAiEnvironmentMonitor
+import com.yourname.expensetracker.data.ai.provider.HybridReceiptAssistService
 import com.yourname.expensetracker.data.ai.provider.HybridReviewExplanationService
 import com.yourname.expensetracker.data.ai.provider.NoOpCategorizationAssistService
 import com.yourname.expensetracker.data.ai.provider.NoOpDedupeJudgeService
@@ -103,7 +105,7 @@ abstract class AiModule {
     @Binds
     @Singleton
     abstract fun bindReceiptAssistService(
-        impl: NoOpReceiptAssistService
+        impl: HybridReceiptAssistService
     ): ReceiptAssistService
 
     @Binds

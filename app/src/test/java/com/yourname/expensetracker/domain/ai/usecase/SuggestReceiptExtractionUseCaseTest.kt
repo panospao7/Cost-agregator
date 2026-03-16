@@ -5,6 +5,8 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
@@ -12,6 +14,7 @@ import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
@@ -33,6 +36,7 @@ class SuggestReceiptExtractionUseCaseTest {
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var receiptAssistService: ReceiptAssistService
+    private lateinit var aiCapabilityRouter: AiCapabilityRouter
     private lateinit var inputBuilder: ReceiptAssistInputBuilder
     private lateinit var receiptRepository: ReceiptRepository
     private lateinit var timeProvider: FakeTimeProvider
@@ -45,6 +49,7 @@ class SuggestReceiptExtractionUseCaseTest {
         aiSettingsRepository = mockk()
         aiArtifactRepository = mockk(relaxed = true)
         receiptAssistService = mockk()
+        aiCapabilityRouter = mockk()
         inputBuilder = mockk()
         receiptRepository = mockk()
         timeProvider = FakeTimeProvider(now)
@@ -53,9 +58,18 @@ class SuggestReceiptExtractionUseCaseTest {
             aiSettingsRepository = aiSettingsRepository,
             aiArtifactRepository = aiArtifactRepository,
             receiptAssistService = receiptAssistService,
+            aiCapabilityRouter = aiCapabilityRouter,
             inputBuilder = inputBuilder,
             receiptRepository = receiptRepository,
             timeProvider = timeProvider
+        )
+        every {
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, any())
+        } returns AiRouteDecision(
+            route = AiRoute.CLOUD,
+            reason = "cloud allowed",
+            providerName = AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER,
+            modelName = AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL
         )
     }
 
@@ -122,6 +136,9 @@ class SuggestReceiptExtractionUseCaseTest {
         assertTrue(result is ReceiptAssistGenerationResult.Success)
         assertEquals(AiArtifactStatus.RUNNING, captured.first().status)
         assertEquals(AiArtifactStatus.READY, captured.last().status)
+        assertEquals(AiMode.CLOUD, captured.first().mode)
+        assertEquals(AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER, captured.first().provider)
+        assertEquals(AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL, captured.first().modelName)
         assertEquals("scanned_receipt:1", captured.last().targetKey)
         assertEquals(AiCapability.RECEIPT_EXTRACTION, captured.last().capability)
         assertTrue(captured.last().payloadJson?.contains("Lidl") == true)
@@ -144,6 +161,7 @@ class SuggestReceiptExtractionUseCaseTest {
 
         assertTrue(result is ReceiptAssistGenerationResult.Error)
         assertEquals(AiArtifactStatus.FAILED, captured.last().status)
+        assertEquals("cloud allowed", captured.last().errorMessage)
     }
 
     private fun enabledSettings() = AiSettings(aiEnabled = true, receiptAssistEnabled = true)
