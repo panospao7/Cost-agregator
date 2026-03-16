@@ -2927,6 +2927,572 @@ If we proceed with Phase 1, these are the recommended defaults:
 4. Storage model: `ai_artifacts` only in Phase 1, no chat/session tables yet.
 5. Privacy mode: opt-in, redact before cloud, no prompt persistence outside debug.
 
+## Hybrid Provider Plan
+
+Now that Phases 1 through 3 are scaffolded and shipped behind feature flags, the next planning step should be the provider-routing layer rather than jumping directly into Phase 4 behavior.
+
+Recommended strategy:
+
+- use a hybrid AI architecture
+- keep deterministic logic as the first authority
+- route each AI capability to the best runtime by capability, privacy sensitivity, latency tolerance, and device/network conditions
+- support both on-device Gemini Nano class models and cloud Gemini / AI Studio class providers behind the same service seams
+
+Important current repo reality:
+
+- `AiModule.kt` still binds no-op services for all AI capabilities
+- `AiSettings` already contains the core hybrid toggles: `allowCloudAi`, `allowOnDeviceAi`, `wifiOnlyForCloud`, `redactBeforeCloud`, and `preferredMode`
+- `AiArtifactEntity` already has `mode`, `provider`, and `modelName`, so artifact records can capture which route was actually used
+- there is no dedicated connectivity or provider-routing abstraction yet, so that should be introduced before wiring a real provider broadly
+
+This means the architecture is ready for hybrid rollout, but not yet ready for hybrid runtime selection.
+
+## Hybrid Goals
+
+The purpose of the hybrid layer is not to “use both everywhere.”
+
+The purpose is to choose the right execution path per capability.
+
+### Desired outcomes
+
+- on-device where privacy and latency matter most
+- cloud where model quality, reasoning depth, or broader language coverage matter most
+- deterministic fallback whenever AI is unavailable, disabled, unsupported, offline, too slow, or policy-blocked
+- explicit routing decisions that are observable and debuggable
+
+### Hybrid non-goals
+
+- no invisible switching that users cannot reason about
+- no cloud fallback for capabilities that should remain strictly local unless the user has explicitly enabled cloud AI
+- no provider logic inside UI screens or domain use cases directly
+- no direct coupling of business logic to Gemini SDK types
+
+## New Hybrid Architecture Layer
+
+Before wiring a real provider, add a provider-selection layer that sits between use cases and concrete providers.
+
+### Recommended new abstractions
+
+#### 1. Provider availability and connectivity
+
+Add a small environment abstraction:
+
+```kotlin
+interface AiEnvironmentMonitor {
+    fun isNetworkAvailable(): Boolean
+    fun isWifiConnected(): Boolean
+    fun isOnDeviceModelAvailable(capability: AiCapability): Boolean
+}
+```
+
+Reason:
+
+- the routing layer needs to know whether cloud is reachable and whether the relevant on-device model/runtime is actually available
+- this must not live in ViewModels or be inferred ad hoc by each use case
+
+#### 2. Route decision model
+
+Add a typed routing result:
+
+```kotlin
+enum class AiRoute {
+    ON_DEVICE,
+    CLOUD,
+    DETERMINISTIC_FALLBACK,
+    DISABLED
+}
+
+data class AiRouteDecision(
+    val route: AiRoute,
+    val reason: String,
+    val providerName: String? = null,
+    val modelName: String? = null
+)
+```
+
+Reason:
+
+- route selection should be explicit and inspectable
+- the decision should be available for logs, diagnostics, and artifact metadata
+
+#### 3. Capability router
+
+Add a domain-level router:
+
+```kotlin
+interface AiCapabilityRouter {
+    fun decide(capability: AiCapability, settings: AiSettings): AiRouteDecision
+}
+```
+
+Reason:
+
+- service use cases already know the capability they are executing
+- the router should centralize the routing logic instead of repeating it in six separate use cases
+
+#### 4. Concrete provider adapters
+
+Separate providers by runtime:
+
+- `data/ai/provider/cloud/`
+- `data/ai/provider/ondevice/`
+
+Example future classes:
+
+- `CloudReviewExplanationService`
+- `OnDeviceReviewExplanationService`
+- `CloudReceiptAssistService`
+- `OnDeviceCategorizationAssistService`
+
+Reason:
+
+- runtime concerns should remain in data/provider code
+- use cases should not know SDK details for Gemini Nano or cloud Gemini
+
+#### 5. Hybrid delegating services
+
+Bind each domain service to a hybrid delegator instead of directly to a no-op or concrete provider.
+
+Example:
+
+```kotlin
+class HybridReviewExplanationService(
+    private val router: AiCapabilityRouter,
+    private val onDevice: OnDeviceReviewExplanationService,
+    private val cloud: CloudReviewExplanationService
+) : ReviewExplanationService
+```
+
+Reason:
+
+- the service interface remains stable
+- the delegator can choose the route at runtime and preserve fallback behavior cleanly
+
+## Service-by-Service Routing Recommendations
+
+Not every capability should use the same default route.
+
+### 1. `ReviewExplanationService`
+
+Recommended initial route:
+
+- cloud first
+- on-device fallback later if quality is acceptable
+
+Why:
+
+- explanation quality and fluency matter more than ultra-low latency
+- this is advisory-only and user-triggered
+- it is the safest first real provider slice for collecting latency and quality signals
+
+Fallback order:
+
+- cloud if allowed and reachable
+- on-device if available and good enough
+- artifact cache if still fresh
+- otherwise fail gracefully with current disabled/unavailable UX
+
+### 2. `DashboardBriefingService`
+
+Recommended initial route:
+
+- cloud first
+
+Why:
+
+- this is a synthesis task with broad language generation needs
+- slight latency is acceptable if cached
+- it is high-value but low-risk because it is read-only
+
+Fallback order:
+
+- fresh artifact cache
+- cloud if allowed
+- on-device only if later tested to produce acceptable quality
+- otherwise no briefing
+
+### 3. `QueryInterpretationService`
+
+Recommended initial route:
+
+- deterministic local interpretation remains primary
+- cloud optional later for unsupported open-ended prompts only
+
+Why:
+
+- Phase 2 already works for the supported query family without a real model provider
+- numeric trust boundaries are strict here
+- this service should never become the sole source of truth for totals or comparisons
+
+Fallback order:
+
+- deterministic parser / local heuristic interpretation
+- optional cloud interpretation for unsupported natural phrasing only
+- unsupported result
+
+### 4. `ReceiptAssistService`
+
+Recommended initial route:
+
+- hybrid candidate
+- on-device preferred when model/runtime supports extraction from OCR text well
+- cloud allowed when user explicitly enables it and on-device is unavailable or weak
+
+Why:
+
+- receipt data can contain sensitive text
+- on-device is attractive for privacy
+- but cloud may produce stronger results early in rollout
+
+Fallback order:
+
+- on-device if available and allowed
+- cloud if user opted in and policy allows
+- deterministic manual editing flow only
+
+### 5. `CategorizationAssistService`
+
+Recommended initial route:
+
+- on-device first, cloud fallback second
+
+Why:
+
+- the task is bounded: choose from an existing category list
+- it is narrower than free-form text generation
+- privacy sensitivity is moderate
+- good candidate for low-latency local inference if quality is acceptable
+
+Fallback order:
+
+- on-device if available
+- cloud if on-device unavailable and cloud allowed
+- deterministic category suggestion only
+
+### 6. `DedupeJudgeService`
+
+Recommended initial route:
+
+- cloud first
+
+Why:
+
+- ambiguous duplicate reasoning is subtle and quality-sensitive
+- the candidate set is already bounded deterministically, which helps privacy and prompt size
+- this is advisory-only, so cloud rollout is acceptable if opt-in
+
+Fallback order:
+
+- cloud if allowed
+- on-device later only if quality proves reliable
+- otherwise show no AI dedupe verdict
+
+## Global Routing Rules
+
+These rules should apply to all hybrid services.
+
+### 1. Honor explicit settings first
+
+If `aiEnabled` is false:
+
+- route = `DISABLED`
+
+If capability-specific flag is false:
+
+- route = `DISABLED`
+
+If `preferredMode == ON_DEVICE`:
+
+- do not call cloud unless the product explicitly defines a user-approved override path
+
+If `preferredMode == CLOUD`:
+
+- use cloud when policy and connectivity allow it
+- optionally fallback to on-device only if the user experience would otherwise fail and the capability is low-risk
+
+If `preferredMode == AUTO`:
+
+- use the capability default routing strategy
+
+### 2. Cloud requires policy + connectivity
+
+Cloud may only be used when all of the following are true:
+
+- `allowCloudAi == true`
+- network is available
+- if `wifiOnlyForCloud == true`, Wi-Fi is connected
+- capability-level privacy policy allows cloud use
+
+Otherwise:
+
+- route away from cloud
+
+### 3. On-device requires runtime availability
+
+On-device may only be used when:
+
+- `allowOnDeviceAi == true`
+- the on-device runtime is present
+- the relevant model is available for the capability
+- the device meets minimum capability requirements
+
+Otherwise:
+
+- route away from on-device
+
+### 4. Deterministic fallback must remain possible
+
+If neither cloud nor on-device can run:
+
+- do not force failure when the existing deterministic UX can proceed without AI
+- continue with the existing flow and surface AI as unavailable
+
+### 5. Artifacts should record actual route
+
+Every successful artifact should persist:
+
+- `mode`
+- `provider`
+- `modelName`
+
+Reason:
+
+- later evaluation depends on knowing whether a result came from Nano or cloud
+
+## Connectivity and Offline Rules
+
+Connectivity should be planned capability-by-capability, not globally.
+
+### Offline-safe capabilities
+
+- query assistant deterministic path
+- receipt manual correction flow
+- review approval/edit flow
+- all screens when AI is disabled or unavailable
+
+### Cloud-tolerant capabilities
+
+- dashboard briefing
+- review explanation
+- dedupe judge
+
+### Prefer-local-if-possible capabilities
+
+- receipt assist
+- categorization fallback
+
+### Timeout recommendations
+
+Use capability-specific limits instead of one universal timeout.
+
+Suggested starting values:
+
+- review explanation: 8–12s
+- dashboard briefing: 10–15s
+- receipt assist: 6–10s
+- categorization fallback: 3–6s
+- dedupe judge: 5–8s
+
+Rule:
+
+- timeouts should fail gracefully into existing UX, not block screens indefinitely
+
+### Retry rules
+
+- no silent infinite retries in interactive flows
+- one retry max for transient cloud failures if the request is user-triggered and the user is still waiting
+- do not retry automatically inside the notification pipeline because AI should not be there at all
+
+## Privacy Policy by Capability
+
+The current `AiPolicyImpl` is intentionally minimal.
+
+Before real provider rollout, extend policy decisions to capability-sensitive cloud allowances.
+
+### Recommended privacy defaults
+
+#### Always conservative
+
+- redact before cloud by default
+- persist minimal artifact payloads
+- do not store raw prompts/responses in production
+- keep receipt images local unless a future explicit image-upload feature is approved
+
+#### Capability-specific cloud guidance
+
+- `DASHBOARD_BRIEFING`: cloud allowed when opted in
+- `REVIEW_EXPLANATION`: cloud allowed when opted in and redaction enabled
+- `QUERY_INTERPRETATION`: cloud optional only for unsupported natural phrasing, never for numeric authority
+- `RECEIPT_EXTRACTION`: cloud allowed only with explicit opt-in and text-only payload in the first release
+- `CATEGORIZATION_FALLBACK`: cloud allowed with bounded category list and redacted support text
+- `DEDUPE_JUDGE`: cloud allowed only with bounded candidate set and no full-ledger context
+
+### Recommended `AiPolicy` expansion
+
+Add methods like:
+
+```kotlin
+interface AiPolicy {
+    fun canUseCloud(settings: AiSettings): Boolean
+    fun canUseCloudFor(settings: AiSettings, capability: AiCapability): Boolean
+    fun shouldRedact(settings: AiSettings, capability: AiCapability): Boolean
+    fun shouldAllowOnDevice(settings: AiSettings, capability: AiCapability): Boolean
+}
+```
+
+Reason:
+
+- global `canUseCloud` is too coarse for hybrid capability routing
+
+## Observability and Diagnostics Plan
+
+Hybrid rollout will be hard to tune without observability.
+
+Recommended minimal telemetry / diagnostics fields per invocation:
+
+- capability
+- route chosen
+- fallback reason if rerouted
+- provider name
+- model name
+- latency bucket
+- success / null / failed / timed out
+- whether result was from cache
+
+Do not log raw receipt text, notification text, prompts, or personally sensitive payloads in production logs.
+
+### Debug surface recommendation
+
+If a debug UI is added later, show:
+
+- route chosen
+- provider/model
+- redaction applied yes/no
+- cache hit yes/no
+- artifact freshness
+- failure reason
+
+## Hybrid Settings and UX Plan
+
+The settings model is already close, but the UX should be explicit.
+
+### Recommended user-facing controls
+
+- master AI enable
+- allow cloud AI
+- allow on-device AI
+- preferred mode: auto / on-device / cloud
+- Wi-Fi only for cloud
+- redact before cloud
+- capability toggles per AI surface
+
+### Recommended UX defaults
+
+- AI off by default for cloud-backed routes until explicit consent
+- on-device allowed by default if the runtime is present and the capability is low-risk
+- `preferredMode = AUTO` as the initial default for hybrid rollout
+
+## Recommended Implementation Order for Real Provider Wiring
+
+Do not wire all six services at once.
+
+### Step 1: Add hybrid routing infrastructure
+
+- add `AiEnvironmentMonitor`
+- add `AiCapabilityRouter`
+- expand `AiPolicy`
+- define provider/model metadata conventions
+- keep existing no-op services as fallback implementations
+
+Done when:
+
+- use cases can ask for a route decision without knowing any provider SDK details
+
+### Step 2: Wire one cloud-first advisory capability
+
+Recommended first slice:
+
+- `ReviewExplanationService`
+
+Why:
+
+- low-risk
+- user-triggered
+- easy to judge quality manually
+- advisory-only with existing fallback UX
+
+Done when:
+
+- review explanations can come from a real cloud provider behind feature flags
+
+### Step 3: Wire one hybrid capture capability
+
+Recommended second slice:
+
+- `ReceiptAssistService`
+
+Why:
+
+- best test bed for cloud vs on-device tradeoffs
+- privacy and latency both matter
+- still advisory-only and reversible
+
+Done when:
+
+- receipt assist can choose local vs cloud based on mode, policy, and availability
+
+### Step 4: Wire bounded local-or-hybrid classification
+
+Recommended third slice:
+
+- `CategorizationAssistService`
+
+Why:
+
+- narrow output space
+- good candidate for lower-latency local execution
+
+### Step 5: Wire higher-quality reasoning services
+
+- `DashboardBriefingService`
+- `DedupeJudgeService`
+
+### Step 6: Reevaluate Phase 4 only after real provider evidence exists
+
+Phase 4 should not proceed on architecture confidence alone.
+
+Require evidence on:
+
+- quality
+- latency
+- privacy acceptability
+- override rates
+- fallback behavior
+
+## Recommended Next Slice After This Plan
+
+The best immediate implementation slice is:
+
+### Hybrid PR 1: Provider routing foundation
+
+In scope:
+
+- add `AiEnvironmentMonitor`
+- add `AiCapabilityRouter`
+- expand `AiPolicy` for per-capability routing
+- define provider/model metadata handling in AI artifacts
+- keep all current services no-op or hybrid-stubbed
+
+Out of scope:
+
+- no actual Gemini SDK integration yet
+- no Phase 4 automation
+- no UI redesign
+
+Why this slice first:
+
+- it gives a stable backbone for both Gemini Nano and AI Studio cloud without forcing an early provider choice into every use case
+
 ## Immediate Next Planning Step
 
 Freeze the Phase 1 scope before coding:

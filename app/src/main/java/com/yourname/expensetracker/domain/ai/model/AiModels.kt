@@ -20,6 +20,13 @@ enum class AiMode {
     AUTO
 }
 
+enum class AiRoute {
+    ON_DEVICE,
+    CLOUD,
+    DETERMINISTIC_FALLBACK,
+    DISABLED
+}
+
 enum class AiTargetType {
     DASHBOARD,
     PENDING_REVIEW,
@@ -46,6 +53,13 @@ data class AiTargetRef(
     val type: AiTargetType,
     val id: Long? = null,
     val key: String
+)
+
+data class AiRouteDecision(
+    val route: AiRoute,
+    val reason: String,
+    val providerName: String? = null,
+    val modelName: String? = null
 )
 
 // ---------------------------------------------------------------------------

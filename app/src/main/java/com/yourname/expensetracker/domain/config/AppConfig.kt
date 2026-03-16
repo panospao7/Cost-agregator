@@ -126,6 +126,14 @@ object AppConfig {
         const val PROMPT_VERSION_RECEIPT   = "v1"
         const val PROMPT_VERSION_CATEGORIZATION = "v1"
         const val PROMPT_VERSION_DEDUPE    = "v1"
+        const val REVIEW_EXPLANATION_CLOUD_PROVIDER = "google-ai-studio"
+        const val REVIEW_EXPLANATION_CLOUD_MODEL = "gemini-2.5-flash"
+        const val GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
+        const val REVIEW_EXPLANATION_TIMEOUT_SECONDS = 12L
+        const val MAX_REVIEW_EXPLANATION_HEADLINE_CHARS = 80
+        const val MAX_REVIEW_EXPLANATION_BODY_CHARS = 320
+        const val MAX_REVIEW_EXPLANATION_CAUTION_CHARS = 140
+        const val REVIEW_EXPLANATION_MAX_OUTPUT_TOKENS = 384
 
         // Query interpretation / assistant limits
         const val MAX_QUERY_INPUT_CHARS = 400

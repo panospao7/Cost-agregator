@@ -41,6 +41,30 @@ class AiPolicyTest {
         assertTrue(policy.canUseCloud(settings))
     }
 
+    @Test
+    fun `canUseCloudFor returns false when capability flag is off`() {
+        val settings = AiSettings(aiEnabled = true, allowCloudAi = true, reviewExplanationEnabled = false)
+        assertFalse(policy.canUseCloudFor(settings, AiCapability.REVIEW_EXPLANATION))
+    }
+
+    @Test
+    fun `canUseCloudFor returns true when cloud and capability are enabled`() {
+        val settings = AiSettings(aiEnabled = true, allowCloudAi = true, reviewExplanationEnabled = true)
+        assertTrue(policy.canUseCloudFor(settings, AiCapability.REVIEW_EXPLANATION))
+    }
+
+    @Test
+    fun `shouldAllowOnDevice returns false when on-device is disabled`() {
+        val settings = AiSettings(aiEnabled = true, allowOnDeviceAi = false, receiptAssistEnabled = true)
+        assertFalse(policy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION))
+    }
+
+    @Test
+    fun `shouldAllowOnDevice returns true when on-device and capability are enabled`() {
+        val settings = AiSettings(aiEnabled = true, allowOnDeviceAi = true, receiptAssistEnabled = true)
+        assertTrue(policy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION))
+    }
+
     // ── shouldRedact ──────────────────────────────────────────────────────────
 
     @Test

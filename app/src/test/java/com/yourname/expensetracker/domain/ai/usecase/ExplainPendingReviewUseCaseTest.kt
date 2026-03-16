@@ -6,10 +6,13 @@ import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanation
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
@@ -31,6 +34,7 @@ class ExplainPendingReviewUseCaseTest {
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var reviewExplanationService: ReviewExplanationService
+    private lateinit var aiCapabilityRouter: AiCapabilityRouter
     private lateinit var inputBuilder: ReviewExplanationInputBuilder
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var useCase: ExplainPendingReviewUseCase
@@ -42,6 +46,7 @@ class ExplainPendingReviewUseCaseTest {
         aiSettingsRepository  = mockk()
         aiArtifactRepository  = mockk(relaxed = true)
         reviewExplanationService = mockk()
+        aiCapabilityRouter    = mockk()
         inputBuilder          = mockk()
         timeProvider          = FakeTimeProvider(fixedTime = now)
 
@@ -49,8 +54,17 @@ class ExplainPendingReviewUseCaseTest {
             aiSettingsRepository     = aiSettingsRepository,
             aiArtifactRepository     = aiArtifactRepository,
             reviewExplanationService = reviewExplanationService,
+            aiCapabilityRouter       = aiCapabilityRouter,
             inputBuilder             = inputBuilder,
             timeProvider             = timeProvider
+        )
+        every {
+            aiCapabilityRouter.decide(AiCapability.REVIEW_EXPLANATION, any())
+        } returns AiRouteDecision(
+            route = AiRoute.CLOUD,
+            reason = "cloud allowed",
+            providerName = "google-ai-studio",
+            modelName = "gemini-2.5-flash"
         )
     }
 
@@ -177,7 +191,7 @@ class ExplainPendingReviewUseCaseTest {
         // Two upserts: RUNNING tombstone + final FAILED
         coVerify(exactly = 2) { aiArtifactRepository.upsert(any()) }
         assertEquals(AiArtifactStatus.FAILED, slot.captured.status)
-        assertEquals("Provider returned null", slot.captured.errorMessage)
+        assertEquals("cloud allowed", slot.captured.errorMessage)
     }
 
     // ── provider succeeds ─────────────────────────────────────────────────────
@@ -226,6 +240,24 @@ class ExplainPendingReviewUseCaseTest {
         useCase(review)
 
         assertTrue(captured.all { it.targetKey == "pending_review:42" })
+    }
+
+    @Test
+    fun `invoke stores route metadata when provider succeeds`() = runTest {
+        val review = makePendingReview()
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { reviewExplanationService.generate(any()) } returns ReviewExplanation("H", "B")
+        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        useCase(review)
+
+        val running = captured.first()
+        assertEquals(AiMode.CLOUD, running.mode)
+        assertEquals("google-ai-studio", running.provider)
+        assertEquals("gemini-2.5-flash", running.modelName)
     }
 
     // ── provider throws ───────────────────────────────────────────────────────

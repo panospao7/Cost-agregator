@@ -4,8 +4,8 @@ import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
-import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
@@ -34,6 +34,7 @@ class ExplainPendingReviewUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val reviewExplanationService: ReviewExplanationService,
+    private val aiCapabilityRouter: AiCapabilityRouter,
     private val inputBuilder: ReviewExplanationInputBuilder,
     private val timeProvider: TimeProvider
 ) {
@@ -48,6 +49,11 @@ class ExplainPendingReviewUseCase @Inject constructor(
 
         // ── 2. Build input (with redaction + clamping) ───────────────────────
         val input = inputBuilder.build(review, settings)
+        val routeDecision = aiCapabilityRouter.decide(AiCapability.REVIEW_EXPLANATION, settings)
+        if (routeDecision.route == com.yourname.expensetracker.domain.ai.model.AiRoute.DISABLED) {
+            Timber.d("ExplainPendingReviewUseCase: router disabled review explanation, skipping.")
+            return
+        }
 
         // ── 3. Derive target key ─────────────────────────────────────────────
         val targetKey = "pending_review:${review.id}"
@@ -71,7 +77,14 @@ class ExplainPendingReviewUseCase @Inject constructor(
             targetKey     = targetKey,
             capability    = AiCapability.REVIEW_EXPLANATION,
             status        = AiArtifactStatus.RUNNING,
-            mode          = AiMode.AUTO,
+            mode          = when (routeDecision.route) {
+                com.yourname.expensetracker.domain.ai.model.AiRoute.ON_DEVICE -> com.yourname.expensetracker.domain.ai.model.AiMode.ON_DEVICE
+                com.yourname.expensetracker.domain.ai.model.AiRoute.CLOUD -> com.yourname.expensetracker.domain.ai.model.AiMode.CLOUD
+                com.yourname.expensetracker.domain.ai.model.AiRoute.DETERMINISTIC_FALLBACK,
+                com.yourname.expensetracker.domain.ai.model.AiRoute.DISABLED -> com.yourname.expensetracker.domain.ai.model.AiMode.AUTO
+            },
+            provider      = routeDecision.providerName,
+            modelName     = routeDecision.modelName,
             promptVersion = AppConfig.Ai.PROMPT_VERSION_REVIEW,
             sourceHash    = sourceHash,
             createdAt     = now,
@@ -96,7 +109,7 @@ class ExplainPendingReviewUseCase @Inject constructor(
                 // until the user explicitly requests again.
                 baseEntity.copy(
                     status       = AiArtifactStatus.FAILED,
-                    errorMessage = "Provider returned null",
+                    errorMessage = routeDecision.reason,
                     updatedAt    = timeProvider.now()
                 )
             }

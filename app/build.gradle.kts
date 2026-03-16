@@ -27,6 +27,8 @@ android {
             "\"${localProps.getProperty("geoapify.api.key", "")}\"")
         buildConfigField("String", "GOOGLE_PLACES_API_KEY",
             "\"${localProps.getProperty("google.places.api.key", "")}\"")
+        buildConfigField("String", "GEMINI_API_KEY",
+            "\"${localProps.getProperty("gemini.api.key", "")}\"")
     }
 
     buildTypes {

@@ -13,6 +13,12 @@ interface AiPolicy {
     /** Returns true if cloud AI calls are permitted under the current [settings]. */
     fun canUseCloud(settings: AiSettings): Boolean
 
+    /** Returns true if cloud AI may be used for the given [capability]. */
+    fun canUseCloudFor(settings: AiSettings, capability: AiCapability): Boolean
+
+    /** Returns true if on-device AI may be used for the given [capability]. */
+    fun shouldAllowOnDevice(settings: AiSettings, capability: AiCapability): Boolean
+
     /**
      * Returns true if raw user data must be redacted before being sent to the
      * cloud for the given [capability].
