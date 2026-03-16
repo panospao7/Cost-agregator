@@ -59,7 +59,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
             inputBuilder,
             timeProvider
         )
-        every {
+        coEvery {
             aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, any())
         } returns AiRouteDecision(
             route = AiRoute.CLOUD,

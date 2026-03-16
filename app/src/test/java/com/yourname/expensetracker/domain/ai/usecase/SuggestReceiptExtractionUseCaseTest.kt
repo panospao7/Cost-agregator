@@ -63,7 +63,7 @@ class SuggestReceiptExtractionUseCaseTest {
             receiptRepository = receiptRepository,
             timeProvider = timeProvider
         )
-        every {
+        coEvery {
             aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, any())
         } returns AiRouteDecision(
             route = AiRoute.CLOUD,

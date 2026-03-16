@@ -5,5 +5,5 @@ import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 
 interface AiCapabilityRouter {
-    fun decide(capability: AiCapability, settings: AiSettings): AiRouteDecision
+    suspend fun decide(capability: AiCapability, settings: AiSettings): AiRouteDecision
 }

@@ -58,7 +58,7 @@ class ExplainPendingReviewUseCaseTest {
             inputBuilder             = inputBuilder,
             timeProvider             = timeProvider
         )
-        every {
+        coEvery {
             aiCapabilityRouter.decide(AiCapability.REVIEW_EXPLANATION, any())
         } returns AiRouteDecision(
             route = AiRoute.CLOUD,

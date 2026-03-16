@@ -19,11 +19,6 @@ import javax.inject.Singleton
 
 /**
  * Environment monitor that queries real ML Kit GenAI Prompt API status.
- *
- * [getOnDeviceModelStatus] is synchronous (the router calls it from a
- * non-suspend context) so it returns the most recently cached status.
- * Call [refreshOnDeviceStatus] from a coroutine to perform the actual
- * async ML Kit `checkStatus()` query and update the cache.
  */
 @Singleton
 class DefaultAiEnvironmentMonitor @Inject constructor(
@@ -53,27 +48,9 @@ class DefaultAiEnvironmentMonitor @Inject constructor(
         return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
     }
 
-    override fun getOnDeviceModelStatus(capability: AiCapability): OnDeviceModelStatus {
+    override suspend fun getOnDeviceModelStatus(capability: AiCapability): OnDeviceModelStatus {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             return OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION
-        }
-
-        // Return cached status if available; otherwise NOT_INSTALLED as a safe default.
-        // The actual ML Kit query happens in refreshOnDeviceStatus().
-        return cachedFeatureStatus.get() ?: OnDeviceModelStatus.NOT_INSTALLED
-    }
-
-    /**
-     * Asynchronously queries ML Kit for the current on-device model status
-     * and updates the cached value returned by [getOnDeviceModelStatus].
-     *
-     * Call this from a coroutine scope (e.g. before making a routing decision
-     * from the ViewModel layer) to ensure the cache is fresh.
-     */
-    suspend fun refreshOnDeviceStatus() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            cachedFeatureStatus.set(OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION)
-            return
         }
 
         try {
@@ -82,12 +59,17 @@ class DefaultAiEnvironmentMonitor @Inject constructor(
             val mapped = mapFeatureStatus(featureStatus)
             cachedFeatureStatus.set(mapped)
             Timber.d("DefaultAiEnvironmentMonitor: ML Kit status=%d → %s", featureStatus, mapped)
+            return mapped
         } catch (e: GenAiException) {
             Timber.w(e, "DefaultAiEnvironmentMonitor: checkStatus failed (code=%d)", e.errorCode)
-            cachedFeatureStatus.set(OnDeviceModelStatus.UNAVAILABLE)
+            val mapped = cachedFeatureStatus.get() ?: OnDeviceModelStatus.UNAVAILABLE
+            cachedFeatureStatus.set(mapped)
+            return mapped
         } catch (e: Exception) {
             Timber.w(e, "DefaultAiEnvironmentMonitor: checkStatus failed unexpectedly")
-            cachedFeatureStatus.set(OnDeviceModelStatus.UNKNOWN)
+            val mapped = cachedFeatureStatus.get() ?: OnDeviceModelStatus.UNKNOWN
+            cachedFeatureStatus.set(mapped)
+            return mapped
         }
     }
 

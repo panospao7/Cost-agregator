@@ -5,9 +5,12 @@ import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
+import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -27,16 +30,15 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
-    fun `decide returns DISABLED when AI is off`() {
+    fun `decide returns DISABLED when AI is off`() = runTest {
         val result = router.decide(AiCapability.REVIEW_EXPLANATION, AiSettings(aiEnabled = false))
         assertEquals(AiRoute.DISABLED, result.route)
     }
 
     @Test
-    fun `decide returns CLOUD in AUTO for cloud-first capability when network available`() {
+    fun `decide returns CLOUD in AUTO for cloud-first capability when network available`() = runTest {
         every { environmentMonitor.isNetworkAvailable() } returns true
         every { environmentMonitor.isWifiConnected() } returns true
-        every { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.NOT_INSTALLED
 
         val settings = AiSettings(
             aiEnabled = true,
@@ -51,10 +53,10 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
-    fun `decide returns ON_DEVICE in AUTO for on-device-first capability when local model available`() {
+    fun `decide returns ON_DEVICE in AUTO for on-device-first capability when local model available`() = runTest {
         every { environmentMonitor.isNetworkAvailable() } returns false
         every { environmentMonitor.isWifiConnected() } returns false
-        every { environmentMonitor.getOnDeviceModelStatus(AiCapability.CATEGORIZATION_FALLBACK) } returns OnDeviceModelStatus.AVAILABLE
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.CATEGORIZATION_FALLBACK) } returns OnDeviceModelStatus.AVAILABLE
 
         val settings = AiSettings(
             aiEnabled = true,
@@ -66,13 +68,14 @@ class DefaultAiCapabilityRouterTest {
         val result = router.decide(AiCapability.CATEGORIZATION_FALLBACK, settings)
 
         assertEquals(AiRoute.ON_DEVICE, result.route)
+        assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, result.providerName)
+        assertEquals(AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL, result.modelName)
     }
 
     @Test
-    fun `decide respects wifiOnlyForCloud and falls back when wifi unavailable`() {
+    fun `decide respects wifiOnlyForCloud and falls back when wifi unavailable`() = runTest {
         every { environmentMonitor.isNetworkAvailable() } returns true
         every { environmentMonitor.isWifiConnected() } returns false
-        every { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.NOT_INSTALLED
 
         val settings = AiSettings(
             aiEnabled = true,
@@ -88,9 +91,7 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
-    fun `decide respects ON_DEVICE preferred mode without cloud fallback`() {
-        every { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.NOT_INSTALLED
-
+    fun `decide reports not implemented for unshipped on-device capability`() = runTest {
         val settings = AiSettings(
             aiEnabled = true,
             allowCloudAi = true,
@@ -102,12 +103,12 @@ class DefaultAiCapabilityRouterTest {
         val result = router.decide(AiCapability.RECEIPT_EXTRACTION, settings)
 
         assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
-        assertTrue(result.reason.contains("not installed", ignoreCase = true))
+        assertTrue(result.reason.contains("not implemented", ignoreCase = true))
     }
 
     @Test
-    fun `decide reports unsupported android version for on-device preferred mode`() {
-        every { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION
+    fun `decide reports unsupported android version for on-device preferred mode`() = runTest {
+        coEvery { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION
 
         val settings = AiSettings(
             aiEnabled = true,
@@ -123,10 +124,10 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
-    fun `decide reports unsupported device when auto has no cloud and no local`() {
+    fun `decide reports unsupported device when auto has no cloud and no local`() = runTest {
         every { environmentMonitor.isNetworkAvailable() } returns false
         every { environmentMonitor.isWifiConnected() } returns false
-        every { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.UNSUPPORTED_DEVICE
+        coEvery { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.UNSUPPORTED_DEVICE
 
         val settings = AiSettings(
             aiEnabled = true,
@@ -143,8 +144,8 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
-    fun `decide reports downloading model when on-device preferred mode is waiting on runtime`() {
-        every { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.DOWNLOADING
+    fun `decide reports downloading model when on-device preferred mode is waiting on runtime`() = runTest {
+        coEvery { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.DOWNLOADING
 
         val settings = AiSettings(
             aiEnabled = true,
@@ -160,10 +161,10 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
-    fun `decide reports unavailable model when auto has no cloud fallback`() {
+    fun `decide reports unavailable model when auto has no cloud fallback`() = runTest {
         every { environmentMonitor.isNetworkAvailable() } returns false
         every { environmentMonitor.isWifiConnected() } returns false
-        every { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.UNAVAILABLE
+        coEvery { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.UNAVAILABLE
 
         val settings = AiSettings(
             aiEnabled = true,

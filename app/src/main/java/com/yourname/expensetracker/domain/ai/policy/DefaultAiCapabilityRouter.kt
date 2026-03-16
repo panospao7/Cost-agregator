@@ -18,7 +18,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
     private val environmentMonitor: AiEnvironmentMonitor
 ) : AiCapabilityRouter {
 
-    override fun decide(capability: AiCapability, settings: AiSettings): AiRouteDecision {
+    override suspend fun decide(capability: AiCapability, settings: AiSettings): AiRouteDecision {
         if (!settings.aiEnabled) {
             return AiRouteDecision(AiRoute.DISABLED, "AI is disabled in settings.")
         }
@@ -27,35 +27,39 @@ class DefaultAiCapabilityRouter @Inject constructor(
             return AiRouteDecision(AiRoute.DISABLED, "$capability is disabled in settings.")
         }
 
+        val onDeviceStatus = resolveOnDeviceStatus(capability, settings)
+
         return when (settings.preferredMode) {
-            AiMode.ON_DEVICE -> chooseOnDevicePreferred(capability, settings)
-            AiMode.CLOUD -> chooseCloudPreferred(capability, settings)
-            AiMode.AUTO -> chooseAuto(capability, settings)
+            AiMode.ON_DEVICE -> chooseOnDevicePreferred(capability, settings, onDeviceStatus)
+            AiMode.CLOUD -> chooseCloudPreferred(capability, settings, onDeviceStatus)
+            AiMode.AUTO -> chooseAuto(capability, settings, onDeviceStatus)
         }
     }
 
-    private fun chooseOnDevicePreferred(
+    private suspend fun chooseOnDevicePreferred(
         capability: AiCapability,
-        settings: AiSettings
+        settings: AiSettings,
+        onDeviceStatus: OnDeviceModelStatus?
     ): AiRouteDecision {
-        if (canUseOnDevice(capability, settings)) {
+        if (canUseOnDevice(capability, settings, onDeviceStatus)) {
             return AiRouteDecision(
                 route = AiRoute.ON_DEVICE,
                 reason = "Preferred mode is on-device and the local model is available.",
-                providerName = "on-device",
+                providerName = AppConfig.Ai.ON_DEVICE_PROVIDER_NAME,
                 modelName = capability.defaultOnDeviceModelName()
             )
         }
 
         return AiRouteDecision(
             route = AiRoute.DETERMINISTIC_FALLBACK,
-            reason = onDeviceUnavailableReason(capability, settings)
+            reason = onDeviceUnavailableReason(capability, settings, onDeviceStatus)
         )
     }
 
-    private fun chooseCloudPreferred(
+    private suspend fun chooseCloudPreferred(
         capability: AiCapability,
-        settings: AiSettings
+        settings: AiSettings,
+        onDeviceStatus: OnDeviceModelStatus?
     ): AiRouteDecision {
         if (canUseCloud(capability, settings)) {
             return AiRouteDecision(
@@ -66,11 +70,11 @@ class DefaultAiCapabilityRouter @Inject constructor(
             )
         }
 
-        if (isLowRiskOnDeviceFallback(capability) && canUseOnDevice(capability, settings)) {
+        if (isLowRiskOnDeviceFallback(capability) && canUseOnDevice(capability, settings, onDeviceStatus)) {
             return AiRouteDecision(
                 route = AiRoute.ON_DEVICE,
                 reason = "Cloud was preferred but unavailable, so using on-device fallback.",
-                providerName = "on-device",
+                providerName = AppConfig.Ai.ON_DEVICE_PROVIDER_NAME,
                 modelName = capability.defaultOnDeviceModelName()
             )
         }
@@ -81,9 +85,10 @@ class DefaultAiCapabilityRouter @Inject constructor(
         )
     }
 
-    private fun chooseAuto(
+    private suspend fun chooseAuto(
         capability: AiCapability,
-        settings: AiSettings
+        settings: AiSettings,
+        onDeviceStatus: OnDeviceModelStatus?
     ): AiRouteDecision {
         val prefersCloud = capability in CLOUD_FIRST_CAPABILITIES
 
@@ -95,25 +100,25 @@ class DefaultAiCapabilityRouter @Inject constructor(
                     providerName = capability.defaultCloudProviderName(),
                     modelName = capability.defaultCloudModelName()
                 )
-            } else if (canUseOnDevice(capability, settings)) {
+            } else if (canUseOnDevice(capability, settings, onDeviceStatus)) {
                 AiRouteDecision(
                     route = AiRoute.ON_DEVICE,
                     reason = "AUTO mode fell back from cloud to on-device.",
-                    providerName = "on-device",
+                    providerName = AppConfig.Ai.ON_DEVICE_PROVIDER_NAME,
                     modelName = capability.defaultOnDeviceModelName()
                 )
             } else {
                 AiRouteDecision(
                     route = AiRoute.DETERMINISTIC_FALLBACK,
-                    reason = combinedUnavailableReason(capability, settings)
+                    reason = combinedUnavailableReason(capability, settings, onDeviceStatus)
                 )
             }
         } else {
-            if (canUseOnDevice(capability, settings)) {
+            if (canUseOnDevice(capability, settings, onDeviceStatus)) {
                 AiRouteDecision(
                     route = AiRoute.ON_DEVICE,
                     reason = "AUTO mode selected the capability's on-device-first route.",
-                    providerName = "on-device",
+                    providerName = AppConfig.Ai.ON_DEVICE_PROVIDER_NAME,
                     modelName = capability.defaultOnDeviceModelName()
                 )
             } else if (canUseCloud(capability, settings)) {
@@ -126,7 +131,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
             } else {
                 AiRouteDecision(
                     route = AiRoute.DETERMINISTIC_FALLBACK,
-                    reason = combinedUnavailableReason(capability, settings)
+                    reason = combinedUnavailableReason(capability, settings, onDeviceStatus)
                 )
             }
         }
@@ -139,17 +144,30 @@ class DefaultAiCapabilityRouter @Inject constructor(
         return true
     }
 
-    private fun canUseOnDevice(capability: AiCapability, settings: AiSettings): Boolean {
+    private suspend fun canUseOnDevice(
+        capability: AiCapability,
+        settings: AiSettings,
+        onDeviceStatus: OnDeviceModelStatus?
+    ): Boolean {
+        if (!isOnDeviceImplemented(capability)) return false
         if (!aiPolicy.shouldAllowOnDevice(settings, capability)) return false
-        return environmentMonitor.getOnDeviceModelStatus(capability) == OnDeviceModelStatus.AVAILABLE
+        return onDeviceStatus == OnDeviceModelStatus.AVAILABLE
     }
 
-    private fun onDeviceUnavailableReason(capability: AiCapability, settings: AiSettings): String {
+    private suspend fun onDeviceUnavailableReason(
+        capability: AiCapability,
+        settings: AiSettings,
+        onDeviceStatus: OnDeviceModelStatus?
+    ): String {
+        if (!isOnDeviceImplemented(capability)) {
+            return "On-device AI is not implemented yet for this capability."
+        }
+
         if (!aiPolicy.shouldAllowOnDevice(settings, capability)) {
             return "On-device AI is disabled by settings or policy for this capability."
         }
 
-        return when (environmentMonitor.getOnDeviceModelStatus(capability)) {
+        return when (onDeviceStatus ?: OnDeviceModelStatus.UNKNOWN) {
             OnDeviceModelStatus.AVAILABLE -> "On-device model is available."
             OnDeviceModelStatus.NOT_INSTALLED -> "On-device model is not installed on this device."
             OnDeviceModelStatus.DOWNLOADING -> "On-device model is still downloading."
@@ -161,16 +179,29 @@ class DefaultAiCapabilityRouter @Inject constructor(
         }
     }
 
-    private fun combinedUnavailableReason(capability: AiCapability, settings: AiSettings): String {
+    private suspend fun combinedUnavailableReason(
+        capability: AiCapability,
+        settings: AiSettings,
+        onDeviceStatus: OnDeviceModelStatus?
+    ): String {
         val cloudUnavailable = !canUseCloud(capability, settings)
-        val onDeviceUnavailable = !canUseOnDevice(capability, settings)
+        val onDeviceUnavailable = !canUseOnDevice(capability, settings, onDeviceStatus)
 
         return when {
             cloudUnavailable && onDeviceUnavailable ->
-                "Neither cloud nor on-device AI is currently available. ${onDeviceUnavailableReason(capability, settings)}"
-            onDeviceUnavailable -> onDeviceUnavailableReason(capability, settings)
+                "Neither cloud nor on-device AI is currently available. ${onDeviceUnavailableReason(capability, settings, onDeviceStatus)}"
+            onDeviceUnavailable -> onDeviceUnavailableReason(capability, settings, onDeviceStatus)
             else -> "Cloud routing is unavailable for the current settings or connectivity."
         }
+    }
+
+    private suspend fun resolveOnDeviceStatus(
+        capability: AiCapability,
+        settings: AiSettings
+    ): OnDeviceModelStatus? {
+        if (!isOnDeviceImplemented(capability)) return null
+        if (!aiPolicy.shouldAllowOnDevice(settings, capability)) return null
+        return environmentMonitor.getOnDeviceModelStatus(capability)
     }
 
     private fun isCapabilityEnabled(capability: AiCapability, settings: AiSettings): Boolean {
@@ -190,6 +221,10 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.REVIEW_EXPLANATION,
             AiCapability.CATEGORIZATION_FALLBACK
         )
+    }
+
+    private fun isOnDeviceImplemented(capability: AiCapability): Boolean {
+        return capability in ON_DEVICE_IMPLEMENTED_CAPABILITIES
     }
 
     private fun AiCapability.defaultCloudProviderName(): String = when (this) {
@@ -217,7 +252,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_EXPLANATION -> "gemini-nano-review"
         AiCapability.QUERY_INTERPRETATION -> "gemini-nano-query"
         AiCapability.RECEIPT_EXTRACTION -> "gemini-nano-receipt"
-        AiCapability.CATEGORIZATION_FALLBACK -> "gemini-nano-category"
+        AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL
         AiCapability.DEDUPE_JUDGE -> "gemini-nano-dedupe"
         AiCapability.LOCATION_SUMMARY -> "gemini-nano-location"
     }
@@ -227,6 +262,10 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.DASHBOARD_BRIEFING,
             AiCapability.REVIEW_EXPLANATION,
             AiCapability.DEDUPE_JUDGE
+        )
+
+        val ON_DEVICE_IMPLEMENTED_CAPABILITIES = setOf(
+            AiCapability.CATEGORIZATION_FALLBACK
         )
     }
 }

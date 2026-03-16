@@ -6,5 +6,5 @@ import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 interface AiEnvironmentMonitor {
     fun isNetworkAvailable(): Boolean
     fun isWifiConnected(): Boolean
-    fun getOnDeviceModelStatus(capability: AiCapability): OnDeviceModelStatus
+    suspend fun getOnDeviceModelStatus(capability: AiCapability): OnDeviceModelStatus
 }

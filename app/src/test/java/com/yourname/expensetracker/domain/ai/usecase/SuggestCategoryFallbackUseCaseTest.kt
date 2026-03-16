@@ -23,6 +23,7 @@ import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -62,7 +63,7 @@ class SuggestCategoryFallbackUseCaseTest {
             categoryRepository,
             timeProvider
         )
-        every {
+        coEvery {
             aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any())
         } returns AiRouteDecision(
             route = AiRoute.CLOUD,
@@ -106,6 +107,47 @@ class SuggestCategoryFallbackUseCaseTest {
         assertEquals(AiMode.CLOUD, captured.first().mode)
         assertEquals(AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_PROVIDER, captured.first().provider)
         assertEquals(AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL, captured.first().modelName)
+    }
+
+    @Test
+    fun `invoke stores ON_DEVICE metadata when router selects local categorization`() = runTest {
+        val item = makeItem()
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(
+                aiEnabled = true,
+                allowOnDeviceAi = true,
+                categorizationFallbackEnabled = true,
+                preferredMode = AiMode.ON_DEVICE
+            )
+        )
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any())
+        } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "local model available",
+            providerName = AppConfig.Ai.ON_DEVICE_PROVIDER_NAME,
+            modelName = AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL
+        )
+        coEvery { inputBuilder.build(item, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { categoryRepository.getAll() } returns listOf(Category(id = 2L, name = "Groceries", icon = "G", color = "#00FF00"))
+        coEvery { categorizationAssistService.suggest(input) } returns CategoryAssistSuggestion(
+            categoryId = 2L,
+            categoryName = "Groceries",
+            rationale = "Merchant looks like a supermarket"
+        )
+
+        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(item)
+
+        assertTrue(result is CategoryAssistGenerationResult.Success)
+        assertEquals(AiMode.ON_DEVICE, captured.first().mode)
+        assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, captured.first().provider)
+        assertEquals(AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL, captured.first().modelName)
+        coVerify { aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any()) }
     }
 
     private fun makeItem() = PendingReviewWithReceipt(
