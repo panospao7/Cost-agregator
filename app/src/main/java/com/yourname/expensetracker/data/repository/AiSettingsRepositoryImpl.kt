@@ -31,6 +31,8 @@ class AiSettingsRepositoryImpl @Inject constructor(
         val AI_ENABLED                  = booleanPreferencesKey("ai_enabled")
         val ALLOW_CLOUD_AI              = booleanPreferencesKey("ai_allow_cloud")
         val ALLOW_ON_DEVICE_AI          = booleanPreferencesKey("ai_allow_on_device")
+        val ASSISTANT_ENABLED           = booleanPreferencesKey("ai_assistant_enabled")
+        val QUERY_INTERPRETATION_ENABLED = booleanPreferencesKey("ai_query_interpretation_enabled")
         val DASHBOARD_BRIEFING_ENABLED  = booleanPreferencesKey("ai_dashboard_briefing_enabled")
         val REVIEW_EXPLANATION_ENABLED  = booleanPreferencesKey("ai_review_explanation_enabled")
         val PROACTIVE_BRIEFINGS         = booleanPreferencesKey("ai_proactive_briefings")
@@ -54,6 +56,8 @@ class AiSettingsRepositoryImpl @Inject constructor(
             prefs[Keys.AI_ENABLED]                 = updated.aiEnabled
             prefs[Keys.ALLOW_CLOUD_AI]             = updated.allowCloudAi
             prefs[Keys.ALLOW_ON_DEVICE_AI]         = updated.allowOnDeviceAi
+            prefs[Keys.ASSISTANT_ENABLED]          = updated.assistantEnabled
+            prefs[Keys.QUERY_INTERPRETATION_ENABLED] = updated.queryInterpretationEnabled
             prefs[Keys.DASHBOARD_BRIEFING_ENABLED] = updated.dashboardBriefingEnabled
             prefs[Keys.REVIEW_EXPLANATION_ENABLED] = updated.reviewExplanationEnabled
             prefs[Keys.PROACTIVE_BRIEFINGS]        = updated.proactiveBriefingsEnabled
@@ -72,6 +76,8 @@ class AiSettingsRepositoryImpl @Inject constructor(
         aiEnabled                 = this[Keys.AI_ENABLED]                 ?: false,
         allowCloudAi              = this[Keys.ALLOW_CLOUD_AI]             ?: false,
         allowOnDeviceAi           = this[Keys.ALLOW_ON_DEVICE_AI]         ?: true,
+        assistantEnabled          = this[Keys.ASSISTANT_ENABLED]          ?: false,
+        queryInterpretationEnabled = this[Keys.QUERY_INTERPRETATION_ENABLED] ?: false,
         dashboardBriefingEnabled  = this[Keys.DASHBOARD_BRIEFING_ENABLED] ?: false,
         reviewExplanationEnabled  = this[Keys.REVIEW_EXPLANATION_ENABLED] ?: false,
         proactiveBriefingsEnabled = this[Keys.PROACTIVE_BRIEFINGS]        ?: false,

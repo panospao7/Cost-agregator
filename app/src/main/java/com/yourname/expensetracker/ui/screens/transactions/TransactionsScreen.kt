@@ -61,6 +61,16 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
+private fun OwnershipFilter.toRepositoryOwnershipFilter(): com.yourname.expensetracker.data.repository.OwnershipFilter {
+    return when (this) {
+        OwnershipFilter.ALL -> com.yourname.expensetracker.data.repository.OwnershipFilter.ALL
+        OwnershipFilter.MINE -> com.yourname.expensetracker.data.repository.OwnershipFilter.MINE
+        OwnershipFilter.NOT_MINE -> com.yourname.expensetracker.data.repository.OwnershipFilter.NOT_MINE
+        OwnershipFilter.SHARED -> com.yourname.expensetracker.data.repository.OwnershipFilter.SHARED
+        OwnershipFilter.TRANSFER -> com.yourname.expensetracker.data.repository.OwnershipFilter.TRANSFER
+    }
+}
+
 // ============================================================
 // MAIN SCREEN
 // ============================================================
@@ -325,6 +335,20 @@ fun TransactionsScreen(
                                 activeFilter?.categoryId?.let { id -> 
                                     categories.find { it.id == id }?.name?.let { parts.add("Category: $it") }
                                 }
+                                activeFilter?.transactionType?.let { parts.add("Type: ${it.name}") }
+                                activeFilter?.dateRange?.let { parts.add("Date range") }
+                                activeFilter?.ownership?.let {
+                                    val label = when (it) {
+                                        com.yourname.expensetracker.data.repository.OwnershipFilter.MINE -> "Mine"
+                                        com.yourname.expensetracker.data.repository.OwnershipFilter.NOT_MINE -> "Not mine"
+                                        com.yourname.expensetracker.data.repository.OwnershipFilter.SHARED -> "Shared"
+                                        com.yourname.expensetracker.data.repository.OwnershipFilter.TRANSFER -> "Transfers"
+                                        com.yourname.expensetracker.data.repository.OwnershipFilter.ALL -> "All"
+                                    }
+                                    parts.add("Ownership: $label")
+                                }
+                                activeFilter?.minAmount?.let { parts.add("Min: %.2f".format(it)) }
+                                activeFilter?.maxAmount?.let { parts.add("Max: %.2f".format(it)) }
                                 append(parts.joinToString(", "))
                             }
                             
@@ -495,7 +519,13 @@ fun TransactionsScreen(
                 currentOwnershipFilter = ownershipFilter,
                 onDismiss = { showFilterSheet = false },
                 onApply = { filter, ownership ->
-                    viewModel.applyFilter(filter ?: TransactionFilter())
+                    if (filter != null) {
+                        viewModel.applyFilter(
+                            filter.copy(ownership = ownership.toRepositoryOwnershipFilter())
+                        )
+                    } else {
+                        viewModel.clearFilter()
+                    }
                     viewModel.setOwnershipFilter(ownership)
                     showFilterSheet = false
                 },

@@ -179,7 +179,7 @@ tasks.register("verifyRoomSchemaSnapshots") {
     description = "Reports Room schema snapshot coverage by version"
 
     doLast {
-        val maxVersion = 34
+        val maxVersion = 35
         val schemaDir = file("$projectDir/schemas/com.yourname.expensetracker.data.database.AppDatabase")
         val existing = if (schemaDir.exists()) {
             schemaDir.listFiles()

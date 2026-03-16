@@ -85,7 +85,10 @@ class ExpenseRepository @Inject constructor(
         endDate: Long? = null,
         transactionType: TransactionType? = null,
         categoryId: Long? = null,
+        merchantName: String? = null,
         ownershipFilter: OwnershipFilter = OwnershipFilter.ALL,
+        minAmount: Double? = null,
+        maxAmount: Double? = null,
         sortOrder: SortOrder = SortOrder.DATE_DESC
     ): List<ExpenseWithCategory> {
         val args = mutableListOf<Any>()
@@ -119,6 +122,23 @@ class ExpenseRepository @Inject constructor(
         if (categoryId != null) {
             whereClauses.add("e.categoryId = ?")
             args.add(categoryId)
+        }
+
+        // Merchant filter
+        if (!merchantName.isNullOrBlank()) {
+            whereClauses.add("e.merchantKey = ?")
+            args.add(MerchantKeyGenerator.generate(merchantName))
+        }
+
+        // Effective amount range filter
+        val effectiveAmountExpr = "CASE WHEN e.isNotMine = 1 THEN 0.0 WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0 ELSE e.amount END"
+        if (minAmount != null) {
+            whereClauses.add("$effectiveAmountExpr >= ?")
+            args.add(minAmount)
+        }
+        if (maxAmount != null) {
+            whereClauses.add("$effectiveAmountExpr <= ?")
+            args.add(maxAmount)
         }
 
         // Ownership filter

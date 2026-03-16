@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.map
 
+import app.cash.turbine.test
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Before
 import org.junit.Test
@@ -56,20 +58,26 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - after init isLoading becomes false when data loaded`() = runTest {
-        advanceUntilIdle()
-        assertEquals(false, viewModel.state.value.isLoading)
+    fun `stress - after init isLoading becomes false when data loaded`() = runTest(testDispatcher) {
+        viewModel.state.test {
+            var state = awaitItem()
+            if (state.isLoading) {
+                state = awaitItem()
+            }
+            assertFalse(state.isLoading)
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 
     @Test
-    fun `stress - onPermissionResult denied updates state`() = runTest {
+    fun `stress - onPermissionResult denied updates state`() = runTest(testDispatcher) {
         viewModel.onPermissionResult(false)
         advanceUntilIdle()
         assertEquals(false, viewModel.state.value.locationPermissionGranted)
     }
 
     @Test
-    fun `stress - onShowPermissionRationale updates state`() = runTest {
+    fun `stress - onShowPermissionRationale updates state`() = runTest(testDispatcher) {
         viewModel.onShowPermissionRationale(true)
         advanceUntilIdle()
         assertEquals(true, viewModel.state.value.showPermissionRationale)

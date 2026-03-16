@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -53,7 +54,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
         coEvery { expenseRepository.getExpensesWithCategoryInPeriod(any(), any()) } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesWithCategoryFiltered(any(), any(), any(), any(), any()) } returns flowOf(emptyList())
         coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
-        coEvery { expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns emptyList()
 
         viewModel = TransactionsViewModel(
             notificationRepository,
@@ -67,7 +68,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - initial selectedTab is MONTH`() = runTest {
+    fun `stress - initial selectedTab is MONTH`() = runTest(testDispatcher) {
         viewModel.selectedTab.test {
             assertEquals(TransactionsViewModel.TransactionTab.MONTH, awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -75,7 +76,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - initial searchQuery is empty`() = runTest {
+    fun `stress - initial searchQuery is empty`() = runTest(testDispatcher) {
         viewModel.searchQuery.test {
             assertEquals("", awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -83,7 +84,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - initial ownershipFilter is ALL`() = runTest {
+    fun `stress - initial ownershipFilter is ALL`() = runTest(testDispatcher) {
         viewModel.ownershipFilter.test {
             assertEquals(TransactionsViewModel.OwnershipFilter.ALL, awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -91,7 +92,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - initial sortOrder is DATE_DESC`() = runTest {
+    fun `stress - initial sortOrder is DATE_DESC`() = runTest(testDispatcher) {
         viewModel.sortOrder.test {
             assertEquals(SortOrder.DATE_DESC, awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -99,7 +100,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - selectTab TODAY updates selectedTab`() = runTest {
+    fun `stress - selectTab TODAY updates selectedTab`() = runTest(testDispatcher) {
         viewModel.selectTab(TransactionsViewModel.TransactionTab.TODAY)
         advanceUntilIdle()
 
@@ -110,7 +111,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - search updates searchQuery`() = runTest {
+    fun `stress - search updates searchQuery`() = runTest(testDispatcher) {
         viewModel.search("coffee")
         advanceUntilIdle()
 
@@ -121,7 +122,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - setOwnershipFilter updates state`() = runTest {
+    fun `stress - setOwnershipFilter updates state`() = runTest(testDispatcher) {
         viewModel.setOwnershipFilter(TransactionsViewModel.OwnershipFilter.MINE)
         advanceUntilIdle()
 
@@ -132,7 +133,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - setSortOrder updates state`() = runTest {
+    fun `stress - setSortOrder updates state`() = runTest(testDispatcher) {
         viewModel.setSortOrder(SortOrder.AMOUNT_DESC)
         advanceUntilIdle()
 
@@ -143,26 +144,38 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - loadMore on ALL tab triggers repository`() = runTest {
-        viewModel.selectTab(TransactionsViewModel.TransactionTab.ALL)
-        advanceUntilIdle()
+    fun `stress - loadMore on ALL tab triggers repository`() = runTest(testDispatcher) {
+        viewModel.isLoading.test {
+            assertEquals(false, awaitItem())
+            viewModel.selectTab(TransactionsViewModel.TransactionTab.ALL)
+            assertEquals(true, awaitItem())
+            assertEquals(false, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
 
-        viewModel.loadMore()
-        advanceUntilIdle()
+        viewModel.isLoadingMoreState.test {
+            assertEquals(false, awaitItem())
+            viewModel.loadMore()
+            assertEquals(true, awaitItem())
+            assertEquals(false, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
 
-        coEvery { expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns emptyList()
+        coVerify(atLeast = 2) {
+            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
         assertNotNull(viewModel)
     }
 
     @Test
-    fun `stress - refresh does not crash`() = runTest {
+    fun `stress - refresh does not crash`() = runTest(testDispatcher) {
         viewModel.refresh()
         advanceUntilIdle()
         assertNotNull(viewModel)
     }
 
     @Test
-    fun `stress - clearFilter clears filter`() = runTest {
+    fun `stress - clearFilter clears filter`() = runTest(testDispatcher) {
         viewModel.applyFilter(TransactionFilter(categoryId = 1L))
         advanceUntilIdle()
         viewModel.clearFilter()
@@ -171,7 +184,7 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `stress - applyFilter does not crash`() = runTest {
+    fun `stress - applyFilter does not crash`() = runTest(testDispatcher) {
         val filter = TransactionFilter(
             categoryId = 1L,
             merchantName = "Test",
@@ -181,5 +194,64 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
         viewModel.applyFilter(filter)
         advanceUntilIdle()
         assertEquals(filter, viewModel.filter.value)
+    }
+
+    @Test
+    fun `stress - applyFilter on ALL tab reloads paged data with assistant filter params`() = runTest(testDispatcher) {
+        val filter = TransactionFilter(
+            categoryId = 5L,
+            merchantName = "Lidl",
+            transactionType = TransactionType.PURCHASE,
+            dateRange = Pair(100L, 200L),
+            minAmount = 10.0,
+            maxAmount = 50.0
+        )
+
+        viewModel.isLoading.test {
+            assertEquals(false, awaitItem())
+            viewModel.selectTab(TransactionsViewModel.TransactionTab.ALL)
+            assertEquals(true, awaitItem())
+            assertEquals(false, awaitItem())
+            viewModel.applyFilter(filter)
+            assertEquals(true, awaitItem())
+            assertEquals(false, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        coVerify(atLeast = 1) {
+            expenseRepository.getExpensesPagedDynamic(
+                limit = any(),
+                offset = any(),
+                searchQuery = any(),
+                startDate = 100L,
+                endDate = 200L,
+                transactionType = TransactionType.PURCHASE,
+                categoryId = 5L,
+                merchantName = "Lidl",
+                ownershipFilter = any(),
+                minAmount = 10.0,
+                maxAmount = 50.0,
+                sortOrder = any()
+            )
+        }
+    }
+
+    @Test
+    fun `stress - clearFilter on ALL tab preserves filter reset`() = runTest(testDispatcher) {
+        viewModel.isLoading.test {
+            assertEquals(false, awaitItem())
+            viewModel.selectTab(TransactionsViewModel.TransactionTab.ALL)
+            assertEquals(true, awaitItem())
+            assertEquals(false, awaitItem())
+            viewModel.applyFilter(TransactionFilter(categoryId = 1L, merchantName = "Test"))
+            assertEquals(true, awaitItem())
+            assertEquals(false, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        viewModel.clearFilter()
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.filter.value)
     }
 }

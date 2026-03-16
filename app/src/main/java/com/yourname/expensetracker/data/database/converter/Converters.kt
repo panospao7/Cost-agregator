@@ -7,6 +7,8 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
+import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 
@@ -100,4 +102,18 @@ class Converters {
     @TypeConverter
     fun toAiArtifactStatus(value: String): AiArtifactStatus =
         try { AiArtifactStatus.valueOf(value) } catch (_: IllegalArgumentException) { AiArtifactStatus.FAILED }
+
+    @TypeConverter
+    fun fromAssistantMessageRole(value: AssistantMessageRole): String = value.name
+
+    @TypeConverter
+    fun toAssistantMessageRole(value: String): AssistantMessageRole =
+        try { AssistantMessageRole.valueOf(value) } catch (_: IllegalArgumentException) { AssistantMessageRole.SYSTEM }
+
+    @TypeConverter
+    fun fromAssistantMessageKind(value: AssistantMessageKind): String = value.name
+
+    @TypeConverter
+    fun toAssistantMessageKind(value: String): AssistantMessageKind =
+        try { AssistantMessageKind.valueOf(value) } catch (_: IllegalArgumentException) { AssistantMessageKind.ERROR }
 }

@@ -26,6 +26,7 @@ import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.ui.components.AppNavigationBar
 import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
+import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
 import com.yourname.expensetracker.ui.screens.home.HomeScreen
@@ -91,10 +92,19 @@ fun MainScreen(mainViewModel: MainViewModel) {
     val reviewViewModel: com.yourname.expensetracker.ui.screens.review.ReviewViewModel = hiltViewModel()
     
     var showNotificationPermissionDialog by rememberSaveable { mutableStateOf(false) }
+    var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
     
     LaunchedEffect(Unit) {
-        mainViewModel.navigationRequest.collect { tabIndex ->
-            selectedTab = tabIndex
+        mainViewModel.navigationRequest.collect { request ->
+            when (request) {
+                is MainNavigationRequest.Tab -> {
+                    selectedTab = request.index
+                }
+                is MainNavigationRequest.Transactions -> {
+                    activeTransactionFilter = request.filter
+                    selectedTab = 1
+                }
+            }
         }
     }
 
@@ -122,9 +132,8 @@ fun MainScreen(mainViewModel: MainViewModel) {
     var showAddExpense by rememberSaveable { mutableStateOf(false) }
     var showScanReceipt by rememberSaveable { mutableStateOf(false) }
     var showRecurringExpenses by rememberSaveable { mutableStateOf(false) }
+    var showAssistant by rememberSaveable { mutableStateOf(false) }
     var isFabExpanded by rememberSaveable { mutableStateOf(false) }
-    
-    var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
 
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
@@ -146,20 +155,35 @@ fun MainScreen(mainViewModel: MainViewModel) {
             )
         },
         floatingActionButton = {
-            SmartFAB(
-                selectedTab = selectedTab,
-                isExpanded = isFabExpanded,
-                onToggleExpand = { isFabExpanded = !isFabExpanded },
-                onAddExpense = { 
-                    showAddExpense = true 
-                    isFabExpanded = false
-                },
-                onScanReceipt = {
-                    showScanReceipt = true
-                    isFabExpanded = false
-                },
-                onApproveAll = { reviewViewModel.approveAll() }
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                SmallFloatingActionButton(
+                    onClick = {
+                        haptic(HapticType.Standard)
+                        showAssistant = true
+                        isFabExpanded = false
+                    },
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                ) {
+                    Icon(Icons.Rounded.AutoAwesome, contentDescription = "Open assistant")
+                }
+
+                SmartFAB(
+                    selectedTab = selectedTab,
+                    isExpanded = isFabExpanded,
+                    onToggleExpand = { isFabExpanded = !isFabExpanded },
+                    onAddExpense = {
+                        showAddExpense = true
+                        isFabExpanded = false
+                    },
+                    onScanReceipt = {
+                        showScanReceipt = true
+                        isFabExpanded = false
+                    },
+                    onApproveAll = { reviewViewModel.approveAll() }
+                )
+            }
         }
     ) { padding ->
         Box(
@@ -225,6 +249,17 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         // Close recurring screen since it's an overlay
                         showRecurringExpenses = false
                         selectedTab = 1
+                    }
+                )
+            }
+
+            if (showAssistant) {
+                AssistantSheet(
+                    onDismiss = { showAssistant = false },
+                    onOpenTransactions = { filter ->
+                        activeTransactionFilter = filter
+                        selectedTab = 1
+                        showAssistant = false
                     }
                 )
             }

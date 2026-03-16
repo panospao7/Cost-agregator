@@ -2,17 +2,23 @@ package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.AiArtifactDao
+import com.yourname.expensetracker.data.database.dao.AiChatMessageDao
+import com.yourname.expensetracker.data.database.dao.AiChatSessionDao
 import com.yourname.expensetracker.data.ai.provider.NoOpDashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.NoOpQueryInterpretationService
 import com.yourname.expensetracker.data.ai.provider.NoOpReviewExplanationService
 import com.yourname.expensetracker.data.ai.worker.AiWorkSchedulerImpl
+import com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
 import com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
 import com.yourname.expensetracker.data.repository.AiSettingsRepositoryImpl
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.ai.service.AiChatRepository
 import com.yourname.expensetracker.domain.ai.policy.AiPolicyImpl
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
 import dagger.Binds
 import dagger.Module
@@ -43,6 +49,12 @@ abstract class AiModule {
 
     @Binds
     @Singleton
+    abstract fun bindAiChatRepository(
+        impl: AiChatRepositoryImpl
+    ): AiChatRepository
+
+    @Binds
+    @Singleton
     abstract fun bindAiPolicy(
         impl: AiPolicyImpl
     ): AiPolicy
@@ -65,6 +77,12 @@ abstract class AiModule {
         impl: NoOpReviewExplanationService
     ): ReviewExplanationService
 
+    @Binds
+    @Singleton
+    abstract fun bindQueryInterpretationService(
+        impl: NoOpQueryInterpretationService
+    ): QueryInterpretationService
+
     // -------------------------------------------------------------------------
     // DAO provision (companion object)
     // -------------------------------------------------------------------------
@@ -74,5 +92,15 @@ abstract class AiModule {
         @Singleton
         fun provideAiArtifactDao(database: AppDatabase): AiArtifactDao =
             database.aiArtifactDao()
+
+        @Provides
+        @Singleton
+        fun provideAiChatSessionDao(database: AppDatabase): AiChatSessionDao =
+            database.aiChatSessionDao()
+
+        @Provides
+        @Singleton
+        fun provideAiChatMessageDao(database: AppDatabase): AiChatMessageDao =
+            database.aiChatMessageDao()
     }
 }

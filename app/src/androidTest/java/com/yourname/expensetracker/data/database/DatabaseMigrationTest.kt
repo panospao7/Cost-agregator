@@ -405,6 +405,56 @@ class DatabaseMigrationTest {
         db.close()
     }
 
+    @Test
+    @Throws(IOException::class)
+    fun migrate_34_to_35_adds_ai_chat_tables() {
+        assumeTrue(hasSchema(34) && hasSchema(35))
+
+        var db = helper.createDatabase(testDb, 34)
+        db.close()
+
+        db = helper.runMigrationsAndValidate(testDb, 35, true)
+
+        val sessionTable = db.query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_chat_sessions'"
+        )
+        assertTrue("ai_chat_sessions should exist at v35", sessionTable.moveToFirst())
+        sessionTable.close()
+
+        val messageTable = db.query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_chat_messages'"
+        )
+        assertTrue("ai_chat_messages should exist at v35", messageTable.moveToFirst())
+        messageTable.close()
+
+        db.execSQL(
+            "INSERT INTO ai_chat_sessions (title, createdAt, updatedAt) VALUES ('Phase 2', 1000, 1000)"
+        )
+        db.execSQL(
+            "INSERT INTO ai_chat_messages (sessionId, role, kind, text, createdAt) VALUES (1, 'USER', 'QUERY', 'How much did I spend?', 1001)"
+        )
+
+        val rowCursor = db.query(
+            "SELECT role, kind, text FROM ai_chat_messages WHERE sessionId = 1"
+        )
+        assertTrue("Inserted chat message should be readable", rowCursor.moveToFirst())
+        assertEquals("USER", rowCursor.getString(0))
+        assertEquals("QUERY", rowCursor.getString(1))
+        assertEquals("How much did I spend?", rowCursor.getString(2))
+        rowCursor.close()
+
+        val indexCursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name IN ('ai_chat_sessions', 'ai_chat_messages')"
+        )
+        val indices = mutableListOf<String>()
+        while (indexCursor.moveToNext()) indices.add(indexCursor.getString(0))
+        indexCursor.close()
+        assertTrue(indices.any { it.contains("ai_chat_sessions") })
+        assertTrue(indices.any { it.contains("ai_chat_messages") })
+
+        db.close()
+    }
+
     private fun hasSchema(version: Int): Boolean {
         val path = "${AppDatabase::class.java.canonicalName}/$version.json"
         return try {

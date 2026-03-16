@@ -116,6 +116,14 @@ object AppConfig {
         // Prompt versioning — bump to invalidate cached artifacts for that capability
         const val PROMPT_VERSION_DASHBOARD = "v1"
         const val PROMPT_VERSION_REVIEW    = "v1"
+        const val PROMPT_VERSION_QUERY     = "v1"
+
+        // Query interpretation / assistant limits
+        const val MAX_QUERY_INPUT_CHARS = 400
+        const val MAX_QUERY_HISTORY_TURNS_FOR_MODEL = 8
+        const val MAX_QUERY_RESULT_ROWS = 8
+        const val MAX_QUERY_GROUP_BUCKETS = 8
+        const val MAX_QUERY_CLARIFICATION_OPTIONS = 4
 
         // Worker tags
         const val WORK_NAME_DAILY_BRIEFING = "ai_daily_briefing"

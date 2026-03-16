@@ -56,6 +56,8 @@ data class AiSettings(
     val aiEnabled: Boolean = false,
     val allowCloudAi: Boolean = false,
     val allowOnDeviceAi: Boolean = true,
+    val assistantEnabled: Boolean = false,
+    val queryInterpretationEnabled: Boolean = false,
     val dashboardBriefingEnabled: Boolean = false,
     val reviewExplanationEnabled: Boolean = false,
     val proactiveBriefingsEnabled: Boolean = false,

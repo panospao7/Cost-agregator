@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui
 
 import app.cash.turbine.test
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.every
 import io.mockk.mockk
@@ -39,7 +40,7 @@ class MainViewModelStressTest : ViewModelTestUtils() {
         viewModel.navigationRequest.test {
             viewModel.navigateToTab(2)
             advanceUntilIdle()
-            assertEquals(2, awaitItem())
+            assertEquals(MainNavigationRequest.Tab(2), awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -51,9 +52,20 @@ class MainViewModelStressTest : ViewModelTestUtils() {
             viewModel.navigateToTab(1)
             viewModel.navigateToTab(2)
             advanceUntilIdle()
-            assertEquals(0, awaitItem())
-            assertEquals(1, awaitItem())
-            assertEquals(2, awaitItem())
+            assertEquals(MainNavigationRequest.Tab(0), awaitItem())
+            assertEquals(MainNavigationRequest.Tab(1), awaitItem())
+            assertEquals(MainNavigationRequest.Tab(2), awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `stress - navigateToTransactions emits transaction request`() = runTest(testDispatcher) {
+        viewModel.navigationRequest.test {
+            val filter = TransactionFilter(merchantName = "Test Merchant")
+            viewModel.navigateToTransactions(filter)
+            advanceUntilIdle()
+            assertEquals(MainNavigationRequest.Transactions(filter), awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }

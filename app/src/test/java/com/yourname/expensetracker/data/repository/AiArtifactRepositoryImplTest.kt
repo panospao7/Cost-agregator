@@ -13,12 +13,17 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
 class AiArtifactRepositoryImplTest {
+
+    private val testScheduler = TestCoroutineScheduler()
+    private val testDispatcher = StandardTestDispatcher(testScheduler)
 
     private lateinit var dao: AiArtifactDao
     private lateinit var repository: AiArtifactRepositoryImpl
@@ -50,7 +55,7 @@ class AiArtifactRepositoryImplTest {
     // ── observeLatest ─────────────────────────────────────────────────────────
 
     @Test
-    fun `observeLatest delegates to dao with capability name`() = runTest {
+    fun `observeLatest delegates to dao with capability name`() = runTest(testDispatcher) {
         val entity = fakeEntity()
         every {
             dao.observeLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION.name)
@@ -65,7 +70,7 @@ class AiArtifactRepositoryImplTest {
     }
 
     @Test
-    fun `observeLatest passes capability name for DASHBOARD_BRIEFING`() = runTest {
+    fun `observeLatest passes capability name for DASHBOARD_BRIEFING`() = runTest(testDispatcher) {
         every {
             dao.observeLatest("dashboard_home:2026-03-16", AiCapability.DASHBOARD_BRIEFING.name)
         } returns flowOf(null)
@@ -81,7 +86,7 @@ class AiArtifactRepositoryImplTest {
     // ── getLatest ─────────────────────────────────────────────────────────────
 
     @Test
-    fun `getLatest delegates to dao with capability name`() = runTest {
+    fun `getLatest delegates to dao with capability name`() = runTest(testDispatcher) {
         val entity = fakeEntity()
         coEvery {
             dao.getLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION.name)
@@ -94,7 +99,7 @@ class AiArtifactRepositoryImplTest {
     }
 
     @Test
-    fun `getLatest returns null when dao returns null`() = runTest {
+    fun `getLatest returns null when dao returns null`() = runTest(testDispatcher) {
         coEvery {
             dao.getLatest(any(), any())
         } returns null
@@ -107,7 +112,7 @@ class AiArtifactRepositoryImplTest {
     // ── upsert ────────────────────────────────────────────────────────────────
 
     @Test
-    fun `upsert delegates to dao and returns row id`() = runTest {
+    fun `upsert delegates to dao and returns row id`() = runTest(testDispatcher) {
         val entity = fakeEntity()
         coEvery { dao.upsert(entity) } returns 42L
 
@@ -120,7 +125,7 @@ class AiArtifactRepositoryImplTest {
     // ── markDismissed ─────────────────────────────────────────────────────────
 
     @Test
-    fun `markDismissed delegates to dao`() = runTest {
+    fun `markDismissed delegates to dao`() = runTest(testDispatcher) {
         repository.markDismissed(7L)
         coVerify { dao.markDismissed(id = 7L, dismissed = any(), now = any()) }
     }
@@ -128,7 +133,7 @@ class AiArtifactRepositoryImplTest {
     // ── deleteExpired ─────────────────────────────────────────────────────────
 
     @Test
-    fun `deleteExpired delegates to dao with given timestamp`() = runTest {
+    fun `deleteExpired delegates to dao with given timestamp`() = runTest(testDispatcher) {
         val now = 999_999L
         repository.deleteExpired(now)
         coVerify { dao.deleteExpired(now) }
@@ -137,7 +142,7 @@ class AiArtifactRepositoryImplTest {
     // ── deleteByTargetKey ─────────────────────────────────────────────────────
 
     @Test
-    fun `deleteByTargetKey delegates to dao`() = runTest {
+    fun `deleteByTargetKey delegates to dao`() = runTest(testDispatcher) {
         repository.deleteByTargetKey("pending_review:55")
         coVerify { dao.deleteByTargetKey("pending_review:55") }
     }

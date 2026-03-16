@@ -7,5 +7,8 @@ data class TransactionFilter(
     val merchantName: String? = null,
     val transactionType: TransactionType? = null,
     val dateRange: Pair<Long, Long>? = null,
+    val ownership: com.yourname.expensetracker.data.repository.OwnershipFilter? = null,
+    val minAmount: Double? = null,
+    val maxAmount: Double? = null,
     val correlationId: Long = System.currentTimeMillis()
 )

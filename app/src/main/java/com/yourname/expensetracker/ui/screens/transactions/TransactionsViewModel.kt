@@ -129,15 +129,19 @@ class TransactionsViewModel @Inject constructor(
     }
         .flatMapLatest { params ->
             val baseExpenses = if (params.filter != null) {
-                val (start, end) = params.filter.dateRange ?: Pair(0L, timeProvider.now())
-                
-                expenseRepository.getExpensesWithCategoryFiltered(
-                    startMs = start,
-                    endMs = end,
-                    type = params.filter.transactionType,
-                    categoryId = params.filter.categoryId,
-                    merchantKey = params.filter.merchantName?.let { MerchantKeyGenerator.generate(it) }
-                )
+                if (params.tab == TransactionTab.ALL) {
+                    _pagedExpenses
+                } else {
+                    val (start, end) = params.filter.dateRange ?: Pair(0L, timeProvider.now())
+
+                    expenseRepository.getExpensesWithCategoryFiltered(
+                        startMs = start,
+                        endMs = end,
+                        type = params.filter.transactionType,
+                        categoryId = params.filter.categoryId,
+                        merchantKey = params.filter.merchantName?.let { MerchantKeyGenerator.generate(it) }
+                    )
+                }
             } else if (params.tab == TransactionTab.ALL) {
                 _pagedExpenses
             } else {
@@ -232,7 +236,11 @@ class TransactionsViewModel @Inject constructor(
 
     fun applyFilter(filter: TransactionFilter) {
         _filter.value = filter
-        // We might want to switch tab visual state or specific logic here if needed
+        if (_selectedTab.value == TransactionTab.ALL) {
+            _currentPage.value = 0
+            _pagedExpenses.value = emptyList()
+            loadInitialAll()
+        }
     }
 
     fun clearFilter() {
@@ -305,11 +313,19 @@ class TransactionsViewModel @Inject constructor(
                 val offset = nextPage * PAGE_SIZE
                 
                 val nextItems = withContext(Dispatchers.IO) {
+                    val activeFilter = _filter.value
                     expenseRepository.getExpensesPagedDynamic(
                         limit = PAGE_SIZE,
                         offset = offset,
                         searchQuery = _searchQuery.value.takeIf { it.isNotBlank() },
+                        startDate = activeFilter?.dateRange?.first,
+                        endDate = activeFilter?.dateRange?.second,
+                        transactionType = activeFilter?.transactionType,
+                        categoryId = activeFilter?.categoryId,
+                        merchantName = activeFilter?.merchantName,
                         ownershipFilter = mapOwnershipFilter(_ownershipFilter.value),
+                        minAmount = activeFilter?.minAmount,
+                        maxAmount = activeFilter?.maxAmount,
                         sortOrder = _sortOrder.value
                     )
                 }
@@ -527,11 +543,19 @@ class TransactionsViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 val initial = withContext(Dispatchers.IO) {
+                    val activeFilter = _filter.value
                     expenseRepository.getExpensesPagedDynamic(
                         limit = PAGE_SIZE,
                         offset = 0,
                         searchQuery = _searchQuery.value.takeIf { it.isNotBlank() },
+                        startDate = activeFilter?.dateRange?.first,
+                        endDate = activeFilter?.dateRange?.second,
+                        transactionType = activeFilter?.transactionType,
+                        categoryId = activeFilter?.categoryId,
+                        merchantName = activeFilter?.merchantName,
                         ownershipFilter = mapOwnershipFilter(_ownershipFilter.value),
+                        minAmount = activeFilter?.minAmount,
+                        maxAmount = activeFilter?.maxAmount,
                         sortOrder = _sortOrder.value
                     )
                 }

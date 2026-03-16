@@ -25,9 +25,11 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         MerchantAlias::class,
         MerchantLocation::class,
         MerchantLocationCorrection::class,
-        AiArtifactEntity::class
+        AiArtifactEntity::class,
+        AiChatSessionEntity::class,
+        AiChatMessageEntity::class
     ],
-        version = 34,
+        version = 35,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -49,6 +51,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun merchantNormalizationDao(): MerchantNormalizationDao
     abstract fun merchantLocationDao(): MerchantLocationDao
     abstract fun aiArtifactDao(): AiArtifactDao
+    abstract fun aiChatSessionDao(): AiChatSessionDao
+    abstract fun aiChatMessageDao(): AiChatMessageDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -731,6 +735,57 @@ abstract class AppDatabase : RoomDatabase() {
                     CREATE INDEX IF NOT EXISTS
                     index_ai_artifacts_expiresAt
                     ON ai_artifacts (expiresAt)
+                """.trimIndent())
+            }
+        }
+
+        val MIGRATION_34_35 = object : androidx.room.migration.Migration(34, 35) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ai_chat_sessions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        title TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ai_chat_sessions_updatedAt
+                    ON ai_chat_sessions (updatedAt)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ai_chat_sessions_createdAt
+                    ON ai_chat_sessions (createdAt)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ai_chat_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        sessionId INTEGER NOT NULL,
+                        role TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        payloadJson TEXT,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(sessionId) REFERENCES ai_chat_sessions(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ai_chat_messages_sessionId
+                    ON ai_chat_messages (sessionId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ai_chat_messages_sessionId_createdAt
+                    ON ai_chat_messages (sessionId, createdAt)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_ai_chat_messages_createdAt
+                    ON ai_chat_messages (createdAt)
                 """.trimIndent())
             }
         }
