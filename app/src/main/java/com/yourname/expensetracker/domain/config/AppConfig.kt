@@ -106,6 +106,12 @@ object AppConfig {
         /** How long a review explanation artifact stays fresh before regeneration. */
         const val REVIEW_EXPLANATION_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
 
+        /** How long a receipt assist artifact stays fresh before regeneration. */
+        const val RECEIPT_ASSIST_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
+
+        /** How long review capture assist artifacts stay fresh before regeneration. */
+        const val REVIEW_CAPTURE_ASSIST_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
+
         // Input size limits (cloud privacy)
         /** Max characters of raw notification text sent to the cloud for a review explanation. */
         const val MAX_REVIEW_TEXT_CHARS_FOR_CLOUD = 500
@@ -117,6 +123,9 @@ object AppConfig {
         const val PROMPT_VERSION_DASHBOARD = "v1"
         const val PROMPT_VERSION_REVIEW    = "v1"
         const val PROMPT_VERSION_QUERY     = "v1"
+        const val PROMPT_VERSION_RECEIPT   = "v1"
+        const val PROMPT_VERSION_CATEGORIZATION = "v1"
+        const val PROMPT_VERSION_DEDUPE    = "v1"
 
         // Query interpretation / assistant limits
         const val MAX_QUERY_INPUT_CHARS = 400
@@ -124,6 +133,12 @@ object AppConfig {
         const val MAX_QUERY_RESULT_ROWS = 8
         const val MAX_QUERY_GROUP_BUCKETS = 8
         const val MAX_QUERY_CLARIFICATION_OPTIONS = 4
+        const val MAX_RECEIPT_OCR_CHARS_FOR_AI = 4_000
+        const val MAX_CAPTURE_SUPPORTING_TEXT_CHARS = 800
+        const val MAX_CATEGORY_OPTIONS_FOR_AI = 30
+        const val MAX_DEDUPE_CANDIDATES_FOR_AI = 5
+        const val MIN_RECEIPT_CONFIDENCE_FOR_AI_FALLBACK = 0.70f
+        const val MIN_CATEGORY_CONFIDENCE_FOR_AI_FALLBACK = 0.70f
 
         // Worker tags
         const val WORK_NAME_DAILY_BRIEFING = "ai_daily_briefing"

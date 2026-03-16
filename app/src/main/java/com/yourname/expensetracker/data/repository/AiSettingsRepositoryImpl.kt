@@ -35,6 +35,9 @@ class AiSettingsRepositoryImpl @Inject constructor(
         val QUERY_INTERPRETATION_ENABLED = booleanPreferencesKey("ai_query_interpretation_enabled")
         val DASHBOARD_BRIEFING_ENABLED  = booleanPreferencesKey("ai_dashboard_briefing_enabled")
         val REVIEW_EXPLANATION_ENABLED  = booleanPreferencesKey("ai_review_explanation_enabled")
+        val RECEIPT_ASSIST_ENABLED      = booleanPreferencesKey("ai_receipt_assist_enabled")
+        val CATEGORIZATION_FALLBACK_ENABLED = booleanPreferencesKey("ai_categorization_fallback_enabled")
+        val DEDUPE_JUDGE_ENABLED        = booleanPreferencesKey("ai_dedupe_judge_enabled")
         val PROACTIVE_BRIEFINGS         = booleanPreferencesKey("ai_proactive_briefings")
         val REDACT_BEFORE_CLOUD         = booleanPreferencesKey("ai_redact_before_cloud")
         val WIFI_ONLY_FOR_CLOUD         = booleanPreferencesKey("ai_wifi_only_for_cloud")
@@ -60,6 +63,9 @@ class AiSettingsRepositoryImpl @Inject constructor(
             prefs[Keys.QUERY_INTERPRETATION_ENABLED] = updated.queryInterpretationEnabled
             prefs[Keys.DASHBOARD_BRIEFING_ENABLED] = updated.dashboardBriefingEnabled
             prefs[Keys.REVIEW_EXPLANATION_ENABLED] = updated.reviewExplanationEnabled
+            prefs[Keys.RECEIPT_ASSIST_ENABLED]     = updated.receiptAssistEnabled
+            prefs[Keys.CATEGORIZATION_FALLBACK_ENABLED] = updated.categorizationFallbackEnabled
+            prefs[Keys.DEDUPE_JUDGE_ENABLED]       = updated.dedupeJudgeEnabled
             prefs[Keys.PROACTIVE_BRIEFINGS]        = updated.proactiveBriefingsEnabled
             prefs[Keys.REDACT_BEFORE_CLOUD]        = updated.redactBeforeCloud
             prefs[Keys.WIFI_ONLY_FOR_CLOUD]        = updated.wifiOnlyForCloud
@@ -80,6 +86,9 @@ class AiSettingsRepositoryImpl @Inject constructor(
         queryInterpretationEnabled = this[Keys.QUERY_INTERPRETATION_ENABLED] ?: false,
         dashboardBriefingEnabled  = this[Keys.DASHBOARD_BRIEFING_ENABLED] ?: false,
         reviewExplanationEnabled  = this[Keys.REVIEW_EXPLANATION_ENABLED] ?: false,
+        receiptAssistEnabled      = this[Keys.RECEIPT_ASSIST_ENABLED]      ?: false,
+        categorizationFallbackEnabled = this[Keys.CATEGORIZATION_FALLBACK_ENABLED] ?: false,
+        dedupeJudgeEnabled        = this[Keys.DEDUPE_JUDGE_ENABLED]        ?: false,
         proactiveBriefingsEnabled = this[Keys.PROACTIVE_BRIEFINGS]        ?: false,
         redactBeforeCloud         = this[Keys.REDACT_BEFORE_CLOUD]        ?: true,
         wifiOnlyForCloud          = this[Keys.WIFI_ONLY_FOR_CLOUD]        ?: false,

@@ -48,6 +48,9 @@ class ReviewQueueRepository @Inject constructor(
     suspend fun getReviewById(reviewId: Long): PendingReview? =
         pendingReviewDao.getById(reviewId)
 
+    suspend fun getPendingReviewWithReceiptById(reviewId: Long): PendingReviewWithReceipt? =
+        pendingReviewDao.getPendingWithReceiptById(reviewId)
+
     suspend fun approveReview(
         reviewId: Long,
         finalAmount: Double? = null,

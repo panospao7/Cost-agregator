@@ -11,10 +11,17 @@ import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
+import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResult
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExplainPendingReviewUseCase
+import com.yourname.expensetracker.domain.ai.usecase.JudgePendingReviewDuplicateUseCase
+import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.model.Result
 import timber.log.Timber
 // ...
@@ -49,6 +56,8 @@ class ReviewViewModel @Inject constructor(
     private val debugDataStorage: com.yourname.expensetracker.ui.screens.debug.DebugDataStorage,
     val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
     private val explainPendingReviewUseCase: ExplainPendingReviewUseCase,
+    private val suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase,
+    private val judgePendingReviewDuplicateUseCase: JudgePendingReviewDuplicateUseCase,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiSettingsRepository: AiSettingsRepository
 ) : ViewModel() {
@@ -71,6 +80,15 @@ class ReviewViewModel @Inject constructor(
         MutableStateFlow<Map<Long, AiLoadState<ReviewExplanationUi>>>(emptyMap())
     val aiExplanationStates: StateFlow<Map<Long, AiLoadState<ReviewExplanationUi>>> =
         _aiExplanationStates.asStateFlow()
+
+    private val _reviewCaptureAssistStates =
+        MutableStateFlow<Map<Long, ReviewCaptureAssistState>>(emptyMap())
+    val reviewCaptureAssistStates: StateFlow<Map<Long, ReviewCaptureAssistState>> =
+        _reviewCaptureAssistStates.asStateFlow()
+
+    private val _prefilledCategorySuggestions = MutableStateFlow<Map<Long, Long>>(emptyMap())
+    val prefilledCategorySuggestions: StateFlow<Map<Long, Long>> =
+        _prefilledCategorySuggestions.asStateFlow()
 
     /** Tracks review IDs that already have an in-flight coroutine, preventing duplicates. */
     private val _inFlightExplanations = mutableSetOf<Long>()
@@ -286,6 +304,88 @@ class ReviewViewModel @Inject constructor(
         _errorMessage.value = null
     }
 
+    fun requestCategoryAssist(reviewId: Long, force: Boolean = false) {
+        viewModelScope.launch {
+            val item = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
+                ?: return@launch updateCategoryAssistState(
+                    reviewId,
+                    AiLoadState.Error("Review not found")
+                )
+
+            updateCategoryAssistState(reviewId, AiLoadState.Loading)
+
+            when (val result = suggestCategoryFallbackUseCase(item, force = force)) {
+                is CategoryAssistGenerationResult.Success -> {
+                    updateCategoryAssistState(reviewId, AiLoadState.Ready(result.suggestion))
+                }
+                is CategoryAssistGenerationResult.Disabled -> {
+                    updateCategoryAssistState(reviewId, AiLoadState.Disabled)
+                }
+                is CategoryAssistGenerationResult.NotNeeded -> {
+                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason))
+                }
+                is CategoryAssistGenerationResult.Error -> {
+                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason))
+                }
+            }
+        }
+    }
+
+    fun requestDedupeAssist(reviewId: Long, force: Boolean = false) {
+        viewModelScope.launch {
+            val item = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
+                ?: return@launch updateDedupeAssistState(
+                    reviewId,
+                    AiLoadState.Error("Review not found")
+                )
+
+            updateDedupeAssistState(reviewId, AiLoadState.Loading)
+
+            when (val result = judgePendingReviewDuplicateUseCase(item, force = force)) {
+                is DedupeJudgeGenerationResult.Success -> {
+                    updateDedupeAssistState(reviewId, AiLoadState.Ready(result.suggestion))
+                }
+                is DedupeJudgeGenerationResult.Disabled -> {
+                    updateDedupeAssistState(reviewId, AiLoadState.Disabled)
+                }
+                is DedupeJudgeGenerationResult.NotNeeded -> {
+                    updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason))
+                }
+                is DedupeJudgeGenerationResult.Error -> {
+                    updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason))
+                }
+            }
+        }
+    }
+
+    fun applyCategorySuggestion(reviewId: Long) {
+        val suggestion = (_reviewCaptureAssistStates.value[reviewId]?.categorySuggestion as? AiLoadState.Ready)?.value
+            ?: return
+        _prefilledCategorySuggestions.update { it + (reviewId to suggestion.categoryId) }
+    }
+
+    fun consumePrefilledCategorySuggestion(reviewId: Long): Long? {
+        val value = _prefilledCategorySuggestions.value[reviewId]
+        _prefilledCategorySuggestions.update { it - reviewId }
+        return value
+    }
+
+    fun dismissCategoryAssist(reviewId: Long) {
+        dismissArtifact(
+            reviewId = reviewId,
+            capability = com.yourname.expensetracker.domain.ai.model.AiCapability.CATEGORIZATION_FALLBACK,
+            clear = { current -> current.copy(categorySuggestion = AiLoadState.Idle) }
+        )
+    }
+
+    fun dismissDedupeAssist(reviewId: Long) {
+        dismissArtifact(
+            reviewId = reviewId,
+            capability = com.yourname.expensetracker.domain.ai.model.AiCapability.DEDUPE_JUDGE,
+            clear = { current -> current.copy(dedupeSuggestion = AiLoadState.Idle) }
+        )
+    }
+
     fun approveAll() {
         viewModelScope.launch {
             try {
@@ -392,5 +492,35 @@ class ReviewViewModel @Inject constructor(
         }
         _debugData.value = null
         _errorMessage.value = "Debug data cleared."
+    }
+
+    private fun updateCategoryAssistState(reviewId: Long, state: AiLoadState<CategoryAssistSuggestion>) {
+        _reviewCaptureAssistStates.update { current ->
+            val existing = current[reviewId] ?: ReviewCaptureAssistState()
+            current + (reviewId to existing.copy(categorySuggestion = state))
+        }
+    }
+
+    private fun updateDedupeAssistState(reviewId: Long, state: AiLoadState<DedupeJudgeSuggestion>) {
+        _reviewCaptureAssistStates.update { current ->
+            val existing = current[reviewId] ?: ReviewCaptureAssistState()
+            current + (reviewId to existing.copy(dedupeSuggestion = state))
+        }
+    }
+
+    private fun dismissArtifact(
+        reviewId: Long,
+        capability: com.yourname.expensetracker.domain.ai.model.AiCapability,
+        clear: (ReviewCaptureAssistState) -> ReviewCaptureAssistState
+    ) {
+        viewModelScope.launch {
+            aiArtifactRepository.getLatest("pending_review:$reviewId", capability)?.let { artifact ->
+                aiArtifactRepository.markDismissed(artifact.id)
+            }
+            _reviewCaptureAssistStates.update { current ->
+                val existing = current[reviewId] ?: ReviewCaptureAssistState()
+                current + (reviewId to clear(existing))
+            }
+        }
     }
 }

@@ -38,9 +38,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.ui.screens.addexpense.CategoryGrid
 import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
 import com.yourname.expensetracker.ui.screens.addexpense.PaymentMethodChip
+import com.yourname.expensetracker.ui.components.ai.ReceiptAssistCard
 import kotlinx.coroutines.delay
 import java.util.Currency
 
@@ -329,6 +331,120 @@ private fun ReviewStep(
 
     // Confidence indicator
     ConfidenceIndicator(confidence = state.ocrConfidence)
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    if (viewModel.shouldOfferReceiptAssist()) {
+        when (val assistState = state.receiptAssistState) {
+            AiLoadState.Idle,
+            AiLoadState.Disabled -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "Need help filling missing fields?",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            state.receiptAssistMessage ?: "AI can suggest merchant, total, and date from the OCR text.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(onClick = { viewModel.requestReceiptAssist() }) {
+                            Text("Try AI assist")
+                        }
+                    }
+                }
+            }
+            AiLoadState.Loading -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text("AI is reviewing the OCR text for missing receipt fields.")
+                    }
+                }
+            }
+            is AiLoadState.Ready -> {
+                ReceiptAssistCard(
+                    suggestion = assistState.value,
+                    onApplyMerchant = viewModel::applyReceiptAssistMerchant,
+                    onApplyTotal = viewModel::applyReceiptAssistTotal,
+                    onApplyDate = viewModel::applyReceiptAssistDate,
+                    onApplyAll = viewModel::applyAllReceiptAssist,
+                    onDismiss = viewModel::dismissReceiptAssist
+                )
+            }
+            is AiLoadState.Error -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "AI receipt assist failed",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            assistState.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(onClick = { viewModel.requestReceiptAssist(force = true) }) {
+                            Text("Retry AI assist")
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+
+    state.receiptAssistMessage?.let { message ->
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.25f)
+            )
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = message,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                TextButton(onClick = viewModel::clearReceiptAssistMessage) {
+                    Text("OK")
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+    }
 
     Spacer(modifier = Modifier.height(16.dp))
 

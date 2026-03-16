@@ -1,0 +1,109 @@
+package com.yourname.expensetracker.domain.ai.usecase
+
+import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
+import com.yourname.expensetracker.domain.ai.model.DedupeCandidateSummary
+import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
+import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+class JudgePendingReviewDuplicateUseCaseTest {
+
+    private lateinit var aiSettingsRepository: AiSettingsRepository
+    private lateinit var aiArtifactRepository: AiArtifactRepository
+    private lateinit var dedupeJudgeService: DedupeJudgeService
+    private lateinit var inputBuilder: DedupeJudgeInputBuilder
+    private lateinit var timeProvider: FakeTimeProvider
+    private lateinit var useCase: JudgePendingReviewDuplicateUseCase
+
+    @Before
+    fun setup() {
+        aiSettingsRepository = mockk()
+        aiArtifactRepository = mockk(relaxed = true)
+        dedupeJudgeService = mockk()
+        inputBuilder = mockk()
+        timeProvider = FakeTimeProvider(1_000L)
+
+        useCase = JudgePendingReviewDuplicateUseCase(
+            aiSettingsRepository,
+            aiArtifactRepository,
+            dedupeJudgeService,
+            inputBuilder,
+            timeProvider
+        )
+    }
+
+    @Test
+    fun `invoke returns NotNeeded when builder says not needed`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.NotNeeded("not needed")
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.NotNeeded)
+    }
+
+    @Test
+    fun `invoke stores READY artifact on success`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dedupeJudgeService.judge(any()) } returns DedupeJudgeSuggestion(
+            verdict = DuplicateVerdict.UNCERTAIN,
+            rationale = "Two nearby matches look similar"
+        )
+        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        assertEquals(AiArtifactStatus.READY, captured.last().status)
+        assertEquals(AiCapability.DEDUPE_JUDGE, captured.last().capability)
+    }
+
+    private fun makeItem() = PendingReviewWithReceipt(
+        PendingReview(
+            id = 2L,
+            rawNotificationId = null,
+            suggestedAmount = 10.0,
+            suggestedCurrency = "EUR",
+            suggestedMerchant = "Lidl",
+            suggestedType = "PURCHASE",
+            suggestedCategoryId = null,
+            suggestedDate = 1_000L,
+            confidence = 0.8f,
+            packageName = "pkg",
+            notificationTitle = null,
+            notificationText = null
+        ),
+        null
+    )
+
+    private fun makeInput() = DedupeJudgeInput(
+        subject = DedupeCandidateSummary(AiTargetType.PENDING_REVIEW, 2L, "Lidl", 10.0, "EUR", 1_000L, "pkg"),
+        candidates = listOf(
+            DedupeCandidateSummary(AiTargetType.EXPENSE, 3L, "Lidl", 10.0, "EUR", 1_020L, "expense")
+        )
+    )
+}

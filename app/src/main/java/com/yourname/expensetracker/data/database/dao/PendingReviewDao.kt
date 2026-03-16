@@ -31,6 +31,10 @@ interface PendingReviewDao {
     @Query("SELECT * FROM pending_reviews WHERE id = :id")
     suspend fun getById(id: Long): PendingReview?
 
+    @Transaction
+    @Query("SELECT * FROM pending_reviews WHERE id = :id")
+    suspend fun getPendingWithReceiptById(id: Long): PendingReviewWithReceipt?
+
     @Query("SELECT * FROM pending_reviews WHERE rawNotificationId = :rawId")
     suspend fun getByRawId(rawId: Long): PendingReview?
 

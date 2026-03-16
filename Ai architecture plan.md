@@ -1842,13 +1842,767 @@ Use this order exactly unless a blocker appears:
 - Do not widen Phase 2 into budget editing, review approval, or capture assistance
 - Do not add automatic apply / mutate actions from assistant results
 
+## Phase 3: Capture Assist
+
+### Goal
+
+Let users receive AI-assisted capture suggestions when deterministic parsing, categorization, or duplicate detection is incomplete, while keeping the existing save and approve flows as the only paths that can mutate financial data.
+
+### Phase 3 scope
+
+1. AI receipt-field fallback for low-confidence scanned receipts
+2. AI categorization fallback for review and receipt flows when deterministic suggestions are weak or missing
+3. AI duplicate assessment for ambiguous review candidates only
+4. UI affordances to apply suggestions into local edit state before the existing save / approve actions
+5. Artifact caching, dismissal, and provenance for capture suggestions using the existing AI layer
+
+### Phase 3 non-goals
+
+- No inline AI calls in `NotificationProcessingPipeline.kt`
+- No auto-approval, auto-rejection, auto-merge, or auto-delete actions
+- No direct AI writes to `Expense`, `PendingReview`, budgets, planned expenses, or merchant-category mappings
+- No model-generated SQL, Room query fragments, or schema-aware executable output
+- No AI-created categories; suggestions must map to the existing category taxonomy only
+- No mandatory cloud upload of receipt images in the first Phase 3 release
+- No expansion into manual-entry copilot flows in `AddExpenseViewModel.kt` yet
+- No proactive background triage of all pending reviews or all scanned receipts
+- No Phase 4 one-tap apply or semi-automation behavior
+
+### Why this is the right third release
+
+- It keeps AI advisory while moving closer to higher-value capture flows.
+- It reuses strong existing human-in-the-loop surfaces: `ReceiptScanViewModel.kt`, `ReceiptScanScreen.kt`, `ReviewViewModel.kt`, and `ReviewScreen.kt`.
+- It keeps deterministic OCR, parsing, categorization, and dedupe logic as the first pass instead of replacing them.
+- It builds on the artifact, settings, and provider seams already proven in Phases 1 and 2.
+- It avoids putting AI inside the mutex-serialized notification pipeline, which remains the wrong place for cloud latency or probabilistic behavior.
+
+Important repo realities to plan around:
+
+- `ReceiptScanViewModel.kt` already maintains editable draft state for merchant, amount, date, category, and notes after deterministic parsing.
+- `ReviewViewModel.kt` already has a proven per-item `AiLoadState` pattern for advisory content in the review queue.
+- `ai_artifacts` already supports `SCANNED_RECEIPT` and `PENDING_REVIEW` targets, so the initial Phase 3 release should reuse it instead of adding new AI tables.
+- `CrossSourceDeduplication.kt` already handles hard duplicate heuristics; AI should only judge bounded ambiguous cases, not replace deterministic duplicate rules.
+- `ReceiptRepository.processStatement(...)` already creates `PendingReview` rows for imported statement transactions, which gives Phase 3 a safe advisory surface after ingestion instead of during ingestion.
+
+## Detailed Phase 3 Plan
+
+### Product scope
+
+#### A. Receipt assist for scanned receipts
+
+Add an on-demand AI fallback that can suggest receipt fields when deterministic OCR parsing is incomplete or low-confidence.
+
+Recommended behavior:
+
+- Keep `ReceiptOcrService` and `ReceiptParser` as the primary extraction path.
+- Offer AI assist only when critical fields are missing, parser confidence is low, or the user explicitly asks for help.
+- In the first Phase 3 release, use OCR text plus deterministic parse output as the AI input; do not require a multimodal image provider.
+- Store receipt suggestions as `ai_artifacts` targeted to `SCANNED_RECEIPT`.
+- Let users apply individual suggestions into `ReceiptScanViewModel` draft state field-by-field or all at once.
+- Do not overwrite `ScannedReceipt` or create an `Expense` from AI output automatically.
+
+Recommended first-release receipt fields:
+
+- merchant
+- total
+- date
+- tax amount
+- short caution / ambiguity notes
+
+Recommended boundaries:
+
+- Do not let AI replace the OCR engine.
+- Do not block manual receipt save on AI success.
+- Do not broaden the first release into full bank-statement multi-transaction AI extraction.
+
+Why this default is best:
+
+- It gives clear user value when receipt parsing is weak without changing the underlying receipt storage contract.
+- It fits the current `ReceiptScanScreen.kt` review step, where users are already editing fields before saving.
+- It keeps the trust boundary obvious: AI suggests, the user confirms, existing repository logic writes.
+
+#### B. Categorization Layer 6 fallback
+
+Treat AI as an external Layer 6 fallback after deterministic and ML categorization have already produced their best result.
+
+Recommended behavior:
+
+- Keep `CategorizationEngine.kt` authoritative for deterministic layers 1 through 5.
+- Invoke AI only when there is no confident category, the deterministic explanation is weak, or the user explicitly requests a second opinion.
+- Build AI input from merchant, amount, type, date, supporting receipt / review text, and the existing category list.
+- Require AI output to map back to an existing app category by name or ID through deterministic app code.
+- Store category suggestions as `ai_artifacts` targeted to `PENDING_REVIEW` or `SCANNED_RECEIPT`.
+- Show the rationale separately from the existing deterministic `matchType` / `explanation` fields.
+
+Recommended boundaries:
+
+- Do not let AI invent new categories.
+- Do not directly update `suggestedCategoryId` in `PendingReview` from model output.
+- Do not auto-learn AI category suggestions into merchant dictionaries.
+
+Why this default is best:
+
+- It preserves your existing category taxonomy and learning loops.
+- It avoids pushing probabilistic behavior into the deterministic engine itself too early.
+- It matches the current review UX, where users already approve or edit category suggestions manually.
+
+#### C. Duplicate judge for ambiguous review candidates
+
+Add AI duplicate assessment only after deterministic code narrows the candidate set.
+
+Recommended behavior:
+
+- Use deterministic code first to gather nearby expense or pending-review candidates by amount, merchant, date, and any existing heuristic scores.
+- Only invoke AI when the deterministic result is ambiguous rather than clearly duplicate or clearly distinct.
+- Judge one pending review against a small bounded set of candidates instead of the full ledger.
+- Store the verdict as an advisory `ai_artifact` targeted to `PENDING_REVIEW`.
+- Show the verdict as a warning / helper card in `ReviewScreen.kt`, not as an automatic action.
+
+Important repo reality:
+
+- `CrossSourceDeduplication.kt` and the current statement-import path already handle hard duplicates.
+- Phase 3 dedupe AI should not override hard deterministic duplicate decisions that already skip or replace records safely.
+- The Phase 3 dedupe judge is for borderline cases that remain in the review queue and still need a human decision.
+
+Recommended boundaries:
+
+- Do not auto reject a review because AI thinks it is a duplicate.
+- Do not auto merge, delete, or hide candidate expenses.
+- Do not let AI search arbitrary expense history; deterministic code must preselect the candidate set first.
+
+Why this default is best:
+
+- Duplicate mistakes are expensive and hard to unwind.
+- A bounded candidate-set judge keeps AI explainable and auditable.
+- The review queue already has the correct human approval surface for acting on the suggestion.
+
+#### D. Suggestion application and provenance UX
+
+AI suggestions should be visible as suggestions, not silently blended into current values.
+
+Recommended behavior:
+
+- Reuse the `AiLoadState` pattern already used by `ReviewViewModel.kt`.
+- Render AI suggestions in dedicated cards or chips labeled clearly as AI output.
+- Show why the suggestion exists, for example low parser confidence, missing category, or possible duplicate.
+- Allow users to apply or dismiss suggestions locally in screen state.
+- Treat apply and dismiss as AI-layer events only; the final financial write still flows through the existing manual save / approve action.
+
+Why this default is best:
+
+- Users can see what is deterministic versus what is advisory.
+- The app keeps a clean trust boundary even when AI is helpful.
+- It aligns with the Phase 1 review-explanation pattern instead of inventing a new interaction model.
+
+#### E. Persistence and cache strategy
+
+Phase 3 should reuse the existing `ai_artifacts` table instead of adding new capture-specific AI tables in the first release.
+
+Recommended behavior:
+
+- Use target keys like `scanned_receipt:<id>` and `pending_review:<id>`.
+- Store the structured suggestion in `payloadJson` and a concise human-readable summary in `summaryText` / `explanationText`.
+- Use `AiArtifactStatus.READY`, `FAILED`, `DISMISSED`, and `APPLIED` to track lifecycle.
+- Recompute or invalidate based on `sourceHash`, prompt version, or target changes.
+- Add a new Room migration only if later Phase 3 work proves that `ai_artifacts` cannot express the needed behavior cleanly.
+
+Why this default is best:
+
+- It avoids schema churn right after the Phase 2 migration.
+- It keeps AI output isolated from finance tables.
+- It reuses patterns already proven in production-like verification.
+
+### Phase 3 touched files and classes
+
+#### New files
+
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/model/CaptureAssistModels.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/service/ReceiptAssistService.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/service/CategorizationAssistService.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/service/DedupeJudgeService.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/ReceiptAssistInputBuilder.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/SuggestReceiptExtractionUseCase.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/CategorizationAssistInputBuilder.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/SuggestCategoryFallbackUseCase.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/DedupeJudgeInputBuilder.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/JudgePendingReviewDuplicateUseCase.kt`
+- `app/src/main/java/com/yourname/expensetracker/data/ai/provider/NoOpReceiptAssistService.kt`
+- `app/src/main/java/com/yourname/expensetracker/data/ai/provider/NoOpCategorizationAssistService.kt`
+- `app/src/main/java/com/yourname/expensetracker/data/ai/provider/NoOpDedupeJudgeService.kt`
+- `app/src/main/java/com/yourname/expensetracker/ui/components/ai/ReceiptAssistCard.kt`
+- `app/src/main/java/com/yourname/expensetracker/ui/components/ai/CategoryAssistCard.kt`
+- `app/src/main/java/com/yourname/expensetracker/ui/components/ai/DedupeAssistCard.kt`
+
+#### Updated files
+
+- `app/src/main/java/com/yourname/expensetracker/domain/ai/model/AiModels.kt`
+- `app/src/main/java/com/yourname/expensetracker/data/repository/AiSettingsRepositoryImpl.kt`
+- `app/src/main/java/com/yourname/expensetracker/di/AiModule.kt`
+- `app/src/main/java/com/yourname/expensetracker/domain/config/AppConfig.kt`
+- `app/src/main/java/com/yourname/expensetracker/ui/screens/receiptscan/ReceiptScanViewModel.kt`
+- `app/src/main/java/com/yourname/expensetracker/ui/screens/receiptscan/ReceiptScanScreen.kt`
+- `app/src/main/java/com/yourname/expensetracker/ui/screens/review/ReviewViewModel.kt`
+- `app/src/main/java/com/yourname/expensetracker/ui/screens/review/ReviewScreen.kt`
+- `app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt` only if a small read-only candidate-lookup seam is needed
+- `app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt` only if a small read-only helper seam is needed
+- `app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt` only if a small read-only helper seam is needed
+
+#### Files that should stay untouched in Phase 3 unless absolutely necessary
+
+- `app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt`
+- expense-creation mutation paths inside `app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt`
+- approve / reject mutation paths inside `app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt`
+- deterministic matching layers inside `app/src/main/java/com/yourname/expensetracker/domain/categorization/CategorizationEngine.kt`
+- `app/src/main/java/com/yourname/expensetracker/data/repository/ManualExpenseRepository.kt`
+- `app/src/main/java/com/yourname/expensetracker/ui/screens/addexpense/AddExpenseViewModel.kt`
+
+### Phase 3 domain contracts
+
+#### Capture assist models
+
+```kotlin
+enum class DuplicateVerdict {
+    LIKELY_DUPLICATE,
+    LIKELY_DISTINCT,
+    UNCERTAIN
+}
+
+data class SuggestedValue<T>(
+    val value: T,
+    val confidence: Float? = null,
+    val rationale: String? = null
+)
+
+data class CategoryOption(
+    val id: Long,
+    val name: String
+)
+
+data class ReceiptAssistInput(
+    val receiptId: Long,
+    val rawOcrText: String,
+    val parsedMerchant: String?,
+    val parsedTotal: Double?,
+    val parsedDate: Long?,
+    val parsedTaxAmount: Double?,
+    val currency: String,
+    val lineItemsJson: String?,
+    val currentTimeMs: Long
+)
+
+data class ReceiptAssistSuggestion(
+    val merchant: SuggestedValue<String>? = null,
+    val total: SuggestedValue<Double>? = null,
+    val date: SuggestedValue<Long>? = null,
+    val taxAmount: SuggestedValue<Double>? = null,
+    val notes: List<String> = emptyList()
+)
+
+data class CategorizationAssistInput(
+    val targetType: AiTargetType,
+    val targetId: Long,
+    val merchant: String,
+    val amount: Double,
+    val currency: String,
+    val transactionType: TransactionType,
+    val date: Long?,
+    val currentCategoryId: Long?,
+    val deterministicMatchType: String?,
+    val deterministicExplanation: String?,
+    val candidateCategories: List<CategoryOption>,
+    val supportingText: String? = null
+)
+
+data class CategoryAssistSuggestion(
+    val categoryId: Long,
+    val categoryName: String,
+    val confidence: Float? = null,
+    val rationale: String? = null,
+    val alternativeCategoryIds: List<Long> = emptyList()
+)
+
+data class DedupeCandidateSummary(
+    val targetType: AiTargetType,
+    val targetId: Long,
+    val merchant: String,
+    val amount: Double,
+    val currency: String,
+    val date: Long,
+    val sourceLabel: String,
+    val textPreview: String? = null
+)
+
+data class DedupeJudgeInput(
+    val subject: DedupeCandidateSummary,
+    val candidates: List<DedupeCandidateSummary>
+)
+
+data class DedupeJudgeSuggestion(
+    val verdict: DuplicateVerdict,
+    val matchedTargetType: AiTargetType? = null,
+    val matchedTargetId: Long? = null,
+    val confidence: Float? = null,
+    val rationale: String? = null
+)
+```
+
+Important rules:
+
+- AI may suggest receipt fields, categories, or duplicate verdicts, but it must not directly write those values into `ScannedReceipt`, `PendingReview`, or `Expense`.
+- Category suggestions must map to an existing category in app code; unmatched labels should be treated as unsupported.
+- Duplicate suggestions must operate over a deterministic candidate set selected by app code first.
+
+### Phase 3 integration flows
+
+#### Manual receipt assist flow
+
+1. User scans a receipt and the deterministic OCR / parser pipeline runs as it does today.
+2. If key fields are missing or parser confidence is low, `ReceiptScanScreen.kt` offers a `Try AI assist` action.
+3. `SuggestReceiptExtractionUseCase` builds grounded input from `ScannedReceipt`, OCR text, and deterministic parse results.
+4. `ReceiptAssistService` returns a structured `ReceiptAssistSuggestion` or an unsupported / failure result.
+5. The suggestion is stored in `ai_artifacts` and surfaced in `ReceiptScanViewModel`.
+6. The user applies none, some, or all suggested fields into draft state.
+7. The existing `saveExpense()` path remains the only way an expense is created.
+
+#### Review categorization fallback flow
+
+1. A pending review has no category or only a weak deterministic suggestion.
+2. `ReviewViewModel.kt` requests `SuggestCategoryFallbackUseCase` for that review.
+3. The input builder passes merchant, amount, type, supporting text, and existing category options.
+4. `CategorizationAssistService` returns a category suggestion.
+5. App code maps it back to an existing category ID and stores an artifact.
+6. `ReviewScreen.kt` shows the suggestion and lets the user apply it into the edit flow before approval.
+
+#### Review duplicate-judge flow
+
+1. Deterministic code identifies a small ambiguous candidate set for a pending review.
+2. `JudgePendingReviewDuplicateUseCase` builds a bounded `DedupeJudgeInput`.
+3. `DedupeJudgeService` returns a verdict and rationale for the most likely match or uncertainty.
+4. The verdict is stored as an artifact targeted to the pending review.
+5. `ReviewScreen.kt` shows the verdict as advisory information only.
+6. The user still chooses the existing approve, edit, or reject path manually.
+
+#### Artifact lifecycle flow
+
+1. A suggestion is generated and stored as `READY` in `ai_artifacts`.
+2. If the user dismisses it, mark the artifact `DISMISSED`.
+3. If the user explicitly applies the suggestion into local edit state, mark it `APPLIED` if that lifecycle tracking is useful for UX or analytics.
+4. Resolving the underlying receipt or review should not mutate financial data through the AI layer; it should only make the artifact stale or ignorable.
+
+### Phase 3 state model additions
+
+#### Receipt scan
+
+Recommended addition in `ReceiptScanViewModel.kt` only:
+
+```kotlin
+data class ReceiptScanState(
+    val receiptAssistState: AiLoadState<ReceiptAssistSuggestion> = AiLoadState.Idle,
+    val receiptAssistError: String? = null
+)
+```
+
+Reason:
+
+- Receipt AI suggestions belong to the current screen draft state, not to `ScannedReceipt` persistence.
+- This keeps suggestion apply / dismiss behavior local and reversible until the user saves.
+
+#### Review queue
+
+Recommended addition in `ReviewViewModel.kt` only:
+
+```kotlin
+data class ReviewCaptureAssistState(
+    val categorySuggestion: AiLoadState<CategoryAssistSuggestion> = AiLoadState.Idle,
+    val dedupeSuggestion: AiLoadState<DedupeJudgeSuggestion> = AiLoadState.Idle
+)
+```
+
+Recommended storage shape in the ViewModel:
+
+- maps keyed by `reviewId`
+- no expansion of `PendingReview` for transient AI UI state
+- no direct coupling to swipe approve / reject logic
+
+Reason:
+
+- `ReviewViewModel.kt` already uses per-review `AiLoadState` successfully for Phase 1 explanations.
+- The review queue needs advisory state without changing the persisted review contract.
+
+### Phase 3 background strategy
+
+#### Use direct coroutines for
+
+- user-requested receipt assist
+- user-requested category fallback
+- user-requested duplicate assessment
+
+#### Do not use WorkManager for
+
+- notification-time AI capture logic
+- automatic AI parsing during statement import in the first Phase 3 release
+- background duplicate sweeps across the whole review queue
+- speculative suggestion generation for all scanned receipts
+
+Reason:
+
+- These are interactive trust-sensitive flows.
+- The notification capture path still must remain deterministic and low latency.
+- On-demand invocation keeps privacy and cost easier to reason about.
+
+### Phase 3 feature flags
+
+Recommended flags:
+
+- `ai_enabled`
+- `ai_receipt_assist_enabled`
+- `ai_categorization_fallback_enabled`
+- `ai_dedupe_judge_enabled`
+- `ai_allow_cloud`
+
+### Phase 3 AppConfig additions
+
+Add to `AppConfig.Ai` at minimum:
+
+- `PROMPT_VERSION_RECEIPT`
+- `PROMPT_VERSION_CATEGORIZATION`
+- `PROMPT_VERSION_DEDUPE`
+- `MAX_RECEIPT_OCR_CHARS_FOR_AI`
+- `MAX_CAPTURE_SUPPORTING_TEXT_CHARS`
+- `MAX_CATEGORY_OPTIONS_FOR_AI`
+- `MAX_DEDUPE_CANDIDATES_FOR_AI`
+- `MIN_RECEIPT_CONFIDENCE_FOR_AI_FALLBACK`
+- `MIN_CATEGORY_CONFIDENCE_FOR_AI_FALLBACK`
+
+### Phase 3 privacy defaults
+
+Recommended defaults:
+
+- all capture-assist capabilities disabled until AI is explicitly enabled
+- no AI invocation from the synchronous notification pipeline
+- first release uses OCR / review text, not mandatory cloud upload of receipt images
+- redact card numbers, IBANs, account identifiers, and obvious personal numbers before cloud when feasible
+- send only the bounded candidate set needed for dedupe judging
+- send only existing category labels for categorization fallback
+- do not persist raw provider prompt / response bodies outside debug mode
+- keep suggestion payloads minimal and separate from finance records
+
+## Phase 3 Testing Plan
+
+### Unit tests
+
+- `SuggestReceiptExtractionUseCaseTest`
+- `SuggestCategoryFallbackUseCaseTest`
+- `JudgePendingReviewDuplicateUseCaseTest`
+- `ReceiptAssistInputBuilderTest`
+- `CategorizationAssistInputBuilderTest`
+- `DedupeJudgeInputBuilderTest`
+
+### Artifact and helper tests
+
+- verify new capabilities use the correct `AiCapability` / target-key combinations in `ai_artifacts`
+- add deterministic candidate-selection tests for the dedupe input-builder path
+- if new repository helper seams are added, cover their date-window and candidate-limiting behavior
+
+### Migration expectation
+
+- initial Phase 3 should not require a Room migration if `ai_artifacts` is reused successfully
+- if implementation later introduces new tables or indices, add explicit migration coverage at that time rather than assuming Phase 3 always needs schema changes
+
+### ViewModel tests
+
+- `ReceiptScanViewModel` tests for disabled, loading, success, apply-suggestion, dismiss, and error behavior
+- `ReviewViewModel` tests for per-review category suggestion state
+- `ReviewViewModel` tests for per-review dedupe suggestion state
+- regression coverage to keep existing review explanation behavior stable
+
+### Integration checks
+
+- manual receipt scan still works fully when AI is disabled or fails
+- applying a suggestion only changes local edit state until the user saves or approves
+- AI category suggestions always resolve to existing category IDs or are rejected as unsupported
+- AI duplicate verdicts never auto reject, auto approve, or auto delete anything
+- notification capture remains AI-free and latency-safe
+- statement import remains deterministic even if AI is unavailable
+
+## Phase 3 Success Criteria
+
+- app behavior is unchanged when all Phase 3 AI flags are off
+- low-confidence receipt scans can request helpful AI suggestions without blocking manual correction
+- review queue users can request category and duplicate suggestions without losing control of approval decisions
+- no AI suggestion writes directly to `Expense`, `PendingReview`, budgets, or planned expenses
+- no new categories are created from model output
+- notification capture and review approval flows remain trustworthy if AI is ignored completely
+
+## Recommended PR Slicing Inside Phase 3
+
+Phase 3 should still be split into smaller targeted changes.
+
+### PR 1: Capture foundation slice
+
+- add capture-assist domain models
+- add service interfaces and no-op providers
+- add settings flags and config constants
+- freeze artifact reuse strategy for receipt, category, and dedupe suggestions
+
+### PR 2: Receipt assist slice
+
+- add receipt assist input builder and use case
+- integrate receipt assist into `ReceiptScanViewModel.kt` and `ReceiptScanScreen.kt`
+- keep save flow deterministic and unchanged
+
+### PR 3: Review assist slice
+
+- add category fallback and dedupe judge input builders / use cases
+- integrate per-review suggestion state into `ReviewViewModel.kt`
+- render advisory suggestion cards in `ReviewScreen.kt`
+
+### PR 4: Hardening slice
+
+- add tests
+- verify privacy / redaction rules and bounded candidate behavior
+- add manual QA checklist and release guardrails
+
+## Phase 3 Task-by-Task Execution Checklist
+
+This is the execution order for Phase 3.
+
+Do these in sequence. Do not start review or receipt UI work before the capture contracts, service seams, and policy boundaries exist.
+
+### Milestone 1: Capture-assist foundation and policy
+
+#### 1.1 Artifact reuse and settings flags
+
+- [ ] Extend `AiSettings` with Phase 3 capability flags
+- [ ] Reuse `ai_artifacts` for receipt, category, and dedupe suggestions
+- [ ] Freeze target-key and payload conventions before implementation begins
+- [ ] Do not add new Room tables unless a later task proves they are necessary
+
+Done when:
+
+- each Phase 3 capability can be enabled or disabled independently without touching core finance tables
+
+#### 1.2 Service contracts and DI
+
+- [ ] Create `ReceiptAssistService`
+- [ ] Create `CategorizationAssistService`
+- [ ] Create `DedupeJudgeService`
+- [ ] Add no-op implementations first and register them in `AiModule.kt`
+
+Done when:
+
+- the app can compile and expose disabled / unsupported states without hard-wiring a provider
+
+#### 1.3 Capture domain models
+
+- [ ] Create `CaptureAssistModels.kt`
+- [ ] Add typed input and suggestion models for receipt, category, and dedupe flows
+- [ ] Keep the contracts UI-agnostic and separate from Compose screen state
+
+Done when:
+
+- all Phase 3 use cases can talk through stable domain contracts instead of ad hoc JSON or screen models
+
+#### 1.4 Config constants and privacy boundaries
+
+- [ ] Add Phase 3 prompt versions and size limits to `AppConfig.Ai`
+- [ ] Add candidate-count and category-option limits
+- [ ] Define first-release privacy boundaries such as text-only receipt assist and bounded dedupe context
+- [ ] Do not add Phase 4 automation settings early
+
+Done when:
+
+- Phase 3 logic does not hardcode provider limits or privacy thresholds inside ViewModels
+
+#### 1.5 Receipt and review state seams
+
+- [ ] Decide where receipt-assist and review-assist UI state lives
+- [ ] Reuse `AiLoadState` rather than adding transient fields to Room entities
+- [ ] Keep suggestion apply / dismiss behavior local to ViewModels and screen state
+
+Done when:
+
+- receipt and review UI can host capture suggestions without changing save / approve repository contracts
+
+### Milestone 2: Receipt assist
+
+#### 2.1 Receipt assist input builder
+
+- [ ] Create `ReceiptAssistInputBuilder`
+- [ ] Build grounded input from `ScannedReceipt`, OCR text, and deterministic parse output
+- [ ] Include current time and only the minimum supporting text needed for the model
+- [ ] Do not require cloud image upload in the first release
+
+Done when:
+
+- the receipt assist provider sees enough grounded text context to help without replacing OCR itself
+
+#### 2.2 Receipt assist use case
+
+- [ ] Create `SuggestReceiptExtractionUseCase`
+- [ ] Check AI settings before any provider call
+- [ ] Trigger only for low-confidence / missing-field cases or explicit user request
+- [ ] Store the suggestion in `ai_artifacts` and return a structured result
+
+Done when:
+
+- scanned receipts can request advisory field extraction without mutating `ScannedReceipt` or creating expenses automatically
+
+#### 2.3 Receipt scan ViewModel integration
+
+- [ ] Extend `ReceiptScanViewModel.kt` with receipt assist loading, ready, error, and dismiss state
+- [ ] Add apply-to-draft actions for merchant, amount, date, and tax suggestions
+- [ ] Keep `saveExpense()` and manual validation logic unchanged
+
+Done when:
+
+- users can bring AI suggestions into the existing draft without changing the actual save path
+
+#### 2.4 Receipt scan UI integration
+
+- [ ] Update `ReceiptScanScreen.kt` to show a clear `Try AI assist` action when appropriate
+- [ ] Render suggestion cards with provenance, confidence, and per-field apply controls
+- [ ] Keep raw-text and manual-entry fallbacks available even when AI fails
+
+Done when:
+
+- the receipt scan flow remains usable without AI, but becomes more recoverable when deterministic parsing is weak
+
+### Milestone 3: Review assist
+
+#### 3.1 Category assist input builder
+
+- [ ] Create `CategorizationAssistInputBuilder`
+- [ ] Build input from pending review data, deterministic match metadata, supporting text, and the existing category list
+- [ ] Ensure the category list sent to AI is the authoritative app taxonomy
+
+Done when:
+
+- the provider can choose among real app categories instead of inventing labels
+
+#### 3.2 Category fallback use case
+
+- [ ] Create `SuggestCategoryFallbackUseCase`
+- [ ] Run it only when category confidence is weak, missing, or explicitly requested
+- [ ] Map AI output back to existing category IDs deterministically
+- [ ] Treat unmatched categories as unsupported rather than guessing
+
+Done when:
+
+- Phase 3 can suggest categories without changing `PendingReview` directly or widening the taxonomy
+
+#### 3.3 Dedupe candidate selection and input builder
+
+- [ ] Create `DedupeJudgeInputBuilder`
+- [ ] Deterministically gather bounded candidate expenses / pending reviews for ambiguous cases only
+- [ ] Exclude hard duplicates that current logic already resolves cleanly
+- [ ] Keep candidate summaries minimal and privacy-aware
+
+Done when:
+
+- AI sees only the ambiguous candidate set it needs to judge, not the full ledger
+
+#### 3.4 Dedupe judge use case
+
+- [ ] Create `JudgePendingReviewDuplicateUseCase`
+- [ ] Check AI settings before provider calls
+- [ ] Persist advisory duplicate verdict artifacts
+- [ ] Never let this use case reject, merge, or delete a review automatically
+
+Done when:
+
+- ambiguous duplicate cases can be surfaced as advice without altering the core approval path
+
+#### 3.5 Review UI integration
+
+- [ ] Extend `ReviewViewModel.kt` with per-review category and dedupe suggestion states
+- [ ] Update `ReviewScreen.kt` to render advisory suggestion cards or chips
+- [ ] Let users apply category suggestions into the edit flow and inspect dedupe advice before acting
+- [ ] Keep existing swipe approve / reject and edit-save behavior unchanged
+
+Done when:
+
+- review users can use or ignore capture suggestions without any new automatic mutation behavior
+
+### Milestone 4: Hardening and verification
+
+#### 4.1 Use case tests
+
+- [ ] Add `SuggestReceiptExtractionUseCaseTest`
+- [ ] Add `SuggestCategoryFallbackUseCaseTest`
+- [ ] Add `JudgePendingReviewDuplicateUseCaseTest`
+- [ ] Add builder tests for receipt, category, and dedupe inputs
+- [ ] Cover disabled, unsupported, success, error, and bounded-candidate paths
+
+Done when:
+
+- Phase 3 orchestration logic is test-covered without needing end-to-end UI automation for trust boundaries
+
+#### 4.2 Artifact and helper tests
+
+- [ ] Verify artifacts use the correct target keys and capabilities
+- [ ] Verify receipt / review suggestion payloads stay minimal
+- [ ] Add deterministic tests for any new candidate-lookup helper seams
+
+Done when:
+
+- artifact reuse and candidate selection are validated by tests instead of assumed by convention
+
+#### 4.3 ViewModel tests
+
+- [ ] Extend `ReceiptScanViewModel` tests for disabled, loading, ready, apply, dismiss, and error behavior
+- [ ] Extend `ReviewViewModel` tests for per-review category suggestion state
+- [ ] Extend `ReviewViewModel` tests for per-review dedupe suggestion state
+- [ ] Keep Phase 1 explanation behavior stable while adding Phase 3 states
+
+Done when:
+
+- receipt and review suggestion state transitions are stable before manual QA
+
+#### 4.4 Integration and privacy checks
+
+- [ ] Verify manual receipt save still works when AI is disabled or unavailable
+- [ ] Verify applying a suggestion changes only local edit state until save / approve occurs
+- [ ] Verify AI category suggestions never create new categories
+- [ ] Verify duplicate suggestions never auto reject or auto approve anything
+- [ ] Verify `NotificationProcessingPipeline.kt` remains AI-free
+
+Done when:
+
+- the Phase 3 trust boundary is enforced by checks, not just documentation
+
+#### 4.5 Manual QA checklist
+
+- [ ] Scan a low-confidence receipt with AI disabled and verify the manual flow still works
+- [ ] Scan a low-confidence receipt with AI enabled and verify suggestion fields can be applied selectively
+- [ ] Approve a review after applying an AI category suggestion and verify the write still goes through the normal approval path
+- [ ] Inspect an ambiguous duplicate suggestion and verify it is advisory only
+- [ ] Ignore AI suggestions entirely and verify baseline receipt and review flows still behave normally
+
+Done when:
+
+- Phase 3 is safe to release behind feature flags and internal opt-in
+
+## Suggested Execution Order Across Phase 3 PRs
+
+Use this order exactly unless a blocker appears:
+
+1. PR 1 tasks 1.1 through 1.5
+2. PR 2 tasks 2.1 through 2.4
+3. PR 3 tasks 3.1 through 3.5
+4. PR 4 tasks 4.1 through 4.5
+
+## What Should Not Happen During Phase 3
+
+- Do not put AI inline in `NotificationProcessingPipeline.kt`
+- Do not let AI overwrite `ScannedReceipt`, `PendingReview`, or `Expense` fields directly
+- Do not auto approve, auto reject, auto merge, or auto delete based on AI suggestions
+- Do not let AI invent new categories or bypass the existing category taxonomy
+- Do not let AI judge duplicates without deterministic candidate preselection
+- Do not require cloud receipt-image upload in the first Phase 3 release
+- Do not widen Phase 3 into manual-entry copilots or proactive automation
+
 ## Deferred to Later Phases
-
-### Phase 3
-
-- Receipt AI fallback
-- Categorization Layer 6 fallback
-- Deduplication judge
 
 ### Phase 4
 

@@ -11,13 +11,21 @@ import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResult
+import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
+import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExplainPendingReviewUseCase
+import com.yourname.expensetracker.domain.ai.usecase.JudgePendingReviewDuplicateUseCase
+import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.ui.screens.debug.DebugData
 import com.yourname.expensetracker.ui.screens.debug.DebugDataStorage
+import io.mockk.coVerify
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -52,6 +60,8 @@ class ReviewViewModelStressTest {
     private lateinit var debugDataStorage: DebugDataStorage
     private lateinit var geocodingService: GeocodingService
     private lateinit var explainPendingReviewUseCase: ExplainPendingReviewUseCase
+    private lateinit var suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase
+    private lateinit var judgePendingReviewDuplicateUseCase: JudgePendingReviewDuplicateUseCase
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var viewModel: ReviewViewModel
@@ -68,6 +78,8 @@ class ReviewViewModelStressTest {
         debugDataStorage = mockk(relaxed = true)
         geocodingService = mockk(relaxed = true)
         explainPendingReviewUseCase = mockk(relaxed = true)
+        suggestCategoryFallbackUseCase = mockk(relaxed = true)
+        judgePendingReviewDuplicateUseCase = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
 
@@ -87,6 +99,8 @@ class ReviewViewModelStressTest {
             debugDataStorage,
             geocodingService,
             explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository
         )
@@ -297,6 +311,8 @@ class ReviewViewModelStressTest {
             debugDataStorage,
             geocodingService,
             explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository
         )
@@ -329,6 +345,8 @@ class ReviewViewModelStressTest {
             debugDataStorage,
             geocodingService,
             explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository
         )
@@ -359,6 +377,8 @@ class ReviewViewModelStressTest {
             debugDataStorage,
             geocodingService,
             explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository
         )
@@ -402,6 +422,8 @@ class ReviewViewModelStressTest {
             debugDataStorage,
             geocodingService,
             explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository
         )
@@ -421,6 +443,199 @@ class ReviewViewModelStressTest {
             state is AiLoadState.Loading
         )
         // No exception was thrown — concurrent calls are safe
+    }
+
+    @Test
+    fun `stress - requestCategoryAssist stores Ready state`() = runTest {
+        val item = PendingReviewWithReceipt(
+            review = mockk(relaxed = true) {
+                every { id } returns 60L
+            },
+            receipt = null
+        )
+        val reviewsFlow = MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getPendingReviews() } returns reviewsFlow
+        coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(60L) } returns item
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, categorizationFallbackEnabled = true)
+        )
+        coEvery { suggestCategoryFallbackUseCase(item, false) } returns CategoryAssistGenerationResult.Success(
+            suggestion = CategoryAssistSuggestion(
+                categoryId = 1L,
+                categoryName = "Groceries",
+                rationale = "supermarket merchant"
+            ),
+            fromCache = false
+        )
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository
+        )
+
+        advanceUntilIdle()
+        viewModel.requestCategoryAssist(60L)
+        advanceUntilIdle()
+
+        val state = viewModel.reviewCaptureAssistStates.value[60L]?.categorySuggestion
+        assertTrue(state is AiLoadState.Ready)
+    }
+
+    @Test
+    fun `stress - requestDedupeAssist stores Ready state`() = runTest {
+        val item = PendingReviewWithReceipt(
+            review = mockk(relaxed = true) {
+                every { id } returns 61L
+            },
+            receipt = null
+        )
+        val reviewsFlow = MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getPendingReviews() } returns reviewsFlow
+        coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(61L) } returns item
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, dedupeJudgeEnabled = true)
+        )
+        coEvery { judgePendingReviewDuplicateUseCase(item, false) } returns DedupeJudgeGenerationResult.Success(
+            suggestion = DedupeJudgeSuggestion(
+                verdict = DuplicateVerdict.UNCERTAIN,
+                rationale = "two similar matches"
+            ),
+            fromCache = false
+        )
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository
+        )
+
+        advanceUntilIdle()
+        viewModel.requestDedupeAssist(61L)
+        advanceUntilIdle()
+
+        val state = viewModel.reviewCaptureAssistStates.value[61L]?.dedupeSuggestion
+        assertTrue(state is AiLoadState.Ready)
+    }
+
+    @Test
+    fun `stress - applyCategorySuggestion stores prefilled category`() = runTest {
+        val viewModelState = com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState(
+            categorySuggestion = AiLoadState.Ready(
+                CategoryAssistSuggestion(categoryId = 7L, categoryName = "Transport")
+            )
+        )
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository
+        )
+
+        val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
+        stateFlow.value = mapOf(70L to viewModelState)
+
+        viewModel.applyCategorySuggestion(70L)
+
+        assertEquals(7L, viewModel.consumePrefilledCategorySuggestion(70L))
+    }
+
+    @Test
+    fun `stress - dismissCategoryAssist resets state and marks artifact dismissed`() = runTest {
+        val artifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            id = 8L,
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 80L,
+            targetKey = "pending_review:80",
+            capability = com.yourname.expensetracker.domain.ai.model.AiCapability.CATEGORIZATION_FALLBACK,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.AUTO,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+        coEvery { aiArtifactRepository.getLatest("pending_review:80", com.yourname.expensetracker.domain.ai.model.AiCapability.CATEGORIZATION_FALLBACK) } returns artifact
+
+        val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
+        stateFlow.value = mapOf(
+            80L to com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState(
+                categorySuggestion = AiLoadState.Ready(CategoryAssistSuggestion(1L, "Groceries"))
+            )
+        )
+
+        viewModel.dismissCategoryAssist(80L)
+        advanceUntilIdle()
+
+        coVerify { aiArtifactRepository.markDismissed(8L) }
+        assertEquals(AiLoadState.Idle, viewModel.reviewCaptureAssistStates.value[80L]?.categorySuggestion)
+    }
+
+    @Test
+    fun `stress - dismissDedupeAssist resets state and marks artifact dismissed`() = runTest {
+        val artifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            id = 9L,
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 81L,
+            targetKey = "pending_review:81",
+            capability = com.yourname.expensetracker.domain.ai.model.AiCapability.DEDUPE_JUDGE,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.AUTO,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+        coEvery { aiArtifactRepository.getLatest("pending_review:81", com.yourname.expensetracker.domain.ai.model.AiCapability.DEDUPE_JUDGE) } returns artifact
+
+        val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
+        stateFlow.value = mapOf(
+            81L to com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState(
+                dedupeSuggestion = AiLoadState.Ready(DedupeJudgeSuggestion(DuplicateVerdict.UNCERTAIN))
+            )
+        )
+
+        viewModel.dismissDedupeAssist(81L)
+        advanceUntilIdle()
+
+        coVerify { aiArtifactRepository.markDismissed(9L) }
+        assertEquals(AiLoadState.Idle, viewModel.reviewCaptureAssistStates.value[81L]?.dedupeSuggestion)
     }
 
     // ============================================================================

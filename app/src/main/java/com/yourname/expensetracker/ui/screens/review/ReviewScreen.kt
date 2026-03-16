@@ -32,9 +32,12 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.AmountText
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
+import com.yourname.expensetracker.ui.components.ai.CategoryAssistCard
+import com.yourname.expensetracker.ui.components.ai.DedupeAssistCard
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
@@ -59,6 +62,7 @@ fun ReviewScreen(
     val categories by viewModel.categories.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
     val aiExplanationStates by viewModel.aiExplanationStates.collectAsState()
+    val reviewCaptureAssistStates by viewModel.reviewCaptureAssistStates.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
     var debugReview by remember { mutableStateOf<PendingReview?>(null) }
     // Guard against double-swipes/rapid-fire actions
@@ -316,8 +320,26 @@ fun ReviewScreen(
                                 },
                                 aiExplanationState = aiExplanationStates[item.review.id]
                                     ?: AiLoadState.Idle,
+                                captureAssistState = reviewCaptureAssistStates[item.review.id]
+                                    ?: ReviewCaptureAssistState(),
                                 onLoadAiExplanation = {
                                     viewModel.loadAiExplanation(item.review.id)
+                                },
+                                onLoadCategoryAssist = {
+                                    viewModel.requestCategoryAssist(item.review.id)
+                                },
+                                onApplyCategoryAssist = {
+                                    viewModel.applyCategorySuggestion(item.review.id)
+                                    editingReview = item.review
+                                },
+                                onDismissCategoryAssist = {
+                                    viewModel.dismissCategoryAssist(item.review.id)
+                                },
+                                onLoadDedupeAssist = {
+                                    viewModel.requestDedupeAssist(item.review.id)
+                                },
+                                onDismissDedupeAssist = {
+                                    viewModel.dismissDedupeAssist(item.review.id)
                                 }
                             )
                         }
@@ -346,6 +368,7 @@ fun ReviewScreen(
                     )
                     editingReview = null
                 },
+                initialCategoryIdOverride = viewModel.consumePrefilledCategorySuggestion(review.id),
                 geocodingService = viewModel.geocodingService
             )
         }
@@ -467,7 +490,13 @@ fun ReviewCard(
     onEdit: () -> Unit,
     onDebug: () -> Unit,
     aiExplanationState: AiLoadState<ReviewExplanationUi> = AiLoadState.Idle,
-    onLoadAiExplanation: () -> Unit = {}
+    captureAssistState: ReviewCaptureAssistState = ReviewCaptureAssistState(),
+    onLoadAiExplanation: () -> Unit = {},
+    onLoadCategoryAssist: () -> Unit = {},
+    onApplyCategoryAssist: () -> Unit = {},
+    onDismissCategoryAssist: () -> Unit = {},
+    onLoadDedupeAssist: () -> Unit = {},
+    onDismissDedupeAssist: () -> Unit = {}
 ) {
     val review = item.review
     
@@ -696,6 +725,17 @@ fun ReviewCard(
                 onRequest = onLoadAiExplanation
             )
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            ReviewCaptureAssistSection(
+                state = captureAssistState,
+                onRequestCategoryAssist = onLoadCategoryAssist,
+                onApplyCategoryAssist = onApplyCategoryAssist,
+                onDismissCategoryAssist = onDismissCategoryAssist,
+                onRequestDedupeAssist = onLoadDedupeAssist,
+                onDismissDedupeAssist = onDismissDedupeAssist
+            )
+
             Spacer(modifier = Modifier.height(16.dp))
 
             Row(
@@ -905,6 +945,111 @@ private fun AiExplanationSection(
     }
 }
 
+@Composable
+private fun ReviewCaptureAssistSection(
+    state: ReviewCaptureAssistState,
+    onRequestCategoryAssist: () -> Unit,
+    onApplyCategoryAssist: () -> Unit,
+    onDismissCategoryAssist: () -> Unit,
+    onRequestDedupeAssist: () -> Unit,
+    onDismissDedupeAssist: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        when (val categoryState = state.categorySuggestion) {
+            is AiLoadState.Idle -> {
+                OutlinedButton(onClick = onRequestCategoryAssist, modifier = Modifier.fillMaxWidth()) {
+                    Text("Suggest category with AI")
+                }
+            }
+            is AiLoadState.Loading -> {
+                AssistLoadingRow("Checking category fallback...")
+            }
+            is AiLoadState.Ready -> {
+                CategoryAssistCard(
+                    suggestion = categoryState.value,
+                    onApply = onApplyCategoryAssist,
+                    onDismiss = onDismissCategoryAssist
+                )
+            }
+            is AiLoadState.Error -> {
+                AssistErrorRow(categoryState.message, onRequestCategoryAssist)
+            }
+            is AiLoadState.Disabled -> Unit
+        }
+
+        when (val dedupeState = state.dedupeSuggestion) {
+            is AiLoadState.Idle -> {
+                OutlinedButton(onClick = onRequestDedupeAssist, modifier = Modifier.fillMaxWidth()) {
+                    Text("Check duplicates with AI")
+                }
+            }
+            is AiLoadState.Loading -> {
+                AssistLoadingRow("Checking possible duplicates...")
+            }
+            is AiLoadState.Ready -> {
+                DedupeAssistCard(
+                    suggestion = dedupeState.value,
+                    onDismiss = onDismissDedupeAssist
+                )
+            }
+            is AiLoadState.Error -> {
+                AssistErrorRow(dedupeState.message, onRequestDedupeAssist)
+            }
+            is AiLoadState.Disabled -> Unit
+        }
+    }
+}
+
+@Composable
+private fun AssistLoadingRow(label: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                SemanticColors.PrimaryIndigo.copy(alpha = 0.06f),
+                RoundedCornerShape(12.dp)
+            )
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(16.dp),
+            strokeWidth = 2.dp,
+            color = SemanticColors.PrimaryIndigo
+        )
+        Text(label, style = MaterialTheme.typography.labelSmall, color = SemanticColors.PrimaryIndigo)
+    }
+}
+
+@Composable
+private fun AssistErrorRow(
+    message: String,
+    onRetry: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                RoundedCornerShape(12.dp)
+            )
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            modifier = Modifier.weight(1f)
+        )
+        TextButton(onClick = onRetry) {
+            Text("Retry", color = SemanticColors.PrimaryIndigo)
+        }
+    }
+}
+
 /**
  * EditReviewDialog — converted from AlertDialog to ModalBottomSheet (B9 fix).
  *
@@ -921,11 +1066,12 @@ fun EditReviewDialog(
     categories: List<Category>,
     onDismiss: () -> Unit,
     onSave: (Double?, String?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?, String?) -> Unit,
+    initialCategoryIdOverride: Long? = null,
     geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) {
     var amount by remember { mutableStateOf(String.format("%.2f", review.suggestedAmount)) }
     var merchant by remember { mutableStateOf(review.suggestedMerchant) }
-    var selectedCategoryId by remember { mutableStateOf(review.suggestedCategoryId) }
+    var selectedCategoryId by remember { mutableStateOf(initialCategoryIdOverride ?: review.suggestedCategoryId) }
     var selectedType by remember { 
         mutableStateOf(
             try { TransactionType.valueOf(review.suggestedType) } 

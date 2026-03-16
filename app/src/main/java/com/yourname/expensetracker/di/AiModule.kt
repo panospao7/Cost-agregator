@@ -5,7 +5,10 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
 import com.yourname.expensetracker.data.database.dao.AiChatMessageDao
 import com.yourname.expensetracker.data.database.dao.AiChatSessionDao
 import com.yourname.expensetracker.data.ai.provider.NoOpDashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.NoOpCategorizationAssistService
+import com.yourname.expensetracker.data.ai.provider.NoOpDedupeJudgeService
 import com.yourname.expensetracker.data.ai.provider.NoOpQueryInterpretationService
+import com.yourname.expensetracker.data.ai.provider.NoOpReceiptAssistService
 import com.yourname.expensetracker.data.ai.provider.NoOpReviewExplanationService
 import com.yourname.expensetracker.data.ai.worker.AiWorkSchedulerImpl
 import com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
@@ -17,8 +20,11 @@ import com.yourname.expensetracker.domain.ai.policy.AiPolicyImpl
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
+import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
+import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
+import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
 import dagger.Binds
 import dagger.Module
@@ -76,6 +82,24 @@ abstract class AiModule {
     abstract fun bindReviewExplanationService(
         impl: NoOpReviewExplanationService
     ): ReviewExplanationService
+
+    @Binds
+    @Singleton
+    abstract fun bindReceiptAssistService(
+        impl: NoOpReceiptAssistService
+    ): ReceiptAssistService
+
+    @Binds
+    @Singleton
+    abstract fun bindCategorizationAssistService(
+        impl: NoOpCategorizationAssistService
+    ): CategorizationAssistService
+
+    @Binds
+    @Singleton
+    abstract fun bindDedupeJudgeService(
+        impl: NoOpDedupeJudgeService
+    ): DedupeJudgeService
 
     @Binds
     @Singleton
