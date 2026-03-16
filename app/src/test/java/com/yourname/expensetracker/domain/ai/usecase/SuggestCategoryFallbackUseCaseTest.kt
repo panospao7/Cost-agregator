@@ -107,6 +107,7 @@ class SuggestCategoryFallbackUseCaseTest {
         assertEquals(AiMode.CLOUD, captured.first().mode)
         assertEquals(AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_PROVIDER, captured.first().provider)
         assertEquals(AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL, captured.first().modelName)
+        assertTrue(captured.last().explanationText?.contains("Route: CLOUD") == true)
     }
 
     @Test
@@ -147,7 +148,28 @@ class SuggestCategoryFallbackUseCaseTest {
         assertEquals(AiMode.ON_DEVICE, captured.first().mode)
         assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, captured.first().provider)
         assertEquals(AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL, captured.first().modelName)
+        assertTrue(captured.last().explanationText?.contains("Route: ON_DEVICE") == true)
         coVerify { aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any()) }
+    }
+
+    @Test
+    fun `invoke stores route diagnostics in FAILED category artifact`() = runTest {
+        val item = makeItem()
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, categorizationFallbackEnabled = true))
+        coEvery { inputBuilder.build(item, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { categorizationAssistService.suggest(input) } returns null
+
+        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(item)
+
+        assertTrue(result is CategoryAssistGenerationResult.Error)
+        assertEquals(AiArtifactStatus.FAILED, captured.last().status)
+        assertTrue(captured.last().errorMessage?.contains("cloud allowed") == true)
+        assertTrue(captured.last().errorMessage?.contains("Route: CLOUD") == true)
     }
 
     private fun makeItem() = PendingReviewWithReceipt(

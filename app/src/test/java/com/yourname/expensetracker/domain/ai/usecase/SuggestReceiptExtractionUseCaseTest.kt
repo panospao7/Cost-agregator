@@ -142,6 +142,7 @@ class SuggestReceiptExtractionUseCaseTest {
         assertEquals("scanned_receipt:1", captured.last().targetKey)
         assertEquals(AiCapability.RECEIPT_EXTRACTION, captured.last().capability)
         assertTrue(captured.last().payloadJson?.contains("Lidl") == true)
+        assertTrue(captured.last().explanationText?.contains("Route: CLOUD") == true)
     }
 
     @Test
@@ -161,7 +162,8 @@ class SuggestReceiptExtractionUseCaseTest {
 
         assertTrue(result is ReceiptAssistGenerationResult.Error)
         assertEquals(AiArtifactStatus.FAILED, captured.last().status)
-        assertEquals("cloud allowed", captured.last().errorMessage)
+        assertTrue(captured.last().errorMessage?.contains("cloud allowed") == true)
+        assertTrue(captured.last().errorMessage?.contains("Route: CLOUD") == true)
     }
 
     private fun enabledSettings() = AiSettings(aiEnabled = true, receiptAssistEnabled = true)

@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
@@ -101,7 +102,7 @@ class ExplainPendingReviewUseCase @Inject constructor(
                 baseEntity.copy(
                     status          = AiArtifactStatus.READY,
                     summaryText     = explanation.headline,
-                    explanationText = explanation.body,
+                    explanationText = explanation.body.withRouteDiagnostics(routeDecision),
                     updatedAt       = timeProvider.now()
                 )
             } else {
@@ -109,7 +110,7 @@ class ExplainPendingReviewUseCase @Inject constructor(
                 // until the user explicitly requests again.
                 baseEntity.copy(
                     status       = AiArtifactStatus.FAILED,
-                    errorMessage = routeDecision.reason,
+                    errorMessage = failureMessage(routeDecision.reason, routeDecision),
                     updatedAt    = timeProvider.now()
                 )
             }
@@ -122,10 +123,27 @@ class ExplainPendingReviewUseCase @Inject constructor(
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status       = AiArtifactStatus.FAILED,
-                    errorMessage = e.message?.take(200),
+                    errorMessage = failureMessage(e.message, routeDecision),
                     updatedAt    = timeProvider.now()
                 )
             )
         }
     }
+}
+
+private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String {
+    val diagnostic = routeDecision.toRouteDiagnosticLine()
+    val combined = listOfNotNull(this?.takeIf { it.isNotBlank() }, diagnostic).joinToString("\n")
+    return combined.take(AppConfig.Ai.MAX_REVIEW_EXPLANATION_BODY_CHARS)
+}
+
+private fun failureMessage(message: String?, routeDecision: AiRouteDecision): String {
+    val base = message?.takeIf { it.isNotBlank() } ?: "AI generation failed."
+    return "$base ${routeDecision.toRouteDiagnosticLine()}".take(200)
+}
+
+private fun AiRouteDecision.toRouteDiagnosticLine(): String {
+    val providerPart = providerName ?: "none"
+    val modelPart = modelName ?: "none"
+    return "Route: ${route.name}, provider: $providerPart, model: $modelPart. Reason: $reason"
 }

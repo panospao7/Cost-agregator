@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
@@ -94,7 +95,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
                 aiArtifactRepository.upsert(
                     baseEntity.copy(
                         status = AiArtifactStatus.FAILED,
-                        errorMessage = routeDecision.reason,
+                        errorMessage = failureMessage(routeDecision.reason, routeDecision),
                         updatedAt = timeProvider.now()
                     )
                 )
@@ -104,7 +105,9 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
                     baseEntity.copy(
                         status = AiArtifactStatus.READY,
                         summaryText = "AI duplicate verdict: ${suggestion.verdict.name}",
-                        explanationText = suggestion.rationale?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS),
+                        explanationText = suggestion.rationale
+                            ?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
+                            .withRouteDiagnostics(routeDecision),
                         payloadJson = suggestion.toPayloadJson(),
                         updatedAt = timeProvider.now()
                     )
@@ -115,7 +118,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status = AiArtifactStatus.FAILED,
-                    errorMessage = e.message?.take(200),
+                    errorMessage = failureMessage(e.message, routeDecision),
                     updatedAt = timeProvider.now()
                 )
             )
@@ -149,4 +152,21 @@ private fun String.toDedupeJudgeSuggestionOrNull(): DedupeJudgeSuggestion? {
             rationale = root.optString("rationale").takeIf { it.isNotBlank() }
         )
     }.getOrNull()
+}
+
+private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String {
+    val diagnostic = routeDecision.toRouteDiagnosticLine()
+    val combined = listOfNotNull(this?.takeIf { it.isNotBlank() }, diagnostic).joinToString("\n")
+    return combined.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
+}
+
+private fun failureMessage(message: String?, routeDecision: AiRouteDecision): String {
+    val base = message?.takeIf { it.isNotBlank() } ?: "AI generation failed."
+    return "$base ${routeDecision.toRouteDiagnosticLine()}".take(200)
+}
+
+private fun AiRouteDecision.toRouteDiagnosticLine(): String {
+    val providerPart = providerName ?: "none"
+    val modelPart = modelName ?: "none"
+    return "Route: ${route.name}, provider: $providerPart, model: $modelPart. Reason: $reason"
 }

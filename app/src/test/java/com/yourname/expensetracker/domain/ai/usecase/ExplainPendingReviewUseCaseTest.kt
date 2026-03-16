@@ -191,7 +191,8 @@ class ExplainPendingReviewUseCaseTest {
         // Two upserts: RUNNING tombstone + final FAILED
         coVerify(exactly = 2) { aiArtifactRepository.upsert(any()) }
         assertEquals(AiArtifactStatus.FAILED, slot.captured.status)
-        assertEquals("cloud allowed", slot.captured.errorMessage)
+        assertTrue(slot.captured.errorMessage?.contains("cloud allowed") == true)
+        assertTrue(slot.captured.errorMessage?.contains("Route: CLOUD") == true)
     }
 
     // ── provider succeeds ─────────────────────────────────────────────────────
@@ -220,7 +221,9 @@ class ExplainPendingReviewUseCaseTest {
         assertEquals(AiArtifactStatus.RUNNING, running.status)
         assertEquals(AiArtifactStatus.READY,   ready.status)
         assertEquals("Likely food purchase", ready.summaryText)
-        assertEquals("Based on merchant and amount, this looks like a café visit.", ready.explanationText)
+        assertTrue(ready.explanationText?.contains("Based on merchant and amount, this looks like a café visit.") == true)
+        assertTrue(ready.explanationText?.contains("Route: CLOUD") == true)
+        assertTrue(ready.explanationText?.contains("provider: google-ai-studio") == true)
         assertEquals("pending_review:1", ready.targetKey)
         assertEquals(AiCapability.REVIEW_EXPLANATION, ready.capability)
     }
@@ -280,6 +283,7 @@ class ExplainPendingReviewUseCaseTest {
         val failedArtifact = captured.last()
         assertEquals(AiArtifactStatus.FAILED, failedArtifact.status)
         assertTrue(failedArtifact.errorMessage?.contains("Network timeout") == true)
+        assertTrue(failedArtifact.errorMessage?.contains("Route: CLOUD") == true)
     }
 
     // ── expiresAt set correctly ───────────────────────────────────────────────

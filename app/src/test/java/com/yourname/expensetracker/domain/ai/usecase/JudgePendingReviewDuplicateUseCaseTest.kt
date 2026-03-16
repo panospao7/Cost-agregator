@@ -99,6 +99,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
         assertEquals(AiMode.CLOUD, captured.first().mode)
         assertEquals(AppConfig.Ai.DEDUPE_JUDGE_CLOUD_PROVIDER, captured.first().provider)
         assertEquals(AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL, captured.first().modelName)
+        assertTrue(captured.last().explanationText?.contains("Route: CLOUD") == true)
     }
 
     private fun makeItem() = PendingReviewWithReceipt(
