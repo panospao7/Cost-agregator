@@ -16,6 +16,7 @@ class HybridDedupeJudgeService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val router: AiCapabilityRouter,
     private val cloudDedupeJudgeService: CloudDedupeJudgeService,
+    private val onDeviceDedupeJudgeService: OnDeviceDedupeJudgeService,
     private val noOpDedupeJudgeService: NoOpDedupeJudgeService
 ) : DedupeJudgeService {
 
@@ -23,7 +24,7 @@ class HybridDedupeJudgeService @Inject constructor(
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.DEDUPE_JUDGE, settings).route) {
             AiRoute.CLOUD -> cloudDedupeJudgeService.judge(input)
-            AiRoute.ON_DEVICE,
+            AiRoute.ON_DEVICE -> onDeviceDedupeJudgeService.judge(input)
             AiRoute.DETERMINISTIC_FALLBACK,
             AiRoute.DISABLED -> noOpDedupeJudgeService.judge(input)
         }

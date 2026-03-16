@@ -102,6 +102,35 @@ class JudgePendingReviewDuplicateUseCaseTest {
         assertTrue(captured.last().explanationText?.contains("Route: CLOUD") == true)
     }
 
+    @Test
+    fun `invoke stores ON_DEVICE metadata when local dedupe provider succeeds`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, any())
+        } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "local model available",
+            providerName = AppConfig.Ai.ON_DEVICE_PROVIDER_NAME,
+            modelName = AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL
+        )
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dedupeJudgeService.judge(any()) } returns DedupeJudgeSuggestion(
+            verdict = DuplicateVerdict.UNCERTAIN,
+            rationale = "Two nearby matches look similar"
+        )
+        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        assertEquals(AiMode.ON_DEVICE, captured.first().mode)
+        assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, captured.first().provider)
+        assertEquals(AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL, captured.first().modelName)
+        assertTrue(captured.last().explanationText?.contains("Route: ON_DEVICE") == true)
+    }
+
     private fun makeItem() = PendingReviewWithReceipt(
         PendingReview(
             id = 2L,
