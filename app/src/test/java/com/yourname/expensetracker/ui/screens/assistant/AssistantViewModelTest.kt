@@ -8,8 +8,11 @@ import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.service.AiChatRepository
+import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
@@ -36,6 +39,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
 
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiChatRepository: AiChatRepository
+    private lateinit var aiEnvironmentMonitor: AiEnvironmentMonitor
     private lateinit var interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase
     private lateinit var executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase
     private lateinit var mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase
@@ -46,6 +50,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         super.setup()
         aiSettingsRepository = mockk(relaxed = true)
         aiChatRepository = mockk(relaxed = true)
+        aiEnvironmentMonitor = mockk(relaxed = true)
         interpretFinancialQueryUseCase = mockk(relaxed = true)
         executeFinancialQueryUseCase = mockk(relaxed = true)
         mapFinancialQueryToNavigationUseCase = mockk(relaxed = true)
@@ -58,10 +63,12 @@ class AssistantViewModelTest : ViewModelTestUtils() {
                 storeConversationHistory = false
             )
         )
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION) } returns OnDeviceModelStatus.AVAILABLE
 
         viewModel = AssistantViewModel(
             aiSettingsRepository,
             aiChatRepository,
+            aiEnvironmentMonitor,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase
@@ -77,6 +84,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         viewModel = AssistantViewModel(
             aiSettingsRepository,
             aiChatRepository,
+            aiEnvironmentMonitor,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase
@@ -86,6 +94,27 @@ class AssistantViewModelTest : ViewModelTestUtils() {
 
         assertTrue(viewModel.uiState.value.isDisabled)
         assertNotNull(viewModel.uiState.value.disabledReason)
+    }
+
+    @Test
+    fun `uiState shows runtime status when on-device model not installed`() = runTest(testDispatcher) {
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION) } returns OnDeviceModelStatus.NOT_INSTALLED
+
+        viewModel = AssistantViewModel(
+            aiSettingsRepository,
+            aiChatRepository,
+            aiEnvironmentMonitor,
+            interpretFinancialQueryUseCase,
+            executeFinancialQueryUseCase,
+            mapFinancialQueryToNavigationUseCase
+        )
+
+        advanceUntilIdle()
+
+        assertEquals(
+            "On-device AI is available but the model is not installed yet.",
+            viewModel.uiState.value.runtimeStatusMessage
+        )
     }
 
     @Test
@@ -184,6 +213,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         viewModel = AssistantViewModel(
             aiSettingsRepository,
             aiChatRepository,
+            aiEnvironmentMonitor,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase

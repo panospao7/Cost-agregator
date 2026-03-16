@@ -94,6 +94,14 @@ fun AssistantSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
+                uiState.runtimeStatusMessage?.let { runtimeMessage ->
+                    Text(
+                        text = runtimeMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()

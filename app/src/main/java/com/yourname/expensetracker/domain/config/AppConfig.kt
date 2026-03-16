@@ -161,6 +161,12 @@ object AppConfig {
         const val ON_DEVICE_DEDUPE_TEMPERATURE = 0.1f
         const val ON_DEVICE_DEDUPE_MAX_TOKENS = 180
         const val ON_DEVICE_DEDUPE_MODEL = "gemini-nano-dedupe"
+        const val ON_DEVICE_QUERY_TEMPERATURE = 0.1f
+        const val ON_DEVICE_QUERY_MAX_TOKENS = 220
+        const val ON_DEVICE_QUERY_MODEL = "gemini-nano-query"
+        const val ON_DEVICE_BRIEFING_TEMPERATURE = 0.2f
+        const val ON_DEVICE_BRIEFING_MAX_TOKENS = 180
+        const val ON_DEVICE_BRIEFING_MODEL = "gemini-nano-briefing"
 
         // Query interpretation / assistant limits
         const val MAX_QUERY_INPUT_CHARS = 400

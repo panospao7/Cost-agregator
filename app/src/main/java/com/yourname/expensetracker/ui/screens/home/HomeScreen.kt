@@ -270,23 +270,33 @@ fun HomeScreen(
                                     containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
                                     border = BorderStroke(1.dp, SemanticColors.PrimaryIndigo.copy(alpha = 0.2f))
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Surface(
-                                            modifier = Modifier.size(40.dp),
-                                            shape = CircleShape,
-                                            color = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Text(displayIcon, fontSize = 20.sp)
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Surface(
+                                                modifier = Modifier.size(40.dp),
+                                                shape = CircleShape,
+                                                color = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(displayIcon, fontSize = 20.sp)
+                                                }
                                             }
+                                            Spacer(modifier = Modifier.width(16.dp))
+                                            Text(
+                                                text = displayText,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = SemanticColors.TextPrimary,
+                                                fontWeight = FontWeight.Medium
+                                            )
                                         }
-                                        Spacer(modifier = Modifier.width(16.dp))
-                                        Text(
-                                            text = displayText,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = SemanticColors.TextPrimary,
-                                            fontWeight = FontWeight.Medium
-                                        )
+
+                                        if (aiBriefing is AiLoadState.Ready && aiBriefing.value.runtimeStatusMessage != null) {
+                                            Text(
+                                                text = aiBriefing.value.runtimeStatusMessage,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = SemanticColors.TextSecondary
+                                            )
+                                        }
                                     }
                                 }
                             }

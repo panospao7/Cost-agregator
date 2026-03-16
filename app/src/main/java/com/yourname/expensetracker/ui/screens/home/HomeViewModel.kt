@@ -10,7 +10,9 @@ import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
@@ -43,7 +45,8 @@ data class DashboardBriefingUi(
     val text: String,
     val icon: String,
     /** True when this text came from an AI artifact rather than deterministic logic. */
-    val isAi: Boolean
+    val isAi: Boolean,
+    val runtimeStatusMessage: String? = null
 )
 
 // ---------------------------------------------------------------------------
@@ -80,6 +83,7 @@ class HomeViewModel @Inject constructor(
     private val computeDashboardWidgetsUseCase: ComputeDashboardWidgetsUseCase,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
+    private val aiEnvironmentMonitor: AiEnvironmentMonitor,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
 
@@ -124,6 +128,9 @@ class HomeViewModel @Inject constructor(
                     flowOf(AiLoadState.Disabled)
                 } else {
                     val targetKey = "dashboard_home:${dateKeyFormat.format(Date(timeProvider.now()))}"
+                    val runtimeStatus = aiEnvironmentMonitor
+                        .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
+                        .toRuntimeStatusMessage(capabilityLabel = "briefing")
                     aiArtifactRepository.observeLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)
                         .map { entity ->
                             when {
@@ -135,12 +142,13 @@ class HomeViewModel @Inject constructor(
                                             title = "AI Briefing",
                                             text  = entity.summaryText,
                                             icon  = "✨",
-                                            isAi  = true
+                                            isAi  = true,
+                                            runtimeStatusMessage = runtimeStatus
                                         )
                                     )
                                 }
                                 entity.status == AiArtifactStatus.FAILED ->
-                                    AiLoadState.Error(entity.errorMessage ?: "Generation failed")
+                                    AiLoadState.Error(runtimeStatus ?: entity.errorMessage ?: "Generation failed")
                                 else -> AiLoadState.Idle
                             }
                         }

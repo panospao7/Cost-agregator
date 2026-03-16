@@ -5,8 +5,11 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
 import com.yourname.expensetracker.data.repository.DashboardRepository
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
@@ -43,6 +46,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
     private lateinit var computeDashboardWidgetsUseCase: ComputeDashboardWidgetsUseCase
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
+    private lateinit var aiEnvironmentMonitor: AiEnvironmentMonitor
     private lateinit var timeProvider: TimeProvider
 
     private val configFlow = MutableStateFlow(defaultConfig())
@@ -59,10 +63,12 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         computeDashboardWidgetsUseCase = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
+        aiEnvironmentMonitor = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
 
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings())
         every { timeProvider.now() } returns 0L
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING) } returns OnDeviceModelStatus.AVAILABLE
 
         every { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(
             ProcessedDashboardData(
@@ -120,6 +126,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             computeDashboardWidgetsUseCase,
             aiSettingsRepository,
             aiArtifactRepository,
+            aiEnvironmentMonitor,
             timeProvider
         )
     }
@@ -368,6 +375,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             computeDashboardWidgetsUseCase,
             aiSettingsRepository,
             aiArtifactRepository,
+            aiEnvironmentMonitor,
             timeProvider
         )
         advanceUntilIdle()

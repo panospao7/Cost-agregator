@@ -7,7 +7,11 @@ import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiChatRepository
+import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
@@ -33,6 +37,7 @@ data class AssistantUiState(
     val isLoading: Boolean = false,
     val isDisabled: Boolean = false,
     val disabledReason: String? = null,
+    val runtimeStatusMessage: String? = null,
     val errorMessage: String? = null,
     val canPersistHistory: Boolean = false,
     val currentSessionId: Long? = null
@@ -67,6 +72,7 @@ sealed interface AssistantNavigationEvent {
 class AssistantViewModel @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiChatRepository: AiChatRepository,
+    private val aiEnvironmentMonitor: AiEnvironmentMonitor,
     private val interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase,
     private val executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase,
     private val mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase
@@ -98,7 +104,8 @@ class AssistantViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isDisabled = isDisabled,
                     disabledReason = disabledReason,
-                    canPersistHistory = settings.storeConversationHistory
+                    canPersistHistory = settings.storeConversationHistory,
+                    runtimeStatusMessage = buildRuntimeStatusMessage(settings.allowOnDeviceAi)
                 )
             }
         }
@@ -324,5 +331,15 @@ class AssistantViewModel @Inject constructor(
             .put("type", "unsupported")
             .put("reason", reason)
             .toString()
+    }
+
+    private suspend fun buildRuntimeStatusMessage(allowOnDeviceAi: Boolean): String? {
+        if (!allowOnDeviceAi) {
+            return "On-device AI is disabled in settings."
+        }
+
+        return aiEnvironmentMonitor
+            .getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION)
+            .toRuntimeStatusMessage(capabilityLabel = "AI")
     }
 }
