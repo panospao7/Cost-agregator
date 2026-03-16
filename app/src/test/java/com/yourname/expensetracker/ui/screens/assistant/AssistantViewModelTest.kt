@@ -63,7 +63,10 @@ class AssistantViewModelTest : ViewModelTestUtils() {
                 storeConversationHistory = false
             )
         )
-        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(emptyList(), null)
+        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(
+            capabilities = emptyList(),
+            highestPriorityMessage = null
+        )
 
         viewModel = AssistantViewModel(
             aiSettingsRepository,
@@ -99,8 +102,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     @Test
     fun `uiState shows runtime status when on-device model not installed`() = runTest(testDispatcher) {
         coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(
-            emptyList(),
-            "On-device AI is available but the model is not installed yet."
+            capabilities = emptyList(),
+            highestPriorityMessage = "On-device model is not installed on this device."
         )
 
         viewModel = AssistantViewModel(
@@ -115,7 +118,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertEquals(
-            "On-device AI is available but the model is not installed yet.",
+            "On-device model is not installed on this device.",
             viewModel.uiState.value.runtimeStatusMessage
         )
     }
@@ -132,8 +135,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             )
         )
         coEvery { getAiRuntimeStatusUseCase(any()) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(
-            emptyList(),
-            "On-device AI is unavailable on this phone right now."
+            capabilities = emptyList(),
+            highestPriorityMessage = "Cloud AI is enabled, so advisory features can still run when on-device AI is unavailable."
         )
 
         viewModel = AssistantViewModel(

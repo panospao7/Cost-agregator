@@ -20,7 +20,11 @@ class DefaultAiCapabilityRouter @Inject constructor(
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : AiCapabilityRouter {
 
-    override suspend fun decide(capability: AiCapability, settings: AiSettings): AiRouteDecision {
+    override suspend fun decide(
+        capability: AiCapability,
+        settings: AiSettings,
+        onDeviceStatus: OnDeviceModelStatus?
+    ): AiRouteDecision {
         if (!settings.aiEnabled) {
             return AiRouteDecision(AiRoute.DISABLED, "AI is disabled in settings.")
         }
@@ -29,12 +33,12 @@ class DefaultAiCapabilityRouter @Inject constructor(
             return AiRouteDecision(AiRoute.DISABLED, "$capability is disabled in settings.")
         }
 
-        val onDeviceStatus = resolveOnDeviceStatus(capability, settings)
+        val resolvedOnDeviceStatus = onDeviceStatus ?: resolveOnDeviceStatus(capability, settings)
 
         val decision = when (settings.preferredMode) {
-            AiMode.ON_DEVICE -> chooseOnDevicePreferred(capability, settings, onDeviceStatus)
-            AiMode.CLOUD -> chooseCloudPreferred(capability, settings, onDeviceStatus)
-            AiMode.AUTO -> chooseAuto(capability, settings, onDeviceStatus)
+            AiMode.ON_DEVICE -> chooseOnDevicePreferred(capability, settings, resolvedOnDeviceStatus)
+            AiMode.CLOUD -> chooseCloudPreferred(capability, settings, resolvedOnDeviceStatus)
+            AiMode.AUTO -> chooseAuto(capability, settings, resolvedOnDeviceStatus)
         }
 
         aiRuntimeDiagnostics.recordRouteDecision(capability, decision)
@@ -86,7 +90,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
 
         return AiRouteDecision(
             route = AiRoute.DETERMINISTIC_FALLBACK,
-            reason = "Cloud was preferred but unavailable, so using deterministic fallback."
+            reason = combinedUnavailableReason(capability, settings, onDeviceStatus)
         )
     }
 
@@ -191,12 +195,33 @@ class DefaultAiCapabilityRouter @Inject constructor(
     ): String {
         val cloudUnavailable = !canUseCloud(capability, settings)
         val onDeviceUnavailable = !canUseOnDevice(capability, settings, onDeviceStatus)
+        val cloudReason = if (cloudUnavailable) cloudUnavailableReason(capability, settings) else null
+        val onDeviceReason = if (onDeviceUnavailable) {
+            onDeviceUnavailableReason(capability, settings, onDeviceStatus)
+        } else {
+            null
+        }
 
         return when {
-            cloudUnavailable && onDeviceUnavailable ->
-                "Neither cloud nor on-device AI is currently available. ${onDeviceUnavailableReason(capability, settings, onDeviceStatus)}"
-            onDeviceUnavailable -> onDeviceUnavailableReason(capability, settings, onDeviceStatus)
+            cloudReason != null && onDeviceReason != null -> "$cloudReason $onDeviceReason"
+            onDeviceReason != null -> onDeviceReason
+            cloudReason != null -> cloudReason
             else -> "Cloud routing is unavailable for the current settings or connectivity."
+        }
+    }
+
+    private fun cloudUnavailableReason(
+        capability: AiCapability,
+        settings: AiSettings
+    ): String {
+        return when {
+            !settings.aiEnabled -> "AI is disabled in settings."
+            !isCapabilityEnabled(capability, settings) -> "${capability.displayName()} is disabled in settings."
+            !settings.allowCloudAi -> "Cloud AI is disabled in settings."
+            !aiPolicy.canUseCloudFor(settings, capability) -> "Cloud AI is disabled by policy for this capability."
+            !environmentMonitor.isNetworkAvailable() -> "Cloud AI needs an internet connection."
+            settings.wifiOnlyForCloud && !environmentMonitor.isWifiConnected() -> "Cloud AI is limited to Wi-Fi by settings."
+            else -> "Cloud AI is unavailable right now."
         }
     }
 
@@ -231,6 +256,16 @@ class DefaultAiCapabilityRouter @Inject constructor(
 
     private fun isOnDeviceImplemented(capability: AiCapability): Boolean {
         return capability in ON_DEVICE_IMPLEMENTED_CAPABILITIES
+    }
+
+    private fun AiCapability.displayName(): String = when (this) {
+        AiCapability.DASHBOARD_BRIEFING -> "Dashboard briefing"
+        AiCapability.REVIEW_EXPLANATION -> "Review explanation"
+        AiCapability.QUERY_INTERPRETATION -> "Query interpretation"
+        AiCapability.RECEIPT_EXTRACTION -> "Receipt assist"
+        AiCapability.CATEGORIZATION_FALLBACK -> "Categorization fallback"
+        AiCapability.DEDUPE_JUDGE -> "Duplicate detection"
+        AiCapability.LOCATION_SUMMARY -> "Location summary"
     }
 
     private fun AiCapability.defaultCloudProviderName(): String = when (this) {

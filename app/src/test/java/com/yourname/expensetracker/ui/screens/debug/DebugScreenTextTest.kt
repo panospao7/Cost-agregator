@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.ui.screens.debug
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
+import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import org.junit.Assert.assertEquals
@@ -42,5 +44,25 @@ class DebugScreenTextTest {
         )
 
         assertEquals("Cloud fallback available for advisory AI", hint)
+    }
+
+    @Test
+    fun `debug cloud fallback hint hidden when route already resolves to cloud`() {
+        val hint = debugCloudFallbackHint(
+            aiSettings = AiSettings(aiEnabled = true, allowCloudAi = true),
+            capability = AiCapability.REVIEW_EXPLANATION,
+            status = OnDeviceModelStatus.UNAVAILABLE,
+            runtime = AiCapabilityRuntimeStatus(
+                capability = AiCapability.REVIEW_EXPLANATION,
+                status = OnDeviceModelStatus.UNAVAILABLE,
+                message = null,
+                actionLabel = null,
+                route = AiRoute.CLOUD,
+                providerName = "google-ai-studio",
+                modelName = "gemini-2.5-flash"
+            )
+        )
+
+        assertNull(hint)
     }
 }

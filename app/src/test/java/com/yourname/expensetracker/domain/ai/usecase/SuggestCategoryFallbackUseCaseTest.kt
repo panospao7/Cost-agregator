@@ -64,7 +64,7 @@ class SuggestCategoryFallbackUseCaseTest {
             timeProvider
         )
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any())
+            aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any(), any())
         } returns AiRouteDecision(
             route = AiRoute.CLOUD,
             reason = "cloud allowed",
@@ -123,7 +123,7 @@ class SuggestCategoryFallbackUseCaseTest {
             )
         )
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any())
+            aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any(), any())
         } returns AiRouteDecision(
             route = AiRoute.ON_DEVICE,
             reason = "local model available",
@@ -149,7 +149,7 @@ class SuggestCategoryFallbackUseCaseTest {
         assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, captured.first().provider)
         assertEquals(AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL, captured.first().modelName)
         assertTrue(captured.last().explanationText?.contains("Route: ON_DEVICE") == true)
-        coVerify { aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any()) }
+        coVerify { aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any(), any()) }
     }
 
     @Test

@@ -1,7 +1,11 @@
 package com.yourname.expensetracker.ui.screens.aisettings
 
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
+import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
@@ -68,7 +72,17 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
     @Test
     fun `refreshRuntimeStatus updates runtime summary`() = runTest(testDispatcher) {
         val summary = AiRuntimeStatusSummary(
-            capabilities = emptyList(),
+            capabilities = listOf(
+                AiCapabilityRuntimeStatus(
+                    capability = AiCapability.DASHBOARD_BRIEFING,
+                    status = OnDeviceModelStatus.UNAVAILABLE,
+                    message = null,
+                    actionLabel = null,
+                    route = AiRoute.CLOUD,
+                    providerName = "google-ai-studio",
+                    modelName = "gemini-2.5-flash"
+                )
+            ),
             highestPriorityMessage = "Runtime info",
             networkAvailable = true,
             wifiConnected = false,
@@ -81,5 +95,6 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
 
         assertEquals("Runtime info", viewModel.uiState.value.runtimeSummary.highestPriorityMessage)
         assertEquals(4321L, viewModel.uiState.value.runtimeSummary.lastRefreshedAt)
+        assertEquals(AiRoute.CLOUD, viewModel.uiState.value.runtimeSummary.capabilities.first().route)
     }
 }

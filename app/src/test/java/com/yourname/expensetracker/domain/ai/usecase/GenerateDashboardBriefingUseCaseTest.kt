@@ -63,7 +63,7 @@ class GenerateDashboardBriefingUseCaseTest {
             timeProvider           = timeProvider
         )
 
-        coEvery { aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, any()) } returns cloudRouteDecision()
+        coEvery { aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, any(), any()) } returns cloudRouteDecision()
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

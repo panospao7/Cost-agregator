@@ -59,7 +59,7 @@ class ExplainPendingReviewUseCaseTest {
             timeProvider             = timeProvider
         )
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.REVIEW_EXPLANATION, any())
+            aiCapabilityRouter.decide(AiCapability.REVIEW_EXPLANATION, any(), any())
         } returns AiRouteDecision(
             route = AiRoute.CLOUD,
             reason = "cloud allowed",
@@ -269,7 +269,7 @@ class ExplainPendingReviewUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.REVIEW_EXPLANATION, any())
+            aiCapabilityRouter.decide(AiCapability.REVIEW_EXPLANATION, any(), any())
         } returns AiRouteDecision(
             route = AiRoute.ON_DEVICE,
             reason = "local model available",

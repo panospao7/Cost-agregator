@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.aisettings
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
+import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import org.junit.Assert.assertEquals
@@ -41,7 +42,8 @@ class AiSettingsScreenTextTest {
                 capability = AiCapability.DASHBOARD_BRIEFING,
                 status = OnDeviceModelStatus.UNAVAILABLE,
                 message = "On-device briefing is unavailable.",
-                actionLabel = "Check device support"
+                actionLabel = "Check device support",
+                route = AiRoute.DETERMINISTIC_FALLBACK
             ),
             cloudFallbackAvailable = true
         )
@@ -57,7 +59,29 @@ class AiSettingsScreenTextTest {
                 capability = AiCapability.DASHBOARD_BRIEFING,
                 status = OnDeviceModelStatus.AVAILABLE,
                 message = null,
-                actionLabel = null
+                actionLabel = null,
+                route = AiRoute.CLOUD,
+                providerName = "google-ai-studio",
+                modelName = "gemini-2.5-flash"
+            ),
+            cloudFallbackAvailable = true
+        )
+
+        assertNull(hint)
+    }
+
+    @Test
+    fun `cloud fallback hint hidden when route already resolves to cloud`() {
+        val hint = cloudFallbackHint(
+            enabled = true,
+            runtime = AiCapabilityRuntimeStatus(
+                capability = AiCapability.DASHBOARD_BRIEFING,
+                status = OnDeviceModelStatus.UNAVAILABLE,
+                message = null,
+                actionLabel = null,
+                route = AiRoute.CLOUD,
+                providerName = "google-ai-studio",
+                modelName = "gemini-2.5-flash"
             ),
             cloudFallbackAvailable = true
         )

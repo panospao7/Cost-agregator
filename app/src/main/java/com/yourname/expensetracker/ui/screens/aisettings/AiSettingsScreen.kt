@@ -40,6 +40,7 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.routeDisplayText
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Date
 
@@ -210,6 +211,13 @@ fun AiSettingsScreen(
                             supportingContent = {
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(runtime.message ?: "Ready")
+                                    runtime.routeDisplayText()?.let {
+                                        Text(
+                                            text = it,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
                                     runtime.actionLabel?.let {
                                         Text(
                                             text = it,
@@ -337,6 +345,16 @@ private fun CapabilityMatrixRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            if (enabled) {
+                runtime?.routeDisplayText()?.let { routeText ->
+                    Text(
+                        text = routeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
+            }
+
             if (enabled && runtime?.actionLabel != null) {
                 Text(
                     text = runtime.actionLabel,
@@ -409,6 +427,9 @@ internal fun cloudFallbackHint(
     cloudFallbackAvailable: Boolean
 ): String? {
     if (!enabled || !cloudFallbackAvailable || runtime?.message == null) {
+        return null
+    }
+    if (runtime.route == com.yourname.expensetracker.domain.ai.model.AiRoute.CLOUD) {
         return null
     }
     return "Cloud fallback available"

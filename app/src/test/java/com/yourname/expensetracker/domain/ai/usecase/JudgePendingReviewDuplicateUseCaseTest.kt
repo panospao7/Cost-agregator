@@ -60,7 +60,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
             timeProvider
         )
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, any())
+            aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, any(), any())
         } returns AiRouteDecision(
             route = AiRoute.CLOUD,
             reason = "cloud allowed",
@@ -107,7 +107,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
         coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, any())
+            aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, any(), any())
         } returns AiRouteDecision(
             route = AiRoute.ON_DEVICE,
             reason = "local model available",

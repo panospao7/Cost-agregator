@@ -31,6 +31,7 @@ import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
+import com.yourname.expensetracker.domain.ai.model.routeDisplayText
 import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
@@ -251,7 +252,8 @@ fun DebugScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         aiRuntimeStatuses.forEach { (capability, status) ->
-                            val runtimeMessage = status.toRuntimeStatusMessage(capability.debugRuntimeLabel())
+                            val runtime = aiRuntimeMeta.capabilities.firstOrNull { it.capability == capability }
+                            val runtimeMessage = runtime?.message ?: status.toRuntimeStatusMessage(capability.debugRuntimeLabel())
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -274,6 +276,13 @@ fun DebugScreen(
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
+                            runtime?.routeDisplayText()?.let { routeText ->
+                                Text(
+                                    text = routeText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                            }
                             runtimeMessage?.let {
                                 Text(
                                     text = it,
@@ -281,7 +290,7 @@ fun DebugScreen(
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                debugCloudFallbackHint(aiSettings, capability, status)?.let { hint ->
+                                debugCloudFallbackHint(aiSettings, capability, status, runtime)?.let { hint ->
                                     Text(
                                         text = hint,
                                         style = MaterialTheme.typography.labelSmall,
@@ -620,12 +629,16 @@ internal fun debugRuntimeGuidanceText(
 internal fun debugCloudFallbackHint(
     aiSettings: AiSettings,
     capability: AiCapability,
-    status: OnDeviceModelStatus
+    status: OnDeviceModelStatus,
+    runtime: com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus? = null
 ): String? {
     if (!aiSettings.aiEnabled || !aiSettings.allowCloudAi || status == OnDeviceModelStatus.AVAILABLE) {
         return null
     }
     if (!capability.supportsCloudFallback()) {
+        return null
+    }
+    if (runtime?.route == com.yourname.expensetracker.domain.ai.model.AiRoute.CLOUD) {
         return null
     }
     return "Cloud fallback available for advisory AI"

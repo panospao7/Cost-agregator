@@ -9,10 +9,13 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
-import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.debug.NotificationSeeder
 import com.yourname.expensetracker.domain.debug.ServiceDiagnostics
@@ -47,7 +50,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
     private lateinit var timeProvider: TimeProvider
     private lateinit var diagnostics: ServiceDiagnostics
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
-    private lateinit var aiEnvironmentMonitor: AiEnvironmentMonitor
+    private lateinit var getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var viewModel: DebugViewModel
 
@@ -64,7 +67,6 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         timeProvider = mockk(relaxed = true)
         diagnostics = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
-        aiEnvironmentMonitor = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
 
         val now = 1_700_000_000_000L
@@ -90,9 +92,25 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(aiEnabled = true, allowCloudAi = true)
         )
-        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.AVAILABLE
-        every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
-        every { aiEnvironmentMonitor.isWifiConnected() } returns false
+        getAiRuntimeStatusUseCase = mockk(relaxed = true)
+        coEvery { getAiRuntimeStatusUseCase(any()) } returns AiRuntimeStatusSummary(
+            capabilities = AiCapability.entries.map { capability ->
+                AiCapabilityRuntimeStatus(
+                    capability = capability,
+                    status = OnDeviceModelStatus.AVAILABLE,
+                    message = null,
+                    actionLabel = null,
+                    route = AiRoute.CLOUD,
+                    routeReason = "Cloud route available",
+                    providerName = "google-ai-studio",
+                    modelName = "gemini-2.5-flash"
+                )
+            },
+            highestPriorityMessage = null,
+            networkAvailable = true,
+            wifiConnected = false,
+            lastRefreshedAt = now
+        )
 
         viewModel = DebugViewModel(
             repository = repository,
@@ -103,8 +121,8 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             notificationSeeder = notificationSeeder,
             timeProvider = timeProvider,
             diagnostics = diagnostics,
+            getAiRuntimeStatusUseCase = getAiRuntimeStatusUseCase,
             aiSettingsRepository = aiSettingsRepository,
-            aiEnvironmentMonitor = aiEnvironmentMonitor,
             aiRuntimeDiagnostics = aiRuntimeDiagnostics
         )
     }
@@ -121,6 +139,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         assertEquals(true, viewModel.aiRuntimeMeta.value.networkAvailable)
         assertEquals(false, viewModel.aiRuntimeMeta.value.wifiConnected)
         assertEquals(true, viewModel.aiSettings.value.allowCloudAi)
+        assertEquals(AiRoute.CLOUD, viewModel.aiRuntimeMeta.value.capabilities.first().route)
 
         settingsJob.cancel()
     }

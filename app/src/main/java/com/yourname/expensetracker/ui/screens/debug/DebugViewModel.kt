@@ -9,7 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
-import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
@@ -31,8 +31,8 @@ class DebugViewModel @Inject constructor(
     private val notificationSeeder: com.yourname.expensetracker.domain.debug.NotificationSeeder,
     private val timeProvider: TimeProvider,
     private val diagnostics: com.yourname.expensetracker.domain.debug.ServiceDiagnostics,
+    private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
     private val aiSettingsRepository: AiSettingsRepository,
-    private val aiEnvironmentMonitor: AiEnvironmentMonitor,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : ViewModel() {
 
@@ -232,21 +232,12 @@ class DebugViewModel @Inject constructor(
 
     fun refreshAiRuntimeStatuses() {
         viewModelScope.launch {
-            val statuses = buildMap {
-                AiCapability.entries.forEach { capability ->
-                    put(capability, aiEnvironmentMonitor.getOnDeviceModelStatus(capability))
-                }
-            }
+            val summary = getAiRuntimeStatusUseCase(AiCapability.entries)
+            val statuses = summary.capabilities.associate { it.capability to it.status }
             _aiRuntimeStatuses.value = statuses
-            _aiRuntimeMeta.value = AiRuntimeStatusSummary(
-                capabilities = emptyList(),
-                highestPriorityMessage = null,
-                networkAvailable = aiEnvironmentMonitor.isNetworkAvailable(),
-                wifiConnected = aiEnvironmentMonitor.isWifiConnected(),
-                lastRefreshedAt = timeProvider.now()
-            )
+            _aiRuntimeMeta.value = summary
             aiRuntimeDiagnostics.recordRuntimeRefresh(
-                message = "Debug refresh: network=${_aiRuntimeMeta.value.networkAvailable}, wifi=${_aiRuntimeMeta.value.wifiConnected}",
+                message = "Debug refresh: network=${summary.networkAvailable}, wifi=${summary.wifiConnected}, highest='${summary.highestPriorityMessage ?: "none"}'",
                 now = _aiRuntimeMeta.value.lastRefreshedAt
             )
             _aiRuntimeEvents.value = aiRuntimeDiagnostics.getRecentEvents()

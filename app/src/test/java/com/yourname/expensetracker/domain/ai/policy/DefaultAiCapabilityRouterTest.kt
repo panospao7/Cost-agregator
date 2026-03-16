@@ -156,6 +156,7 @@ class DefaultAiCapabilityRouterTest {
         val result = router.decide(AiCapability.REVIEW_EXPLANATION, settings)
 
         assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
+        assertTrue(result.reason.contains("Wi-Fi", ignoreCase = true))
     }
 
     @Test
@@ -251,5 +252,25 @@ class DefaultAiCapabilityRouterTest {
 
         assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
         assertTrue(result.reason.contains("unavailable", ignoreCase = true))
+    }
+
+    @Test
+    fun `decide reports cloud disabled explicitly when cloud setting is off`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.UNAVAILABLE
+
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = false,
+            allowOnDeviceAi = true,
+            reviewExplanationEnabled = true,
+            preferredMode = AiMode.CLOUD
+        )
+
+        val result = router.decide(AiCapability.REVIEW_EXPLANATION, settings)
+
+        assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
+        assertTrue(result.reason.contains("Cloud AI is disabled", ignoreCase = true))
     }
 }

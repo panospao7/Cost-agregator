@@ -64,7 +64,7 @@ class SuggestReceiptExtractionUseCaseTest {
             timeProvider = timeProvider
         )
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, any())
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, any(), any())
         } returns AiRouteDecision(
             route = AiRoute.CLOUD,
             reason = "cloud allowed",
@@ -158,7 +158,7 @@ class SuggestReceiptExtractionUseCaseTest {
         every { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, any())
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, any(), any())
         } returns AiRouteDecision(
             route = AiRoute.ON_DEVICE,
             reason = "local model available",
