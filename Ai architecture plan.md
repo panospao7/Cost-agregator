@@ -3504,18 +3504,23 @@ As of the current branch state, these cloud-backed Gemini services are live behi
 - `CategorizationAssistService`
 - `DedupeJudgeService`
 
-These are still not real providers yet:
+These now also have real on-device Gemini Nano / ML Kit-backed providers:
 
 - `DashboardBriefingService`
-- `QueryInterpretationService` as a true model-backed service
-- any on-device Gemini Nano path
+- `QueryInterpretationService`
+- `ReviewExplanationService`
+- `ReceiptAssistService`
+- `CategorizationAssistService`
+- `DedupeJudgeService`
 
 Important current repo reality:
 
 - cloud routing is real and tested
-- on-device routing is modeled, but `DefaultAiEnvironmentMonitor.isOnDeviceModelAvailable(...)` still returns `false`
-- router decisions already support `ON_DEVICE`, but there are no concrete Nano-backed provider adapters yet
-- the next planning step should focus on making the on-device side real without destabilizing the cloud side that is now working
+- on-device routing is real and runtime-aware via `AiEnvironmentMonitor`
+- router decisions support `ON_DEVICE`, `CLOUD`, and deterministic fallback with actual provider adapters
+- artifacts record real route/provider/model metadata
+- runtime status is surfaced in assistant, dashboard, and a dedicated AI settings screen
+- the next work should focus on quality tuning, model-install/download UX, and rollout hardening rather than core provider scaffolding
 
 ## Gemini Nano Plan
 
@@ -3923,29 +3928,33 @@ Completed:
 
 ## Recommended Next Slice From Here
 
-The best immediate next implementation slice is:
+The best immediate next implementation slices are no longer foundational Nano wiring.
 
-### Nano PR 1: On-device runtime foundation
+Recommended next work, in order:
 
-In scope:
+### 1. Runtime UX hardening
 
-- add `OnDeviceModelStatus`
-- expand `AiEnvironmentMonitor`
-- update router logic and tests for richer on-device reasoning
-- keep all current cloud providers unchanged
-- do not wire a real Nano SDK yet
+- Add richer install/download/retry UX around `AICore` / model availability
+- Distinguish device unsupported vs model missing vs downloading in user-facing surfaces
+- Consider a reusable runtime panel component that can be dropped into more screens
 
-Why this slice first:
+### 2. Quality tuning and evaluation
 
-- it turns the on-device path from “mode placeholder” into a real runtime-aware path
-- it avoids mixing SDK adoption with routing redesign in one step
+- Evaluate categorization / receipt / review / dedupe / query / briefing quality on real Android 14+ devices
+- Tune prompts, token limits, and routing preferences based on evidence
+- Validate offline behavior, cold-start behavior, and latency
+
+### 3. Plan Phase 4 only after evidence
+
+- Do not enter Phase 4 implementation yet
+- Revisit Gate 3 after suggestion quality, rejectability, and runtime UX are proven in practice
 
 ## Immediate Next Planning Step
 
-Freeze the Phase 1 scope before coding:
+The immediate planning/documentation step should be:
 
-- Home AI briefing
-- Review AI explanation
-- Foundation infrastructure required to support those two only
+- clean up any remaining stale rollout notes elsewhere in this file
+- define a manual QA matrix for on-device availability / install / download / unsupported states
+- collect evidence needed before any Phase 4 planning opens
 
-Once that is approved, implementation should start with PR 1 from the Phase 1 PR slicing plan.
+Phase 4 should remain gated until the advisory/runtime rollout has been validated end to end.
