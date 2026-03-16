@@ -126,6 +126,10 @@ object AppConfig {
         const val PROMPT_VERSION_RECEIPT   = "v1"
         const val PROMPT_VERSION_CATEGORIZATION = "v1"
         const val PROMPT_VERSION_DEDUPE    = "v1"
+        const val DASHBOARD_BRIEFING_CLOUD_PROVIDER = "google-ai-studio"
+        const val DASHBOARD_BRIEFING_CLOUD_MODEL = "gemini-2.5-flash"
+        const val QUERY_INTERPRETATION_CLOUD_PROVIDER = "google-ai-studio"
+        const val QUERY_INTERPRETATION_CLOUD_MODEL = "gemini-2.5-flash"
         const val REVIEW_EXPLANATION_CLOUD_PROVIDER = "google-ai-studio"
         const val REVIEW_EXPLANATION_CLOUD_MODEL = "gemini-2.5-flash"
         const val RECEIPT_ASSIST_CLOUD_PROVIDER = "google-ai-studio"
@@ -135,6 +139,8 @@ object AppConfig {
         const val DEDUPE_JUDGE_CLOUD_PROVIDER = "google-ai-studio"
         const val DEDUPE_JUDGE_CLOUD_MODEL = "gemini-2.5-flash"
         const val GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
+        const val DASHBOARD_BRIEFING_TIMEOUT_SECONDS = 12L
+        const val QUERY_INTERPRETATION_TIMEOUT_SECONDS = 12L
         const val REVIEW_EXPLANATION_TIMEOUT_SECONDS = 12L
         const val RECEIPT_ASSIST_TIMEOUT_SECONDS = 12L
         const val CATEGORIZATION_ASSIST_TIMEOUT_SECONDS = 10L
@@ -142,6 +148,8 @@ object AppConfig {
         const val MAX_REVIEW_EXPLANATION_HEADLINE_CHARS = 80
         const val MAX_REVIEW_EXPLANATION_BODY_CHARS = 320
         const val MAX_REVIEW_EXPLANATION_CAUTION_CHARS = 140
+        const val DASHBOARD_BRIEFING_MAX_OUTPUT_TOKENS = 256
+        const val QUERY_INTERPRETATION_MAX_OUTPUT_TOKENS = 320
         const val REVIEW_EXPLANATION_MAX_OUTPUT_TOKENS = 384
         const val RECEIPT_ASSIST_MAX_OUTPUT_TOKENS = 384
         const val CATEGORIZATION_ASSIST_MAX_OUTPUT_TOKENS = 220

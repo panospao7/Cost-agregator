@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.assistant
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
@@ -103,7 +104,7 @@ class AssistantViewModel @Inject constructor(
                     isDisabled = isDisabled,
                     disabledReason = disabledReason,
                     canPersistHistory = settings.storeConversationHistory,
-                    runtimeStatusMessage = buildRuntimeStatusMessage(settings.allowOnDeviceAi)
+                    runtimeStatusMessage = buildRuntimeStatusMessage(settings)
                 )
             }
         }
@@ -331,9 +332,13 @@ class AssistantViewModel @Inject constructor(
             .toString()
     }
 
-    private suspend fun buildRuntimeStatusMessage(allowOnDeviceAi: Boolean): String? {
-        if (!allowOnDeviceAi) {
-            return "On-device AI is disabled in settings."
+    private suspend fun buildRuntimeStatusMessage(settings: com.yourname.expensetracker.domain.ai.model.AiSettings): String? {
+        if (!settings.allowOnDeviceAi) {
+            return null
+        }
+
+        if (settings.allowCloudAi && settings.preferredMode != AiMode.ON_DEVICE) {
+            return null
         }
 
         return getAiRuntimeStatusUseCase(

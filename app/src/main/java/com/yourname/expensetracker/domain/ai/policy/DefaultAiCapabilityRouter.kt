@@ -176,7 +176,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
             OnDeviceModelStatus.AVAILABLE -> "On-device model is available."
             OnDeviceModelStatus.NOT_INSTALLED -> "On-device model is not installed on this device."
             OnDeviceModelStatus.DOWNLOADING -> "On-device model is still downloading."
-            OnDeviceModelStatus.UNAVAILABLE -> "On-device model is currently unavailable on this device."
+            OnDeviceModelStatus.UNAVAILABLE -> "On-device model is unavailable on this phone right now. This usually means Android AICore / Gemini Nano is missing, not provisioned yet, or unsupported by the device vendor."
             OnDeviceModelStatus.UNSUPPORTED_DEVICE -> "This device does not support the on-device model."
             OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION -> "This Android version does not support the on-device model."
             OnDeviceModelStatus.DISABLED_BY_POLICY -> "On-device model is disabled by policy."
@@ -234,19 +234,19 @@ class DefaultAiCapabilityRouter @Inject constructor(
     }
 
     private fun AiCapability.defaultCloudProviderName(): String = when (this) {
-        AiCapability.DASHBOARD_BRIEFING,
-        AiCapability.REVIEW_EXPLANATION,
-        AiCapability.QUERY_INTERPRETATION,
-        AiCapability.RECEIPT_EXTRACTION,
-        AiCapability.CATEGORIZATION_FALLBACK,
-        AiCapability.DEDUPE_JUDGE,
+        AiCapability.DASHBOARD_BRIEFING -> AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_PROVIDER
+        AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_PROVIDER
+        AiCapability.QUERY_INTERPRETATION -> AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_PROVIDER
+        AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER
+        AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_PROVIDER
+        AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.DEDUPE_JUDGE_CLOUD_PROVIDER
         AiCapability.LOCATION_SUMMARY -> "google-ai-studio"
     }
 
     private fun AiCapability.defaultCloudModelName(): String = when (this) {
-        AiCapability.DASHBOARD_BRIEFING -> "gemini-cloud-briefing"
+        AiCapability.DASHBOARD_BRIEFING -> AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL
         AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_MODEL
-        AiCapability.QUERY_INTERPRETATION -> "gemini-cloud-query"
+        AiCapability.QUERY_INTERPRETATION -> AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL
@@ -254,9 +254,9 @@ class DefaultAiCapabilityRouter @Inject constructor(
     }
 
     private fun AiCapability.defaultOnDeviceModelName(): String = when (this) {
-        AiCapability.DASHBOARD_BRIEFING -> "gemini-nano-briefing"
+        AiCapability.DASHBOARD_BRIEFING -> AppConfig.Ai.ON_DEVICE_BRIEFING_MODEL
         AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.ON_DEVICE_REVIEW_MODEL
-        AiCapability.QUERY_INTERPRETATION -> "gemini-nano-query"
+        AiCapability.QUERY_INTERPRETATION -> AppConfig.Ai.ON_DEVICE_QUERY_MODEL
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL
@@ -271,7 +271,9 @@ class DefaultAiCapabilityRouter @Inject constructor(
         )
 
         val ON_DEVICE_IMPLEMENTED_CAPABILITIES = setOf(
+            AiCapability.DASHBOARD_BRIEFING,
             AiCapability.REVIEW_EXPLANATION,
+            AiCapability.QUERY_INTERPRETATION,
             AiCapability.RECEIPT_EXTRACTION,
             AiCapability.CATEGORIZATION_FALLBACK,
             AiCapability.DEDUPE_JUDGE

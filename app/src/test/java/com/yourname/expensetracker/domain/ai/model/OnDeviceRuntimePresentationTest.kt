@@ -26,4 +26,12 @@ class OnDeviceRuntimePresentationTest {
             OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION.toRuntimeStatusMessage("briefing")
         )
     }
+
+    @Test
+    fun `unavailable returns runtime guidance`() {
+        assertEquals(
+            "On-device AI is unavailable on this phone right now. This usually means Android AICore / Gemini Nano is missing, not provisioned yet, or unsupported by the device vendor.",
+            OnDeviceModelStatus.UNAVAILABLE.toRuntimeStatusMessage("AI")
+        )
+    }
 }

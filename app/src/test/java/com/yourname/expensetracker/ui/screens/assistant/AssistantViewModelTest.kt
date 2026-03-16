@@ -121,6 +121,36 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `uiState hides runtime status when cloud is allowed in auto mode`() = runTest(testDispatcher) {
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(
+                aiEnabled = true,
+                assistantEnabled = true,
+                queryInterpretationEnabled = true,
+                allowCloudAi = true,
+                allowOnDeviceAi = true
+            )
+        )
+        coEvery { getAiRuntimeStatusUseCase(any()) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(
+            emptyList(),
+            "On-device AI is unavailable on this phone right now."
+        )
+
+        viewModel = AssistantViewModel(
+            aiSettingsRepository,
+            aiChatRepository,
+            getAiRuntimeStatusUseCase,
+            interpretFinancialQueryUseCase,
+            executeFinancialQueryUseCase,
+            mapFinancialQueryToNavigationUseCase
+        )
+
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.runtimeStatusMessage)
+    }
+
+    @Test
     fun `submitQuery ignores blank input`() = runTest(testDispatcher) {
         viewModel.submitQuery("   ")
         advanceUntilIdle()

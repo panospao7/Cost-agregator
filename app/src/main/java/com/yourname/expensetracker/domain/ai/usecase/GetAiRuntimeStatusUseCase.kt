@@ -45,7 +45,7 @@ private fun OnDeviceModelStatus.actionLabel(): String? = when (this) {
     OnDeviceModelStatus.AVAILABLE -> null
     OnDeviceModelStatus.NOT_INSTALLED -> "Install required"
     OnDeviceModelStatus.DOWNLOADING -> "Wait for download"
-    OnDeviceModelStatus.UNAVAILABLE -> "Try again later"
+    OnDeviceModelStatus.UNAVAILABLE -> "Check device support"
     OnDeviceModelStatus.UNSUPPORTED_DEVICE -> "Unsupported device"
     OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION -> "Update Android"
     OnDeviceModelStatus.DISABLED_BY_POLICY -> "Enable on-device AI"

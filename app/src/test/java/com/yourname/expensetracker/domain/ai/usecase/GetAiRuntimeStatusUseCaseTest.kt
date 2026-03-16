@@ -51,4 +51,20 @@ class GetAiRuntimeStatusUseCaseTest {
         )
         assertEquals("Install required", result.capabilities.first().actionLabel)
     }
+
+    @Test
+    fun `invoke returns unavailable guidance when runtime is missing`() = runTest {
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION) } returns OnDeviceModelStatus.UNAVAILABLE
+        every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
+        every { aiEnvironmentMonitor.isWifiConnected() } returns false
+        every { timeProvider.now() } returns 9999L
+
+        val result = useCase(listOf(AiCapability.QUERY_INTERPRETATION))
+
+        assertEquals(
+            "On-device AI is unavailable on this phone right now. This usually means Android AICore / Gemini Nano is missing, not provisioned yet, or unsupported by the device vendor.",
+            result.highestPriorityMessage
+        )
+        assertEquals("Check device support", result.capabilities.first().actionLabel)
+    }
 }

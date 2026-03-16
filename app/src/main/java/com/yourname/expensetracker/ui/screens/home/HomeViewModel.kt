@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
@@ -128,11 +129,22 @@ class HomeViewModel @Inject constructor(
                     flowOf(AiLoadState.Disabled)
                 } else {
                     val targetKey = "dashboard_home:${dateKeyFormat.format(Date(timeProvider.now()))}"
-                    val runtimeStatus = aiEnvironmentMonitor
-                        .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
-                        .toRuntimeStatusMessage(capabilityLabel = "briefing")
                     aiArtifactRepository.observeLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)
                         .map { entity ->
+                            val runtimeStatus = when {
+                                entity?.mode == AiMode.CLOUD -> null
+                                entity?.mode == AiMode.ON_DEVICE -> aiEnvironmentMonitor
+                                    .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
+                                    .toRuntimeStatusMessage(capabilityLabel = "briefing")
+                                settings.preferredMode == AiMode.ON_DEVICE -> aiEnvironmentMonitor
+                                    .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
+                                    .toRuntimeStatusMessage(capabilityLabel = "briefing")
+                                !settings.allowCloudAi && settings.allowOnDeviceAi -> aiEnvironmentMonitor
+                                    .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
+                                    .toRuntimeStatusMessage(capabilityLabel = "briefing")
+                                else -> null
+                            }
+
                             when {
                                 entity == null -> AiLoadState.Idle
                                 entity.status == AiArtifactStatus.RUNNING -> AiLoadState.Loading

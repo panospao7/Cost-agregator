@@ -4,9 +4,10 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.AiArtifactDao
 import com.yourname.expensetracker.data.database.dao.AiChatMessageDao
 import com.yourname.expensetracker.data.database.dao.AiChatSessionDao
+import com.yourname.expensetracker.data.ai.provider.HybridDashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.HybridQueryInterpretationService
 import com.yourname.expensetracker.data.ai.provider.CloudReviewExplanationService
 import com.yourname.expensetracker.data.ai.provider.CloudReceiptAssistService
-import com.yourname.expensetracker.data.ai.provider.OnDeviceDashboardBriefingService
 import com.yourname.expensetracker.data.ai.provider.CloudCategorizationAssistService
 import com.yourname.expensetracker.data.ai.provider.CloudDedupeJudgeService
 import com.yourname.expensetracker.data.ai.provider.DefaultAiEnvironmentMonitor
@@ -16,7 +17,6 @@ import com.yourname.expensetracker.data.ai.provider.HybridReceiptAssistService
 import com.yourname.expensetracker.data.ai.provider.HybridReviewExplanationService
 import com.yourname.expensetracker.data.ai.provider.NoOpCategorizationAssistService
 import com.yourname.expensetracker.data.ai.provider.NoOpDedupeJudgeService
-import com.yourname.expensetracker.data.ai.provider.OnDeviceQueryInterpretationService
 import com.yourname.expensetracker.data.ai.provider.NoOpReceiptAssistService
 import com.yourname.expensetracker.data.ai.worker.AiWorkSchedulerImpl
 import com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
@@ -97,7 +97,7 @@ abstract class AiModule {
     @Binds
     @Singleton
     abstract fun bindDashboardBriefingService(
-        impl: OnDeviceDashboardBriefingService
+        impl: HybridDashboardBriefingService
     ): DashboardBriefingService
 
     @Binds
@@ -127,7 +127,7 @@ abstract class AiModule {
     @Binds
     @Singleton
     abstract fun bindQueryInterpretationService(
-        impl: OnDeviceQueryInterpretationService
+        impl: HybridQueryInterpretationService
     ): QueryInterpretationService
 
     // -------------------------------------------------------------------------

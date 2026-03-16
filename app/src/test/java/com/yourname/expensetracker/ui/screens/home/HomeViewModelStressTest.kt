@@ -3,11 +3,15 @@ package com.yourname.expensetracker.ui.screens.home
 import app.cash.turbine.test
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
 import com.yourname.expensetracker.data.repository.DashboardRepository
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
@@ -113,6 +117,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         every { dashboardRepository.saveDashboardConfigSync(any()) } answers {
             configFlow.value = firstArg()
         }
+        every { aiArtifactRepository.observeLatest(any(), any()) } returns flowOf(null)
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         coEvery { categoryRepository.ensureDefaultCategories() } just Runs
         coEvery { plannedExpenseRepository.addPlannedExpense(any()) } returns 1L
@@ -168,6 +173,61 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             advanceUntilIdle()
             val afterToggle = awaitItem()
             assertTrue(afterToggle.isEditMode != initial.isEditMode)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `stress - cloud dashboard artifact does not surface on-device runtime warning`() = runTest(testDispatcher) {
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(
+                aiEnabled = true,
+                dashboardBriefingEnabled = true,
+                allowCloudAi = true,
+                allowOnDeviceAi = true
+            )
+        )
+        every { aiArtifactRepository.observeLatest(any(), any()) } returns flowOf(
+            AiArtifactEntity(
+                targetType = AiTargetType.DASHBOARD,
+                targetKey = "dashboard_home:1970-01-01",
+                capability = AiCapability.DASHBOARD_BRIEFING,
+                status = AiArtifactStatus.READY,
+                mode = AiMode.CLOUD,
+                provider = "google-ai-studio",
+                modelName = "gemini-2.5-flash",
+                promptVersion = "v1",
+                summaryText = "Cloud generated briefing",
+                sourceHash = "hash",
+                createdAt = 0L,
+                updatedAt = 0L,
+                expiresAt = 1L
+            )
+        )
+
+        viewModel = HomeViewModel(
+            dashboardDataProvider,
+            dashboardRepository,
+            categoryRepository,
+            plannedExpenseRepository,
+            analyticsRepository,
+            computeDashboardWidgetsUseCase,
+            aiSettingsRepository,
+            aiArtifactRepository,
+            aiEnvironmentMonitor,
+            timeProvider
+        )
+
+        viewModel.dashboard.test {
+            advanceUntilIdle()
+            var latest = awaitItem()
+            while (latest.aiBriefing !is com.yourname.expensetracker.domain.ai.model.AiLoadState.Ready) {
+                latest = awaitItem()
+            }
+
+            val briefing = latest.aiBriefing as com.yourname.expensetracker.domain.ai.model.AiLoadState.Ready
+            assertEquals("Cloud generated briefing", briefing.value.text)
+            assertEquals(null, briefing.value.runtimeStatusMessage)
             cancelAndIgnoreRemainingEvents()
         }
     }

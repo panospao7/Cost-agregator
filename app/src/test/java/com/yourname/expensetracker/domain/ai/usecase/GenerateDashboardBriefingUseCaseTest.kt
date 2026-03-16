@@ -4,11 +4,14 @@ import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.config.AppConfig
@@ -30,6 +33,7 @@ class GenerateDashboardBriefingUseCaseTest {
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var dashboardBriefingService: DashboardBriefingService
+    private lateinit var aiCapabilityRouter: AiCapabilityRouter
     private lateinit var inputBuilder: DashboardBriefingInputBuilder
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var useCase: GenerateDashboardBriefingUseCase
@@ -45,6 +49,7 @@ class GenerateDashboardBriefingUseCaseTest {
         aiSettingsRepository   = mockk()
         aiArtifactRepository   = mockk(relaxed = true)
         dashboardBriefingService = mockk()
+        aiCapabilityRouter     = mockk()
         inputBuilder           = mockk()
         timeProvider           = FakeTimeProvider(fixedTime = now)
         processedData          = mockk(relaxed = true)
@@ -53,9 +58,12 @@ class GenerateDashboardBriefingUseCaseTest {
             aiSettingsRepository   = aiSettingsRepository,
             aiArtifactRepository   = aiArtifactRepository,
             dashboardBriefingService = dashboardBriefingService,
+            aiCapabilityRouter     = aiCapabilityRouter,
             inputBuilder           = inputBuilder,
             timeProvider           = timeProvider
         )
+
+        coEvery { aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, any()) } returns cloudRouteDecision()
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -88,12 +96,21 @@ class GenerateDashboardBriefingUseCaseTest {
         targetKey     = "dashboard_home:$dateKey",
         capability    = AiCapability.DASHBOARD_BRIEFING,
         status        = AiArtifactStatus.READY,
-        mode          = AiMode.AUTO,
+        mode          = AiMode.CLOUD,
+        provider      = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_PROVIDER,
+        modelName     = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL,
         promptVersion = AppConfig.Ai.PROMPT_VERSION_DASHBOARD,
         sourceHash    = "existing_hash",
         createdAt     = now,
         updatedAt     = now,
         expiresAt     = now + AppConfig.Ai.DASHBOARD_BRIEFING_TTL_MS
+    )
+
+    private fun cloudRouteDecision() = AiRouteDecision(
+        route = AiRoute.CLOUD,
+        reason = "Preferred mode is cloud and connectivity/policy allow it.",
+        providerName = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_PROVIDER,
+        modelName = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL
     )
 
     // ── disabled gate ─────────────────────────────────────────────────────────
@@ -160,7 +177,7 @@ class GenerateDashboardBriefingUseCaseTest {
         coVerify(exactly = 2) { aiArtifactRepository.upsert(any()) }
         val finalArtifact = captured.last()
         assertEquals(AiArtifactStatus.FAILED, finalArtifact.status)
-        assertEquals("Provider returned null", finalArtifact.errorMessage)
+        assertTrue(finalArtifact.errorMessage?.contains("provider: ${AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_PROVIDER}") == true)
     }
 
     // ── provider succeeds ─────────────────────────────────────────────────────
@@ -187,6 +204,9 @@ class GenerateDashboardBriefingUseCaseTest {
         val ready   = captured[1]
         assertEquals(AiArtifactStatus.RUNNING, running.status)
         assertEquals(AiArtifactStatus.READY,   ready.status)
+        assertEquals(AiMode.CLOUD, running.mode)
+        assertEquals(AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_PROVIDER, running.provider)
+        assertEquals(AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL, running.modelName)
         assertTrue(ready.summaryText?.isNotEmpty() == true)
         assertEquals("dashboard_home:$dateKey", ready.targetKey)
         assertEquals(AiCapability.DASHBOARD_BRIEFING, ready.capability)

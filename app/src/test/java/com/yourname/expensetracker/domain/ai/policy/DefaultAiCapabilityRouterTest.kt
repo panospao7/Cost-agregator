@@ -159,19 +159,24 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
-    fun `decide reports not implemented for unshipped on-device capability`() = runTest {
+    fun `decide routes query interpretation to cloud when cloud is preferred`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION) } returns OnDeviceModelStatus.UNAVAILABLE
+
         val settings = AiSettings(
             aiEnabled = true,
             allowCloudAi = true,
             allowOnDeviceAi = true,
             queryInterpretationEnabled = true,
-            preferredMode = AiMode.ON_DEVICE
+            preferredMode = AiMode.CLOUD
         )
 
         val result = router.decide(AiCapability.QUERY_INTERPRETATION, settings)
 
-        assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
-        assertTrue(result.reason.contains("not implemented", ignoreCase = true))
+        assertEquals(AiRoute.CLOUD, result.route)
+        assertEquals(AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_PROVIDER, result.providerName)
+        assertEquals(AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL, result.modelName)
     }
 
     @Test

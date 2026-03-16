@@ -4,8 +4,11 @@ import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.config.AppConfig
@@ -34,6 +37,7 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val dashboardBriefingService: DashboardBriefingService,
+    private val aiCapabilityRouter: AiCapabilityRouter,
     private val inputBuilder: DashboardBriefingInputBuilder,
     private val timeProvider: TimeProvider
 ) {
@@ -48,6 +52,11 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
 
         // ── 2. Build input ───────────────────────────────────────────────────
         val input = inputBuilder.build(processedData)
+        val routeDecision = aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, settings)
+        if (routeDecision.route == AiRoute.DISABLED) {
+            Timber.d("GenerateDashboardBriefingUseCase: router disabled briefing generation, skipping.")
+            return
+        }
 
         // ── 3. Derive target key ─────────────────────────────────────────────
         val targetKey = "dashboard_home:${input.dateKey}"
@@ -71,7 +80,9 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
             targetKey     = targetKey,
             capability    = AiCapability.DASHBOARD_BRIEFING,
             status        = AiArtifactStatus.RUNNING,
-            mode          = AiMode.AUTO,
+            mode          = routeDecision.route.toArtifactMode(),
+            provider      = routeDecision.providerName,
+            modelName     = routeDecision.modelName,
             promptVersion = AppConfig.Ai.PROMPT_VERSION_DASHBOARD,
             sourceHash    = sourceHash,
             createdAt     = now,
@@ -96,7 +107,7 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
                 // until the next scheduled run.
                 baseEntity.copy(
                     status       = AiArtifactStatus.FAILED,
-                    errorMessage = "Provider returned null",
+                    errorMessage = failureMessage(routeDecision.reason, routeDecision),
                     updatedAt    = timeProvider.now()
                 )
             }
@@ -109,10 +120,24 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status       = AiArtifactStatus.FAILED,
-                    errorMessage = e.message?.take(200),
+                    errorMessage = failureMessage(e.message, routeDecision),
                     updatedAt    = timeProvider.now()
                 )
             )
         }
     }
+}
+
+private fun AiRoute.toArtifactMode(): AiMode = when (this) {
+    AiRoute.ON_DEVICE -> AiMode.ON_DEVICE
+    AiRoute.CLOUD -> AiMode.CLOUD
+    AiRoute.DETERMINISTIC_FALLBACK,
+    AiRoute.DISABLED -> AiMode.AUTO
+}
+
+private fun failureMessage(message: String?, routeDecision: AiRouteDecision): String {
+    val base = message?.takeIf { it.isNotBlank() } ?: "AI generation failed."
+    val providerPart = routeDecision.providerName ?: "none"
+    val modelPart = routeDecision.modelName ?: "none"
+    return "$base Route: ${routeDecision.route.name}, provider: $providerPart, model: $modelPart. Reason: ${routeDecision.reason}".take(200)
 }
