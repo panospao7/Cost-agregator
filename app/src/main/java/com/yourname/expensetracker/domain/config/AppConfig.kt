@@ -147,6 +147,12 @@ object AppConfig {
         const val CATEGORIZATION_ASSIST_MAX_OUTPUT_TOKENS = 220
         const val DEDUPE_JUDGE_MAX_OUTPUT_TOKENS = 220
 
+        // On-device (Gemini Nano) constants
+        const val ON_DEVICE_CATEGORIZATION_TEMPERATURE = 0.1f
+        const val ON_DEVICE_CATEGORIZATION_MAX_TOKENS = 150
+        const val ON_DEVICE_PROVIDER_NAME = "mlkit-genai-nano"
+        const val ON_DEVICE_CATEGORIZATION_MODEL = "gemini-nano"
+
         // Query interpretation / assistant limits
         const val MAX_QUERY_INPUT_CHARS = 400
         const val MAX_QUERY_HISTORY_TURNS_FOR_MODEL = 8

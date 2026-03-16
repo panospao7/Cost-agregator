@@ -141,4 +141,41 @@ class DefaultAiCapabilityRouterTest {
         assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
         assertTrue(result.reason.contains("device", ignoreCase = true))
     }
+
+    @Test
+    fun `decide reports downloading model when on-device preferred mode is waiting on runtime`() {
+        every { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.DOWNLOADING
+
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowOnDeviceAi = true,
+            categorizationFallbackEnabled = true,
+            preferredMode = AiMode.ON_DEVICE
+        )
+
+        val result = router.decide(AiCapability.CATEGORIZATION_FALLBACK, settings)
+
+        assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
+        assertTrue(result.reason.contains("downloading", ignoreCase = true))
+    }
+
+    @Test
+    fun `decide reports unavailable model when auto has no cloud fallback`() {
+        every { environmentMonitor.isNetworkAvailable() } returns false
+        every { environmentMonitor.isWifiConnected() } returns false
+        every { environmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.UNAVAILABLE
+
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            allowOnDeviceAi = true,
+            categorizationFallbackEnabled = true,
+            preferredMode = AiMode.AUTO
+        )
+
+        val result = router.decide(AiCapability.CATEGORIZATION_FALLBACK, settings)
+
+        assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
+        assertTrue(result.reason.contains("unavailable", ignoreCase = true))
+    }
 }

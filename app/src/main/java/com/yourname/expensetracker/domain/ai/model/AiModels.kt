@@ -30,6 +30,8 @@ enum class AiRoute {
 enum class OnDeviceModelStatus {
     AVAILABLE,
     NOT_INSTALLED,
+    DOWNLOADING,
+    UNAVAILABLE,
     UNSUPPORTED_DEVICE,
     UNSUPPORTED_ANDROID_VERSION,
     DISABLED_BY_POLICY,

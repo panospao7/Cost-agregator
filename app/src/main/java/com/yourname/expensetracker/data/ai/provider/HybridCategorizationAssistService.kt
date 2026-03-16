@@ -16,6 +16,7 @@ class HybridCategorizationAssistService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val router: AiCapabilityRouter,
     private val cloudCategorizationAssistService: CloudCategorizationAssistService,
+    private val onDeviceCategorizationAssistService: OnDeviceCategorizationAssistService,
     private val noOpCategorizationAssistService: NoOpCategorizationAssistService
 ) : CategorizationAssistService {
 
@@ -23,7 +24,7 @@ class HybridCategorizationAssistService @Inject constructor(
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.CATEGORIZATION_FALLBACK, settings).route) {
             AiRoute.CLOUD -> cloudCategorizationAssistService.suggest(input)
-            AiRoute.ON_DEVICE,
+            AiRoute.ON_DEVICE -> onDeviceCategorizationAssistService.suggest(input)
             AiRoute.DETERMINISTIC_FALLBACK,
             AiRoute.DISABLED -> noOpCategorizationAssistService.suggest(input)
         }

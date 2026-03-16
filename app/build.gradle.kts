@@ -2,8 +2,8 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
-    id("com.google.dagger.hilt.android") version "2.51.1"
+    id("com.google.devtools.ksp") version "2.2.21-2.0.5"
+    id("com.google.dagger.hilt.android") version "2.57"
 }
 
 android {
@@ -84,7 +84,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     
     // Room Database
-    val roomVersion = "2.6.1"
+    val roomVersion = "2.7.2"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
@@ -94,8 +94,8 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     
     // Hilt Dependency Injection
-    implementation("com.google.dagger:hilt-android:2.51.1")
-    ksp("com.google.dagger:hilt-android-compiler:2.51.1")
+    implementation("com.google.dagger:hilt-android:2.57")
+    ksp("com.google.dagger:hilt-android-compiler:2.57")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
     
     // Material Components (XML) - Required for Theme.ExpenseTracker parent
@@ -115,6 +115,7 @@ dependencies {
 
     // ML Kit Text Recognition
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta1")
 
     // PDF Processing - Direct text extraction for bank statements
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
@@ -136,7 +137,7 @@ dependencies {
     // WorkManager — background geocoding backfill worker
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("androidx.hilt:hilt-work:1.2.0")
-    ksp("androidx.hilt:hilt-compiler:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.3.0")
 
     // DataStore — AI settings persistence
     implementation("androidx.datastore:datastore-preferences:1.1.1")
@@ -153,8 +154,8 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("org.json:json:20231013")
     // Hilt Testing
-    testImplementation("com.google.dagger:hilt-android-testing:2.51.1")
-    kspTest("com.google.dagger:hilt-android-compiler:2.51.1")
+    testImplementation("com.google.dagger:hilt-android-testing:2.57")
+    kspTest("com.google.dagger:hilt-android-compiler:2.57")
     // Robolectric
     testImplementation("org.robolectric:robolectric:4.11.1")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
@@ -168,7 +169,7 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
-    androidTestImplementation("androidx.room:room-testing:2.6.1")
+    androidTestImplementation("androidx.room:room-testing:$roomVersion")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     androidTestImplementation("io.mockk:mockk-android:1.13.8")
     // WorkManager testing

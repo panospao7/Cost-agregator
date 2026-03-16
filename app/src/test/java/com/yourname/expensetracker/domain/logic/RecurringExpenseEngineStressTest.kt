@@ -509,13 +509,13 @@ class RecurringExpenseEngineStressTest {
     }
     
     private fun checkMerchantConsistency(transactions: List<Transaction>): Boolean {
-        val merchants = transactions.map { it.merchant.toLowerCase() }.distinct()
+        val merchants = transactions.map { it.merchant.lowercase() }.distinct()
         return merchants.size == 1
     }
     
     private fun checkMerchantSimilarity(transactions: List<Transaction>): Boolean {
         val normalized = transactions.map { 
-            it.merchant.toLowerCase().replace(".com", "").replace("www.", "")
+            it.merchant.lowercase().replace(".com", "").replace("www.", "")
         }
         val distinct = normalized.distinct()
         return distinct.size <= transactions.size / 2

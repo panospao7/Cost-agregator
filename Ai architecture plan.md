@@ -3797,6 +3797,50 @@ Done when:
 
 - categorization assist can produce real local output on supported devices
 
+Current blocker discovered during implementation:
+
+- the official ML Kit GenAI Prompt dependency currently requires a newer Kotlin metadata/toolchain than this repository uses today
+- in practice, `com.google.mlkit:genai-prompt:1.0.0-beta1` fails to compile against the current project Kotlin setup
+- because of that, a safe real Nano provider should not be merged until the toolchain compatibility issue is handled explicitly
+
+Recommended prerequisite slice before real Nano provider wiring:
+
+### Nano PR 1.5: Kotlin / toolchain compatibility upgrade
+
+Status: DONE (in working tree, not yet committed)
+
+Completed:
+
+- Kotlin 2.0.21 → 2.2.21
+- AGP 8.7.2 → 8.10.1
+- Gradle 8.9 → 8.11.1
+- KSP 2.0.21-1.0.27 → 2.2.21-2.0.5
+- Room 2.6.1 → 2.7.2
+- Hilt 2.51.1 → 2.57
+- ML Kit genai-prompt:1.0.0-beta1 dependency added
+- Fixed Kotlin 2.2 test regressions (toLowerCase → lowercase)
+- Compile and router tests pass
+
+### Nano PR 2: First real Nano provider
+
+Status: DONE (in working tree, not yet committed)
+
+Completed:
+
+- Created `OnDeviceCategorizationAssistService` using ML Kit GenAI Prompt API
+  - Uses `Generation.getClient()` to obtain a `GenerativeModel`
+  - Builds concise on-device categorization prompt via `GenerateContentRequest.Builder`
+  - Parses JSON response with graceful fallback for markdown fences / leading text
+  - Handles `GenAiException` and returns null on failure
+- Updated `HybridCategorizationAssistService` to route `ON_DEVICE` → `OnDeviceCategorizationAssistService`
+- Updated `DefaultAiEnvironmentMonitor` with real ML Kit status query:
+  - `refreshOnDeviceStatus()` suspend function queries `GenerativeModel.checkStatus()`
+  - Maps `FeatureStatus` (AVAILABLE/DOWNLOADABLE/DOWNLOADING/UNAVAILABLE) to `OnDeviceModelStatus`
+  - Caches result atomically for synchronous `getOnDeviceModelStatus()` reads
+- Added `AppConfig.Ai` constants for on-device categorization (temperature, max tokens, provider/model names)
+- Created comprehensive `OnDeviceCategorizationAssistServiceTest` (16 tests: prompt building + response parsing)
+- All tests pass, compile succeeds
+
 ### Nano PR 3: Routing validation and UX hardening
 
 In scope:

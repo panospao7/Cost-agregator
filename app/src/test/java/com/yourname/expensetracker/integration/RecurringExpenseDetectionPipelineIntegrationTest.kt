@@ -120,7 +120,7 @@ class RecurringExpenseDetectionPipelineIntegrationTest {
         )
         
         // Check if all contain "netflix" (case insensitive)
-        val normalized = transactions.map { it.toLowerCase() }
+        val normalized = transactions.map { it.lowercase() }
         val allSimilar = normalized.all { it.contains("netflix") }
         
         assertTrue("Should detect similar merchant names", allSimilar)

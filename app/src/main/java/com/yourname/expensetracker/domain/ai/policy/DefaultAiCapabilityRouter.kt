@@ -152,6 +152,8 @@ class DefaultAiCapabilityRouter @Inject constructor(
         return when (environmentMonitor.getOnDeviceModelStatus(capability)) {
             OnDeviceModelStatus.AVAILABLE -> "On-device model is available."
             OnDeviceModelStatus.NOT_INSTALLED -> "On-device model is not installed on this device."
+            OnDeviceModelStatus.DOWNLOADING -> "On-device model is still downloading."
+            OnDeviceModelStatus.UNAVAILABLE -> "On-device model is currently unavailable on this device."
             OnDeviceModelStatus.UNSUPPORTED_DEVICE -> "This device does not support the on-device model."
             OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION -> "This Android version does not support the on-device model."
             OnDeviceModelStatus.DISABLED_BY_POLICY -> "On-device model is disabled by policy."
