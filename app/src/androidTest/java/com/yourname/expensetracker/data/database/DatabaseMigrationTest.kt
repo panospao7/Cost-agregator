@@ -345,7 +345,12 @@ class DatabaseMigrationTest {
         db.close()
 
         // Run migration to 34 and validate schema
-        db = helper.runMigrationsAndValidate(testDb, 34, true)
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            34,
+            true,
+            AppDatabase.MIGRATION_33_34
+        )
 
         // Table must exist
         val tableCursor = db.query(
@@ -395,7 +400,12 @@ class DatabaseMigrationTest {
         assumeTrue(hasSchema(1) && hasSchema(34))
         var db = helper.createDatabase(testDb, 1)
         db.close()
-        db = helper.runMigrationsAndValidate(testDb, 34, true)
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            34,
+            true,
+            AppDatabase.MIGRATION_33_34
+        )
         // Basic smoke check — ai_artifacts table should exist at the end
         val cursor = db.query(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_artifacts'"
@@ -413,7 +423,12 @@ class DatabaseMigrationTest {
         var db = helper.createDatabase(testDb, 34)
         db.close()
 
-        db = helper.runMigrationsAndValidate(testDb, 35, true)
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            35,
+            true,
+            AppDatabase.MIGRATION_34_35
+        )
 
         val sessionTable = db.query(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_chat_sessions'"
