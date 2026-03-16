@@ -331,6 +331,59 @@ class ReviewViewModelStressTest {
     }
 
     @Test
+    fun `stress - loadAiExplanation surfaces on-device diagnostics when artifact is local`() = runTest {
+        val enabledSettings = AiSettings(
+            aiEnabled = true,
+            reviewExplanationEnabled = true
+        )
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings)
+
+        val fakeArtifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetKey = "pending_review:11",
+            capability = AiCapability.REVIEW_EXPLANATION,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.ON_DEVICE,
+            provider = "mlkit-genai-nano",
+            modelName = "gemini-nano-review",
+            promptVersion = "1",
+            sourceHash = "testhash",
+            summaryText = "Explanation headline",
+            explanationText = "Explanation body",
+            createdAt = 0L,
+            updatedAt = 0L,
+            expiresAt = Long.MAX_VALUE
+        )
+        coEvery { reviewQueueRepository.getReviewById(11L) } returns mockk(relaxed = true)
+        coEvery { explainPendingReviewUseCase(any()) } returns Unit
+        coEvery { aiArtifactRepository.getLatest("pending_review:11", AiCapability.REVIEW_EXPLANATION) } returns fakeArtifact
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository
+        )
+
+        viewModel.loadAiExplanation(reviewId = 11L)
+        advanceUntilIdle()
+
+        val state = viewModel.aiExplanationStates.value[11L]
+        assertNotNull(state)
+        assertTrue(state is AiLoadState.Ready)
+        val ready = state as AiLoadState.Ready<ReviewExplanationUi>
+        assertEquals("On-device - mlkit-genai-nano - gemini-nano-review", ready.value.diagnostics)
+    }
+
+    @Test
     fun `stress - loadAiExplanation sets Error when review not found`() = runTest {
         val enabledSettings = AiSettings(
             aiEnabled = true,
@@ -543,9 +596,9 @@ class ReviewViewModelStressTest {
             targetKey = "pending_review:61",
             capability = AiCapability.DEDUPE_JUDGE,
             status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
-            mode = com.yourname.expensetracker.domain.ai.model.AiMode.CLOUD,
-            provider = "google-ai-studio",
-            modelName = "gemini-2.5-flash",
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.ON_DEVICE,
+            provider = "mlkit-genai-nano",
+            modelName = "gemini-nano-dedupe",
             promptVersion = "v1",
             sourceHash = "hash",
             createdAt = 0L,
@@ -574,7 +627,7 @@ class ReviewViewModelStressTest {
         val state = viewModel.reviewCaptureAssistStates.value[61L]?.dedupeSuggestion
         assertTrue(state is AiLoadState.Ready)
         assertEquals(
-            "Cloud - google-ai-studio - gemini-2.5-flash",
+            "On-device - mlkit-genai-nano - gemini-nano-dedupe",
             viewModel.reviewCaptureAssistStates.value[61L]?.dedupeDiagnostics
         )
     }

@@ -16,6 +16,7 @@ class HybridReviewExplanationService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val router: AiCapabilityRouter,
     private val cloudReviewExplanationService: CloudReviewExplanationService,
+    private val onDeviceReviewExplanationService: OnDeviceReviewExplanationService,
     private val noOpReviewExplanationService: NoOpReviewExplanationService
 ) : ReviewExplanationService {
 
@@ -23,7 +24,7 @@ class HybridReviewExplanationService @Inject constructor(
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.REVIEW_EXPLANATION, settings).route) {
             AiRoute.CLOUD -> cloudReviewExplanationService.generate(input)
-            AiRoute.ON_DEVICE,
+            AiRoute.ON_DEVICE -> onDeviceReviewExplanationService.generate(input)
             AiRoute.DETERMINISTIC_FALLBACK,
             AiRoute.DISABLED -> noOpReviewExplanationService.generate(input)
         }

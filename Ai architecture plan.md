@@ -3881,6 +3881,46 @@ Completed:
   - receipt UI diagnostics for local artifacts
 - Verified compile and focused unit suites for the Nano receipt path
 
+### Nano PR 5: Third Nano capability
+
+Status: DONE (committed)
+
+Completed:
+
+- Added `OnDeviceReviewExplanationService` using ML Kit GenAI Prompt API
+  - Builds a short cautious review-explanation prompt
+  - Parses `headline` / `body` / `caution` JSON safely
+  - Handles `GenAiException` and malformed output gracefully
+- Updated `HybridReviewExplanationService` to delegate `ON_DEVICE` review routing to the new local provider
+- Enabled `REVIEW_EXPLANATION` as a shipped on-device capability in the router
+- Added on-device review config constants in `AppConfig.Ai`
+- Added focused tests for:
+  - on-device review explanation prompt and parsing behavior
+  - review routing to `ON_DEVICE`
+  - review artifact metadata persistence for local routing
+  - review UI diagnostics for local artifacts
+- Verified compile and focused unit suites for the Nano review path
+
+### Nano PR 6: Fourth Nano capability
+
+Status: DONE (in working tree, ready to commit)
+
+Completed:
+
+- Added `OnDeviceDedupeJudgeService` using ML Kit GenAI Prompt API
+  - Builds a bounded duplicate-judging prompt from subject and candidate set
+  - Parses `verdict` / `matchedTargetType` / `matchedTargetId` / `confidence` / `rationale` JSON safely
+  - Handles `GenAiException` and malformed output gracefully
+- Updated `HybridDedupeJudgeService` to delegate `ON_DEVICE` dedupe routing to the new local provider
+- Enabled `DEDUPE_JUDGE` as a shipped on-device capability in the router
+- Added on-device dedupe config constants in `AppConfig.Ai`
+- Added focused tests for:
+  - on-device dedupe prompt and parsing behavior
+  - dedupe routing to `ON_DEVICE`
+  - dedupe artifact metadata persistence for local routing
+  - review UI diagnostics for local dedupe artifacts
+- Verified compile and focused unit suites for the Nano dedupe path
+
 ## Recommended Next Slice From Here
 
 The best immediate next implementation slice is:

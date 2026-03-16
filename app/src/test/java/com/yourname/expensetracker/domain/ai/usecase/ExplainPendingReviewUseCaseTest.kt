@@ -263,6 +263,34 @@ class ExplainPendingReviewUseCaseTest {
         assertEquals("gemini-2.5-flash", running.modelName)
     }
 
+    @Test
+    fun `invoke stores ON_DEVICE route metadata when local review provider succeeds`() = runTest {
+        val review = makePendingReview()
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.REVIEW_EXPLANATION, any())
+        } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "local model available",
+            providerName = AppConfig.Ai.ON_DEVICE_PROVIDER_NAME,
+            modelName = AppConfig.Ai.ON_DEVICE_REVIEW_MODEL
+        )
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { reviewExplanationService.generate(any()) } returns ReviewExplanation("H", "B")
+        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        useCase(review)
+
+        val running = captured.first()
+        val ready = captured.last()
+        assertEquals(AiMode.ON_DEVICE, running.mode)
+        assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, running.provider)
+        assertEquals(AppConfig.Ai.ON_DEVICE_REVIEW_MODEL, running.modelName)
+        assertTrue(ready.explanationText?.contains("Route: ON_DEVICE") == true)
+    }
+
     // ── provider throws ───────────────────────────────────────────────────────
 
     @Test

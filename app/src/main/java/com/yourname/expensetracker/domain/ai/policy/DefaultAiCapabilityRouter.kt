@@ -250,11 +250,11 @@ class DefaultAiCapabilityRouter @Inject constructor(
 
     private fun AiCapability.defaultOnDeviceModelName(): String = when (this) {
         AiCapability.DASHBOARD_BRIEFING -> "gemini-nano-briefing"
-        AiCapability.REVIEW_EXPLANATION -> "gemini-nano-review"
+        AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.ON_DEVICE_REVIEW_MODEL
         AiCapability.QUERY_INTERPRETATION -> "gemini-nano-query"
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL
-        AiCapability.DEDUPE_JUDGE -> "gemini-nano-dedupe"
+        AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL
         AiCapability.LOCATION_SUMMARY -> "gemini-nano-location"
     }
 
@@ -266,8 +266,10 @@ class DefaultAiCapabilityRouter @Inject constructor(
         )
 
         val ON_DEVICE_IMPLEMENTED_CAPABILITIES = setOf(
+            AiCapability.REVIEW_EXPLANATION,
             AiCapability.RECEIPT_EXTRACTION,
-            AiCapability.CATEGORIZATION_FALLBACK
+            AiCapability.CATEGORIZATION_FALLBACK,
+            AiCapability.DEDUPE_JUDGE
         )
     }
 }
