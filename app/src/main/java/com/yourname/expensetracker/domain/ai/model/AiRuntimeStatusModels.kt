@@ -3,7 +3,8 @@ package com.yourname.expensetracker.domain.ai.model
 data class AiCapabilityRuntimeStatus(
     val capability: AiCapability,
     val status: OnDeviceModelStatus,
-    val message: String?
+    val message: String?,
+    val actionLabel: String?
 )
 
 data class AiRuntimeStatusSummary(

@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
+import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -23,8 +26,16 @@ class DebugViewModel @Inject constructor(
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val notificationSeeder: com.yourname.expensetracker.domain.debug.NotificationSeeder,
     private val timeProvider: TimeProvider,
-    private val diagnostics: com.yourname.expensetracker.domain.debug.ServiceDiagnostics
+    private val diagnostics: com.yourname.expensetracker.domain.debug.ServiceDiagnostics,
+    private val aiEnvironmentMonitor: AiEnvironmentMonitor
 ) : ViewModel() {
+
+    private val _aiRuntimeStatuses = MutableStateFlow<Map<AiCapability, OnDeviceModelStatus>>(emptyMap())
+    val aiRuntimeStatuses: StateFlow<Map<AiCapability, OnDeviceModelStatus>> = _aiRuntimeStatuses
+
+    init {
+        refreshAiRuntimeStatuses()
+    }
     
     val notifications: StateFlow<List<RawNotification>> = repository
         .getRecentNotifications(200)
@@ -203,6 +214,17 @@ class DebugViewModel @Inject constructor(
             context.startForegroundService(intent)
         } else {
             context.startService(intent)
+        }
+    }
+
+    fun refreshAiRuntimeStatuses() {
+        viewModelScope.launch {
+            val statuses = buildMap {
+                AiCapability.entries.forEach { capability ->
+                    put(capability, aiEnvironmentMonitor.getOnDeviceModelStatus(capability))
+                }
+            }
+            _aiRuntimeStatuses.value = statuses
         }
     }
 }

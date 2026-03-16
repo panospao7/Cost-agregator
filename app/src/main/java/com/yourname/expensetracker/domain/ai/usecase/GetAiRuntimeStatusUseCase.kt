@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.ai.usecase
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import javax.inject.Inject
@@ -19,7 +20,8 @@ class GetAiRuntimeStatusUseCase @Inject constructor(
             AiCapabilityRuntimeStatus(
                 capability = capability,
                 status = status,
-                message = status.toRuntimeStatusMessage(capability.runtimeLabel())
+                message = status.toRuntimeStatusMessage(capability.runtimeLabel()),
+                actionLabel = status.actionLabel()
             )
         }
 
@@ -32,6 +34,17 @@ class GetAiRuntimeStatusUseCase @Inject constructor(
             highestPriorityMessage = highestPriorityMessage
         )
     }
+}
+
+private fun OnDeviceModelStatus.actionLabel(): String? = when (this) {
+    OnDeviceModelStatus.AVAILABLE -> null
+    OnDeviceModelStatus.NOT_INSTALLED -> "Install required"
+    OnDeviceModelStatus.DOWNLOADING -> "Wait for download"
+    OnDeviceModelStatus.UNAVAILABLE -> "Try again later"
+    OnDeviceModelStatus.UNSUPPORTED_DEVICE -> "Unsupported device"
+    OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION -> "Update Android"
+    OnDeviceModelStatus.DISABLED_BY_POLICY -> "Enable on-device AI"
+    OnDeviceModelStatus.UNKNOWN -> "Refresh status"
 }
 
 private fun AiCapability.runtimeLabel(): String = when (this) {

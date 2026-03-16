@@ -8,6 +8,9 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
+import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.debug.NotificationSeeder
 import com.yourname.expensetracker.domain.debug.ServiceDiagnostics
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
@@ -39,6 +42,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
     private lateinit var notificationSeeder: NotificationSeeder
     private lateinit var timeProvider: TimeProvider
     private lateinit var diagnostics: ServiceDiagnostics
+    private lateinit var aiEnvironmentMonitor: AiEnvironmentMonitor
     private lateinit var viewModel: DebugViewModel
 
     @Before
@@ -53,6 +57,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         notificationSeeder = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
         diagnostics = mockk(relaxed = true)
+        aiEnvironmentMonitor = mockk(relaxed = true)
 
         val now = 1_700_000_000_000L
         val sampleNotification = RawNotification(
@@ -74,6 +79,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         every { expenseRepository.getTotalSpent() } returns flowOf(42.5)
         every { diagnostics.getStats() } returns ServiceDiagnostics.Stats(1, 0, 0, now, 0)
         every { timeProvider.now() } returns now
+        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.AVAILABLE
 
         viewModel = DebugViewModel(
             repository = repository,
@@ -83,8 +89,17 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             categoryRepository = categoryRepository,
             notificationSeeder = notificationSeeder,
             timeProvider = timeProvider,
-            diagnostics = diagnostics
+            diagnostics = diagnostics,
+            aiEnvironmentMonitor = aiEnvironmentMonitor
         )
+    }
+
+    @Test
+    fun `stress - AI runtime statuses load for all capabilities`() = runTest(testDispatcher) {
+        advanceUntilIdle()
+
+        assertEquals(AiCapability.entries.size, viewModel.aiRuntimeStatuses.value.size)
+        assertEquals(OnDeviceModelStatus.AVAILABLE, viewModel.aiRuntimeStatuses.value[AiCapability.QUERY_INTERPRETATION])
     }
 
     @Test

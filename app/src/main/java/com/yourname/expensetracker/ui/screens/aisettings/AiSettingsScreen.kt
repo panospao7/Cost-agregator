@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiMode
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -106,16 +107,51 @@ fun AiSettingsScreen(
 
             item {
                 SettingsSection(
-                    title = "Capabilities",
-                    description = "Turn specific AI features on or off without affecting deterministic app logic."
+                    title = "Capability Matrix",
+                    description = "See feature enablement and on-device readiness together for each AI capability."
                 ) {
-                    ToggleRow("Assistant", settings.assistantEnabled, viewModel::setAssistantEnabled)
-                    ToggleRow("Query interpretation", settings.queryInterpretationEnabled, viewModel::setQueryInterpretationEnabled)
-                    ToggleRow("Dashboard briefing", settings.dashboardBriefingEnabled, viewModel::setDashboardBriefingEnabled)
-                    ToggleRow("Review explanation", settings.reviewExplanationEnabled, viewModel::setReviewExplanationEnabled)
-                    ToggleRow("Receipt assist", settings.receiptAssistEnabled, viewModel::setReceiptAssistEnabled)
-                    ToggleRow("Categorization fallback", settings.categorizationFallbackEnabled, viewModel::setCategorizationFallbackEnabled)
-                    ToggleRow("Duplicate detection", settings.dedupeJudgeEnabled, viewModel::setDedupeJudgeEnabled)
+                    CapabilityMatrixRow(
+                        label = "Assistant",
+                        enabled = settings.assistantEnabled,
+                        onEnabledChange = viewModel::setAssistantEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.QUERY_INTERPRETATION }
+                    )
+                    CapabilityMatrixRow(
+                        label = "Query interpretation",
+                        enabled = settings.queryInterpretationEnabled,
+                        onEnabledChange = viewModel::setQueryInterpretationEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.QUERY_INTERPRETATION }
+                    )
+                    CapabilityMatrixRow(
+                        label = "Dashboard briefing",
+                        enabled = settings.dashboardBriefingEnabled,
+                        onEnabledChange = viewModel::setDashboardBriefingEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DASHBOARD_BRIEFING }
+                    )
+                    CapabilityMatrixRow(
+                        label = "Review explanation",
+                        enabled = settings.reviewExplanationEnabled,
+                        onEnabledChange = viewModel::setReviewExplanationEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.REVIEW_EXPLANATION }
+                    )
+                    CapabilityMatrixRow(
+                        label = "Receipt assist",
+                        enabled = settings.receiptAssistEnabled,
+                        onEnabledChange = viewModel::setReceiptAssistEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_EXTRACTION }
+                    )
+                    CapabilityMatrixRow(
+                        label = "Categorization fallback",
+                        enabled = settings.categorizationFallbackEnabled,
+                        onEnabledChange = viewModel::setCategorizationFallbackEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.CATEGORIZATION_FALLBACK }
+                    )
+                    CapabilityMatrixRow(
+                        label = "Duplicate detection",
+                        enabled = settings.dedupeJudgeEnabled,
+                        onEnabledChange = viewModel::setDedupeJudgeEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DEDUPE_JUDGE }
+                    )
                 }
             }
 
@@ -135,6 +171,8 @@ fun AiSettingsScreen(
                     title = "Runtime Status",
                     description = "See whether on-device AI is ready, downloading, or unavailable per capability."
                 ) {
+                    RuntimeGuidanceCard(uiState.runtimeSummary.highestPriorityMessage)
+
                     uiState.runtimeSummary.highestPriorityMessage?.let {
                         ElevatedCard {
                             Text(
@@ -151,7 +189,18 @@ fun AiSettingsScreen(
                         ListItem(
                             headlineContent = { Text(runtime.capability.label()) },
                             overlineContent = { RuntimeBadge(runtime.message == null) },
-                            supportingContent = { Text(runtime.message ?: "Ready") }
+                            supportingContent = {
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(runtime.message ?: "Ready")
+                                    runtime.actionLabel?.let {
+                                        Text(
+                                            text = it,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
                         )
                         HorizontalDivider()
                     }
@@ -195,6 +244,58 @@ private fun ToggleRow(
 }
 
 @Composable
+private fun CapabilityMatrixRow(
+    label: String,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    runtime: AiCapabilityRuntimeStatus?
+) {
+    ElevatedCard {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(label, style = MaterialTheme.typography.bodyLarge)
+                    runtime?.let {
+                        RuntimeBadge(it.message == null)
+                    }
+                }
+                Switch(checked = enabled, onCheckedChange = onEnabledChange)
+            }
+
+            val runtimeText = when {
+                !enabled -> "Disabled in settings"
+                runtime == null -> "Runtime status not loaded"
+                runtime.message == null -> "Ready"
+                else -> runtime.message
+            }
+
+            Text(
+                text = runtimeText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (enabled && runtime?.actionLabel != null) {
+                Text(
+                    text = runtime.actionLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun RuntimeBadge(isReady: Boolean) {
     Surface(
         color = if (isReady) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.tertiaryContainer,
@@ -206,6 +307,24 @@ private fun RuntimeBadge(isReady: Boolean) {
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
     }
+}
+
+@Composable
+private fun RuntimeGuidanceCard(highestPriorityMessage: String?) {
+    ElevatedCard {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("What to do next", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = highestPriorityMessage ?: "If a capability is marked Ready, on-device AI can be used immediately when allowed by settings and routing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+    Spacer(modifier = Modifier.height(8.dp))
 }
 
 private fun AiMode.displayLabel(): String = when (this) {

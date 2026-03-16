@@ -3958,3 +3958,53 @@ The immediate planning/documentation step should be:
 - collect evidence needed before any Phase 4 planning opens
 
 Phase 4 should remain gated until the advisory/runtime rollout has been validated end to end.
+
+## Manual QA Matrix For Runtime Rollout
+
+Use this matrix before any broader rollout or any Phase 4 planning.
+
+### Device / runtime states to verify
+
+- Android 14+ with on-device model available
+- Android 14+ with model not installed
+- Android 14+ with model downloading
+- Android 14+ with runtime unavailable / transient failure
+- Android version below 14
+- device class that does not support on-device runtime
+
+### Capabilities to verify
+
+- dashboard briefing
+- query interpretation
+- review explanation
+- receipt assist
+- categorization fallback
+- dedupe judge
+
+### For each capability, verify
+
+- `AUTO` mode chooses on-device when available
+- `AUTO` mode falls back cleanly when on-device is unavailable
+- `ON_DEVICE` mode shows a clear unavailable reason instead of failing silently
+- artifacts record correct `mode` / `provider` / `modelName`
+- runtime status surfaces show correct message and badge
+- deterministic UX still works when AI is unavailable
+
+### User-facing surfaces to verify
+
+- AI settings screen runtime section
+- assistant runtime banner
+- dashboard briefing runtime message
+- review explanation diagnostics
+- receipt assist diagnostics
+- category assist diagnostics
+- dedupe assist diagnostics
+
+### Evidence checklist before broader rollout
+
+- no blocking crashes across runtime states
+- no misleading "Ready" state when on-device is actually unavailable
+- no AI path blocks approval, save, or manual edit flows
+- local latency is acceptable on at least one representative supported device
+- unsupported / not-installed / downloading states are understandable to testers
+- kill switches and settings toggles remain effective per capability

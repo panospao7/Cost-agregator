@@ -23,6 +23,7 @@ class GetAiRuntimeStatusUseCaseTest {
 
         assertEquals(2, result.capabilities.size)
         assertNull(result.highestPriorityMessage)
+        assertEquals(null, result.capabilities.first().actionLabel)
     }
 
     @Test
@@ -36,5 +37,6 @@ class GetAiRuntimeStatusUseCaseTest {
             "On-device AI is available but the model is not installed yet.",
             result.highestPriorityMessage
         )
+        assertEquals("Install required", result.capabilities.first().actionLabel)
     }
 }

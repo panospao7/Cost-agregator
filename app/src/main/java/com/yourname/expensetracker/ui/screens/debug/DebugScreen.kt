@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.*
@@ -43,6 +44,7 @@ fun DebugScreen(
     val count by viewModel.notificationCount.collectAsState()
     val packages by viewModel.packages.collectAsState()
     val selectedFilter by viewModel.selectedPackageFilter.collectAsState()
+    val aiRuntimeStatuses by viewModel.aiRuntimeStatuses.collectAsState()
     
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
     var diagnosticsStats by remember { mutableStateOf(viewModel.getServiceDiagnostics()) }
@@ -192,6 +194,61 @@ fun DebugScreen(
                                         Color(0xFFF44336) else Color.Unspecified
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            // 1.6 AI Runtime Diagnostics
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "🤖 AI Runtime Diagnostics",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            TextButton(onClick = viewModel::refreshAiRuntimeStatuses) {
+                                Text("Refresh")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        aiRuntimeStatuses.forEach { (capability, status) ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(capability.name, style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    text = status.name,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = when (status) {
+                                        OnDeviceModelStatus.AVAILABLE -> Color(0xFF4CAF50)
+                                        OnDeviceModelStatus.DOWNLOADING -> Color(0xFFFFC107)
+                                        OnDeviceModelStatus.NOT_INSTALLED,
+                                        OnDeviceModelStatus.UNAVAILABLE,
+                                        OnDeviceModelStatus.UNSUPPORTED_DEVICE,
+                                        OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION,
+                                        OnDeviceModelStatus.DISABLED_BY_POLICY,
+                                        OnDeviceModelStatus.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
                         }
                     }
                 }
