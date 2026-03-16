@@ -12,9 +12,9 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.service.AiChatRepository
-import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCase
+import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
@@ -39,7 +39,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
 
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiChatRepository: AiChatRepository
-    private lateinit var aiEnvironmentMonitor: AiEnvironmentMonitor
+    private lateinit var getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase
     private lateinit var interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase
     private lateinit var executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase
     private lateinit var mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase
@@ -50,7 +50,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         super.setup()
         aiSettingsRepository = mockk(relaxed = true)
         aiChatRepository = mockk(relaxed = true)
-        aiEnvironmentMonitor = mockk(relaxed = true)
+        getAiRuntimeStatusUseCase = mockk(relaxed = true)
         interpretFinancialQueryUseCase = mockk(relaxed = true)
         executeFinancialQueryUseCase = mockk(relaxed = true)
         mapFinancialQueryToNavigationUseCase = mockk(relaxed = true)
@@ -63,12 +63,12 @@ class AssistantViewModelTest : ViewModelTestUtils() {
                 storeConversationHistory = false
             )
         )
-        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION) } returns OnDeviceModelStatus.AVAILABLE
+        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(emptyList(), null)
 
         viewModel = AssistantViewModel(
             aiSettingsRepository,
             aiChatRepository,
-            aiEnvironmentMonitor,
+            getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase
@@ -84,7 +84,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         viewModel = AssistantViewModel(
             aiSettingsRepository,
             aiChatRepository,
-            aiEnvironmentMonitor,
+            getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase
@@ -98,12 +98,15 @@ class AssistantViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `uiState shows runtime status when on-device model not installed`() = runTest(testDispatcher) {
-        coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION) } returns OnDeviceModelStatus.NOT_INSTALLED
+        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(
+            emptyList(),
+            "On-device AI is available but the model is not installed yet."
+        )
 
         viewModel = AssistantViewModel(
             aiSettingsRepository,
             aiChatRepository,
-            aiEnvironmentMonitor,
+            getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase
@@ -213,7 +216,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         viewModel = AssistantViewModel(
             aiSettingsRepository,
             aiChatRepository,
-            aiEnvironmentMonitor,
+            getAiRuntimeStatusUseCase,
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase

@@ -7,13 +7,11 @@ import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
-import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
-import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiChatRepository
-import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCase
+import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
@@ -72,7 +70,7 @@ sealed interface AssistantNavigationEvent {
 class AssistantViewModel @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiChatRepository: AiChatRepository,
-    private val aiEnvironmentMonitor: AiEnvironmentMonitor,
+    private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
     private val interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase,
     private val executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase,
     private val mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase
@@ -338,8 +336,8 @@ class AssistantViewModel @Inject constructor(
             return "On-device AI is disabled in settings."
         }
 
-        return aiEnvironmentMonitor
-            .getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION)
-            .toRuntimeStatusMessage(capabilityLabel = "AI")
+        return getAiRuntimeStatusUseCase(
+            capabilities = listOf(AiCapability.QUERY_INTERPRETATION)
+        ).highestPriorityMessage
     }
 }

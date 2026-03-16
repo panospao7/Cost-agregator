@@ -54,6 +54,7 @@ fun HomeScreen(
     val categories by viewModel.categories.collectAsState()
 
     var showQuickSettings by remember { mutableStateOf(false) }
+    var showAiSettings by remember { mutableStateOf(false) }
     var showCategories by remember { mutableStateOf(false) }
     var showDebug by remember { mutableStateOf(false) }
     var showAddPlannedExpenseDialog by remember { mutableStateOf(false) }
@@ -413,6 +414,10 @@ fun HomeScreen(
         if (showQuickSettings) {
             QuickSettingsDialog(
                 onDismiss = { showQuickSettings = false },
+                onNavigateToAiSettings = {
+                    showQuickSettings = false
+                    showAiSettings = true
+                },
                 onNavigateToCategories = { 
                     showQuickSettings = false
                     showCategories = true 
@@ -421,6 +426,12 @@ fun HomeScreen(
                     showQuickSettings = false
                     showDebug = true
                 }
+            )
+        }
+
+        if (showAiSettings) {
+            com.yourname.expensetracker.ui.screens.aisettings.AiSettingsScreen(
+                onDismiss = { showAiSettings = false }
             )
         }
 
@@ -499,6 +510,7 @@ private fun isFullSpan(widget: DashboardWidget): Boolean = when (widget) {
 @Composable
 fun QuickSettingsDialog(
     onDismiss: () -> Unit,
+    onNavigateToAiSettings: () -> Unit,
     onNavigateToCategories: () -> Unit,
     onNavigateToDebug: () -> Unit
 ) {
@@ -507,6 +519,11 @@ fun QuickSettingsDialog(
         title = { Text("Quick Settings") },
         text = {
             Column {
+                ListItem(
+                    headlineContent = { Text("AI Settings") },
+                    leadingContent = { Text("✨") },
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onNavigateToAiSettings() }
+                )
                 ListItem(
                     headlineContent = { Text("Categories") },
                     leadingContent = { Text("🏷️") },
