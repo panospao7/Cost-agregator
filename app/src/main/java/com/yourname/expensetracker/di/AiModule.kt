@@ -7,7 +7,9 @@ import com.yourname.expensetracker.data.database.dao.AiChatSessionDao
 import com.yourname.expensetracker.data.ai.provider.CloudReviewExplanationService
 import com.yourname.expensetracker.data.ai.provider.CloudReceiptAssistService
 import com.yourname.expensetracker.data.ai.provider.NoOpDashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.CloudCategorizationAssistService
 import com.yourname.expensetracker.data.ai.provider.DefaultAiEnvironmentMonitor
+import com.yourname.expensetracker.data.ai.provider.HybridCategorizationAssistService
 import com.yourname.expensetracker.data.ai.provider.HybridReceiptAssistService
 import com.yourname.expensetracker.data.ai.provider.HybridReviewExplanationService
 import com.yourname.expensetracker.data.ai.provider.NoOpCategorizationAssistService
@@ -111,7 +113,7 @@ abstract class AiModule {
     @Binds
     @Singleton
     abstract fun bindCategorizationAssistService(
-        impl: NoOpCategorizationAssistService
+        impl: HybridCategorizationAssistService
     ): CategorizationAssistService
 
     @Binds

@@ -5,10 +5,12 @@ import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
@@ -23,6 +25,7 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val categorizationAssistService: CategorizationAssistService,
+    private val aiCapabilityRouter: AiCapabilityRouter,
     private val inputBuilder: CategorizationAssistInputBuilder,
     private val categoryRepository: CategoryRepository,
     private val timeProvider: TimeProvider
@@ -44,6 +47,10 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
         }
 
         val input = inputBuilder.build(item, settings)
+        val routeDecision = aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, settings)
+        if (routeDecision.route == AiRoute.DISABLED) {
+            return CategoryAssistGenerationResult.Disabled(routeDecision.reason)
+        }
         val targetKey = "pending_review:${item.review.id}"
         val now = timeProvider.now()
         val sourceHash = input.hashCode().toString()
@@ -67,7 +74,14 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
             targetKey = targetKey,
             capability = AiCapability.CATEGORIZATION_FALLBACK,
             status = AiArtifactStatus.RUNNING,
-            mode = AiMode.AUTO,
+            mode = when (routeDecision.route) {
+                AiRoute.ON_DEVICE -> AiMode.ON_DEVICE
+                AiRoute.CLOUD -> AiMode.CLOUD
+                AiRoute.DETERMINISTIC_FALLBACK,
+                AiRoute.DISABLED -> AiMode.AUTO
+            },
+            provider = routeDecision.providerName,
+            modelName = routeDecision.modelName,
             promptVersion = AppConfig.Ai.PROMPT_VERSION_CATEGORIZATION,
             sourceHash = sourceHash,
             createdAt = now,
@@ -83,7 +97,7 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
                 aiArtifactRepository.upsert(
                     baseEntity.copy(
                         status = AiArtifactStatus.FAILED,
-                        errorMessage = "AI category assist returned no supported category.",
+                        errorMessage = routeDecision.reason,
                         updatedAt = timeProvider.now()
                     )
                 )

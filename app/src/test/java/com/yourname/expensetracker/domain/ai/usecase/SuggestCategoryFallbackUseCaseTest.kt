@@ -7,6 +7,8 @@ import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
@@ -14,6 +16,7 @@ import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResul
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
@@ -34,6 +37,7 @@ class SuggestCategoryFallbackUseCaseTest {
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var categorizationAssistService: CategorizationAssistService
+    private lateinit var aiCapabilityRouter: AiCapabilityRouter
     private lateinit var inputBuilder: CategorizationAssistInputBuilder
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var timeProvider: FakeTimeProvider
@@ -44,6 +48,7 @@ class SuggestCategoryFallbackUseCaseTest {
         aiSettingsRepository = mockk()
         aiArtifactRepository = mockk(relaxed = true)
         categorizationAssistService = mockk()
+        aiCapabilityRouter = mockk()
         inputBuilder = mockk()
         categoryRepository = mockk()
         timeProvider = FakeTimeProvider(1_000L)
@@ -52,9 +57,18 @@ class SuggestCategoryFallbackUseCaseTest {
             aiSettingsRepository,
             aiArtifactRepository,
             categorizationAssistService,
+            aiCapabilityRouter,
             inputBuilder,
             categoryRepository,
             timeProvider
+        )
+        every {
+            aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, any())
+        } returns AiRouteDecision(
+            route = AiRoute.CLOUD,
+            reason = "cloud allowed",
+            providerName = AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_PROVIDER,
+            modelName = AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL
         )
     }
 
@@ -89,6 +103,9 @@ class SuggestCategoryFallbackUseCaseTest {
         assertTrue(result is CategoryAssistGenerationResult.Success)
         assertEquals(AiArtifactStatus.READY, captured.last().status)
         assertEquals(AiCapability.CATEGORIZATION_FALLBACK, captured.last().capability)
+        assertEquals(AiMode.CLOUD, captured.first().mode)
+        assertEquals(AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_PROVIDER, captured.first().provider)
+        assertEquals(AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL, captured.first().modelName)
     }
 
     private fun makeItem() = PendingReviewWithReceipt(
