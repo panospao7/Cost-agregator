@@ -1,9 +1,11 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import android.content.Context
+import android.os.Build
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -29,5 +31,11 @@ class DefaultAiEnvironmentMonitor @Inject constructor(
         return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
     }
 
-    override fun isOnDeviceModelAvailable(capability: AiCapability): Boolean = false
+    override fun getOnDeviceModelStatus(capability: AiCapability): OnDeviceModelStatus {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION
+        }
+
+        return OnDeviceModelStatus.NOT_INSTALLED
+    }
 }

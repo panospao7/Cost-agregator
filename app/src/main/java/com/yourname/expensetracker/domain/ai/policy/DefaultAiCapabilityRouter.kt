@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
@@ -48,7 +49,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
 
         return AiRouteDecision(
             route = AiRoute.DETERMINISTIC_FALLBACK,
-            reason = "Preferred on-device mode is unavailable, so using deterministic fallback."
+            reason = onDeviceUnavailableReason(capability, settings)
         )
     }
 
@@ -104,7 +105,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
             } else {
                 AiRouteDecision(
                     route = AiRoute.DETERMINISTIC_FALLBACK,
-                    reason = "AUTO mode found neither cloud nor on-device available."
+                    reason = combinedUnavailableReason(capability, settings)
                 )
             }
         } else {
@@ -125,7 +126,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
             } else {
                 AiRouteDecision(
                     route = AiRoute.DETERMINISTIC_FALLBACK,
-                    reason = "AUTO mode found neither on-device nor cloud available."
+                    reason = combinedUnavailableReason(capability, settings)
                 )
             }
         }
@@ -139,8 +140,35 @@ class DefaultAiCapabilityRouter @Inject constructor(
     }
 
     private fun canUseOnDevice(capability: AiCapability, settings: AiSettings): Boolean {
-        return aiPolicy.shouldAllowOnDevice(settings, capability) &&
-            environmentMonitor.isOnDeviceModelAvailable(capability)
+        if (!aiPolicy.shouldAllowOnDevice(settings, capability)) return false
+        return environmentMonitor.getOnDeviceModelStatus(capability) == OnDeviceModelStatus.AVAILABLE
+    }
+
+    private fun onDeviceUnavailableReason(capability: AiCapability, settings: AiSettings): String {
+        if (!aiPolicy.shouldAllowOnDevice(settings, capability)) {
+            return "On-device AI is disabled by settings or policy for this capability."
+        }
+
+        return when (environmentMonitor.getOnDeviceModelStatus(capability)) {
+            OnDeviceModelStatus.AVAILABLE -> "On-device model is available."
+            OnDeviceModelStatus.NOT_INSTALLED -> "On-device model is not installed on this device."
+            OnDeviceModelStatus.UNSUPPORTED_DEVICE -> "This device does not support the on-device model."
+            OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION -> "This Android version does not support the on-device model."
+            OnDeviceModelStatus.DISABLED_BY_POLICY -> "On-device model is disabled by policy."
+            OnDeviceModelStatus.UNKNOWN -> "On-device model availability is unknown."
+        }
+    }
+
+    private fun combinedUnavailableReason(capability: AiCapability, settings: AiSettings): String {
+        val cloudUnavailable = !canUseCloud(capability, settings)
+        val onDeviceUnavailable = !canUseOnDevice(capability, settings)
+
+        return when {
+            cloudUnavailable && onDeviceUnavailable ->
+                "Neither cloud nor on-device AI is currently available. ${onDeviceUnavailableReason(capability, settings)}"
+            onDeviceUnavailable -> onDeviceUnavailableReason(capability, settings)
+            else -> "Cloud routing is unavailable for the current settings or connectivity."
+        }
     }
 
     private fun isCapabilityEnabled(capability: AiCapability, settings: AiSettings): Boolean {

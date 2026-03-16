@@ -27,6 +27,15 @@ enum class AiRoute {
     DISABLED
 }
 
+enum class OnDeviceModelStatus {
+    AVAILABLE,
+    NOT_INSTALLED,
+    UNSUPPORTED_DEVICE,
+    UNSUPPORTED_ANDROID_VERSION,
+    DISABLED_BY_POLICY,
+    UNKNOWN
+}
+
 enum class AiTargetType {
     DASHBOARD,
     PENDING_REVIEW,

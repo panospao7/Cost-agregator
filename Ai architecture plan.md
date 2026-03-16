@@ -3493,6 +3493,349 @@ Why this slice first:
 
 - it gives a stable backbone for both Gemini Nano and AI Studio cloud without forcing an early provider choice into every use case
 
+## Current Hybrid Rollout Status
+
+The hybrid rollout is no longer just scaffolding.
+
+As of the current branch state, these cloud-backed Gemini services are live behind the existing routing and feature-flag architecture:
+
+- `ReviewExplanationService`
+- `ReceiptAssistService`
+- `CategorizationAssistService`
+- `DedupeJudgeService`
+
+These are still not real providers yet:
+
+- `DashboardBriefingService`
+- `QueryInterpretationService` as a true model-backed service
+- any on-device Gemini Nano path
+
+Important current repo reality:
+
+- cloud routing is real and tested
+- on-device routing is modeled, but `DefaultAiEnvironmentMonitor.isOnDeviceModelAvailable(...)` still returns `false`
+- router decisions already support `ON_DEVICE`, but there are no concrete Nano-backed provider adapters yet
+- the next planning step should focus on making the on-device side real without destabilizing the cloud side that is now working
+
+## Gemini Nano Plan
+
+The goal of the next stage is to make the hybrid story true on both sides:
+
+- cloud where deeper generation quality is strongest
+- Gemini Nano / on-device where privacy, offline resilience, and low latency are strongest
+
+This should not be approached as “replace cloud with Nano.”
+
+It should be approached as:
+
+- choose the smallest, safest, most bounded capability for the first real on-device slice
+- build the runtime availability layer properly
+- prove the local path is stable before routing users to it by default
+
+## On-Device Goals
+
+### Desired outcomes
+
+- real `ON_DEVICE` routes become possible for at least one capability
+- on-device inference works without network access when the runtime/model is present
+- routing can distinguish between “model not installed,” “runtime unsupported,” and “available now”
+- artifacts record when output came from Nano rather than cloud
+- privacy-sensitive flows can prefer local execution without breaking UX on unsupported devices
+
+### On-device non-goals
+
+- do not promise universal device support from the start
+- do not wire all AI capabilities to Nano in the first iteration
+- do not let on-device availability checks block app startup or main flows
+- do not route high-risk features to Nano until quality is verified
+- do not merge provider SDK code into ViewModels or use cases
+
+## Recommended First Nano Capability
+
+The best first on-device capability is:
+
+### `CategorizationAssistService`
+
+Why this should be first:
+
+- it has the narrowest output space
+- it already works well as a bounded classification task over an existing category list
+- it is advisory-only and reversible
+- it is a better local-model fit than free-form explanation or dedupe reasoning
+- it gives immediate value in weak-category cases without requiring long-form generation quality
+
+Second-best candidate:
+
+- `ReceiptAssistService`
+
+Why it is second instead of first:
+
+- receipt OCR text is noisier
+- extraction quality is harder to validate than bounded categorization
+- local performance and token/context pressure may be trickier
+
+Capabilities that should not be the first Nano slice:
+
+- `DedupeJudgeService`
+- `DashboardBriefingService`
+- `ReviewExplanationService`
+
+Reason:
+
+- these are more reasoning-heavy or more dependent on fluent natural-language explanation quality
+
+## New On-Device Architecture Requirements
+
+Before implementing a Nano-backed service, add a proper runtime support layer.
+
+### 1. Runtime status model
+
+Add a richer model than a single boolean.
+
+Recommended shape:
+
+```kotlin
+enum class OnDeviceModelStatus {
+    AVAILABLE,
+    NOT_INSTALLED,
+    UNSUPPORTED_DEVICE,
+    UNSUPPORTED_ANDROID_VERSION,
+    DISABLED_BY_POLICY,
+    UNKNOWN
+}
+```
+
+And update the environment layer with something like:
+
+```kotlin
+interface AiEnvironmentMonitor {
+    fun isNetworkAvailable(): Boolean
+    fun isWifiConnected(): Boolean
+    fun getOnDeviceModelStatus(capability: AiCapability): OnDeviceModelStatus
+}
+```
+
+Reason:
+
+- the app needs to distinguish “not available on this phone” from “not configured yet” from “temporarily unavailable”
+- user messaging and fallback routing depend on that distinction
+
+### 2. On-device provider adapter boundary
+
+Create a dedicated on-device provider package:
+
+- `data/ai/provider/ondevice/`
+
+Example future classes:
+
+- `OnDeviceCategorizationAssistService`
+- `OnDeviceReceiptAssistService`
+
+Reason:
+
+- Gemini Nano / system AI APIs will have runtime-specific setup and failure modes
+- these details must stay out of domain use cases
+
+### 3. Availability probing
+
+The environment monitor should eventually answer:
+
+- is the required system AI runtime present?
+- is the device/Android version eligible?
+- is the needed local model ready for this capability?
+- is local inference currently available without warm-up failure?
+
+Important rule:
+
+- probing must be lightweight and cacheable
+- do not do heavy model warm-up inside every routing decision
+
+### 4. On-device error taxonomy
+
+The first Nano rollout should distinguish these failure classes:
+
+- unsupported device
+- unsupported OS/API level
+- runtime missing
+- model missing / not ready
+- inference timeout
+- inference returned unusable output
+
+Reason:
+
+- fallback behavior is only trustworthy if the app knows why Nano failed
+
+## Recommended Routing Changes for Nano Rollout
+
+The existing router is structurally good, but on-device routing needs more nuance once Nano is real.
+
+### Current limitation
+
+Today:
+
+- `isOnDeviceModelAvailable(...)` is only a boolean
+- route reasons are generic
+
+### Recommended next router behavior
+
+When `preferredMode == ON_DEVICE`:
+
+- if Nano is available, use it
+- if Nano is unavailable, return a reason tied to actual on-device status
+- cloud fallback should happen only where the product explicitly permits it
+
+When `preferredMode == AUTO`:
+
+- for `CATEGORIZATION_FALLBACK`, prefer Nano first when available
+- for `RECEIPT_EXTRACTION`, prefer Nano first only after quality is validated
+- for cloud-first services, continue cloud-first unless later evidence supports changing that
+
+### Recommended route reason examples
+
+- `On-device model available for categorization fallback.`
+- `On-device runtime missing on this device.`
+- `Nano unsupported on current Android version.`
+- `On-device model unavailable, falling back to cloud.`
+
+## Gemini Nano Capability Matrix
+
+### Best near-term Nano candidates
+
+- `CATEGORIZATION_FALLBACK`
+- `RECEIPT_EXTRACTION` later
+
+### Medium-term candidates after evidence
+
+- `QUERY_INTERPRETATION` only for non-authoritative phrasing help
+- `REVIEW_EXPLANATION` only if explanation quality is acceptable
+
+### Poor initial Nano candidates
+
+- `DASHBOARD_BRIEFING`
+- `DEDUPE_JUDGE`
+
+Reason:
+
+- these gain more from cloud reasoning quality right now than from local execution
+
+## Nano Privacy and UX Plan
+
+On-device should be more than a routing implementation detail.
+
+It should be a meaningful user value proposition.
+
+### Recommended UX messaging
+
+- when Nano is used, the app may say `Processed on device`
+- when Nano is unavailable, show a precise fallback message only where useful
+- do not scare users with system/runtime jargon in normal UI
+- reserve detailed provider/runtime diagnostics for debug surfaces
+
+### Recommended defaults
+
+- if a capability is low-risk and Nano is available, `AUTO` may prefer on-device
+- if Nano is unavailable, the app should continue gracefully through existing cloud or deterministic paths
+- if cloud is disabled and Nano is unavailable, AI should fail soft rather than block the base flow
+
+## On-Device Testing Plan
+
+### Unit tests
+
+- router tests for richer on-device status outcomes
+- provider adapter tests for local-output parsing
+- use case tests for `ON_DEVICE` artifact metadata
+- fallback tests for unsupported-device and missing-runtime states
+
+### Device checks
+
+Because Nano is device/runtime dependent, true verification requires at least one supported device.
+
+Recommended manual checks:
+
+- supported device with Nano available
+- unsupported device or emulator path
+- offline mode with Nano available
+- cloud disabled + Nano enabled
+- Nano unavailable + cloud enabled fallback path
+
+### Artifact checks
+
+Verify successful on-device outputs persist:
+
+- `mode = ON_DEVICE`
+- `provider = on-device`
+- `modelName = gemini-nano-*`
+
+## Recommended Implementation Order for Gemini Nano
+
+### Nano PR 1: Runtime foundation
+
+In scope:
+
+- extend `AiEnvironmentMonitor` to report richer on-device availability
+- add on-device status model
+- update router reasons and test coverage
+- do not add real Nano inference yet
+
+Done when:
+
+- the app can distinguish supported vs unsupported vs missing-runtime states cleanly
+
+### Nano PR 2: First real Nano provider
+
+Recommended target:
+
+- `CategorizationAssistService`
+
+In scope:
+
+- add `OnDeviceCategorizationAssistService`
+- wire it into the hybrid categorization path
+- keep cloud fallback available under current routing rules
+
+Done when:
+
+- categorization assist can produce real local output on supported devices
+
+### Nano PR 3: Routing validation and UX hardening
+
+In scope:
+
+- tighten fallback messages
+- verify artifact metadata and route diagnostics
+- validate offline local behavior
+
+### Nano PR 4: Consider second Nano capability
+
+Recommended next candidate:
+
+- `ReceiptAssistService`
+
+Only proceed if:
+
+- categorization quality is acceptable
+- runtime checks are stable
+- local latency is acceptable
+
+## Recommended Next Slice From Here
+
+The best immediate next implementation slice is:
+
+### Nano PR 1: On-device runtime foundation
+
+In scope:
+
+- add `OnDeviceModelStatus`
+- expand `AiEnvironmentMonitor`
+- update router logic and tests for richer on-device reasoning
+- keep all current cloud providers unchanged
+- do not wire a real Nano SDK yet
+
+Why this slice first:
+
+- it turns the on-device path from “mode placeholder” into a real runtime-aware path
+- it avoids mixing SDK adoption with routing redesign in one step
+
 ## Immediate Next Planning Step
 
 Freeze the Phase 1 scope before coding:
