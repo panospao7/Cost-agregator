@@ -383,6 +383,7 @@ private fun ReviewStep(
             is AiLoadState.Ready -> {
                 ReceiptAssistCard(
                     suggestion = assistState.value,
+                    diagnostics = state.receiptAssistDiagnostics,
                     onApplyMerchant = viewModel::applyReceiptAssistMerchant,
                     onApplyTotal = viewModel::applyReceiptAssistTotal,
                     onApplyDate = viewModel::applyReceiptAssistDate,

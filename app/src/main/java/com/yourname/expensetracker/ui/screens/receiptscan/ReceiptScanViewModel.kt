@@ -10,6 +10,8 @@ import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
+import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
+import com.yourname.expensetracker.domain.ai.model.toDisplayText
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -60,6 +62,7 @@ data class ReceiptScanState(
     val saveResult: SaveReceiptResult? = null,
     val receiptAssistState: AiLoadState<ReceiptAssistSuggestion> = AiLoadState.Idle,
     val receiptAssistMessage: String? = null,
+    val receiptAssistDiagnostics: String? = null,
     
     // Debug data
     val debugData: DebugData? = null
@@ -122,7 +125,8 @@ class ReceiptScanViewModel @Inject constructor(
                 imageUri = uri,
                 errorMessage = null,
                 receiptAssistState = AiLoadState.Idle,
-                receiptAssistMessage = null
+                receiptAssistMessage = null,
+                receiptAssistDiagnostics = null
             )
         }
 
@@ -174,6 +178,7 @@ class ReceiptScanViewModel @Inject constructor(
                         selectedCategoryId = null, // Will be auto-detected on save
                         receiptAssistState = AiLoadState.Idle,
                         receiptAssistMessage = null,
+                        receiptAssistDiagnostics = null,
                         debugData = debugData
                     )
                 }
@@ -200,6 +205,7 @@ class ReceiptScanViewModel @Inject constructor(
                             errorMessage = "OCR Failed: ${e.message}. You can enter details manually.",
                             receiptAssistState = AiLoadState.Idle,
                             receiptAssistMessage = null,
+                            receiptAssistDiagnostics = null,
                             debugData = debugData
                         )
                     }
@@ -274,15 +280,22 @@ class ReceiptScanViewModel @Inject constructor(
                 it.copy(
                     receiptAssistState = AiLoadState.Loading,
                     receiptAssistMessage = null,
+                    receiptAssistDiagnostics = null,
                     errorMessage = null
                 )
             }
 
             when (val result = suggestReceiptExtractionUseCase(receiptId, force = force)) {
                 is ReceiptAssistGenerationResult.Success -> {
+                    val diagnostics = aiArtifactRepository.getLatest(
+                        targetKey = "scanned_receipt:$receiptId",
+                        capability = com.yourname.expensetracker.domain.ai.model.AiCapability.RECEIPT_EXTRACTION
+                    )?.toDiagnosticsOrNull()?.toDisplayText()
+
                     _state.update {
                         it.copy(
                             receiptAssistState = AiLoadState.Ready(result.suggestion),
+                            receiptAssistDiagnostics = diagnostics,
                             receiptAssistMessage = if (result.fromCache) {
                                 "Showing cached AI receipt suggestions."
                             } else {
@@ -295,6 +308,7 @@ class ReceiptScanViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             receiptAssistState = AiLoadState.Disabled,
+                            receiptAssistDiagnostics = null,
                             receiptAssistMessage = result.reason
                         )
                     }
@@ -303,6 +317,7 @@ class ReceiptScanViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             receiptAssistState = AiLoadState.Idle,
+                            receiptAssistDiagnostics = null,
                             receiptAssistMessage = result.reason
                         )
                     }
@@ -311,6 +326,7 @@ class ReceiptScanViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             receiptAssistState = AiLoadState.Error(result.reason),
+                            receiptAssistDiagnostics = null,
                             receiptAssistMessage = result.reason
                         )
                     }
@@ -333,6 +349,7 @@ class ReceiptScanViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     receiptAssistState = AiLoadState.Idle,
+                    receiptAssistDiagnostics = null,
                     receiptAssistMessage = "AI receipt suggestions dismissed."
                 )
             }

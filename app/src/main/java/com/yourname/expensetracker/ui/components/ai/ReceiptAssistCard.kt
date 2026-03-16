@@ -28,6 +28,7 @@ import java.util.Locale
 @Composable
 fun ReceiptAssistCard(
     suggestion: ReceiptAssistSuggestion,
+    diagnostics: String?,
     onApplyMerchant: () -> Unit,
     onApplyTotal: () -> Unit,
     onApplyDate: () -> Unit,
@@ -59,6 +60,13 @@ fun ReceiptAssistCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                diagnostics?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             suggestion.merchant?.let { merchant ->

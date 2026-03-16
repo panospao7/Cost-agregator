@@ -112,6 +112,20 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             suggestion = suggestion,
             fromCache = false
         )
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = 7L,
+            targetKey = "scanned_receipt:7",
+            capability = AiCapability.RECEIPT_EXTRACTION,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.CLOUD,
+            provider = "google-ai-studio",
+            modelName = "gemini-2.5-flash",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
 
         val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
         field.isAccessible = true
@@ -127,6 +141,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertTrue(viewModel.state.value.receiptAssistState is AiLoadState.Ready)
+        assertEquals("Cloud - google-ai-studio - gemini-2.5-flash", viewModel.state.value.receiptAssistDiagnostics)
 
         viewModel.applyAllReceiptAssist()
 
@@ -159,7 +174,8 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             step = ScanStep.REVIEW,
             receiptId = 7L,
             rawOcrText = "TEXT",
-            receiptAssistState = AiLoadState.Ready(ReceiptAssistSuggestion(merchant = SuggestedValue("Lidl")))
+            receiptAssistState = AiLoadState.Ready(ReceiptAssistSuggestion(merchant = SuggestedValue("Lidl"))),
+            receiptAssistDiagnostics = "Cloud - google-ai-studio - gemini-2.5-flash"
         )
 
         viewModel.dismissReceiptAssist()
@@ -167,5 +183,6 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
 
         coVerify { aiArtifactRepository.markDismissed(4L) }
         assertEquals(AiLoadState.Idle, viewModel.state.value.receiptAssistState)
+        assertEquals(null, viewModel.state.value.receiptAssistDiagnostics)
     }
 }
