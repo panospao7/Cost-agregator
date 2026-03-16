@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -20,13 +21,15 @@ class DefaultAiCapabilityRouterTest {
 
     private lateinit var policy: AiPolicy
     private lateinit var environmentMonitor: AiEnvironmentMonitor
+    private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var router: DefaultAiCapabilityRouter
 
     @Before
     fun setup() {
         policy = AiPolicyImpl()
         environmentMonitor = mockk()
-        router = DefaultAiCapabilityRouter(policy, environmentMonitor)
+        aiRuntimeDiagnostics = mockk(relaxed = true)
+        router = DefaultAiCapabilityRouter(policy, environmentMonitor, aiRuntimeDiagnostics)
     }
 
     @Test

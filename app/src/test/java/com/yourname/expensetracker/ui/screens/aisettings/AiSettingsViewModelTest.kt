@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.aisettings
 
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.util.ViewModelTestUtils
@@ -20,6 +21,7 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
 
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase
+    private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var settingsFlow: MutableStateFlow<AiSettings>
     private lateinit var viewModel: AiSettingsViewModel
 
@@ -28,6 +30,7 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         super.setup()
         aiSettingsRepository = mockk(relaxed = true)
         getAiRuntimeStatusUseCase = mockk(relaxed = true)
+        aiRuntimeDiagnostics = mockk(relaxed = true)
         settingsFlow = MutableStateFlow(AiSettings(aiEnabled = true, allowOnDeviceAi = true))
 
         every { aiSettingsRepository.settings() } returns settingsFlow
@@ -41,7 +44,8 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
 
         viewModel = AiSettingsViewModel(
             aiSettingsRepository = aiSettingsRepository,
-            getAiRuntimeStatusUseCase = getAiRuntimeStatusUseCase
+            getAiRuntimeStatusUseCase = getAiRuntimeStatusUseCase,
+            aiRuntimeDiagnostics = aiRuntimeDiagnostics
         )
     }
 

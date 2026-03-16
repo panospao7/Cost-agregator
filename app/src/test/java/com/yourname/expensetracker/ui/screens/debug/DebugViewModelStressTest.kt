@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.debug.NotificationSeeder
 import com.yourname.expensetracker.domain.debug.ServiceDiagnostics
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
@@ -42,6 +43,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
     private lateinit var notificationSeeder: NotificationSeeder
     private lateinit var timeProvider: TimeProvider
     private lateinit var diagnostics: ServiceDiagnostics
+    private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var aiEnvironmentMonitor: AiEnvironmentMonitor
     private lateinit var viewModel: DebugViewModel
 
@@ -57,6 +59,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         notificationSeeder = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
         diagnostics = mockk(relaxed = true)
+        aiRuntimeDiagnostics = mockk(relaxed = true)
         aiEnvironmentMonitor = mockk(relaxed = true)
 
         val now = 1_700_000_000_000L
@@ -92,7 +95,8 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             notificationSeeder = notificationSeeder,
             timeProvider = timeProvider,
             diagnostics = diagnostics,
-            aiEnvironmentMonitor = aiEnvironmentMonitor
+            aiEnvironmentMonitor = aiEnvironmentMonitor,
+            aiRuntimeDiagnostics = aiRuntimeDiagnostics
         )
     }
 

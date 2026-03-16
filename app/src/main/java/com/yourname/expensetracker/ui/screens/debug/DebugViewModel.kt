@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -28,13 +29,16 @@ class DebugViewModel @Inject constructor(
     private val notificationSeeder: com.yourname.expensetracker.domain.debug.NotificationSeeder,
     private val timeProvider: TimeProvider,
     private val diagnostics: com.yourname.expensetracker.domain.debug.ServiceDiagnostics,
-    private val aiEnvironmentMonitor: AiEnvironmentMonitor
+    private val aiEnvironmentMonitor: AiEnvironmentMonitor,
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : ViewModel() {
 
     private val _aiRuntimeStatuses = MutableStateFlow<Map<AiCapability, OnDeviceModelStatus>>(emptyMap())
     val aiRuntimeStatuses: StateFlow<Map<AiCapability, OnDeviceModelStatus>> = _aiRuntimeStatuses
     private val _aiRuntimeMeta = MutableStateFlow(AiRuntimeStatusSummary(emptyList(), null))
     val aiRuntimeMeta: StateFlow<AiRuntimeStatusSummary> = _aiRuntimeMeta
+    private val _aiRuntimeEvents = MutableStateFlow(emptyList<com.yourname.expensetracker.domain.debug.AiRuntimeEvent>())
+    val aiRuntimeEvents: StateFlow<List<com.yourname.expensetracker.domain.debug.AiRuntimeEvent>> = _aiRuntimeEvents
 
     init {
         refreshAiRuntimeStatuses()
@@ -235,6 +239,11 @@ class DebugViewModel @Inject constructor(
                 wifiConnected = aiEnvironmentMonitor.isWifiConnected(),
                 lastRefreshedAt = timeProvider.now()
             )
+            aiRuntimeDiagnostics.recordRuntimeRefresh(
+                message = "Debug refresh: network=${_aiRuntimeMeta.value.networkAvailable}, wifi=${_aiRuntimeMeta.value.wifiConnected}",
+                now = _aiRuntimeMeta.value.lastRefreshedAt
+            )
+            _aiRuntimeEvents.value = aiRuntimeDiagnostics.getRecentEvents()
         }
     }
 }

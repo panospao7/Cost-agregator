@@ -46,6 +46,7 @@ fun DebugScreen(
     val selectedFilter by viewModel.selectedPackageFilter.collectAsState()
     val aiRuntimeStatuses by viewModel.aiRuntimeStatuses.collectAsState()
     val aiRuntimeMeta by viewModel.aiRuntimeMeta.collectAsState()
+    val aiRuntimeEvents by viewModel.aiRuntimeEvents.collectAsState()
     
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
     var diagnosticsStats by remember { mutableStateOf(viewModel.getServiceDiagnostics()) }
@@ -267,6 +268,26 @@ fun DebugScreen(
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
+                        }
+
+                        if (aiRuntimeEvents.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HorizontalDivider()
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Recent AI runtime events",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            aiRuntimeEvents.take(8).forEach { event ->
+                                Text(
+                                    text = "${DateFormatterUtils.timeWithSecondsAndDate().format(Date(event.timestamp))} • ${event.type} • ${event.message}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 10.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
                         }
                     }
                 }

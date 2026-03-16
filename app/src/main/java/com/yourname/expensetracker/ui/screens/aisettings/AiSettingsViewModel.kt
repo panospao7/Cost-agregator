@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,7 +27,8 @@ data class AiSettingsUiState(
 @HiltViewModel
 class AiSettingsViewModel @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
-    private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase
+    private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AiSettingsUiState())
@@ -63,6 +65,10 @@ class AiSettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 runtimeSummary = summary,
                 isRefreshingRuntime = false
+            )
+            aiRuntimeDiagnostics.recordRuntimeRefresh(
+                message = "AI settings refresh: network=${summary.networkAvailable}, wifi=${summary.wifiConnected}, highest='${summary.highestPriorityMessage ?: "none"}'",
+                now = summary.lastRefreshedAt
             )
         }
     }

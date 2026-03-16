@@ -9,13 +9,15 @@ import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class DefaultAiCapabilityRouter @Inject constructor(
     private val aiPolicy: AiPolicy,
-    private val environmentMonitor: AiEnvironmentMonitor
+    private val environmentMonitor: AiEnvironmentMonitor,
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : AiCapabilityRouter {
 
     override suspend fun decide(capability: AiCapability, settings: AiSettings): AiRouteDecision {
@@ -29,11 +31,14 @@ class DefaultAiCapabilityRouter @Inject constructor(
 
         val onDeviceStatus = resolveOnDeviceStatus(capability, settings)
 
-        return when (settings.preferredMode) {
+        val decision = when (settings.preferredMode) {
             AiMode.ON_DEVICE -> chooseOnDevicePreferred(capability, settings, onDeviceStatus)
             AiMode.CLOUD -> chooseCloudPreferred(capability, settings, onDeviceStatus)
             AiMode.AUTO -> chooseAuto(capability, settings, onDeviceStatus)
         }
+
+        aiRuntimeDiagnostics.recordRouteDecision(capability, decision)
+        return decision
     }
 
     private suspend fun chooseOnDevicePreferred(
