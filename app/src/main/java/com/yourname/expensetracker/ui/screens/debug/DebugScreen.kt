@@ -28,7 +28,10 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
+import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.*
@@ -47,6 +50,7 @@ fun DebugScreen(
     val aiRuntimeStatuses by viewModel.aiRuntimeStatuses.collectAsState()
     val aiRuntimeMeta by viewModel.aiRuntimeMeta.collectAsState()
     val aiRuntimeEvents by viewModel.aiRuntimeEvents.collectAsState()
+    val aiSettings by viewModel.aiSettings.collectAsState()
     
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
     var diagnosticsStats by remember { mutableStateOf(viewModel.getServiceDiagnostics()) }
@@ -232,6 +236,7 @@ fun DebugScreen(
                             "Network: ${if (aiRuntimeMeta.networkAvailable) "available" else "offline"}",
                             style = MaterialTheme.typography.bodySmall
                         )
+                        DebugRuntimeGuidance(aiSettings, aiRuntimeStatuses.values.any { it != OnDeviceModelStatus.AVAILABLE })
                         Text(
                             "Wi-Fi: ${if (aiRuntimeMeta.wifiConnected) "connected" else "not connected"}",
                             style = MaterialTheme.typography.bodySmall
@@ -246,6 +251,7 @@ fun DebugScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         aiRuntimeStatuses.forEach { (capability, status) ->
+                            val runtimeMessage = status.toRuntimeStatusMessage(capability.debugRuntimeLabel())
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -268,6 +274,22 @@ fun DebugScreen(
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
+                            runtimeMessage?.let {
+                                Text(
+                                    text = it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                debugCloudFallbackHint(aiSettings, capability, status)?.let { hint ->
+                                    Text(
+                                        text = hint,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
                         }
 
                         if (aiRuntimeEvents.isNotEmpty()) {
@@ -564,6 +586,69 @@ fun DebugScreen(
             }
         }
     }
+}
+
+@Composable
+private fun DebugRuntimeGuidance(
+    aiSettings: AiSettings,
+    hasRuntimeAttention: Boolean
+) {
+    val message = debugRuntimeGuidanceText(aiSettings, hasRuntimeAttention)
+    if (message != null) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+    }
+}
+
+internal fun debugRuntimeGuidanceText(
+    aiSettings: AiSettings,
+    hasRuntimeAttention: Boolean
+): String? = when {
+    aiSettings.aiEnabled && aiSettings.allowCloudAi && hasRuntimeAttention -> {
+        "Cloud AI is enabled, so advisory features can still run when on-device AI is unavailable."
+    }
+    aiSettings.aiEnabled && aiSettings.allowCloudAi -> {
+        "Cloud AI is enabled for advisory features."
+    }
+    else -> null
+}
+
+internal fun debugCloudFallbackHint(
+    aiSettings: AiSettings,
+    capability: AiCapability,
+    status: OnDeviceModelStatus
+): String? {
+    if (!aiSettings.aiEnabled || !aiSettings.allowCloudAi || status == OnDeviceModelStatus.AVAILABLE) {
+        return null
+    }
+    if (!capability.supportsCloudFallback()) {
+        return null
+    }
+    return "Cloud fallback available for advisory AI"
+}
+
+private fun AiCapability.supportsCloudFallback(): Boolean = when (this) {
+    AiCapability.DASHBOARD_BRIEFING,
+    AiCapability.REVIEW_EXPLANATION,
+    AiCapability.QUERY_INTERPRETATION,
+    AiCapability.RECEIPT_EXTRACTION,
+    AiCapability.CATEGORIZATION_FALLBACK,
+    AiCapability.DEDUPE_JUDGE -> true
+    AiCapability.LOCATION_SUMMARY -> false
+}
+
+private fun AiCapability.debugRuntimeLabel(): String = when (this) {
+    AiCapability.DASHBOARD_BRIEFING -> "briefing"
+    AiCapability.REVIEW_EXPLANATION -> "review explanations"
+    AiCapability.QUERY_INTERPRETATION -> "AI"
+    AiCapability.RECEIPT_EXTRACTION -> "receipt assist"
+    AiCapability.CATEGORIZATION_FALLBACK -> "categorization"
+    AiCapability.DEDUPE_JUDGE -> "duplicate detection"
+    AiCapability.LOCATION_SUMMARY -> "location summaries"
 }
 
 @Composable

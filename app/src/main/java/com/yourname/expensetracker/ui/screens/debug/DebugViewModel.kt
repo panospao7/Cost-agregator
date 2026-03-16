@@ -6,9 +6,11 @@ import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -29,6 +31,7 @@ class DebugViewModel @Inject constructor(
     private val notificationSeeder: com.yourname.expensetracker.domain.debug.NotificationSeeder,
     private val timeProvider: TimeProvider,
     private val diagnostics: com.yourname.expensetracker.domain.debug.ServiceDiagnostics,
+    private val aiSettingsRepository: AiSettingsRepository,
     private val aiEnvironmentMonitor: AiEnvironmentMonitor,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : ViewModel() {
@@ -39,6 +42,9 @@ class DebugViewModel @Inject constructor(
     val aiRuntimeMeta: StateFlow<AiRuntimeStatusSummary> = _aiRuntimeMeta
     private val _aiRuntimeEvents = MutableStateFlow(emptyList<com.yourname.expensetracker.domain.debug.AiRuntimeEvent>())
     val aiRuntimeEvents: StateFlow<List<com.yourname.expensetracker.domain.debug.AiRuntimeEvent>> = _aiRuntimeEvents
+
+    val aiSettings: StateFlow<AiSettings> = aiSettingsRepository.settings()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AiSettings())
 
     init {
         refreshAiRuntimeStatuses()

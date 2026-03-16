@@ -9,8 +9,10 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.debug.NotificationSeeder
 import com.yourname.expensetracker.domain.debug.ServiceDiagnostics
@@ -25,6 +27,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -45,6 +48,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
     private lateinit var diagnostics: ServiceDiagnostics
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var aiEnvironmentMonitor: AiEnvironmentMonitor
+    private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var viewModel: DebugViewModel
 
     @Before
@@ -61,6 +65,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         diagnostics = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
         aiEnvironmentMonitor = mockk(relaxed = true)
+        aiSettingsRepository = mockk(relaxed = true)
 
         val now = 1_700_000_000_000L
         val sampleNotification = RawNotification(
@@ -82,6 +87,9 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         every { expenseRepository.getTotalSpent() } returns flowOf(42.5)
         every { diagnostics.getStats() } returns ServiceDiagnostics.Stats(1, 0, 0, now, 0)
         every { timeProvider.now() } returns now
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, allowCloudAi = true)
+        )
         coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.AVAILABLE
         every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
         every { aiEnvironmentMonitor.isWifiConnected() } returns false
@@ -95,6 +103,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             notificationSeeder = notificationSeeder,
             timeProvider = timeProvider,
             diagnostics = diagnostics,
+            aiSettingsRepository = aiSettingsRepository,
             aiEnvironmentMonitor = aiEnvironmentMonitor,
             aiRuntimeDiagnostics = aiRuntimeDiagnostics
         )
@@ -102,12 +111,18 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
 
     @Test
     fun `stress - AI runtime statuses load for all capabilities`() = runTest(testDispatcher) {
+        val settingsJob = backgroundScope.launch(testDispatcher) {
+            viewModel.aiSettings.collect { }
+        }
         advanceUntilIdle()
 
         assertEquals(AiCapability.entries.size, viewModel.aiRuntimeStatuses.value.size)
         assertEquals(OnDeviceModelStatus.AVAILABLE, viewModel.aiRuntimeStatuses.value[AiCapability.QUERY_INTERPRETATION])
         assertEquals(true, viewModel.aiRuntimeMeta.value.networkAvailable)
         assertEquals(false, viewModel.aiRuntimeMeta.value.wifiConnected)
+        assertEquals(true, viewModel.aiSettings.value.allowCloudAi)
+
+        settingsJob.cancel()
     }
 
     @Test

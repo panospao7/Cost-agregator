@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Date
 
@@ -116,43 +117,50 @@ fun AiSettingsScreen(
                         label = "Assistant",
                         enabled = settings.assistantEnabled,
                         onEnabledChange = viewModel::setAssistantEnabled,
-                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.QUERY_INTERPRETATION }
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.QUERY_INTERPRETATION },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
                         label = "Query interpretation",
                         enabled = settings.queryInterpretationEnabled,
                         onEnabledChange = viewModel::setQueryInterpretationEnabled,
-                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.QUERY_INTERPRETATION }
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.QUERY_INTERPRETATION },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
                         label = "Dashboard briefing",
                         enabled = settings.dashboardBriefingEnabled,
                         onEnabledChange = viewModel::setDashboardBriefingEnabled,
-                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DASHBOARD_BRIEFING }
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DASHBOARD_BRIEFING },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
                         label = "Review explanation",
                         enabled = settings.reviewExplanationEnabled,
                         onEnabledChange = viewModel::setReviewExplanationEnabled,
-                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.REVIEW_EXPLANATION }
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.REVIEW_EXPLANATION },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
                         label = "Receipt assist",
                         enabled = settings.receiptAssistEnabled,
                         onEnabledChange = viewModel::setReceiptAssistEnabled,
-                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_EXTRACTION }
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_EXTRACTION },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
                         label = "Categorization fallback",
                         enabled = settings.categorizationFallbackEnabled,
                         onEnabledChange = viewModel::setCategorizationFallbackEnabled,
-                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.CATEGORIZATION_FALLBACK }
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.CATEGORIZATION_FALLBACK },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                     CapabilityMatrixRow(
                         label = "Duplicate detection",
                         enabled = settings.dedupeJudgeEnabled,
                         onEnabledChange = viewModel::setDedupeJudgeEnabled,
-                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DEDUPE_JUDGE }
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.DEDUPE_JUDGE },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
                 }
             }
@@ -173,7 +181,10 @@ fun AiSettingsScreen(
                     title = "Runtime Status",
                     description = "See whether on-device AI is ready, downloading, or unavailable per capability."
                 ) {
-                    RuntimeGuidanceCard(uiState.runtimeSummary.highestPriorityMessage)
+                    RuntimeGuidanceCard(
+                        settings = settings,
+                        highestPriorityMessage = uiState.runtimeSummary.highestPriorityMessage
+                    )
                     RuntimeMetaCard(
                         networkAvailable = uiState.runtimeSummary.networkAvailable,
                         wifiConnected = uiState.runtimeSummary.wifiConnected,
@@ -289,7 +300,8 @@ private fun CapabilityMatrixRow(
     label: String,
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit,
-    runtime: AiCapabilityRuntimeStatus?
+    runtime: AiCapabilityRuntimeStatus?,
+    cloudFallbackAvailable: Boolean
 ) {
     ElevatedCard {
         Column(
@@ -332,6 +344,18 @@ private fun CapabilityMatrixRow(
                     color = MaterialTheme.colorScheme.primary
                 )
             }
+
+            cloudFallbackHint(
+                enabled = enabled,
+                runtime = runtime,
+                cloudFallbackAvailable = cloudFallbackAvailable
+            )?.let { hint ->
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
         }
     }
 }
@@ -351,7 +375,7 @@ private fun RuntimeBadge(isReady: Boolean) {
 }
 
 @Composable
-private fun RuntimeGuidanceCard(highestPriorityMessage: String?) {
+private fun RuntimeGuidanceCard(settings: AiSettings, highestPriorityMessage: String?) {
     ElevatedCard {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -359,13 +383,35 @@ private fun RuntimeGuidanceCard(highestPriorityMessage: String?) {
         ) {
             Text("What to do next", style = MaterialTheme.typography.titleSmall)
             Text(
-                text = highestPriorityMessage ?: "If a capability is marked Ready, on-device AI can be used immediately when allowed by settings and routing.",
+                text = runtimeGuidanceText(settings, highestPriorityMessage),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
     Spacer(modifier = Modifier.height(8.dp))
+}
+
+internal fun runtimeGuidanceText(settings: AiSettings, highestPriorityMessage: String?): String = when {
+    settings.aiEnabled && settings.allowCloudAi && highestPriorityMessage != null -> {
+        "$highestPriorityMessage Cloud routing can still handle advisory features when your mode and privacy settings allow it."
+    }
+    settings.aiEnabled && settings.allowCloudAi -> {
+        "Cloud AI is enabled, so advisory features can still run even if on-device AI is unavailable on this device."
+    }
+    highestPriorityMessage != null -> highestPriorityMessage
+    else -> "If a capability is marked Ready, on-device AI can be used immediately when allowed by settings and routing."
+}
+
+internal fun cloudFallbackHint(
+    enabled: Boolean,
+    runtime: AiCapabilityRuntimeStatus?,
+    cloudFallbackAvailable: Boolean
+): String? {
+    if (!enabled || !cloudFallbackAvailable || runtime?.message == null) {
+        return null
+    }
+    return "Cloud fallback available"
 }
 
 private fun AiMode.displayLabel(): String = when (this) {
