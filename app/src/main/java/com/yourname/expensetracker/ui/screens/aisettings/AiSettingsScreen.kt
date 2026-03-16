@@ -39,6 +39,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -172,6 +174,11 @@ fun AiSettingsScreen(
                     description = "See whether on-device AI is ready, downloading, or unavailable per capability."
                 ) {
                     RuntimeGuidanceCard(uiState.runtimeSummary.highestPriorityMessage)
+                    RuntimeMetaCard(
+                        networkAvailable = uiState.runtimeSummary.networkAvailable,
+                        wifiConnected = uiState.runtimeSummary.wifiConnected,
+                        lastRefreshedAt = uiState.runtimeSummary.lastRefreshedAt
+                    )
 
                     uiState.runtimeSummary.highestPriorityMessage?.let {
                         ElevatedCard {
@@ -208,6 +215,40 @@ fun AiSettingsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun RuntimeMetaCard(
+    networkAvailable: Boolean,
+    wifiConnected: Boolean,
+    lastRefreshedAt: Long
+) {
+    ElevatedCard {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text("Runtime context", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Network: ${if (networkAvailable) "available" else "offline"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "Wi-Fi: ${if (wifiConnected) "connected" else "not connected"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (lastRefreshedAt > 0L) {
+                Text(
+                    "Last refreshed: ${DateFormatterUtils.timeWithSecondsAndDate().format(Date(lastRefreshedAt))}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+    Spacer(modifier = Modifier.height(8.dp))
 }
 
 @Composable

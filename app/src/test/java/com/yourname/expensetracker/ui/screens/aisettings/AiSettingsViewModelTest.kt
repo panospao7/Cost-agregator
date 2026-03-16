@@ -31,7 +31,13 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         settingsFlow = MutableStateFlow(AiSettings(aiEnabled = true, allowOnDeviceAi = true))
 
         every { aiSettingsRepository.settings() } returns settingsFlow
-        coEvery { getAiRuntimeStatusUseCase(any()) } returns AiRuntimeStatusSummary(emptyList(), null)
+        coEvery { getAiRuntimeStatusUseCase(any()) } returns AiRuntimeStatusSummary(
+            capabilities = emptyList(),
+            highestPriorityMessage = null,
+            networkAvailable = true,
+            wifiConnected = true,
+            lastRefreshedAt = 1234L
+        )
 
         viewModel = AiSettingsViewModel(
             aiSettingsRepository = aiSettingsRepository,
@@ -57,12 +63,19 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `refreshRuntimeStatus updates runtime summary`() = runTest(testDispatcher) {
-        val summary = AiRuntimeStatusSummary(emptyList(), "Runtime info")
+        val summary = AiRuntimeStatusSummary(
+            capabilities = emptyList(),
+            highestPriorityMessage = "Runtime info",
+            networkAvailable = true,
+            wifiConnected = false,
+            lastRefreshedAt = 4321L
+        )
         coEvery { getAiRuntimeStatusUseCase(any()) } returns summary
 
         viewModel.refreshRuntimeStatus()
         advanceUntilIdle()
 
         assertEquals("Runtime info", viewModel.uiState.value.runtimeSummary.highestPriorityMessage)
+        assertEquals(4321L, viewModel.uiState.value.runtimeSummary.lastRefreshedAt)
     }
 }

@@ -6,10 +6,12 @@ import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 
 class GetAiRuntimeStatusUseCase @Inject constructor(
-    private val aiEnvironmentMonitor: AiEnvironmentMonitor
+    private val aiEnvironmentMonitor: AiEnvironmentMonitor,
+    private val timeProvider: TimeProvider
 ) {
 
     suspend operator fun invoke(
@@ -31,7 +33,10 @@ class GetAiRuntimeStatusUseCase @Inject constructor(
 
         return AiRuntimeStatusSummary(
             capabilities = statuses,
-            highestPriorityMessage = highestPriorityMessage
+            highestPriorityMessage = highestPriorityMessage,
+            networkAvailable = aiEnvironmentMonitor.isNetworkAvailable(),
+            wifiConnected = aiEnvironmentMonitor.isWifiConnected(),
+            lastRefreshedAt = timeProvider.now()
         )
     }
 }

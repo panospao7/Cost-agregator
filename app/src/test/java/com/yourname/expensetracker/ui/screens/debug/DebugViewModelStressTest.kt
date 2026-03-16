@@ -80,6 +80,8 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         every { diagnostics.getStats() } returns ServiceDiagnostics.Stats(1, 0, 0, now, 0)
         every { timeProvider.now() } returns now
         coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(any()) } returns OnDeviceModelStatus.AVAILABLE
+        every { aiEnvironmentMonitor.isNetworkAvailable() } returns true
+        every { aiEnvironmentMonitor.isWifiConnected() } returns false
 
         viewModel = DebugViewModel(
             repository = repository,
@@ -100,6 +102,8 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
 
         assertEquals(AiCapability.entries.size, viewModel.aiRuntimeStatuses.value.size)
         assertEquals(OnDeviceModelStatus.AVAILABLE, viewModel.aiRuntimeStatuses.value[AiCapability.QUERY_INTERPRETATION])
+        assertEquals(true, viewModel.aiRuntimeMeta.value.networkAvailable)
+        assertEquals(false, viewModel.aiRuntimeMeta.value.wifiConnected)
     }
 
     @Test

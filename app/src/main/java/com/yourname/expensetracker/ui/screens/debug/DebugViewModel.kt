@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
@@ -32,6 +33,8 @@ class DebugViewModel @Inject constructor(
 
     private val _aiRuntimeStatuses = MutableStateFlow<Map<AiCapability, OnDeviceModelStatus>>(emptyMap())
     val aiRuntimeStatuses: StateFlow<Map<AiCapability, OnDeviceModelStatus>> = _aiRuntimeStatuses
+    private val _aiRuntimeMeta = MutableStateFlow(AiRuntimeStatusSummary(emptyList(), null))
+    val aiRuntimeMeta: StateFlow<AiRuntimeStatusSummary> = _aiRuntimeMeta
 
     init {
         refreshAiRuntimeStatuses()
@@ -225,6 +228,13 @@ class DebugViewModel @Inject constructor(
                 }
             }
             _aiRuntimeStatuses.value = statuses
+            _aiRuntimeMeta.value = AiRuntimeStatusSummary(
+                capabilities = emptyList(),
+                highestPriorityMessage = null,
+                networkAvailable = aiEnvironmentMonitor.isNetworkAvailable(),
+                wifiConnected = aiEnvironmentMonitor.isWifiConnected(),
+                lastRefreshedAt = timeProvider.now()
+            )
         }
     }
 }

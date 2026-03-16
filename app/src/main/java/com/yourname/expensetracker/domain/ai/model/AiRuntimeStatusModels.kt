@@ -9,5 +9,8 @@ data class AiCapabilityRuntimeStatus(
 
 data class AiRuntimeStatusSummary(
     val capabilities: List<AiCapabilityRuntimeStatus>,
-    val highestPriorityMessage: String?
+    val highestPriorityMessage: String?,
+    val networkAvailable: Boolean = false,
+    val wifiConnected: Boolean = false,
+    val lastRefreshedAt: Long = 0L
 )

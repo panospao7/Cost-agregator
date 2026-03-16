@@ -45,6 +45,7 @@ fun DebugScreen(
     val packages by viewModel.packages.collectAsState()
     val selectedFilter by viewModel.selectedPackageFilter.collectAsState()
     val aiRuntimeStatuses by viewModel.aiRuntimeStatuses.collectAsState()
+    val aiRuntimeMeta by viewModel.aiRuntimeMeta.collectAsState()
     
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
     var diagnosticsStats by remember { mutableStateOf(viewModel.getServiceDiagnostics()) }
@@ -223,6 +224,23 @@ fun DebugScreen(
                             TextButton(onClick = viewModel::refreshAiRuntimeStatuses) {
                                 Text("Refresh")
                             }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            "Network: ${if (aiRuntimeMeta.networkAvailable) "available" else "offline"}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            "Wi-Fi: ${if (aiRuntimeMeta.wifiConnected) "connected" else "not connected"}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (aiRuntimeMeta.lastRefreshedAt > 0L) {
+                            Text(
+                                "Last refreshed: ${DateFormatterUtils.timeWithSecondsAndDate().format(Date(aiRuntimeMeta.lastRefreshedAt))}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 10.sp
+                            )
                         }
                         Spacer(modifier = Modifier.height(8.dp))
 
