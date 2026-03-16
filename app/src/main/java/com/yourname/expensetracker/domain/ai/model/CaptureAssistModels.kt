@@ -133,5 +133,7 @@ sealed interface DedupeJudgeGenerationResult {
 
 data class ReviewCaptureAssistState(
     val categorySuggestion: AiLoadState<CategoryAssistSuggestion> = AiLoadState.Idle,
-    val dedupeSuggestion: AiLoadState<DedupeJudgeSuggestion> = AiLoadState.Idle
+    val categoryDiagnostics: String? = null,
+    val dedupeSuggestion: AiLoadState<DedupeJudgeSuggestion> = AiLoadState.Idle,
+    val dedupeDiagnostics: String? = null
 )

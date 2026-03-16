@@ -470,6 +470,22 @@ class ReviewViewModelStressTest {
             ),
             fromCache = false
         )
+        coEvery {
+            aiArtifactRepository.getLatest("pending_review:60", AiCapability.CATEGORIZATION_FALLBACK)
+        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 60L,
+            targetKey = "pending_review:60",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.ON_DEVICE,
+            provider = "mlkit-genai-nano",
+            modelName = "gemini-nano",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
 
         viewModel = ReviewViewModel(
             notificationRepository,
@@ -492,6 +508,10 @@ class ReviewViewModelStressTest {
 
         val state = viewModel.reviewCaptureAssistStates.value[60L]?.categorySuggestion
         assertTrue(state is AiLoadState.Ready)
+        assertEquals(
+            "On-device - mlkit-genai-nano - gemini-nano",
+            viewModel.reviewCaptureAssistStates.value[60L]?.categoryDiagnostics
+        )
     }
 
     @Test
@@ -515,6 +535,22 @@ class ReviewViewModelStressTest {
             ),
             fromCache = false
         )
+        coEvery {
+            aiArtifactRepository.getLatest("pending_review:61", AiCapability.DEDUPE_JUDGE)
+        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 61L,
+            targetKey = "pending_review:61",
+            capability = AiCapability.DEDUPE_JUDGE,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.CLOUD,
+            provider = "google-ai-studio",
+            modelName = "gemini-2.5-flash",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
 
         viewModel = ReviewViewModel(
             notificationRepository,
@@ -537,6 +573,10 @@ class ReviewViewModelStressTest {
 
         val state = viewModel.reviewCaptureAssistStates.value[61L]?.dedupeSuggestion
         assertTrue(state is AiLoadState.Ready)
+        assertEquals(
+            "Cloud - google-ai-studio - gemini-2.5-flash",
+            viewModel.reviewCaptureAssistStates.value[61L]?.dedupeDiagnostics
+        )
     }
 
     @Test
@@ -596,7 +636,8 @@ class ReviewViewModelStressTest {
         val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
         stateFlow.value = mapOf(
             80L to com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState(
-                categorySuggestion = AiLoadState.Ready(CategoryAssistSuggestion(1L, "Groceries"))
+                categorySuggestion = AiLoadState.Ready(CategoryAssistSuggestion(1L, "Groceries")),
+                categoryDiagnostics = "On-device - mlkit-genai-nano - gemini-nano"
             )
         )
 
@@ -605,6 +646,7 @@ class ReviewViewModelStressTest {
 
         coVerify { aiArtifactRepository.markDismissed(8L) }
         assertEquals(AiLoadState.Idle, viewModel.reviewCaptureAssistStates.value[80L]?.categorySuggestion)
+        assertNull(viewModel.reviewCaptureAssistStates.value[80L]?.categoryDiagnostics)
     }
 
     @Test
@@ -630,7 +672,8 @@ class ReviewViewModelStressTest {
         val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
         stateFlow.value = mapOf(
             81L to com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState(
-                dedupeSuggestion = AiLoadState.Ready(DedupeJudgeSuggestion(DuplicateVerdict.UNCERTAIN))
+                dedupeSuggestion = AiLoadState.Ready(DedupeJudgeSuggestion(DuplicateVerdict.UNCERTAIN)),
+                dedupeDiagnostics = "Cloud - google-ai-studio - gemini-2.5-flash"
             )
         )
 
@@ -639,6 +682,7 @@ class ReviewViewModelStressTest {
 
         coVerify { aiArtifactRepository.markDismissed(9L) }
         assertEquals(AiLoadState.Idle, viewModel.reviewCaptureAssistStates.value[81L]?.dedupeSuggestion)
+        assertNull(viewModel.reviewCaptureAssistStates.value[81L]?.dedupeDiagnostics)
     }
 
     // ============================================================================

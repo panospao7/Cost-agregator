@@ -974,6 +974,7 @@ private fun ReviewCaptureAssistSection(
             is AiLoadState.Ready -> {
                 CategoryAssistCard(
                     suggestion = categoryState.value,
+                    diagnostics = state.categoryDiagnostics,
                     onApply = onApplyCategoryAssist,
                     onDismiss = onDismissCategoryAssist
                 )
@@ -996,6 +997,7 @@ private fun ReviewCaptureAssistSection(
             is AiLoadState.Ready -> {
                 DedupeAssistCard(
                     suggestion = dedupeState.value,
+                    diagnostics = state.dedupeDiagnostics,
                     onDismiss = onDismissDedupeAssist
                 )
             }

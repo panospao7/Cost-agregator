@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
 @Composable
 fun DedupeAssistCard(
     suggestion: DedupeJudgeSuggestion,
+    diagnostics: String?,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -57,6 +58,13 @@ fun DedupeAssistCard(
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            diagnostics?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

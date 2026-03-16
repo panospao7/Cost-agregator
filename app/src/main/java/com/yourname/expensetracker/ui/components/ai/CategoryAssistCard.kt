@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 @Composable
 fun CategoryAssistCard(
     suggestion: CategoryAssistSuggestion,
+    diagnostics: String?,
     onApply: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -53,6 +54,13 @@ fun CategoryAssistCard(
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            diagnostics?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

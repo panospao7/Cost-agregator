@@ -3807,7 +3807,7 @@ Recommended prerequisite slice before real Nano provider wiring:
 
 ### Nano PR 1.5: Kotlin / toolchain compatibility upgrade
 
-Status: DONE (in working tree, not yet committed)
+Status: DONE (committed)
 
 Completed:
 
@@ -3823,7 +3823,7 @@ Completed:
 
 ### Nano PR 2: First real Nano provider
 
-Status: DONE (in working tree, not yet committed)
+Status: DONE (committed)
 
 Completed:
 
@@ -3834,20 +3834,32 @@ Completed:
   - Handles `GenAiException` and returns null on failure
 - Updated `HybridCategorizationAssistService` to route `ON_DEVICE` → `OnDeviceCategorizationAssistService`
 - Updated `DefaultAiEnvironmentMonitor` with real ML Kit status query:
-  - `refreshOnDeviceStatus()` suspend function queries `GenerativeModel.checkStatus()`
+  - `getOnDeviceModelStatus()` now queries `GenerativeModel.checkStatus()` directly
   - Maps `FeatureStatus` (AVAILABLE/DOWNLOADABLE/DOWNLOADING/UNAVAILABLE) to `OnDeviceModelStatus`
-  - Caches result atomically for synchronous `getOnDeviceModelStatus()` reads
+  - Falls back to cached status on transient query failures
 - Added `AppConfig.Ai` constants for on-device categorization (temperature, max tokens, provider/model names)
 - Created comprehensive `OnDeviceCategorizationAssistServiceTest` (16 tests: prompt building + response parsing)
 - All tests pass, compile succeeds
 
 ### Nano PR 3: Routing validation and UX hardening
 
-In scope:
+Status: DONE (committed)
 
-- tighten fallback messages
-- verify artifact metadata and route diagnostics
-- validate offline local behavior
+Completed:
+
+- Tightened router validation so `ON_DEVICE` is only selected for capabilities with a real local provider
+- Made routing/environment checks suspendable so route decisions use live ML Kit availability
+- Ensured on-device routing metadata uses shared provider/model constants
+- Persisted route/provider/model diagnostics into AI artifact success and failure text
+- Added structured artifact presentation mapping via `AiArtifactPresentation`
+- Surfaced route diagnostics in UI for:
+  - review explanations
+  - receipt assist
+  - category assist
+  - dedupe assist
+- Cleared diagnostics correctly when assist artifacts are dismissed
+- Added focused tests for router validation, artifact diagnostics mapping, review diagnostics UI, receipt diagnostics UI, and capture-assist diagnostics UI
+- Verified compile and focused unit suites for all PR 3 slices
 
 ### Nano PR 4: Consider second Nano capability
 

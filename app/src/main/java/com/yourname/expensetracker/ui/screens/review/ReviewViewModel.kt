@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResul
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.toDisplayText
 import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
 import com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState
@@ -320,16 +321,24 @@ class ReviewViewModel @Inject constructor(
 
             when (val result = suggestCategoryFallbackUseCase(item, force = force)) {
                 is CategoryAssistGenerationResult.Success -> {
-                    updateCategoryAssistState(reviewId, AiLoadState.Ready(result.suggestion))
+                    val diagnostics = aiArtifactRepository.getLatest(
+                        "pending_review:$reviewId",
+                        AiCapability.CATEGORIZATION_FALLBACK
+                    )?.toDiagnosticsOrNull()?.toDisplayText()
+                    updateCategoryAssistState(
+                        reviewId = reviewId,
+                        state = AiLoadState.Ready(result.suggestion),
+                        diagnostics = diagnostics
+                    )
                 }
                 is CategoryAssistGenerationResult.Disabled -> {
-                    updateCategoryAssistState(reviewId, AiLoadState.Disabled)
+                    updateCategoryAssistState(reviewId, AiLoadState.Disabled, diagnostics = null)
                 }
                 is CategoryAssistGenerationResult.NotNeeded -> {
-                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason))
+                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = null)
                 }
                 is CategoryAssistGenerationResult.Error -> {
-                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason))
+                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = null)
                 }
             }
         }
@@ -347,16 +356,24 @@ class ReviewViewModel @Inject constructor(
 
             when (val result = judgePendingReviewDuplicateUseCase(item, force = force)) {
                 is DedupeJudgeGenerationResult.Success -> {
-                    updateDedupeAssistState(reviewId, AiLoadState.Ready(result.suggestion))
+                    val diagnostics = aiArtifactRepository.getLatest(
+                        "pending_review:$reviewId",
+                        AiCapability.DEDUPE_JUDGE
+                    )?.toDiagnosticsOrNull()?.toDisplayText()
+                    updateDedupeAssistState(
+                        reviewId = reviewId,
+                        state = AiLoadState.Ready(result.suggestion),
+                        diagnostics = diagnostics
+                    )
                 }
                 is DedupeJudgeGenerationResult.Disabled -> {
-                    updateDedupeAssistState(reviewId, AiLoadState.Disabled)
+                    updateDedupeAssistState(reviewId, AiLoadState.Disabled, diagnostics = null)
                 }
                 is DedupeJudgeGenerationResult.NotNeeded -> {
-                    updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason))
+                    updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = null)
                 }
                 is DedupeJudgeGenerationResult.Error -> {
-                    updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason))
+                    updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = null)
                 }
             }
         }
@@ -378,7 +395,7 @@ class ReviewViewModel @Inject constructor(
         dismissArtifact(
             reviewId = reviewId,
             capability = com.yourname.expensetracker.domain.ai.model.AiCapability.CATEGORIZATION_FALLBACK,
-            clear = { current -> current.copy(categorySuggestion = AiLoadState.Idle) }
+            clear = { current -> current.copy(categorySuggestion = AiLoadState.Idle, categoryDiagnostics = null) }
         )
     }
 
@@ -386,7 +403,7 @@ class ReviewViewModel @Inject constructor(
         dismissArtifact(
             reviewId = reviewId,
             capability = com.yourname.expensetracker.domain.ai.model.AiCapability.DEDUPE_JUDGE,
-            clear = { current -> current.copy(dedupeSuggestion = AiLoadState.Idle) }
+            clear = { current -> current.copy(dedupeSuggestion = AiLoadState.Idle, dedupeDiagnostics = null) }
         )
     }
 
@@ -498,17 +515,25 @@ class ReviewViewModel @Inject constructor(
         _errorMessage.value = "Debug data cleared."
     }
 
-    private fun updateCategoryAssistState(reviewId: Long, state: AiLoadState<CategoryAssistSuggestion>) {
+    private fun updateCategoryAssistState(
+        reviewId: Long,
+        state: AiLoadState<CategoryAssistSuggestion>,
+        diagnostics: String? = null
+    ) {
         _reviewCaptureAssistStates.update { current ->
             val existing = current[reviewId] ?: ReviewCaptureAssistState()
-            current + (reviewId to existing.copy(categorySuggestion = state))
+            current + (reviewId to existing.copy(categorySuggestion = state, categoryDiagnostics = diagnostics))
         }
     }
 
-    private fun updateDedupeAssistState(reviewId: Long, state: AiLoadState<DedupeJudgeSuggestion>) {
+    private fun updateDedupeAssistState(
+        reviewId: Long,
+        state: AiLoadState<DedupeJudgeSuggestion>,
+        diagnostics: String? = null
+    ) {
         _reviewCaptureAssistStates.update { current ->
             val existing = current[reviewId] ?: ReviewCaptureAssistState()
-            current + (reviewId to existing.copy(dedupeSuggestion = state))
+            current + (reviewId to existing.copy(dedupeSuggestion = state, dedupeDiagnostics = diagnostics))
         }
     }
 
