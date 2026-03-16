@@ -905,6 +905,13 @@ private fun AiExplanationSection(
                         color = SemanticColors.TextSecondary
                     )
                 }
+                ui.diagnostics?.let { diagnostics ->
+                    Text(
+                        diagnostics,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SemanticColors.TextSecondary.copy(alpha = 0.8f)
+                    )
+                }
                 ui.caution?.let { caution ->
                     Text(
                         caution,

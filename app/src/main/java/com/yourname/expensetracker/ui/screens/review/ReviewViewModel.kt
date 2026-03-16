@@ -16,6 +16,8 @@ import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResul
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.model.toDisplayText
+import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
 import com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
@@ -43,7 +45,8 @@ data class ReviewExplanationUi(
     val headline: String,
     val body: String,
     val caution: String? = null,
-    val isAi: Boolean = true
+    val isAi: Boolean = true,
+    val diagnostics: String? = null
 )
 
 @HiltViewModel
@@ -166,7 +169,8 @@ class ReviewViewModel @Inject constructor(
                             ReviewExplanationUi(
                                 headline = artifact.summaryText,
                                 body     = artifact.explanationText ?: "",
-                                isAi     = true
+                                isAi     = true,
+                                diagnostics = artifact.toDiagnosticsOrNull()?.toDisplayText()
                             )
                         )
                     }

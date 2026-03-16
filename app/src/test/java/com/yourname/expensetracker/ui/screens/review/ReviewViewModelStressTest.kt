@@ -289,7 +289,9 @@ class ReviewViewModelStressTest {
             targetKey       = "pending_review:10",
             capability      = AiCapability.REVIEW_EXPLANATION,
             status          = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
-            mode            = com.yourname.expensetracker.domain.ai.model.AiMode.AUTO,
+            mode            = com.yourname.expensetracker.domain.ai.model.AiMode.CLOUD,
+            provider        = "google-ai-studio",
+            modelName       = "gemini-2.5-flash",
             promptVersion   = "1",
             sourceHash      = "testhash",
             summaryText     = "Explanation headline",
@@ -325,6 +327,7 @@ class ReviewViewModelStressTest {
         assertTrue("Expected Ready but got $state", state is AiLoadState.Ready)
         val ready = state as AiLoadState.Ready<ReviewExplanationUi>
         assertEquals("Explanation headline", ready.value.headline)
+        assertEquals("Cloud - google-ai-studio - gemini-2.5-flash", ready.value.diagnostics)
     }
 
     @Test
