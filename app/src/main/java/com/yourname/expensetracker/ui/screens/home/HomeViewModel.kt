@@ -11,6 +11,8 @@ import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
+import com.yourname.expensetracker.domain.ai.model.toDisplayText
 import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
@@ -47,7 +49,8 @@ data class DashboardBriefingUi(
     val icon: String,
     /** True when this text came from an AI artifact rather than deterministic logic. */
     val isAi: Boolean,
-    val runtimeStatusMessage: String? = null
+    val runtimeStatusMessage: String? = null,
+    val diagnostics: String? = null
 )
 
 // ---------------------------------------------------------------------------
@@ -155,7 +158,8 @@ class HomeViewModel @Inject constructor(
                                             text  = entity.summaryText,
                                             icon  = "✨",
                                             isAi  = true,
-                                            runtimeStatusMessage = runtimeStatus
+                                            runtimeStatusMessage = runtimeStatus,
+                                            diagnostics = entity.toDiagnosticsOrNull()?.toDisplayText()
                                         )
                                     )
                                 }

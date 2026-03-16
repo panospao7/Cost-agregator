@@ -298,6 +298,14 @@ fun HomeScreen(
                                                 color = SemanticColors.TextSecondary
                                             )
                                         }
+
+                                        if (aiBriefing is AiLoadState.Ready && aiBriefing.value.diagnostics != null) {
+                                            Text(
+                                                text = aiBriefing.value.diagnostics,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = SemanticColors.TextSecondary
+                                            )
+                                        }
                                     }
                                 }
                             }

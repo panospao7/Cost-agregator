@@ -228,6 +228,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             val briefing = latest.aiBriefing as com.yourname.expensetracker.domain.ai.model.AiLoadState.Ready
             assertEquals("Cloud generated briefing", briefing.value.text)
             assertEquals(null, briefing.value.runtimeStatusMessage)
+            assertEquals("Cloud - google-ai-studio - gemini-2.5-flash", briefing.value.diagnostics)
             cancelAndIgnoreRemainingEvents()
         }
     }
