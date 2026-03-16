@@ -16,6 +16,7 @@ class HybridReceiptAssistService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val router: AiCapabilityRouter,
     private val cloudReceiptAssistService: CloudReceiptAssistService,
+    private val onDeviceReceiptAssistService: OnDeviceReceiptAssistService,
     private val noOpReceiptAssistService: NoOpReceiptAssistService
 ) : ReceiptAssistService {
 
@@ -23,7 +24,7 @@ class HybridReceiptAssistService @Inject constructor(
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.RECEIPT_EXTRACTION, settings).route) {
             AiRoute.CLOUD -> cloudReceiptAssistService.suggest(input)
-            AiRoute.ON_DEVICE,
+            AiRoute.ON_DEVICE -> onDeviceReceiptAssistService.suggest(input)
             AiRoute.DETERMINISTIC_FALLBACK,
             AiRoute.DISABLED -> noOpReceiptAssistService.suggest(input)
         }

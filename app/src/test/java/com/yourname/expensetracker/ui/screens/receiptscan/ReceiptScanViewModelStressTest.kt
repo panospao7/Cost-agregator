@@ -151,6 +151,49 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `stress - requestReceiptAssist surfaces on-device diagnostics when latest artifact is local`() = runTest {
+        val suggestion = ReceiptAssistSuggestion(
+            merchant = SuggestedValue("Lidl")
+        )
+        coEvery { suggestReceiptExtractionUseCase(7L, false) } returns ReceiptAssistGenerationResult.Success(
+            suggestion = suggestion,
+            fromCache = false
+        )
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = 7L,
+            targetKey = "scanned_receipt:7",
+            capability = AiCapability.RECEIPT_EXTRACTION,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.ON_DEVICE,
+            provider = "mlkit-genai-nano",
+            modelName = "gemini-nano-receipt",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            rawOcrText = "LIDL TOTAL 12.34"
+        )
+
+        viewModel.requestReceiptAssist()
+        advanceUntilIdle()
+
+        assertEquals(
+            "On-device - mlkit-genai-nano - gemini-nano-receipt",
+            viewModel.state.value.receiptAssistDiagnostics
+        )
+    }
+
+    @Test
     fun `stress - dismissReceiptAssist clears state and marks artifact dismissed`() = runTest {
         coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
             id = 4L,

@@ -146,6 +146,40 @@ class SuggestReceiptExtractionUseCaseTest {
     }
 
     @Test
+    fun `invoke stores ON_DEVICE metadata when router selects local receipt assist`() = runTest {
+        val receipt = makeReceipt(confidence = 0.2f)
+        val input = makeInput()
+        val suggestion = ReceiptAssistSuggestion(
+            merchant = SuggestedValue("Lidl"),
+            total = SuggestedValue(12.34)
+        )
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        coEvery { receiptRepository.getReceiptById(1L) } returns receipt
+        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, any())
+        } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "local model available",
+            providerName = AppConfig.Ai.ON_DEVICE_PROVIDER_NAME,
+            modelName = AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL
+        )
+        coEvery { receiptAssistService.suggest(input) } returns suggestion
+
+        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(receiptId = 1L)
+
+        assertTrue(result is ReceiptAssistGenerationResult.Success)
+        assertEquals(AiMode.ON_DEVICE, captured.first().mode)
+        assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, captured.first().provider)
+        assertEquals(AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL, captured.first().modelName)
+        assertTrue(captured.last().explanationText?.contains("Route: ON_DEVICE") == true)
+    }
+
+    @Test
     fun `invoke stores FAILED artifact when provider returns null`() = runTest {
         val receipt = makeReceipt(confidence = 0.2f)
         val input = makeInput()

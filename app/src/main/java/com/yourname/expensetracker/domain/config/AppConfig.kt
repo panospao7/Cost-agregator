@@ -152,6 +152,9 @@ object AppConfig {
         const val ON_DEVICE_CATEGORIZATION_MAX_TOKENS = 150
         const val ON_DEVICE_PROVIDER_NAME = "mlkit-genai-nano"
         const val ON_DEVICE_CATEGORIZATION_MODEL = "gemini-nano"
+        const val ON_DEVICE_RECEIPT_TEMPERATURE = 0.1f
+        const val ON_DEVICE_RECEIPT_MAX_TOKENS = 220
+        const val ON_DEVICE_RECEIPT_MODEL = "gemini-nano-receipt"
 
         // Query interpretation / assistant limits
         const val MAX_QUERY_INPUT_CHARS = 400

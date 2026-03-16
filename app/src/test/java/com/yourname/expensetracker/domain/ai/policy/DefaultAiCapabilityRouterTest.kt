@@ -73,6 +73,27 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
+    fun `decide returns ON_DEVICE for receipt extraction when local model available`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns false
+        every { environmentMonitor.isWifiConnected() } returns false
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.RECEIPT_EXTRACTION) } returns OnDeviceModelStatus.AVAILABLE
+
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            allowOnDeviceAi = true,
+            receiptAssistEnabled = true,
+            preferredMode = AiMode.AUTO
+        )
+
+        val result = router.decide(AiCapability.RECEIPT_EXTRACTION, settings)
+
+        assertEquals(AiRoute.ON_DEVICE, result.route)
+        assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, result.providerName)
+        assertEquals(AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL, result.modelName)
+    }
+
+    @Test
     fun `decide respects wifiOnlyForCloud and falls back when wifi unavailable`() = runTest {
         every { environmentMonitor.isNetworkAvailable() } returns true
         every { environmentMonitor.isWifiConnected() } returns false
@@ -96,11 +117,11 @@ class DefaultAiCapabilityRouterTest {
             aiEnabled = true,
             allowCloudAi = true,
             allowOnDeviceAi = true,
-            receiptAssistEnabled = true,
+            reviewExplanationEnabled = true,
             preferredMode = AiMode.ON_DEVICE
         )
 
-        val result = router.decide(AiCapability.RECEIPT_EXTRACTION, settings)
+        val result = router.decide(AiCapability.REVIEW_EXPLANATION, settings)
 
         assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
         assertTrue(result.reason.contains("not implemented", ignoreCase = true))

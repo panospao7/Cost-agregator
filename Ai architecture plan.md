@@ -3863,15 +3863,23 @@ Completed:
 
 ### Nano PR 4: Consider second Nano capability
 
-Recommended next candidate:
+Status: DONE (committed)
 
-- `ReceiptAssistService`
+Completed:
 
-Only proceed if:
-
-- categorization quality is acceptable
-- runtime checks are stable
-- local latency is acceptable
+- Added `OnDeviceReceiptAssistService` using ML Kit GenAI Prompt API
+  - Builds a conservative receipt recovery prompt for OCR text
+  - Parses merchant / total / date / tax / notes JSON safely
+  - Handles `GenAiException` and malformed output gracefully
+- Updated `HybridReceiptAssistService` to delegate `ON_DEVICE` receipt routing to the new local provider
+- Enabled `RECEIPT_EXTRACTION` as a shipped on-device capability in the router
+- Added on-device receipt config constants in `AppConfig.Ai`
+- Added focused tests for:
+  - on-device receipt prompt and parsing behavior
+  - receipt routing to `ON_DEVICE`
+  - receipt artifact metadata persistence for local routing
+  - receipt UI diagnostics for local artifacts
+- Verified compile and focused unit suites for the Nano receipt path
 
 ## Recommended Next Slice From Here
 

@@ -219,6 +219,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
     private fun isLowRiskOnDeviceFallback(capability: AiCapability): Boolean {
         return capability in setOf(
             AiCapability.REVIEW_EXPLANATION,
+            AiCapability.RECEIPT_EXTRACTION,
             AiCapability.CATEGORIZATION_FALLBACK
         )
     }
@@ -251,7 +252,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.DASHBOARD_BRIEFING -> "gemini-nano-briefing"
         AiCapability.REVIEW_EXPLANATION -> "gemini-nano-review"
         AiCapability.QUERY_INTERPRETATION -> "gemini-nano-query"
-        AiCapability.RECEIPT_EXTRACTION -> "gemini-nano-receipt"
+        AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL
         AiCapability.DEDUPE_JUDGE -> "gemini-nano-dedupe"
         AiCapability.LOCATION_SUMMARY -> "gemini-nano-location"
@@ -265,6 +266,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         )
 
         val ON_DEVICE_IMPLEMENTED_CAPABILITIES = setOf(
+            AiCapability.RECEIPT_EXTRACTION,
             AiCapability.CATEGORIZATION_FALLBACK
         )
     }
