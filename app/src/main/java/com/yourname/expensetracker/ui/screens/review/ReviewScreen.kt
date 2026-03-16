@@ -31,6 +31,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.AmountText
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
@@ -57,6 +58,7 @@ fun ReviewScreen(
     val pendingReviews by viewModel.pendingReviews.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
+    val aiExplanationStates by viewModel.aiExplanationStates.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
     var debugReview by remember { mutableStateOf<PendingReview?>(null) }
     // Guard against double-swipes/rapid-fire actions
@@ -311,6 +313,11 @@ fun ReviewScreen(
                                         }
                                     }
                                     debugReview = item.review
+                                },
+                                aiExplanationState = aiExplanationStates[item.review.id]
+                                    ?: AiLoadState.Idle,
+                                onLoadAiExplanation = {
+                                    viewModel.loadAiExplanation(item.review.id)
                                 }
                             )
                         }
@@ -458,7 +465,9 @@ fun ReviewCard(
     onApprove: () -> Unit,
     onReject: () -> Unit,
     onEdit: () -> Unit,
-    onDebug: () -> Unit
+    onDebug: () -> Unit,
+    aiExplanationState: AiLoadState<ReviewExplanationUi> = AiLoadState.Idle,
+    onLoadAiExplanation: () -> Unit = {}
 ) {
     val review = item.review
     
@@ -680,6 +689,15 @@ fun ReviewCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // ── AI Explanation Section ────────────────────────────────────────
+            // Separate from the raw evidence panel above; never touches approve/reject flow.
+            AiExplanationSection(
+                state = aiExplanationState,
+                onRequest = onLoadAiExplanation
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -723,6 +741,164 @@ fun ReviewCard(
                     )
                 ) {
                     Text("Approve", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * AI explanation surface for a single review card.
+ *
+ * States:
+ * - [AiLoadState.Disabled] / [AiLoadState.Idle] — shows a subtle "Explain with AI" button.
+ * - [AiLoadState.Loading]  — shows an inline progress indicator.
+ * - [AiLoadState.Ready]    — shows headline + body text.
+ * - [AiLoadState.Error]    — shows error message with a retry affordance.
+ *
+ * This section is completely non-destructive: it never touches approve/reject/edit logic.
+ */
+@Composable
+private fun AiExplanationSection(
+    state: AiLoadState<ReviewExplanationUi>,
+    onRequest: () -> Unit
+) {
+    when (state) {
+        is AiLoadState.Disabled, is AiLoadState.Idle -> {
+            // Show a minimal "Explain with AI" prompt — only visible when AI is on
+            // For Disabled we hide it entirely; for Idle we show the tap affordance.
+            if (state is AiLoadState.Idle) {
+                OutlinedButton(
+                    onClick = onRequest,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, SemanticColors.PrimaryIndigo.copy(alpha = 0.4f))
+                ) {
+                    Icon(
+                        Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = SemanticColors.PrimaryIndigo
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "Explain with AI",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = SemanticColors.PrimaryIndigo
+                    )
+                }
+            }
+        }
+
+        is AiLoadState.Loading -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        SemanticColors.PrimaryIndigo.copy(alpha = 0.06f),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = SemanticColors.PrimaryIndigo
+                )
+                Text(
+                    "Generating explanation…",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SemanticColors.PrimaryIndigo
+                )
+            }
+        }
+
+        is AiLoadState.Ready -> {
+            val ui = state.value
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        SemanticColors.PrimaryIndigo.copy(alpha = 0.08f),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .border(
+                        1.dp,
+                        SemanticColors.PrimaryIndigo.copy(alpha = 0.25f),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = SemanticColors.PrimaryIndigo
+                    )
+                    Text(
+                        "AI EXPLANATION",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.PrimaryIndigo,
+                        letterSpacing = 1.sp
+                    )
+                }
+                if (ui.headline.isNotBlank()) {
+                    Text(
+                        ui.headline,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = SemanticColors.TextPrimary
+                    )
+                }
+                if (ui.body.isNotBlank()) {
+                    Text(
+                        ui.body,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.TextSecondary
+                    )
+                }
+                ui.caution?.let { caution ->
+                    Text(
+                        caution,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SemanticColors.WarningOrange
+                    )
+                }
+            }
+        }
+
+        is AiLoadState.Error -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "AI explanation unavailable",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onRequest) {
+                    Text(
+                        "Retry",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SemanticColors.PrimaryIndigo
+                    )
                 }
             }
         }

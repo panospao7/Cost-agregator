@@ -8,6 +8,7 @@ import androidx.work.Configuration
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.location.LocationBackfillWorker
 import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
+import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import dagger.hilt.android.HiltAndroidApp
@@ -25,6 +26,9 @@ class ExpenseTrackerApp : Application(), Configuration.Provider {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    @Inject
+    lateinit var aiWorkScheduler: AiWorkScheduler
 
     // WorkManager requires this when using Hilt-injected workers
     override val workManagerConfiguration: Configuration
@@ -61,6 +65,9 @@ class ExpenseTrackerApp : Application(), Configuration.Provider {
 
         // Schedule the one-time merchantKey column backfill for pre-v32 rows
         MerchantKeyBackfillWorker.schedule(this)
+
+        // Schedule the daily AI dashboard briefing worker (no-op when AI is disabled)
+        aiWorkScheduler.scheduleDailyBriefing()
     }
 }
 

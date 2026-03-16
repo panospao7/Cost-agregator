@@ -3,6 +3,8 @@ package com.yourname.expensetracker.data.database
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.data.database.dao.*
 import androidx.room.*
+import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.data.database.dao.AiArtifactDao
 
 @Database(
     entities = [
@@ -22,9 +24,10 @@ import androidx.room.*
         MerchantCanonical::class,
         MerchantAlias::class,
         MerchantLocation::class,
-        MerchantLocationCorrection::class
+        MerchantLocationCorrection::class,
+        AiArtifactEntity::class
     ],
-        version = 33,
+        version = 34,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -45,6 +48,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun savingsGoalDao(): SavingsGoalDao
     abstract fun merchantNormalizationDao(): MerchantNormalizationDao
     abstract fun merchantLocationDao(): MerchantLocationDao
+    abstract fun aiArtifactDao(): AiArtifactDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -669,6 +673,65 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("DELETE FROM merchant_locations")
                 database.execSQL("DELETE FROM merchant_location_corrections")
+            }
+        }
+
+        // Migration 33 -> 34: Add ai_artifacts table for Phase 1 AI foundation.
+        // Stores AI-generated briefings and explanations separately from financial tables
+        // so that AI output can be expired, regenerated, or disabled without side effects.
+        val MIGRATION_33_34 = object : androidx.room.migration.Migration(33, 34) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ai_artifacts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        targetType TEXT NOT NULL,
+                        targetId INTEGER,
+                        targetKey TEXT NOT NULL,
+                        capability TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        mode TEXT NOT NULL,
+                        provider TEXT,
+                        modelName TEXT,
+                        promptVersion TEXT NOT NULL,
+                        summaryText TEXT,
+                        explanationText TEXT,
+                        payloadJson TEXT,
+                        confidence REAL,
+                        sourceHash TEXT NOT NULL,
+                        errorMessage TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        expiresAt INTEGER
+                    )
+                """.trimIndent())
+
+                // Unique index for upsert deduplication
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS
+                    index_ai_artifacts_targetKey_capability_promptVersion_sourceHash
+                    ON ai_artifacts (targetKey, capability, promptVersion, sourceHash)
+                """.trimIndent())
+
+                // Latest-artifact lookup
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS
+                    index_ai_artifacts_targetKey_capability_updatedAt
+                    ON ai_artifacts (targetKey, capability, updatedAt)
+                """.trimIndent())
+
+                // Cleanup sweep by status
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS
+                    index_ai_artifacts_status_updatedAt
+                    ON ai_artifacts (status, updatedAt)
+                """.trimIndent())
+
+                // TTL expiry sweep
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS
+                    index_ai_artifacts_expiresAt
+                    ON ai_artifacts (expiresAt)
+                """.trimIndent())
             }
         }
     }

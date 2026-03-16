@@ -1,0 +1,78 @@
+package com.yourname.expensetracker.di
+
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.AiArtifactDao
+import com.yourname.expensetracker.data.ai.provider.NoOpDashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.NoOpReviewExplanationService
+import com.yourname.expensetracker.data.ai.worker.AiWorkSchedulerImpl
+import com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+import com.yourname.expensetracker.data.repository.AiSettingsRepositoryImpl
+import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.ai.policy.AiPolicyImpl
+import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
+import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
+import dagger.Binds
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class AiModule {
+
+    // -------------------------------------------------------------------------
+    // Interface → implementation bindings
+    // -------------------------------------------------------------------------
+
+    @Binds
+    @Singleton
+    abstract fun bindAiSettingsRepository(
+        impl: AiSettingsRepositoryImpl
+    ): AiSettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAiArtifactRepository(
+        impl: AiArtifactRepositoryImpl
+    ): AiArtifactRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAiPolicy(
+        impl: AiPolicyImpl
+    ): AiPolicy
+
+    @Binds
+    @Singleton
+    abstract fun bindAiWorkScheduler(
+        impl: AiWorkSchedulerImpl
+    ): AiWorkScheduler
+
+    @Binds
+    @Singleton
+    abstract fun bindDashboardBriefingService(
+        impl: NoOpDashboardBriefingService
+    ): DashboardBriefingService
+
+    @Binds
+    @Singleton
+    abstract fun bindReviewExplanationService(
+        impl: NoOpReviewExplanationService
+    ): ReviewExplanationService
+
+    // -------------------------------------------------------------------------
+    // DAO provision (companion object)
+    // -------------------------------------------------------------------------
+
+    companion object {
+        @Provides
+        @Singleton
+        fun provideAiArtifactDao(database: AppDatabase): AiArtifactDao =
+            database.aiArtifactDao()
+    }
+}

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.review
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -9,6 +10,11 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.usecase.ExplainPendingReviewUseCase
 import com.yourname.expensetracker.domain.model.Result
 import timber.log.Timber
 // ...
@@ -17,11 +23,21 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
 import javax.inject.Inject
+
+/** UI-layer wrapper surfaced per review card. */
+data class ReviewExplanationUi(
+    val headline: String,
+    val body: String,
+    val caution: String? = null,
+    val isAi: Boolean = true
+)
 
 @HiltViewModel
 class ReviewViewModel @Inject constructor(
@@ -31,7 +47,10 @@ class ReviewViewModel @Inject constructor(
     private val receiptRepository: com.yourname.expensetracker.data.repository.ReceiptRepository,
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val debugDataStorage: com.yourname.expensetracker.ui.screens.debug.DebugDataStorage,
-    val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
+    val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
+    private val explainPendingReviewUseCase: ExplainPendingReviewUseCase,
+    private val aiArtifactRepository: AiArtifactRepository,
+    private val aiSettingsRepository: AiSettingsRepository
 ) : ViewModel() {
     
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -46,14 +65,110 @@ class ReviewViewModel @Inject constructor(
     private val _debugData = MutableStateFlow<com.yourname.expensetracker.ui.screens.debug.DebugData?>(null)
     val debugData = _debugData.asStateFlow()
 
+    // ── AI explanation state ──────────────────────────────────────────────────
+    // Map of reviewId → AiLoadState<ReviewExplanationUi>; updated atomically.
+    private val _aiExplanationStates =
+        MutableStateFlow<Map<Long, AiLoadState<ReviewExplanationUi>>>(emptyMap())
+    val aiExplanationStates: StateFlow<Map<Long, AiLoadState<ReviewExplanationUi>>> =
+        _aiExplanationStates.asStateFlow()
+
+    /** Tracks review IDs that already have an in-flight coroutine, preventing duplicates. */
+    private val _inFlightExplanations = mutableSetOf<Long>()
+
     init {
         // Load saved debug data on startup
         viewModelScope.launch {
             _debugData.value = debugDataStorage.load()
         }
+        // Initialise AI explanation states based on current settings
+        viewModelScope.launch {
+            val settings = aiSettingsRepository.settings().first()
+            if (!settings.aiEnabled || !settings.reviewExplanationEnabled) {
+                // Pre-set a sentinel so the UI knows AI is globally disabled
+                // (individual per-review states default to Idle when absent from map)
+                Timber.d("ReviewViewModel: AI explanation disabled in settings.")
+            }
+        }
     }
 
     private var batchJob: Job? = null
+
+    // ── AI explanation API ────────────────────────────────────────────────────
+
+    /**
+     * Triggers on-demand AI explanation for [reviewId].
+     *
+     * Guards:
+     * - Skips if already in-flight for this ID.
+     * - Sets [AiLoadState.Loading] immediately so the UI reflects the request.
+     * - On completion, reads the artifact from the repository and maps it to
+     *   [ReviewExplanationUi], then sets [AiLoadState.Ready] or [AiLoadState.Error].
+     * - If AI is disabled in settings, sets [AiLoadState.Disabled] and returns.
+     */
+    fun loadAiExplanation(reviewId: Long) {
+        if (_inFlightExplanations.contains(reviewId)) return
+
+        viewModelScope.launch {
+            // Settings gate — check before touching UI state
+            val settings = aiSettingsRepository.settings().first()
+            if (!settings.aiEnabled || !settings.reviewExplanationEnabled) {
+                _aiExplanationStates.update { it + (reviewId to AiLoadState.Disabled) }
+                return@launch
+            }
+
+            // Mark in-flight and show loading
+            _inFlightExplanations.add(reviewId)
+            _aiExplanationStates.update { it + (reviewId to AiLoadState.Loading) }
+
+            try {
+                // Load the review entity
+                val review = reviewQueueRepository.getReviewById(reviewId)
+                if (review == null) {
+                    _aiExplanationStates.update {
+                        it + (reviewId to AiLoadState.Error("Review not found"))
+                    }
+                    return@launch
+                }
+
+                // Run the use case (writes artifact to DB)
+                explainPendingReviewUseCase(review)
+
+                // Read the resulting artifact and map to UI model
+                val targetKey = "pending_review:$reviewId"
+                val artifact = aiArtifactRepository.getLatest(
+                    targetKey,
+                    com.yourname.expensetracker.domain.ai.model.AiCapability.REVIEW_EXPLANATION
+                )
+
+                val newState: AiLoadState<ReviewExplanationUi> = when {
+                    artifact == null -> AiLoadState.Error("No artifact produced")
+                    artifact.status == AiArtifactStatus.READY &&
+                            artifact.summaryText != null -> {
+                        AiLoadState.Ready(
+                            ReviewExplanationUi(
+                                headline = artifact.summaryText,
+                                body     = artifact.explanationText ?: "",
+                                isAi     = true
+                            )
+                        )
+                    }
+                    else -> AiLoadState.Error(
+                        artifact.errorMessage ?: "Generation failed"
+                    )
+                }
+
+                _aiExplanationStates.update { it + (reviewId to newState) }
+
+            } catch (e: Exception) {
+                Timber.e(e, "loadAiExplanation: unexpected error for review $reviewId")
+                _aiExplanationStates.update {
+                    it + (reviewId to AiLoadState.Error(e.message ?: "Unexpected error"))
+                }
+            } finally {
+                _inFlightExplanations.remove(reviewId)
+            }
+        }
+    }
 
     val pendingReviews: StateFlow<List<PendingReviewWithReceipt>> = reviewQueueRepository
         .getPendingReviews()

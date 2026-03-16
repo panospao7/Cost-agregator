@@ -136,6 +136,9 @@ dependencies {
     implementation("androidx.hilt:hilt-work:1.2.0")
     ksp("androidx.hilt:hilt-compiler:1.2.0")
 
+    // DataStore — AI settings persistence
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
     // Logging
     implementation("com.jakewharton.timber:timber:5.0.1")
     
@@ -176,7 +179,7 @@ tasks.register("verifyRoomSchemaSnapshots") {
     description = "Reports Room schema snapshot coverage by version"
 
     doLast {
-        val maxVersion = 33
+        val maxVersion = 34
         val schemaDir = file("$projectDir/schemas/com.yourname.expensetracker.data.database.AppDatabase")
         val existing = if (schemaDir.exists()) {
             schemaDir.listFiles()

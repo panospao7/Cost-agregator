@@ -5,11 +5,15 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
 import com.yourname.expensetracker.data.repository.DashboardRepository
+import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +41,9 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
     private lateinit var plannedExpenseRepository: com.yourname.expensetracker.data.repository.PlannedExpenseRepository
     private lateinit var analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository
     private lateinit var computeDashboardWidgetsUseCase: ComputeDashboardWidgetsUseCase
+    private lateinit var aiSettingsRepository: AiSettingsRepository
+    private lateinit var aiArtifactRepository: AiArtifactRepository
+    private lateinit var timeProvider: TimeProvider
 
     private val configFlow = MutableStateFlow(defaultConfig())
     private lateinit var viewModel: HomeViewModel
@@ -50,6 +57,12 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         plannedExpenseRepository = mockk(relaxed = true)
         analyticsRepository = mockk(relaxed = true)
         computeDashboardWidgetsUseCase = mockk(relaxed = true)
+        aiSettingsRepository = mockk(relaxed = true)
+        aiArtifactRepository = mockk(relaxed = true)
+        timeProvider = mockk(relaxed = true)
+
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings())
+        every { timeProvider.now() } returns 0L
 
         every { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(
             ProcessedDashboardData(
@@ -104,7 +117,10 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             categoryRepository,
             plannedExpenseRepository,
             analyticsRepository,
-            computeDashboardWidgetsUseCase
+            computeDashboardWidgetsUseCase,
+            aiSettingsRepository,
+            aiArtifactRepository,
+            timeProvider
         )
     }
 
@@ -349,7 +365,10 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             categoryRepository,
             plannedExpenseRepository,
             analyticsRepository,
-            computeDashboardWidgetsUseCase
+            computeDashboardWidgetsUseCase,
+            aiSettingsRepository,
+            aiArtifactRepository,
+            timeProvider
         )
         advanceUntilIdle()
         assertNotNull(vm.dashboard)

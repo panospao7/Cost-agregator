@@ -328,6 +328,83 @@ class DatabaseMigrationTest {
         db.close()
     }
 
+    // ── Migration 33 → 34 (AI artifacts table) ───────────────────────────────
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_33_to_34_adds_ai_artifacts_table() {
+        assumeTrue(hasSchema(33) && hasSchema(34))
+
+        // Create DB at version 33 (no ai_artifacts table)
+        var db = helper.createDatabase(testDb, 33)
+        val tablesBefore = mutableListOf<String>()
+        db.query("SELECT name FROM sqlite_master WHERE type='table'").use { c ->
+            while (c.moveToNext()) tablesBefore.add(c.getString(0))
+        }
+        assertFalse("ai_artifacts should NOT exist at v33", tablesBefore.contains("ai_artifacts"))
+        db.close()
+
+        // Run migration to 34 and validate schema
+        db = helper.runMigrationsAndValidate(testDb, 34, true)
+
+        // Table must exist
+        val tableCursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_artifacts'"
+        )
+        assertTrue("ai_artifacts table should exist at v34", tableCursor.moveToFirst())
+        tableCursor.close()
+
+        // Required columns must be present — insert a representative row
+        db.execSQL("""
+            INSERT INTO ai_artifacts
+              (targetType, targetKey, capability, status, mode, promptVersion,
+               sourceHash, createdAt, updatedAt)
+            VALUES
+              ('PENDING_REVIEW','pending_review:1','REVIEW_EXPLANATION','READY','AUTO','v1',
+               'hash_abc', ${System.currentTimeMillis()}, ${System.currentTimeMillis()})
+        """)
+
+        val rowCursor = db.query(
+            "SELECT targetType, targetKey, capability, status FROM ai_artifacts"
+        )
+        assertTrue("Inserted row should be readable", rowCursor.moveToFirst())
+        assertEquals("PENDING_REVIEW", rowCursor.getString(0))
+        assertEquals("pending_review:1", rowCursor.getString(1))
+        assertEquals("REVIEW_EXPLANATION", rowCursor.getString(2))
+        assertEquals("READY", rowCursor.getString(3))
+        rowCursor.close()
+
+        // Required indices must exist
+        val indexCursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='ai_artifacts'"
+        )
+        val indices = mutableListOf<String>()
+        while (indexCursor.moveToNext()) indices.add(indexCursor.getString(0))
+        indexCursor.close()
+        assertTrue(
+            "Unique index on (targetKey,capability,promptVersion,sourceHash) should exist",
+            indices.any { it.contains("ai_artifacts") }
+        )
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_1_to_34_full_chain() {
+        assumeTrue(hasSchema(1) && hasSchema(34))
+        var db = helper.createDatabase(testDb, 1)
+        db.close()
+        db = helper.runMigrationsAndValidate(testDb, 34, true)
+        // Basic smoke check — ai_artifacts table should exist at the end
+        val cursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_artifacts'"
+        )
+        assertTrue("ai_artifacts should exist after 1→34 full chain", cursor.moveToFirst())
+        cursor.close()
+        db.close()
+    }
+
     private fun hasSchema(version: Int): Boolean {
         val path = "${AppDatabase::class.java.canonicalName}/$version.json"
         return try {

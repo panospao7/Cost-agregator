@@ -5,6 +5,10 @@ import androidx.room.TypeConverter
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiTargetType
 
 class Converters {
     @TypeConverter
@@ -64,4 +68,36 @@ class Converters {
             }
         }
     }
+
+    // ------------------------------------------------------------------
+    // AI enums
+    // ------------------------------------------------------------------
+
+    @TypeConverter
+    fun fromAiCapability(value: AiCapability): String = value.name
+
+    @TypeConverter
+    fun toAiCapability(value: String): AiCapability =
+        try { AiCapability.valueOf(value) } catch (_: IllegalArgumentException) { AiCapability.DASHBOARD_BRIEFING }
+
+    @TypeConverter
+    fun fromAiMode(value: AiMode): String = value.name
+
+    @TypeConverter
+    fun toAiMode(value: String): AiMode =
+        try { AiMode.valueOf(value) } catch (_: IllegalArgumentException) { AiMode.AUTO }
+
+    @TypeConverter
+    fun fromAiTargetType(value: AiTargetType): String = value.name
+
+    @TypeConverter
+    fun toAiTargetType(value: String): AiTargetType =
+        try { AiTargetType.valueOf(value) } catch (_: IllegalArgumentException) { AiTargetType.DASHBOARD }
+
+    @TypeConverter
+    fun fromAiArtifactStatus(value: AiArtifactStatus): String = value.name
+
+    @TypeConverter
+    fun toAiArtifactStatus(value: String): AiArtifactStatus =
+        try { AiArtifactStatus.valueOf(value) } catch (_: IllegalArgumentException) { AiArtifactStatus.FAILED }
 }

@@ -38,6 +38,7 @@ import java.util.*
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 
@@ -252,6 +253,19 @@ fun HomeScreen(
                                 }
                             }
                             is DashboardWidget.NaturalLanguageInsight -> {
+                                // When AI is ready, display the AI briefing text in this slot.
+                                // Otherwise fall back to the deterministic insight text/icon.
+                                val aiBriefing = state.aiBriefing
+                                val displayText = if (aiBriefing is AiLoadState.Ready) {
+                                    aiBriefing.value.text
+                                } else {
+                                    widget.text
+                                }
+                                val displayIcon = if (aiBriefing is AiLoadState.Ready) {
+                                    aiBriefing.value.icon
+                                } else {
+                                    widget.icon
+                                }
                                 BentoCard(
                                     containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
                                     border = BorderStroke(1.dp, SemanticColors.PrimaryIndigo.copy(alpha = 0.2f))
@@ -263,12 +277,12 @@ fun HomeScreen(
                                             color = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
                                         ) {
                                             Box(contentAlignment = Alignment.Center) {
-                                                Text(widget.icon, fontSize = 20.sp)
+                                                Text(displayIcon, fontSize = 20.sp)
                                             }
                                         }
                                         Spacer(modifier = Modifier.width(16.dp))
                                         Text(
-                                            text = widget.text,
+                                            text = displayText,
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = SemanticColors.TextPrimary,
                                             fontWeight = FontWeight.Medium

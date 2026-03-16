@@ -1,0 +1,118 @@
+package com.yourname.expensetracker.domain.ai.usecase
+
+import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
+import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.flow.first
+import timber.log.Timber
+import javax.inject.Inject
+
+/**
+ * Generates (or returns a cached) AI dashboard briefing artifact.
+ *
+ * Flow:
+ * 1. Gate: exit immediately if AI or dashboard briefing is disabled in settings.
+ * 2. Build the typed [DashboardBriefingInput] from the current [ProcessedDashboardData].
+ * 3. Derive a [targetKey] = "dashboard_home:yyyy-MM-dd".
+ * 4. Check the artifact cache: if a READY artifact already exists for today and
+ *    is still within TTL, skip generation (the ViewModel observes the flow).
+ * 5. Persist a RUNNING tombstone, call [DashboardBriefingService.generate], then
+ *    upsert either a READY or FAILED artifact.
+ *
+ * Returning normally (no exception) always means the artifact store is in a
+ * consistent state — callers do not need to inspect a return value.
+ */
+class GenerateDashboardBriefingUseCase @Inject constructor(
+    private val aiSettingsRepository: AiSettingsRepository,
+    private val aiArtifactRepository: AiArtifactRepository,
+    private val dashboardBriefingService: DashboardBriefingService,
+    private val inputBuilder: DashboardBriefingInputBuilder,
+    private val timeProvider: TimeProvider
+) {
+
+    suspend operator fun invoke(processedData: ProcessedDashboardData) {
+        // ── 1. Settings gate ─────────────────────────────────────────────────
+        val settings = aiSettingsRepository.settings().first()
+        if (!settings.aiEnabled || !settings.dashboardBriefingEnabled) {
+            Timber.d("GenerateDashboardBriefingUseCase: AI or briefing disabled, skipping.")
+            return
+        }
+
+        // ── 2. Build input ───────────────────────────────────────────────────
+        val input = inputBuilder.build(processedData)
+
+        // ── 3. Derive target key ─────────────────────────────────────────────
+        val targetKey = "dashboard_home:${input.dateKey}"
+        val now       = timeProvider.now()
+
+        // ── 4. Cache freshness check ─────────────────────────────────────────
+        val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)
+        if (existing != null &&
+            existing.status == AiArtifactStatus.READY &&
+            existing.promptVersion == AppConfig.Ai.PROMPT_VERSION_DASHBOARD &&
+            existing.expiresAt != null && existing.expiresAt > now
+        ) {
+            Timber.d("GenerateDashboardBriefingUseCase: fresh artifact found, skipping generation.")
+            return
+        }
+
+        // ── 5a. Persist RUNNING tombstone ────────────────────────────────────
+        val sourceHash = input.hashCode().toString()
+        val baseEntity = AiArtifactEntity(
+            targetType    = AiTargetType.DASHBOARD,
+            targetKey     = targetKey,
+            capability    = AiCapability.DASHBOARD_BRIEFING,
+            status        = AiArtifactStatus.RUNNING,
+            mode          = AiMode.AUTO,
+            promptVersion = AppConfig.Ai.PROMPT_VERSION_DASHBOARD,
+            sourceHash    = sourceHash,
+            createdAt     = now,
+            updatedAt     = now,
+            expiresAt     = now + AppConfig.Ai.DASHBOARD_BRIEFING_TTL_MS
+        )
+        aiArtifactRepository.upsert(baseEntity)
+
+        // ── 5b. Generate ─────────────────────────────────────────────────────
+        try {
+            val briefing = dashboardBriefingService.generate(input)
+
+            val finalEntity = if (briefing != null) {
+                baseEntity.copy(
+                    status      = AiArtifactStatus.READY,
+                    summaryText = briefing.text
+                        .take(AppConfig.Ai.MAX_BRIEFING_LENGTH_CHARS),
+                    updatedAt   = timeProvider.now()
+                )
+            } else {
+                // No-op provider or provider declined — mark failed so we don't retry
+                // until the next scheduled run.
+                baseEntity.copy(
+                    status       = AiArtifactStatus.FAILED,
+                    errorMessage = "Provider returned null",
+                    updatedAt    = timeProvider.now()
+                )
+            }
+
+            aiArtifactRepository.upsert(finalEntity)
+            Timber.d("GenerateDashboardBriefingUseCase: artifact stored with status ${finalEntity.status}.")
+
+        } catch (e: Exception) {
+            Timber.e(e, "GenerateDashboardBriefingUseCase: generation failed")
+            aiArtifactRepository.upsert(
+                baseEntity.copy(
+                    status       = AiArtifactStatus.FAILED,
+                    errorMessage = e.message?.take(200),
+                    updatedAt    = timeProvider.now()
+                )
+            )
+        }
+    }
+}

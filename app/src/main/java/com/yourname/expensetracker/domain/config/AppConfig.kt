@@ -95,4 +95,29 @@ object AppConfig {
         const val GEOAPIFY_BASE_URL = "https://api.geoapify.com"
         const val GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com"
     }
+
+    // ── AI Layer (Phase 1) ────────────────────────────────────────────────────
+
+    object Ai {
+        // TTLs
+        /** How long a dashboard briefing artifact stays fresh before regeneration. */
+        const val DASHBOARD_BRIEFING_TTL_MS = 24L * 60 * 60 * 1000L      // 24 hours
+
+        /** How long a review explanation artifact stays fresh before regeneration. */
+        const val REVIEW_EXPLANATION_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
+
+        // Input size limits (cloud privacy)
+        /** Max characters of raw notification text sent to the cloud for a review explanation. */
+        const val MAX_REVIEW_TEXT_CHARS_FOR_CLOUD = 500
+
+        /** Max characters for any single AI briefing response stored in the artifact. */
+        const val MAX_BRIEFING_LENGTH_CHARS = 600
+
+        // Prompt versioning — bump to invalidate cached artifacts for that capability
+        const val PROMPT_VERSION_DASHBOARD = "v1"
+        const val PROMPT_VERSION_REVIEW    = "v1"
+
+        // Worker tags
+        const val WORK_NAME_DAILY_BRIEFING = "ai_daily_briefing"
+    }
 }
