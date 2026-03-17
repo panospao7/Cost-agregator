@@ -32,6 +32,7 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
 import com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.AmountText
@@ -63,6 +64,8 @@ fun ReviewScreen(
     val pendingCount by viewModel.pendingCount.collectAsState()
     val aiExplanationStates by viewModel.aiExplanationStates.collectAsState()
     val reviewCaptureAssistStates by viewModel.reviewCaptureAssistStates.collectAsState()
+    val quickApprovePreview by viewModel.quickApprovePreview.collectAsState()
+    val reviewQuickApproveEnabled by viewModel.reviewQuickApproveEnabled.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
     var debugReview by remember { mutableStateOf<PendingReview?>(null) }
     // Guard against double-swipes/rapid-fire actions
@@ -332,6 +335,11 @@ fun ReviewScreen(
                                     viewModel.applyCategorySuggestion(item.review.id)
                                     editingReview = item.review
                                 },
+                                reviewQuickApproveEnabled = reviewQuickApproveEnabled,
+                                canQuickApprove = viewModel.canOfferQuickApprove(item.review.id),
+                                onRequestQuickApprove = {
+                                    viewModel.requestQuickApprovePreview(item.review.id)
+                                },
                                 onDismissCategoryAssist = {
                                     viewModel.dismissCategoryAssist(item.review.id)
                                 },
@@ -370,6 +378,42 @@ fun ReviewScreen(
                 },
                 initialCategoryIdOverride = viewModel.consumePrefilledCategorySuggestion(review.id),
                 geocodingService = viewModel.geocodingService
+            )
+        }
+
+        quickApprovePreview?.let { preview ->
+            AlertDialog(
+                onDismissRequest = viewModel::dismissQuickApprovePreview,
+                title = { Text("Approve with suggested category?") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "This keeps the current merchant and amount, applies only the suggested category, and still goes through the normal approval path.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        HorizontalDivider()
+                        Text("Merchant: ${preview.merchant}", style = MaterialTheme.typography.bodySmall)
+                        Text("Amount: ${AmountUtils.formatAmount(preview.amount)}", style = MaterialTheme.typography.bodySmall)
+                        Text("Category: ${preview.categoryName}", style = MaterialTheme.typography.bodySmall)
+                        preview.diagnostics.forEach { diagnostics ->
+                            Text(
+                                diagnostics,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = viewModel::confirmQuickApprove) {
+                        Text("Approve review")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = viewModel::dismissQuickApprovePreview) {
+                        Text("Cancel")
+                    }
+                }
             )
         }
 
@@ -494,11 +538,16 @@ fun ReviewCard(
     onLoadAiExplanation: () -> Unit = {},
     onLoadCategoryAssist: () -> Unit = {},
     onApplyCategoryAssist: () -> Unit = {},
+    reviewQuickApproveEnabled: Boolean = false,
+    canQuickApprove: Boolean = false,
+    onRequestQuickApprove: () -> Unit = {},
     onDismissCategoryAssist: () -> Unit = {},
     onLoadDedupeAssist: () -> Unit = {},
     onDismissDedupeAssist: () -> Unit = {}
 ) {
     val review = item.review
+    val quickApproveBlockedByDuplicate =
+        ((captureAssistState.dedupeSuggestion as? AiLoadState.Ready)?.value?.verdict == DuplicateVerdict.LIKELY_DUPLICATE)
     
     // Find the suggested category
     val suggestedCategory = categories.find { it.id == review.suggestedCategoryId }
@@ -731,6 +780,10 @@ fun ReviewCard(
                 state = captureAssistState,
                 onRequestCategoryAssist = onLoadCategoryAssist,
                 onApplyCategoryAssist = onApplyCategoryAssist,
+                reviewQuickApproveEnabled = reviewQuickApproveEnabled,
+                canQuickApprove = canQuickApprove,
+                onRequestQuickApprove = onRequestQuickApprove,
+                quickApproveBlockedByDuplicate = quickApproveBlockedByDuplicate,
                 onDismissCategoryAssist = onDismissCategoryAssist,
                 onRequestDedupeAssist = onLoadDedupeAssist,
                 onDismissDedupeAssist = onDismissDedupeAssist
@@ -957,6 +1010,10 @@ private fun ReviewCaptureAssistSection(
     state: ReviewCaptureAssistState,
     onRequestCategoryAssist: () -> Unit,
     onApplyCategoryAssist: () -> Unit,
+    reviewQuickApproveEnabled: Boolean,
+    canQuickApprove: Boolean,
+    onRequestQuickApprove: () -> Unit,
+    quickApproveBlockedByDuplicate: Boolean,
     onDismissCategoryAssist: () -> Unit,
     onRequestDedupeAssist: () -> Unit,
     onDismissDedupeAssist: () -> Unit
@@ -972,12 +1029,26 @@ private fun ReviewCaptureAssistSection(
                 AssistLoadingRow("Checking category fallback...")
             }
             is AiLoadState.Ready -> {
-                CategoryAssistCard(
-                    suggestion = categoryState.value,
-                    diagnostics = state.categoryDiagnostics,
-                    onApply = onApplyCategoryAssist,
-                    onDismiss = onDismissCategoryAssist
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CategoryAssistCard(
+                        suggestion = categoryState.value,
+                        diagnostics = state.categoryDiagnostics,
+                        onApply = onApplyCategoryAssist,
+                        onDismiss = onDismissCategoryAssist
+                    )
+                    if (canQuickApprove) {
+                        FilledTonalButton(
+                            onClick = onRequestQuickApprove,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Quick approve with suggested category")
+                        }
+                    } else if (reviewQuickApproveEnabled && quickApproveBlockedByDuplicate) {
+                        AssistInfoRow(
+                            message = "Quick approve is paused because this looks like a likely duplicate. Review it manually before approving."
+                        )
+                    }
+                }
             }
             is AiLoadState.Error -> {
                 AssistErrorRow(
@@ -1014,6 +1085,38 @@ private fun ReviewCaptureAssistSection(
             }
             is AiLoadState.Disabled -> Unit
         }
+    }
+}
+
+@Composable
+private fun AssistInfoRow(message: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                SemanticColors.WarningOrange.copy(alpha = 0.10f),
+                RoundedCornerShape(12.dp)
+            )
+            .border(
+                1.dp,
+                SemanticColors.WarningOrange.copy(alpha = 0.25f),
+                RoundedCornerShape(12.dp)
+            )
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Info,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = SemanticColors.WarningOrange
+        )
+        Text(
+            text = message,
+            style = MaterialTheme.typography.labelSmall,
+            color = SemanticColors.WarningOrange
+        )
     }
 }
 

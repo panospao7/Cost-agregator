@@ -31,6 +31,10 @@ class AiRuntimeDiagnostics @Inject constructor() {
         record(AiRuntimeEvent(timestamp = now, type = "runtime", message = message))
     }
 
+    fun recordInteraction(type: String, message: String, now: Long = System.currentTimeMillis()) {
+        record(AiRuntimeEvent(timestamp = now, type = type, message = message))
+    }
+
     fun getRecentEvents(limit: Int = 20): List<AiRuntimeEvent> = synchronized(lock) {
         events.takeLast(limit).toList().asReversed()
     }

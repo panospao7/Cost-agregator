@@ -10,6 +10,7 @@ interface NotificationService {
     fun sendAiBriefingReady(
         notificationId: Int,
         title: String,
-        message: String
+        message: String,
+        targetKey: String
     )
 }

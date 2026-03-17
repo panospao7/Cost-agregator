@@ -24,6 +24,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.lifecycleScope
+import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.ui.components.AppNavigationBar
 import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
@@ -38,10 +41,18 @@ import com.yourname.expensetracker.ui.util.ClipboardAmountParser
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     private val mainViewModel: MainViewModel by viewModels()
+
+    @Inject
+    lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
+
+    @Inject
+    lateinit var aiEngagementRepository: AiEngagementRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,7 +79,18 @@ class MainActivity : ComponentActivity() {
         val data = intent?.data ?: return
         if (data.scheme == "expensetracker") {
             when (data.host) {
-                "dashboard" -> mainViewModel.navigateToTab(0)
+                "dashboard" -> {
+                    mainViewModel.navigateToTab(0)
+                    data.getQueryParameter("briefingKey")?.let { briefingKey ->
+                        lifecycleScope.launch {
+                            aiEngagementRepository.setLastOpenedDashboardBriefingKey(briefingKey)
+                        }
+                    }
+                    aiRuntimeDiagnostics.recordInteraction(
+                        type = "phase4_open",
+                        message = "dashboard deep link opened${data.getQueryParameter("briefingKey")?.let { " ($it)" } ?: ""}"
+                    )
+                }
                 "activity" -> mainViewModel.navigateToTab(1)
                 "review" -> mainViewModel.navigateToTab(2)
                 "plan" -> mainViewModel.navigateToTab(3)

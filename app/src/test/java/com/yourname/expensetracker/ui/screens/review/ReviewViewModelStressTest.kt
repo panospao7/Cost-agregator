@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExplainPendingReviewUseCase
 import com.yourname.expensetracker.domain.ai.usecase.JudgePendingReviewDuplicateUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.ui.screens.debug.DebugData
@@ -29,6 +30,7 @@ import io.mockk.coVerify
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,6 +66,7 @@ class ReviewViewModelStressTest {
     private lateinit var judgePendingReviewDuplicateUseCase: JudgePendingReviewDuplicateUseCase
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var aiSettingsRepository: AiSettingsRepository
+    private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var viewModel: ReviewViewModel
 
     @Before
@@ -82,6 +85,7 @@ class ReviewViewModelStressTest {
         judgePendingReviewDuplicateUseCase = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
+        aiRuntimeDiagnostics = mockk(relaxed = true)
 
         every { reviewQueueRepository.getPendingReviews() } returns flowOf(emptyList())
         every { reviewQueueRepository.getPendingReviewCount() } returns flowOf(0)
@@ -102,7 +106,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
     }
 
@@ -316,7 +321,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         viewModel.loadAiExplanation(reviewId = 10L)
@@ -370,7 +376,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         viewModel.loadAiExplanation(reviewId = 11L)
@@ -404,7 +411,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         viewModel.loadAiExplanation(reviewId = 20L)
@@ -436,7 +444,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         viewModel.loadAiExplanation(reviewId = 30L)
@@ -481,7 +490,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         // Two rapid calls before any coroutine advancement
@@ -552,7 +562,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         advanceUntilIdle()
@@ -610,7 +621,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         advanceUntilIdle()
@@ -675,7 +687,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         advanceUntilIdle()
@@ -733,7 +746,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         advanceUntilIdle()
@@ -768,7 +782,8 @@ class ReviewViewModelStressTest {
             suggestCategoryFallbackUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
-            aiSettingsRepository
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -797,6 +812,140 @@ class ReviewViewModelStressTest {
 
         assertEquals(7L, viewModel.consumePrefilledCategorySuggestion(70L))
         coVerify { aiArtifactRepository.markApplied(10L) }
+    }
+
+    @Test
+    fun `stress - requestQuickApprovePreview opens when category assist is ready`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, reviewQuickApproveEnabled = true))
+        val item = PendingReviewWithReceipt(
+            review = mockk(relaxed = true) {
+                every { id } returns 71L
+                every { suggestedMerchant } returns "Lidl"
+                every { suggestedAmount } returns 12.34
+            },
+            receipt = null
+        )
+        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
+        )
+
+        val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
+        stateFlow.value = mapOf(
+            71L to com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState(
+                categorySuggestion = AiLoadState.Ready(CategoryAssistSuggestion(4L, "Groceries")),
+                categoryDiagnostics = "Cloud - google-ai-studio - gemini-2.5-flash"
+            )
+        )
+
+        advanceUntilIdle()
+        assertTrue(viewModel.canOfferQuickApprove(71L))
+
+        viewModel.requestQuickApprovePreview(71L)
+
+        assertEquals(71L, viewModel.quickApprovePreview.value?.reviewId)
+        assertEquals("Groceries", viewModel.quickApprovePreview.value?.categoryName)
+    }
+
+    @Test
+    fun `stress - confirmQuickApprove approves review with AI category`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, reviewQuickApproveEnabled = true))
+        val item = PendingReviewWithReceipt(
+            review = mockk(relaxed = true) {
+                every { id } returns 72L
+                every { suggestedMerchant } returns "Lidl"
+                every { suggestedAmount } returns 12.34
+            },
+            receipt = null
+        )
+        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        coEvery {
+            reviewQueueRepository.approveReview(
+                reviewId = 72L,
+                finalAmount = null,
+                finalMerchant = null,
+                finalCategoryId = 4L,
+                finalType = null,
+                finalLatitude = null,
+                finalLongitude = null,
+                finalAddress = null
+            )
+        } returns Result.Success(20L)
+        coEvery { aiArtifactRepository.getLatest("pending_review:72", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            id = 21L,
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 72L,
+            targetKey = "pending_review:72",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.AUTO,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
+        )
+
+        val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
+        stateFlow.value = mapOf(
+            72L to com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState(
+                categorySuggestion = AiLoadState.Ready(CategoryAssistSuggestion(4L, "Groceries"))
+            )
+        )
+
+        advanceUntilIdle()
+        viewModel.requestQuickApprovePreview(72L)
+        viewModel.confirmQuickApprove()
+        advanceUntilIdle()
+
+        coVerify {
+            reviewQueueRepository.approveReview(
+                reviewId = 72L,
+                finalAmount = null,
+                finalMerchant = null,
+                finalCategoryId = 4L,
+                finalType = null,
+                finalLatitude = null,
+                finalLongitude = null,
+                finalAddress = null
+            )
+        }
+        coVerify { aiArtifactRepository.markApplied(21L) }
+        verify { aiRuntimeDiagnostics.recordInteraction(type = "phase4_accept", message = any(), now = any()) }
     }
 
     @Test

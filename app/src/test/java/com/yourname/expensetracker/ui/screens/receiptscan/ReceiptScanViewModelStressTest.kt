@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.model.Result
@@ -28,6 +29,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -54,6 +56,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     private lateinit var suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase
     private lateinit var suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase
     private lateinit var aiArtifactRepository: AiArtifactRepository
+    private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var settingsFlow: kotlinx.coroutines.flow.MutableStateFlow<AiSettings>
 
     private lateinit var viewModel: ReceiptScanViewModel
@@ -69,6 +72,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         suggestReceiptExtractionUseCase = mockk(relaxed = true)
         suggestCategoryFallbackUseCase = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
+        aiRuntimeDiagnostics = mockk(relaxed = true)
         settingsFlow = kotlinx.coroutines.flow.MutableStateFlow(AiSettings(aiEnabled = true))
 
         every { timeProvider.now() } returns System.currentTimeMillis()
@@ -84,7 +88,8 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             timeProvider,
             suggestReceiptExtractionUseCase,
             suggestCategoryFallbackUseCase,
-            aiArtifactRepository
+            aiArtifactRepository,
+            aiRuntimeDiagnostics
         )
     }
 
@@ -411,6 +416,29 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `stress - quickSaveUnavailableReason explains when AI assist has not been requested`() = runTest {
+        settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
+        advanceUntilIdle()
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            editMerchant = "",
+            editAmount = "",
+            receiptQuickSaveEnabled = true
+        )
+
+        assertEquals(
+            "Request AI receipt or category assist first.",
+            viewModel.quickSaveUnavailableReason()
+        )
+    }
+
+    @Test
     fun `stress - confirmReceiptQuickSave saves through normal repository path`() = runTest {
         settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
         advanceUntilIdle()
@@ -485,6 +513,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         assertEquals(5L, viewModel.state.value.selectedCategoryId)
         coVerify { aiArtifactRepository.markApplied(11L) }
         coVerify { aiArtifactRepository.markApplied(12L) }
+        verify { aiRuntimeDiagnostics.recordInteraction(type = "phase4_accept", message = any(), now = any()) }
     }
 
     @Test

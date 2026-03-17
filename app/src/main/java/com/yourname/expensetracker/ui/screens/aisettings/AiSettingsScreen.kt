@@ -192,8 +192,13 @@ fun AiSettingsScreen(
                         settings.receiptQuickSaveEnabled,
                         viewModel::setReceiptQuickSaveEnabled
                     )
+                    ToggleRow(
+                        "Review quick approve",
+                        settings.reviewQuickApproveEnabled,
+                        viewModel::setReviewQuickApproveEnabled
+                    )
                     Text(
-                        text = "Receipt quick save stays behind a confirmation step and the existing receipt validation path.",
+                        text = "Receipt quick save and review quick approve stay behind confirmation and still use the existing validation and approval paths.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

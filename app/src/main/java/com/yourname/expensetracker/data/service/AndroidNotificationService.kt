@@ -78,7 +78,8 @@ class AndroidNotificationService @Inject constructor(
     override fun sendAiBriefingReady(
         notificationId: Int,
         title: String,
-        message: String
+        message: String,
+        targetKey: String
     ) {
         if (!notificationManager.areNotificationsEnabled()) {
             return
@@ -86,7 +87,7 @@ class AndroidNotificationService @Inject constructor(
 
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setClass(context, MainActivity::class.java)
-            data = android.net.Uri.parse("expensetracker://dashboard")
+            data = android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(

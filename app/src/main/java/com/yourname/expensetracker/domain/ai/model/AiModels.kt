@@ -90,6 +90,7 @@ data class AiSettings(
     val dedupeJudgeEnabled: Boolean = false,
     val proactiveBriefingsEnabled: Boolean = false,
     val receiptQuickSaveEnabled: Boolean = false,
+    val reviewQuickApproveEnabled: Boolean = false,
     val redactBeforeCloud: Boolean = true,
     val wifiOnlyForCloud: Boolean = false,
     val storeConversationHistory: Boolean = false,

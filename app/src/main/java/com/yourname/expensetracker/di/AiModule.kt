@@ -20,6 +20,7 @@ import com.yourname.expensetracker.data.ai.provider.NoOpDedupeJudgeService
 import com.yourname.expensetracker.data.ai.provider.NoOpReceiptAssistService
 import com.yourname.expensetracker.data.ai.worker.AiWorkSchedulerImpl
 import com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+import com.yourname.expensetracker.data.repository.AiEngagementRepositoryImpl
 import com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
 import com.yourname.expensetracker.data.repository.AiSettingsRepositoryImpl
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
@@ -29,6 +30,7 @@ import com.yourname.expensetracker.domain.ai.policy.AiPolicyImpl
 import com.yourname.expensetracker.domain.ai.policy.DefaultAiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
@@ -63,6 +65,12 @@ abstract class AiModule {
     abstract fun bindAiArtifactRepository(
         impl: AiArtifactRepositoryImpl
     ): AiArtifactRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAiEngagementRepository(
+        impl: AiEngagementRepositoryImpl
+    ): AiEngagementRepository
 
     @Binds
     @Singleton

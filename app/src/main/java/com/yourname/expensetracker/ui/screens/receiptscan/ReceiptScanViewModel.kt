@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.ui.screens.debug.DebugData
@@ -123,7 +124,8 @@ class ReceiptScanViewModel @Inject constructor(
     private val timeProvider: TimeProvider,
     private val suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase,
     private val suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase,
-    private val aiArtifactRepository: AiArtifactRepository
+    private val aiArtifactRepository: AiArtifactRepository,
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReceiptScanState(
@@ -344,6 +346,34 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun canOfferReceiptQuickSave(): Boolean = buildQuickSavePreview(_state.value) != null
+
+    fun quickSaveUnavailableReason(): String? {
+        val currentState = _state.value
+        if (!currentState.receiptQuickSaveEnabled || currentState.step != ScanStep.REVIEW || currentState.receiptId == null) {
+            return null
+        }
+        if (buildQuickSavePreview(currentState) != null) return null
+
+        val receiptSuggestion = (currentState.receiptAssistState as? AiLoadState.Ready)?.value
+        val hasMerchant = currentState.editMerchant.isNotBlank() || !receiptSuggestion?.merchant?.value.isNullOrBlank()
+        val hasAmount = AmountUtils.parseAmount(currentState.editAmount)?.let { it > 0 } == true ||
+            (receiptSuggestion?.total?.value?.let { it > 0 } == true)
+
+        return when {
+            currentState.receiptAssistState is AiLoadState.Idle && currentState.categoryAssistState is AiLoadState.Idle -> {
+                "Request AI receipt or category assist first."
+            }
+            !hasMerchant -> {
+                "Quick save still needs a merchant from the draft or AI receipt assist."
+            }
+            !hasAmount -> {
+                "Quick save still needs a valid amount from the draft or AI receipt assist."
+            }
+            else -> {
+                "Quick save appears when AI can safely fill at least one missing field."
+            }
+        }
+    }
 
     fun requestReceiptAssist(force: Boolean = false) {
         val receiptId = _state.value.receiptId ?: return
@@ -623,10 +653,18 @@ class ReceiptScanViewModel @Inject constructor(
                 saveResult = null
             )
         }
+        aiRuntimeDiagnostics.recordInteraction(
+            type = "phase4_preview",
+            message = "receipt quick save preview opened for ${preview.autoAppliedFields.joinToString(", ")}"
+        )
     }
 
     fun dismissReceiptQuickSaveConfirmation() {
         _state.update { it.copy(quickSavePreview = null) }
+        aiRuntimeDiagnostics.recordInteraction(
+            type = "phase4_dismiss",
+            message = "receipt quick save preview dismissed"
+        )
     }
 
     fun confirmReceiptQuickSave() {
@@ -658,6 +696,10 @@ class ReceiptScanViewModel @Inject constructor(
         }
 
         preview.usedCapabilities.forEach(::markLatestArtifactApplied)
+        aiRuntimeDiagnostics.recordInteraction(
+            type = "phase4_accept",
+            message = "receipt quick save confirmed with ${preview.autoAppliedFields.joinToString(", ")}"
+        )
         saveExpenseInternal(request)
     }
 

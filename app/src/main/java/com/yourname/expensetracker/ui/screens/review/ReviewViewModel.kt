@@ -25,6 +25,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExplainPendingReviewUseCase
 import com.yourname.expensetracker.domain.ai.usecase.JudgePendingReviewDuplicateUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
+import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.model.Result
 import timber.log.Timber
 // ...
@@ -33,7 +34,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -50,6 +53,15 @@ data class ReviewExplanationUi(
     val diagnostics: String? = null
 )
 
+data class ReviewQuickApprovePreview(
+    val reviewId: Long,
+    val merchant: String,
+    val amount: Double,
+    val categoryId: Long,
+    val categoryName: String,
+    val diagnostics: List<String>
+)
+
 @HiltViewModel
 class ReviewViewModel @Inject constructor(
     private val repository: NotificationRepository,
@@ -63,7 +75,8 @@ class ReviewViewModel @Inject constructor(
     private val suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase,
     private val judgePendingReviewDuplicateUseCase: JudgePendingReviewDuplicateUseCase,
     private val aiArtifactRepository: AiArtifactRepository,
-    private val aiSettingsRepository: AiSettingsRepository
+    private val aiSettingsRepository: AiSettingsRepository,
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : ViewModel() {
     
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -94,6 +107,14 @@ class ReviewViewModel @Inject constructor(
     val prefilledCategorySuggestions: StateFlow<Map<Long, Long>> =
         _prefilledCategorySuggestions.asStateFlow()
 
+    private val _quickApprovePreview = MutableStateFlow<ReviewQuickApprovePreview?>(null)
+    val quickApprovePreview: StateFlow<ReviewQuickApprovePreview?> =
+        _quickApprovePreview.asStateFlow()
+
+    val reviewQuickApproveEnabled: StateFlow<Boolean> = aiSettingsRepository.settings()
+        .map { it.aiEnabled && it.reviewQuickApproveEnabled }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     /** Tracks review IDs that already have an in-flight coroutine, preventing duplicates. */
     private val _inFlightExplanations = mutableSetOf<Long>()
 
@@ -109,6 +130,13 @@ class ReviewViewModel @Inject constructor(
                 // Pre-set a sentinel so the UI knows AI is globally disabled
                 // (individual per-review states default to Idle when absent from map)
                 Timber.d("ReviewViewModel: AI explanation disabled in settings.")
+            }
+        }
+        viewModelScope.launch {
+            reviewQuickApproveEnabled.collect { enabled ->
+                if (!enabled) {
+                    _quickApprovePreview.value = null
+                }
             }
         }
     }
@@ -195,7 +223,7 @@ class ReviewViewModel @Inject constructor(
 
     val pendingReviews: StateFlow<List<PendingReviewWithReceipt>> = reviewQueueRepository
         .getPendingReviews()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val pendingCount: StateFlow<Int> = reviewQueueRepository
         .getPendingReviewCount()
@@ -394,10 +422,67 @@ class ReviewViewModel @Inject constructor(
             ?: return
         _prefilledCategorySuggestions.update { it + (reviewId to suggestion.categoryId) }
         viewModelScope.launch {
-            aiArtifactRepository.getLatest("pending_review:$reviewId", AiCapability.CATEGORIZATION_FALLBACK)
-                ?.let { artifact ->
-                    aiArtifactRepository.markApplied(artifact.id)
-                }
+            markCategoryArtifactApplied(reviewId)
+        }
+    }
+
+    fun canOfferQuickApprove(reviewId: Long): Boolean {
+        if (!reviewQuickApproveEnabled.value) return false
+        val state = _reviewCaptureAssistStates.value[reviewId] ?: return false
+        val categoryReady = state.categorySuggestion as? AiLoadState.Ready ?: return false
+        if (categoryReady.value.categoryId <= 0L) return false
+        val dedupeReady = state.dedupeSuggestion as? AiLoadState.Ready
+        return dedupeReady?.value?.verdict != com.yourname.expensetracker.domain.ai.model.DuplicateVerdict.LIKELY_DUPLICATE
+    }
+
+    fun requestQuickApprovePreview(reviewId: Long) {
+        if (!canOfferQuickApprove(reviewId)) return
+        val state = _reviewCaptureAssistStates.value[reviewId] ?: return
+        val categorySuggestion = (state.categorySuggestion as? AiLoadState.Ready)?.value ?: return
+        val cachedItem = pendingReviews.value.firstOrNull { it.review.id == reviewId }
+        if (cachedItem != null) {
+            showQuickApprovePreview(reviewId, cachedItem, state, categorySuggestion)
+            return
+        }
+
+        viewModelScope.launch {
+            val item = reviewQueueRepository.getPendingReviews().first().firstOrNull { it.review.id == reviewId }
+                ?: reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
+                ?: return@launch
+            showQuickApprovePreview(reviewId, item, state, categorySuggestion)
+        }
+    }
+
+    fun dismissQuickApprovePreview() {
+        _quickApprovePreview.value = null
+        aiRuntimeDiagnostics.recordInteraction(
+            type = "phase4_dismiss",
+            message = "review quick approve preview dismissed"
+        )
+    }
+
+    fun confirmQuickApprove() {
+        val preview = _quickApprovePreview.value ?: return
+        if (!reviewQuickApproveEnabled.value) {
+            _quickApprovePreview.value = null
+            _errorMessage.value = "Review quick approve is turned off."
+            return
+        }
+        _quickApprovePreview.value = null
+
+        viewModelScope.launch {
+            val result = reviewQueueRepository.approveReview(
+                reviewId = preview.reviewId,
+                finalCategoryId = preview.categoryId
+            )
+            handleResult(result, "Failed to quick approve")
+            if (result is Result.Success) {
+                markCategoryArtifactApplied(preview.reviewId)
+                aiRuntimeDiagnostics.recordInteraction(
+                    type = "phase4_accept",
+                    message = "review quick approve confirmed for ${preview.reviewId}"
+                )
+            }
         }
     }
 
@@ -577,5 +662,32 @@ class ReviewViewModel @Inject constructor(
         val artifact = aiArtifactRepository.getLatest(targetKey, capability) ?: return null
         if (expectedStatus != null && artifact.status != expectedStatus) return null
         return artifact.toDiagnosticsOrNull()?.toDisplayText()
+    }
+
+    private suspend fun markCategoryArtifactApplied(reviewId: Long) {
+        aiArtifactRepository.getLatest("pending_review:$reviewId", AiCapability.CATEGORIZATION_FALLBACK)
+            ?.let { artifact ->
+                aiArtifactRepository.markApplied(artifact.id)
+            }
+    }
+
+    private fun showQuickApprovePreview(
+        reviewId: Long,
+        item: PendingReviewWithReceipt,
+        state: ReviewCaptureAssistState,
+        categorySuggestion: CategoryAssistSuggestion
+    ) {
+        _quickApprovePreview.value = ReviewQuickApprovePreview(
+            reviewId = reviewId,
+            merchant = item.review.suggestedMerchant,
+            amount = item.review.suggestedAmount,
+            categoryId = categorySuggestion.categoryId,
+            categoryName = categorySuggestion.categoryName,
+            diagnostics = listOfNotNull(state.categoryDiagnostics, state.dedupeDiagnostics)
+        )
+        aiRuntimeDiagnostics.recordInteraction(
+            type = "phase4_preview",
+            message = "review quick approve preview opened for $reviewId"
+        )
     }
 }
