@@ -9,11 +9,13 @@ import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
+import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -21,11 +23,13 @@ import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class AiSettingsViewModelTest : ViewModelTestUtils() {
 
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private lateinit var syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase
     private lateinit var settingsFlow: MutableStateFlow<AiSettings>
     private lateinit var viewModel: AiSettingsViewModel
 
@@ -35,6 +39,7 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         aiSettingsRepository = mockk(relaxed = true)
         getAiRuntimeStatusUseCase = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
+        syncProactiveBriefingWorkUseCase = mockk(relaxed = true)
         settingsFlow = MutableStateFlow(AiSettings(aiEnabled = true, allowOnDeviceAi = true))
 
         every { aiSettingsRepository.settings() } returns settingsFlow
@@ -49,7 +54,8 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         viewModel = AiSettingsViewModel(
             aiSettingsRepository = aiSettingsRepository,
             getAiRuntimeStatusUseCase = getAiRuntimeStatusUseCase,
-            aiRuntimeDiagnostics = aiRuntimeDiagnostics
+            aiRuntimeDiagnostics = aiRuntimeDiagnostics,
+            syncProactiveBriefingWorkUseCase = syncProactiveBriefingWorkUseCase
         )
     }
 
@@ -67,6 +73,17 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         coVerify { aiSettingsRepository.update(any()) }
+    }
+
+    @Test
+    fun `setProactiveBriefingsEnabled syncs work scheduling`() = runTest(testDispatcher) {
+        viewModel.setProactiveBriefingsEnabled(true)
+        advanceUntilIdle()
+
+        coVerify { aiSettingsRepository.update(any()) }
+        coVerify {
+            syncProactiveBriefingWorkUseCase(match { it.proactiveBriefingsEnabled })
+        }
     }
 
     @Test

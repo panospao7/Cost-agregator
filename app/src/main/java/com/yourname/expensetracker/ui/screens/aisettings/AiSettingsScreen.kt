@@ -179,6 +179,29 @@ fun AiSettingsScreen(
 
             item {
                 SettingsSection(
+                    title = "Phase 4A Experimental",
+                    description = "Turn on the first guarded automation features. These stay opt-in and keep final confirmation or read-only behavior."
+                ) {
+                    ToggleRow(
+                        "Proactive AI briefings",
+                        settings.proactiveBriefingsEnabled,
+                        viewModel::setProactiveBriefingsEnabled
+                    )
+                    ToggleRow(
+                        "Receipt quick save",
+                        settings.receiptQuickSaveEnabled,
+                        viewModel::setReceiptQuickSaveEnabled
+                    )
+                    Text(
+                        text = "Receipt quick save stays behind a confirmation step and the existing receipt validation path.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            item {
+                SettingsSection(
                     title = "Runtime Status",
                     description = "See whether on-device AI is ready, downloading, or unavailable per capability."
                 ) {

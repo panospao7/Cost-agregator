@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
 import com.yourname.expensetracker.domain.ai.model.toDisplayText
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
@@ -71,9 +72,32 @@ data class ReceiptScanState(
     val categoryAssistState: AiLoadState<CategoryAssistSuggestion> = AiLoadState.Idle,
     val categoryAssistMessage: String? = null,
     val categoryAssistDiagnostics: String? = null,
+    val receiptQuickSaveEnabled: Boolean = false,
+    val quickSavePreview: ReceiptQuickSavePreview? = null,
     
     // Debug data
     val debugData: DebugData? = null
+)
+
+data class ReceiptQuickSavePreview(
+    val merchant: String,
+    val amount: Double,
+    val amountText: String,
+    val date: Long,
+    val categoryId: Long?,
+    val categoryName: String?,
+    val autoAppliedFields: List<String>,
+    val usedCapabilities: Set<AiCapability>
+)
+
+private data class ReceiptSaveRequest(
+    val receiptId: Long,
+    val merchant: String,
+    val amount: Double,
+    val date: Long,
+    val categoryId: Long?,
+    val paymentMethod: PaymentMethod,
+    val notes: String?
 )
 
 sealed class SaveReceiptResult {
@@ -86,6 +110,7 @@ sealed class SaveReceiptResult {
 class ReceiptScanViewModel @Inject constructor(
     private val receiptRepository: ReceiptRepository,
     private val categoryRepository: CategoryRepository,
+    private val aiSettingsRepository: AiSettingsRepository,
     private val savedStateHandle: androidx.lifecycle.SavedStateHandle,
     private val timeProvider: TimeProvider,
     private val suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase,
@@ -101,6 +126,16 @@ class ReceiptScanViewModel @Inject constructor(
 
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    init {
+        viewModelScope.launch {
+            aiSettingsRepository.settings().collect { settings ->
+                _state.update {
+                    it.copy(receiptQuickSaveEnabled = settings.aiEnabled && settings.receiptQuickSaveEnabled)
+                }
+            }
+        }
+    }
 
     /**
      * Create a URI for camera to write photo to
@@ -138,7 +173,8 @@ class ReceiptScanViewModel @Inject constructor(
                 receiptAssistDiagnostics = null,
                 categoryAssistState = AiLoadState.Idle,
                 categoryAssistMessage = null,
-                categoryAssistDiagnostics = null
+                categoryAssistDiagnostics = null,
+                quickSavePreview = null
             )
         }
 
@@ -194,6 +230,7 @@ class ReceiptScanViewModel @Inject constructor(
                         categoryAssistState = AiLoadState.Idle,
                         categoryAssistMessage = null,
                         categoryAssistDiagnostics = null,
+                        quickSavePreview = null,
                         debugData = debugData
                     )
                 }
@@ -224,6 +261,7 @@ class ReceiptScanViewModel @Inject constructor(
                             categoryAssistState = AiLoadState.Idle,
                             categoryAssistMessage = null,
                             categoryAssistDiagnostics = null,
+                            quickSavePreview = null,
                             debugData = debugData
                         )
                     }
@@ -296,6 +334,8 @@ class ReceiptScanViewModel @Inject constructor(
         if (currentState.selectedCategoryId == null) return true
         return currentState.ocrConfidence < com.yourname.expensetracker.domain.config.AppConfig.Ai.MIN_CATEGORY_CONFIDENCE_FOR_AI_FALLBACK
     }
+
+    fun canOfferReceiptQuickSave(): Boolean = buildQuickSavePreview(_state.value) != null
 
     fun requestReceiptAssist(force: Boolean = false) {
         val receiptId = _state.value.receiptId ?: return
@@ -559,6 +599,60 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update { it.copy(receiptAssistMessage = null) }
     }
 
+    fun requestReceiptQuickSaveConfirmation() {
+        val preview = buildQuickSavePreview(_state.value)
+        if (preview == null) {
+            _state.update {
+                it.copy(errorMessage = "AI quick save needs a missing field that an AI suggestion can fill safely.")
+            }
+            return
+        }
+
+        _state.update {
+            it.copy(
+                quickSavePreview = preview,
+                errorMessage = null,
+                saveResult = null
+            )
+        }
+    }
+
+    fun dismissReceiptQuickSaveConfirmation() {
+        _state.update { it.copy(quickSavePreview = null) }
+    }
+
+    fun confirmReceiptQuickSave() {
+        val currentState = _state.value
+        val preview = currentState.quickSavePreview ?: return
+        val request = ReceiptSaveRequest(
+            receiptId = currentState.receiptId ?: return,
+            merchant = preview.merchant,
+            amount = preview.amount,
+            date = preview.date,
+            categoryId = preview.categoryId,
+            paymentMethod = currentState.paymentMethod,
+            notes = currentState.notes.takeIf { it.isNotBlank() }
+        )
+
+        _state.update {
+            it.copy(
+                editMerchant = preview.merchant,
+                editAmount = preview.amountText,
+                editDate = preview.date,
+                selectedCategoryId = preview.categoryId ?: it.selectedCategoryId,
+                quickSavePreview = null,
+                receiptAssistMessage = if (preview.autoAppliedFields.isNotEmpty()) {
+                    "AI quick save filled ${preview.autoAppliedFields.joinToString(", ")} before saving."
+                } else {
+                    it.receiptAssistMessage
+                }
+            )
+        }
+
+        preview.usedCapabilities.forEach(::markLatestArtifactApplied)
+        saveExpenseInternal(request)
+    }
+
     private fun applySuggestedValue(
         state: AiLoadState<ReceiptAssistSuggestion>,
         updater: (ReceiptScanState, ReceiptAssistSuggestion) -> ReceiptScanState
@@ -579,14 +673,35 @@ class ReceiptScanViewModel @Inject constructor(
 
     fun saveExpense() {
         val currentState = _state.value
+        val request = buildManualSaveRequest(currentState) ?: return
+        saveExpenseInternal(request)
+    }
 
-        // Validate
+    fun retry() {
+        _state.update {
+            ReceiptScanState(
+                editDate = timeProvider.now(),
+                receiptQuickSaveEnabled = it.receiptQuickSaveEnabled
+            )
+        }
+    }
+
+    fun reset() {
+        _state.update {
+            ReceiptScanState(
+                editDate = timeProvider.now(),
+                receiptQuickSaveEnabled = it.receiptQuickSaveEnabled
+            )
+        }
+    }
+
+    private fun buildManualSaveRequest(currentState: ReceiptScanState): ReceiptSaveRequest? {
         val merchant = currentState.editMerchant.trim()
         if (merchant.isBlank()) {
             _state.update {
                 it.copy(errorMessage = "Merchant name is required")
             }
-            return
+            return null
         }
 
         val amount = AmountUtils.parseAmount(currentState.editAmount)
@@ -594,24 +709,101 @@ class ReceiptScanViewModel @Inject constructor(
             _state.update {
                 it.copy(errorMessage = "Enter a valid amount")
             }
-            return
+            return null
         }
 
-        val receiptId = currentState.receiptId ?: return
+        val receiptId = currentState.receiptId ?: return null
+        return ReceiptSaveRequest(
+            receiptId = receiptId,
+            merchant = merchant,
+            amount = amount,
+            date = currentState.editDate,
+            categoryId = currentState.selectedCategoryId,
+            paymentMethod = currentState.paymentMethod,
+            notes = currentState.notes.takeIf { it.isNotBlank() }
+        )
+    }
 
+    private fun buildQuickSavePreview(currentState: ReceiptScanState): ReceiptQuickSavePreview? {
+        if (!currentState.receiptQuickSaveEnabled || currentState.step != ScanStep.REVIEW) return null
+        if (currentState.receiptId == null || currentState.isSaving) return null
+
+        var merchant = currentState.editMerchant.trim()
+        var amount = AmountUtils.parseAmount(currentState.editAmount)
+        var date = currentState.editDate
+        var categoryId = currentState.selectedCategoryId
+        var categoryName: String? = categoryId?.let { selectedId ->
+            categories.value.firstOrNull { it.id == selectedId }?.name
+        }
+
+        val autoAppliedFields = mutableListOf<String>()
+        val usedCapabilities = linkedSetOf<AiCapability>()
+        val receiptSuggestion = (currentState.receiptAssistState as? AiLoadState.Ready)?.value
+        val categorySuggestion = (currentState.categoryAssistState as? AiLoadState.Ready)?.value
+
+        if (merchant.isBlank()) {
+            receiptSuggestion?.merchant?.value?.takeIf { it.isNotBlank() }?.let {
+                merchant = it
+                autoAppliedFields += "merchant"
+                usedCapabilities += AiCapability.RECEIPT_EXTRACTION
+            }
+        }
+
+        if (amount == null || amount <= 0) {
+            receiptSuggestion?.total?.value?.takeIf { it > 0 }?.let {
+                amount = it
+                autoAppliedFields += "amount"
+                usedCapabilities += AiCapability.RECEIPT_EXTRACTION
+            }
+        }
+
+        if (date <= 0L) {
+            receiptSuggestion?.date?.value?.let {
+                date = it
+                autoAppliedFields += "date"
+                usedCapabilities += AiCapability.RECEIPT_EXTRACTION
+            }
+        }
+
+        if (categoryId == null) {
+            categorySuggestion?.let {
+                categoryId = it.categoryId
+                categoryName = it.categoryName
+                autoAppliedFields += "category"
+                usedCapabilities += AiCapability.CATEGORIZATION_FALLBACK
+            }
+        }
+
+        if (autoAppliedFields.isEmpty()) return null
+        val finalAmount = amount?.takeIf { it > 0 } ?: return null
+        if (merchant.isBlank()) return null
+
+        return ReceiptQuickSavePreview(
+            merchant = merchant,
+            amount = finalAmount,
+            amountText = String.format("%.2f", finalAmount),
+            date = date,
+            categoryId = categoryId,
+            categoryName = categoryName,
+            autoAppliedFields = autoAppliedFields,
+            usedCapabilities = usedCapabilities
+        )
+    }
+
+    private fun saveExpenseInternal(request: ReceiptSaveRequest) {
         _state.update { it.copy(isSaving = true, errorMessage = null) }
 
         viewModelScope.launch {
             try {
                 val result = receiptRepository.createExpenseFromReceipt(
-                    receiptId = receiptId,
-                    merchant = merchant,
-                    amount = amount,
+                    receiptId = request.receiptId,
+                    merchant = request.merchant,
+                    amount = request.amount,
                     currency = "EUR",
-                    categoryId = currentState.selectedCategoryId,
-                    date = currentState.editDate,
-                    paymentMethod = currentState.paymentMethod,
-                    notes = currentState.notes.takeIf { it.isNotBlank() }
+                    categoryId = request.categoryId,
+                    date = request.date,
+                    paymentMethod = request.paymentMethod,
+                    notes = request.notes
                 )
 
                 when (result) {
@@ -644,7 +836,6 @@ class ReceiptScanViewModel @Inject constructor(
                         _state.update { it.copy(isSaving = true) }
                     }
                 }
-
             } catch (e: Exception) {
                 _state.update {
                     it.copy(
@@ -656,16 +847,6 @@ class ReceiptScanViewModel @Inject constructor(
                 }
             }
         }
-    }
-
-    fun retry() {
-        _state.update {
-            ReceiptScanState(editDate = timeProvider.now())
-        }
-    }
-
-    fun reset() {
-        _state.update { ReceiptScanState(editDate = timeProvider.now()) }
     }
 
     private suspend fun latestArtifactDiagnostics(

@@ -39,6 +39,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
         val CATEGORIZATION_FALLBACK_ENABLED = booleanPreferencesKey("ai_categorization_fallback_enabled")
         val DEDUPE_JUDGE_ENABLED        = booleanPreferencesKey("ai_dedupe_judge_enabled")
         val PROACTIVE_BRIEFINGS         = booleanPreferencesKey("ai_proactive_briefings")
+        val RECEIPT_QUICK_SAVE          = booleanPreferencesKey("ai_receipt_quick_save")
         val REDACT_BEFORE_CLOUD         = booleanPreferencesKey("ai_redact_before_cloud")
         val WIFI_ONLY_FOR_CLOUD         = booleanPreferencesKey("ai_wifi_only_for_cloud")
         val STORE_CONVERSATION_HISTORY  = booleanPreferencesKey("ai_store_conversation_history")
@@ -67,6 +68,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
             prefs[Keys.CATEGORIZATION_FALLBACK_ENABLED] = updated.categorizationFallbackEnabled
             prefs[Keys.DEDUPE_JUDGE_ENABLED]       = updated.dedupeJudgeEnabled
             prefs[Keys.PROACTIVE_BRIEFINGS]        = updated.proactiveBriefingsEnabled
+            prefs[Keys.RECEIPT_QUICK_SAVE]         = updated.receiptQuickSaveEnabled
             prefs[Keys.REDACT_BEFORE_CLOUD]        = updated.redactBeforeCloud
             prefs[Keys.WIFI_ONLY_FOR_CLOUD]        = updated.wifiOnlyForCloud
             prefs[Keys.STORE_CONVERSATION_HISTORY] = updated.storeConversationHistory
@@ -90,6 +92,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
         categorizationFallbackEnabled = this[Keys.CATEGORIZATION_FALLBACK_ENABLED] ?: false,
         dedupeJudgeEnabled        = this[Keys.DEDUPE_JUDGE_ENABLED]        ?: false,
         proactiveBriefingsEnabled = this[Keys.PROACTIVE_BRIEFINGS]        ?: false,
+        receiptQuickSaveEnabled   = this[Keys.RECEIPT_QUICK_SAVE]         ?: false,
         redactBeforeCloud         = this[Keys.REDACT_BEFORE_CLOUD]        ?: true,
         wifiOnlyForCloud          = this[Keys.WIFI_ONLY_FOR_CLOUD]        ?: false,
         storeConversationHistory  = this[Keys.STORE_CONVERSATION_HISTORY] ?: false,

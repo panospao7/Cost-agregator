@@ -8,10 +8,14 @@ import androidx.work.Configuration
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.location.LocationBackfillWorker
 import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
-import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
+import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -28,7 +32,9 @@ class ExpenseTrackerApp : Application(), Configuration.Provider {
     lateinit var workerFactory: HiltWorkerFactory
 
     @Inject
-    lateinit var aiWorkScheduler: AiWorkScheduler
+    lateinit var syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // WorkManager requires this when using Hilt-injected workers
     override val workManagerConfiguration: Configuration
@@ -66,8 +72,10 @@ class ExpenseTrackerApp : Application(), Configuration.Provider {
         // Schedule the one-time merchantKey column backfill for pre-v32 rows
         MerchantKeyBackfillWorker.schedule(this)
 
-        // Schedule the daily AI dashboard briefing worker (no-op when AI is disabled)
-        aiWorkScheduler.scheduleDailyBriefing()
+        // Keep proactive briefing work aligned with the current opt-in state.
+        appScope.launch {
+            syncProactiveBriefingWorkUseCase()
+        }
     }
 }
 

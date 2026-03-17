@@ -39,6 +39,7 @@ import coil.compose.AsyncImage
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.components.ai.CategoryAssistCard
 import com.yourname.expensetracker.ui.screens.addexpense.CategoryGrid
 import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
@@ -46,6 +47,7 @@ import com.yourname.expensetracker.ui.screens.addexpense.PaymentMethodChip
 import com.yourname.expensetracker.ui.components.ai.ReceiptAssistCard
 import kotlinx.coroutines.delay
 import java.util.Currency
+import java.util.Date
 
 private fun getCurrencySymbol(currencyCode: String?): String {
     return try { Currency.getInstance(currencyCode ?: "EUR").symbol } catch(e: Exception) { "€" }
@@ -309,6 +311,46 @@ private fun ReviewStep(
     viewModel: ReceiptScanViewModel
 ) {
     val parsed = state.parsedReceipt
+
+    state.quickSavePreview?.let { preview ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissReceiptQuickSaveConfirmation,
+            title = { Text("Quick save with AI?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "This fills missing draft fields from AI suggestions and then uses the normal save path.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "AI will fill: ${preview.autoAppliedFields.joinToString(", ")}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    HorizontalDivider()
+                    Text("Merchant: ${preview.merchant}", style = MaterialTheme.typography.bodySmall)
+                    Text("Amount: ${getCurrencySymbol(parsed?.currency)}${preview.amountText}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Date: ${DateFormatterUtils.shortDate().format(Date(preview.date))}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    preview.categoryName?.let {
+                        Text("Category: $it", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::confirmReceiptQuickSave) {
+                    Text("Save now")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissReceiptQuickSaveConfirmation) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     // Image preview (small)
     if (state.imageUri != null) {
@@ -825,6 +867,21 @@ private fun ReviewStep(
     }
 
     Spacer(modifier = Modifier.height(16.dp))
+
+    if (viewModel.canOfferReceiptQuickSave()) {
+        FilledTonalButton(
+            onClick = viewModel::requestReceiptQuickSaveConfirmation,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            enabled = !state.isSaving,
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Quick Save With AI")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+    }
 
     // Save button
     Button(

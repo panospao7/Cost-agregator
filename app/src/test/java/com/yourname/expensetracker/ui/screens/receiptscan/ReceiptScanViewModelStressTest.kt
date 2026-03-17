@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
@@ -15,10 +16,12 @@ import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -45,11 +48,13 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
 
     private lateinit var receiptRepository: ReceiptRepository
     private lateinit var categoryRepository: CategoryRepository
+    private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var savedStateHandle: SavedStateHandle
     private lateinit var timeProvider: TimeProvider
     private lateinit var suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase
     private lateinit var suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase
     private lateinit var aiArtifactRepository: AiArtifactRepository
+    private lateinit var settingsFlow: kotlinx.coroutines.flow.MutableStateFlow<AiSettings>
 
     private lateinit var viewModel: ReceiptScanViewModel
 
@@ -58,19 +63,23 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         super.setup()
         receiptRepository = mockk(relaxed = true)
         categoryRepository = mockk(relaxed = true)
+        aiSettingsRepository = mockk(relaxed = true)
         savedStateHandle = SavedStateHandle()
         timeProvider = mockk(relaxed = true)
         suggestReceiptExtractionUseCase = mockk(relaxed = true)
         suggestCategoryFallbackUseCase = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
+        settingsFlow = kotlinx.coroutines.flow.MutableStateFlow(AiSettings(aiEnabled = true))
 
         every { timeProvider.now() } returns System.currentTimeMillis()
         every { categoryRepository.allCategories } returns flowOf(emptyList())
+        every { aiSettingsRepository.settings() } returns settingsFlow
         every { receiptRepository.createTempPhotoUri() } returns Uri.parse("content://test/photo.jpg")
 
         viewModel = ReceiptScanViewModel(
             receiptRepository,
             categoryRepository,
+            aiSettingsRepository,
             savedStateHandle,
             timeProvider,
             suggestReceiptExtractionUseCase,
@@ -362,6 +371,120 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
 
         assertTrue(viewModel.state.value.categoryAssistState is AiLoadState.Error)
         assertEquals("On-device - mlkit-genai-nano - gemini-nano", viewModel.state.value.categoryAssistDiagnostics)
+    }
+
+    @Test
+    fun `stress - requestReceiptQuickSaveConfirmation builds preview from AI suggestions`() = runTest {
+        settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
+        advanceUntilIdle()
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            editMerchant = "",
+            editAmount = "",
+            editDate = 999L,
+            receiptQuickSaveEnabled = true,
+            receiptAssistState = AiLoadState.Ready(
+                ReceiptAssistSuggestion(
+                    merchant = SuggestedValue("Lidl"),
+                    total = SuggestedValue(12.34)
+                )
+            ),
+            categoryAssistState = AiLoadState.Ready(
+                CategoryAssistSuggestion(categoryId = 5L, categoryName = "Groceries")
+            )
+        )
+
+        viewModel.requestReceiptQuickSaveConfirmation()
+
+        val preview = viewModel.state.value.quickSavePreview
+        assertNotNull(preview)
+        assertEquals(listOf("merchant", "amount", "category"), preview?.autoAppliedFields)
+        assertEquals("Lidl", preview?.merchant)
+        assertEquals("12.34", preview?.amountText)
+        assertEquals(5L, preview?.categoryId)
+    }
+
+    @Test
+    fun `stress - confirmReceiptQuickSave saves through normal repository path`() = runTest {
+        settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
+        advanceUntilIdle()
+        coEvery {
+            receiptRepository.createExpenseFromReceipt(
+                receiptId = 7L,
+                merchant = "Lidl",
+                amount = 12.34,
+                currency = "EUR",
+                categoryId = 5L,
+                date = 999L,
+                paymentMethod = any(),
+                notes = null
+            )
+        } returns Result.Success(9L)
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+            id = 11L,
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = 7L,
+            targetKey = "scanned_receipt:7",
+            capability = AiCapability.RECEIPT_EXTRACTION,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.AUTO,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactEntity(
+            id = 12L,
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = 7L,
+            targetKey = "scanned_receipt:7",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.AUTO,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            editMerchant = "",
+            editAmount = "",
+            editDate = 999L,
+            receiptQuickSaveEnabled = true,
+            receiptAssistState = AiLoadState.Ready(
+                ReceiptAssistSuggestion(
+                    merchant = SuggestedValue("Lidl"),
+                    total = SuggestedValue(12.34)
+                )
+            ),
+            categoryAssistState = AiLoadState.Ready(
+                CategoryAssistSuggestion(categoryId = 5L, categoryName = "Groceries")
+            )
+        )
+
+        viewModel.requestReceiptQuickSaveConfirmation()
+        viewModel.confirmReceiptQuickSave()
+        advanceUntilIdle()
+
+        assertEquals(ScanStep.DONE, viewModel.state.value.step)
+        assertEquals("Lidl", viewModel.state.value.editMerchant)
+        assertEquals("12.34", viewModel.state.value.editAmount)
+        assertEquals(5L, viewModel.state.value.selectedCategoryId)
+        coVerify { aiArtifactRepository.markApplied(11L) }
+        coVerify { aiArtifactRepository.markApplied(12L) }
     }
 
     @Test
