@@ -88,4 +88,16 @@ class AiSettingsScreenTextTest {
 
         assertNull(hint)
     }
+
+    @Test
+    fun `runtime guidance keeps receipt image cloud toggle state in settings model`() {
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            receiptAssistEnabled = true,
+            receiptImageCloudEnabled = true
+        )
+
+        assertEquals(true, settings.receiptImageCloudEnabled)
+    }
 }

@@ -36,6 +36,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -131,7 +132,8 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         )
         coEvery { suggestReceiptExtractionUseCase(7L, false) } returns ReceiptAssistGenerationResult.Success(
             suggestion = suggestion,
-            fromCache = false
+            fromCache = false,
+            usedImageInput = false
         )
         coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
             targetType = AiTargetType.SCANNED_RECEIPT,
@@ -180,7 +182,8 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         )
         coEvery { suggestReceiptExtractionUseCase(7L, false) } returns ReceiptAssistGenerationResult.Success(
             suggestion = suggestion,
-            fromCache = false
+            fromCache = false,
+            usedImageInput = false
         )
         coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
             targetType = AiTargetType.SCANNED_RECEIPT,
@@ -214,6 +217,63 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             "On-device - mlkit-genai-nano - gemini-nano-receipt",
             viewModel.state.value.receiptAssistDiagnostics
         )
+    }
+
+    @Test
+    fun `stress - requestReceiptAssist surfaces image-aware message when vision input was used`() = runTest {
+        val suggestion = ReceiptAssistSuggestion(
+            merchant = SuggestedValue("AB Βασιλόπουλος")
+        )
+        coEvery { suggestReceiptExtractionUseCase(7L, false) } returns ReceiptAssistGenerationResult.Success(
+            suggestion = suggestion,
+            fromCache = false,
+            usedImageInput = true
+        )
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = 7L,
+            targetKey = "scanned_receipt:7",
+            capability = AiCapability.RECEIPT_EXTRACTION,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.CLOUD,
+            provider = "google-ai-studio",
+            modelName = "gemini-2.5-flash",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            rawOcrText = "ΑΒ ΒΑΣΙΛΟΠΟΥΛΟΣ"
+        )
+
+        viewModel.requestReceiptAssist()
+        advanceUntilIdle()
+
+        assertEquals(
+            "Image-aware AI cross-checked the receipt photo and OCR text.",
+            viewModel.state.value.receiptAssistMessage
+        )
+    }
+
+    @Test
+    fun `stress - image cloud toggle alone does not enable quick save`() = runTest {
+        settingsFlow.value = AiSettings(
+            aiEnabled = true,
+            receiptAssistEnabled = true,
+            receiptImageCloudEnabled = true,
+            receiptQuickSaveEnabled = false
+        )
+        advanceUntilIdle()
+
+        assertNull(viewModel.quickSaveUnavailableReason())
     }
 
     @Test

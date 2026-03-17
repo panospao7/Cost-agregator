@@ -36,6 +36,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
         val DASHBOARD_BRIEFING_ENABLED  = booleanPreferencesKey("ai_dashboard_briefing_enabled")
         val REVIEW_EXPLANATION_ENABLED  = booleanPreferencesKey("ai_review_explanation_enabled")
         val RECEIPT_ASSIST_ENABLED      = booleanPreferencesKey("ai_receipt_assist_enabled")
+        val RECEIPT_IMAGE_CLOUD_ENABLED = booleanPreferencesKey("ai_receipt_image_cloud_enabled")
         val CATEGORIZATION_FALLBACK_ENABLED = booleanPreferencesKey("ai_categorization_fallback_enabled")
         val DEDUPE_JUDGE_ENABLED        = booleanPreferencesKey("ai_dedupe_judge_enabled")
         val PROACTIVE_BRIEFINGS         = booleanPreferencesKey("ai_proactive_briefings")
@@ -66,6 +67,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
             prefs[Keys.DASHBOARD_BRIEFING_ENABLED] = updated.dashboardBriefingEnabled
             prefs[Keys.REVIEW_EXPLANATION_ENABLED] = updated.reviewExplanationEnabled
             prefs[Keys.RECEIPT_ASSIST_ENABLED]     = updated.receiptAssistEnabled
+            prefs[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] = updated.receiptImageCloudEnabled
             prefs[Keys.CATEGORIZATION_FALLBACK_ENABLED] = updated.categorizationFallbackEnabled
             prefs[Keys.DEDUPE_JUDGE_ENABLED]       = updated.dedupeJudgeEnabled
             prefs[Keys.PROACTIVE_BRIEFINGS]        = updated.proactiveBriefingsEnabled
@@ -91,6 +93,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
         dashboardBriefingEnabled  = this[Keys.DASHBOARD_BRIEFING_ENABLED] ?: false,
         reviewExplanationEnabled  = this[Keys.REVIEW_EXPLANATION_ENABLED] ?: false,
         receiptAssistEnabled      = this[Keys.RECEIPT_ASSIST_ENABLED]      ?: false,
+        receiptImageCloudEnabled  = this[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] ?: false,
         categorizationFallbackEnabled = this[Keys.CATEGORIZATION_FALLBACK_ENABLED] ?: false,
         dedupeJudgeEnabled        = this[Keys.DEDUPE_JUDGE_ENABLED]        ?: false,
         proactiveBriefingsEnabled = this[Keys.PROACTIVE_BRIEFINGS]        ?: false,

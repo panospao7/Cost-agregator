@@ -86,6 +86,7 @@ data class AiSettings(
     val dashboardBriefingEnabled: Boolean = false,
     val reviewExplanationEnabled: Boolean = false,
     val receiptAssistEnabled: Boolean = false,
+    val receiptImageCloudEnabled: Boolean = false,
     val categorizationFallbackEnabled: Boolean = false,
     val dedupeJudgeEnabled: Boolean = false,
     val proactiveBriefingsEnabled: Boolean = false,

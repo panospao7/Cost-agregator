@@ -54,6 +54,18 @@ class AiPolicyTest {
     }
 
     @Test
+    fun `canUseCloudFor receipt extraction does not require image toggle`() {
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            receiptAssistEnabled = true,
+            receiptImageCloudEnabled = false
+        )
+
+        assertTrue(policy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION))
+    }
+
+    @Test
     fun `shouldAllowOnDevice returns false when on-device is disabled`() {
         val settings = AiSettings(aiEnabled = true, allowOnDeviceAi = false, receiptAssistEnabled = true)
         assertFalse(policy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION))

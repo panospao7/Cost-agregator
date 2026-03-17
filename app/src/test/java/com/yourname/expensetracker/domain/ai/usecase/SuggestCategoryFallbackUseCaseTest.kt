@@ -222,6 +222,7 @@ class SuggestCategoryFallbackUseCaseTest {
     @Test
     fun `invoke for receipt returns NotNeeded when confidence is strong and category exists`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, categorizationFallbackEnabled = true))
+        coEvery { categoryRepository.getAll() } returns listOf(Category(id = 4L, name = "Groceries", icon = "G", color = "#00FF00"))
 
         val result = useCase(
             receipt = makeReceipt(confidence = 0.95f),
@@ -233,6 +234,80 @@ class SuggestCategoryFallbackUseCaseTest {
         )
 
         assertTrue(result is CategoryAssistGenerationResult.NotNeeded)
+    }
+
+    @Test
+    fun `invoke for review still allows fallback when deterministic category is Uncategorized`() = runTest {
+        val item = PendingReviewWithReceipt(
+            makeItem().review.copy(
+                suggestedCategoryId = 99L,
+                confidence = 0.95f,
+                matchType = null
+            ),
+            null
+        )
+        val input = makeInput().copy(currentCategoryId = 99L)
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, categorizationFallbackEnabled = true))
+        coEvery { inputBuilder.build(item, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery {
+            categoryRepository.getAll()
+        } returns listOf(
+            Category(id = 99L, name = "Uncategorized", icon = "?", color = "#BDBDBD"),
+            Category(id = 2L, name = "Groceries", icon = "G", color = "#00FF00")
+        )
+        coEvery { categorizationAssistService.suggest(input) } returns CategoryAssistSuggestion(
+            categoryId = 2L,
+            categoryName = "Groceries"
+        )
+
+        val result = useCase(item)
+
+        assertTrue(result is CategoryAssistGenerationResult.Success)
+    }
+
+    @Test
+    fun `invoke for receipt still allows fallback when current category is Uncategorized`() = runTest {
+        val receipt = makeReceipt(confidence = 0.95f)
+        val input = CategorizationAssistInput(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = receipt.id,
+            merchant = "Lidl",
+            amount = 10.0,
+            currency = "EUR",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = receipt.parsedDate,
+            currentCategoryId = 99L,
+            deterministicMatchType = null,
+            deterministicExplanation = null,
+            candidateCategories = listOf(CategoryOption(2L, "Groceries"))
+        )
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, categorizationFallbackEnabled = true))
+        coEvery {
+            inputBuilder.build(receipt, "Lidl", 10.0, receipt.parsedDate, 99L, any())
+        } returns input
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns null
+        coEvery {
+            categoryRepository.getAll()
+        } returns listOf(
+            Category(id = 99L, name = "Uncategorized", icon = "?", color = "#BDBDBD"),
+            Category(id = 2L, name = "Groceries", icon = "G", color = "#00FF00")
+        )
+        coEvery { categorizationAssistService.suggest(input) } returns CategoryAssistSuggestion(
+            categoryId = 2L,
+            categoryName = "Groceries"
+        )
+
+        val result = useCase(
+            receipt = receipt,
+            draftMerchant = "Lidl",
+            draftAmount = 10.0,
+            draftDate = receipt.parsedDate,
+            currentCategoryId = 99L,
+            force = false
+        )
+
+        assertTrue(result is CategoryAssistGenerationResult.Success)
     }
 
     private fun makeItem() = PendingReviewWithReceipt(

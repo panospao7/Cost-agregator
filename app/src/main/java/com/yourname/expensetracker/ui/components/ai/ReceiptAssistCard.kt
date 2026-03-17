@@ -66,6 +66,13 @@ fun ReceiptAssistCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (it.contains("google-ai-studio") && it.contains("gemini-2.5-flash")) {
+                        Text(
+                            text = "Cloud receipt assist may also use the saved receipt image when that opt-in is enabled.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 

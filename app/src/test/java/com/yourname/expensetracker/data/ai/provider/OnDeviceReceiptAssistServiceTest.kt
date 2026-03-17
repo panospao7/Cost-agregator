@@ -14,6 +14,8 @@ class OnDeviceReceiptAssistServiceTest {
     private val sampleInput = ReceiptAssistInput(
         receiptId = 7L,
         rawOcrText = "LIDL HELLAS\nTOTAL 12.34\nDATE 2026-03-01",
+        imagePath = null,
+        imageMimeType = null,
         parsedMerchant = null,
         parsedTotal = null,
         parsedDate = null,

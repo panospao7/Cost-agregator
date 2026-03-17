@@ -16,10 +16,13 @@ class ReceiptAssistInputBuilder @Inject constructor(
 
     fun build(receipt: ScannedReceipt, settings: AiSettings): ReceiptAssistInput {
         val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.RECEIPT_EXTRACTION)
+        val allowImageInput = settings.receiptImageCloudEnabled && !shouldRedact
 
         return ReceiptAssistInput(
             receiptId = receipt.id,
             rawOcrText = sanitizeOcrText(receipt.rawOcrText, shouldRedact),
+            imagePath = receipt.imagePath.takeIf { it.isNotBlank() && allowImageInput },
+            imageMimeType = receipt.imagePath.toImageMimeType().takeIf { allowImageInput },
             parsedMerchant = receipt.parsedMerchant?.trim()?.take(120),
             parsedTotal = receipt.parsedTotal,
             parsedDate = receipt.parsedDate,
@@ -47,5 +50,14 @@ class ReceiptAssistInputBuilder @Inject constructor(
         private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")
         private val CARD_REGEX = Regex("""\b(?:\d[ -]?){13,19}\b""")
         private val LONG_NUMBER_REGEX = Regex("""\b\d{10,}\b""")
+    }
+}
+
+private fun String.toImageMimeType(): String? {
+    return when {
+        endsWith(".jpg", ignoreCase = true) || endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
+        endsWith(".png", ignoreCase = true) -> "image/png"
+        endsWith(".webp", ignoreCase = true) -> "image/webp"
+        else -> null
     }
 }

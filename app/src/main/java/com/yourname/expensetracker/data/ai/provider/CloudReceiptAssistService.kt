@@ -4,6 +4,7 @@ import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
 import okhttp3.MediaType.Companion.toMediaType
@@ -12,18 +13,26 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.util.Base64
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
 
 @Singleton
-class CloudReceiptAssistService @Inject constructor() : ReceiptAssistService {
+class CloudReceiptAssistService @Inject constructor(
+    private val aiSettingsRepository: AiSettingsRepository
+) : ReceiptAssistService {
 
     private var apiKeyOverride: String? = null
 
-    internal constructor(apiKeyOverride: String) : this() {
+    internal constructor(
+        aiSettingsRepository: AiSettingsRepository,
+        apiKeyOverride: String
+    ) : this(aiSettingsRepository) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -35,13 +44,17 @@ class CloudReceiptAssistService @Inject constructor() : ReceiptAssistService {
     private val apiKey: String
         get() = apiKeyOverride ?: BuildConfig.GEMINI_API_KEY
 
+    override fun usedImageInput(input: ReceiptAssistInput): Boolean =
+        input.imagePath != null && input.imageMimeType != null
+
     override suspend fun suggest(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
         if (apiKey.isBlank()) {
             Timber.d("CloudReceiptAssistService: Gemini API key missing, skipping.")
             return null
         }
 
-        val requestBody = buildRequestBody(input)
+        val settings = aiSettingsRepository.settings().first()
+        val requestBody = buildRequestBody(input, settings.receiptImageCloudEnabled)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL}:generateContent?key=$apiKey"
         val request = Request.Builder()
             .url(url)
@@ -69,15 +82,19 @@ class CloudReceiptAssistService @Inject constructor() : ReceiptAssistService {
         }
     }
 
-    private fun buildRequestBody(input: ReceiptAssistInput): String {
+    internal fun buildRequestBodyForTest(input: ReceiptAssistInput, allowImage: Boolean): String =
+        buildRequestBody(input, allowImage)
+
+    private fun buildRequestBody(input: ReceiptAssistInput, allowImage: Boolean): String {
         val prompt = buildPrompt(input)
+        val parts = JSONArray().put(JSONObject().put("text", prompt))
+        buildImageInlineData(input, allowImage)?.let(parts::put)
         return JSONObject().apply {
             put(
                 "contents",
                 JSONArray().put(
                     JSONObject().put(
-                        "parts",
-                        JSONArray().put(JSONObject().put("text", prompt))
+                        "parts", parts
                     )
                 )
             )
@@ -99,9 +116,14 @@ class CloudReceiptAssistService @Inject constructor() : ReceiptAssistService {
     }
 
     private fun buildPrompt(input: ReceiptAssistInput): String {
+        val imageMode = if (usedImageInput(input)) {
+            "Receipt image is attached. Use it to cross-check OCR, especially for Greek characters or confusing glyphs."
+        } else {
+            "No receipt image is attached. Use only OCR text and parsed fields."
+        }
         return """
-            You are helping recover missing receipt fields from OCR text in a finance app.
-            Use only the provided OCR text and parsed receipt values.
+            You are helping recover missing receipt fields from receipt OCR in a finance app.
+            Use the attached image when available and cross-check it with the OCR text and parsed receipt values.
             Stay conservative.
             Do not invent values when uncertain.
             Return compact JSON only.
@@ -119,6 +141,10 @@ class CloudReceiptAssistService @Inject constructor() : ReceiptAssistService {
             - Prefer null over guessing.
             - Only provide a Unix epoch milliseconds date if the date is reasonably supported.
             - Keep notes short.
+            - If the image and OCR disagree, prefer the image only when it is clearly more legible.
+
+            Image guidance:
+            - $imageMode
 
             Receipt facts:
             - currency: ${input.currency}
@@ -130,6 +156,27 @@ class CloudReceiptAssistService @Inject constructor() : ReceiptAssistService {
             - rawOcrText:
             ${input.rawOcrText}
         """.trimIndent()
+    }
+
+    private fun buildImageInlineData(input: ReceiptAssistInput, allowImage: Boolean): JSONObject? {
+        if (!allowImage) return null
+        val imagePath = input.imagePath ?: return null
+        val mimeType = input.imageMimeType ?: return null
+        val file = File(imagePath)
+        if (!file.exists()) return null
+        val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
+        if (bytes.isEmpty()) return null
+        if (bytes.size > MAX_INLINE_IMAGE_BYTES) {
+            Timber.d("CloudReceiptAssistService: receipt image too large for inline upload (%d bytes)", bytes.size)
+            return null
+        }
+
+        return JSONObject().put(
+            "inlineData",
+            JSONObject()
+                .put("mimeType", mimeType)
+                .put("data", Base64.getEncoder().encodeToString(bytes))
+        )
     }
 
     private fun parseResponse(body: String): ReceiptAssistSuggestion? {
@@ -206,6 +253,7 @@ class CloudReceiptAssistService @Inject constructor() : ReceiptAssistService {
     }
 
     private companion object {
-        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private const val MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
     }
 }

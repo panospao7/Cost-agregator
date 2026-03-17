@@ -71,6 +71,7 @@ class SuggestReceiptExtractionUseCaseTest {
             providerName = AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER,
             modelName = AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL
         )
+        every { receiptAssistService.usedImageInput(any()) } returns false
     }
 
     @Test
@@ -110,6 +111,7 @@ class SuggestReceiptExtractionUseCaseTest {
         assertTrue(result is ReceiptAssistGenerationResult.Success)
         result as ReceiptAssistGenerationResult.Success
         assertTrue(result.fromCache)
+        assertTrue(!result.usedImageInput)
         assertEquals("Lidl", result.suggestion.merchant?.value)
         coVerify(exactly = 0) { receiptAssistService.suggest(any()) }
     }
@@ -133,6 +135,7 @@ class SuggestReceiptExtractionUseCaseTest {
 
         val result = useCase(receiptId = 1L)
 
+        assertTrue(captured.size >= 2)
         assertTrue(result is ReceiptAssistGenerationResult.Success)
         assertEquals(AiArtifactStatus.RUNNING, captured.first().status)
         assertEquals(AiArtifactStatus.READY, captured.last().status)
@@ -143,6 +146,42 @@ class SuggestReceiptExtractionUseCaseTest {
         assertEquals(AiCapability.RECEIPT_EXTRACTION, captured.last().capability)
         assertTrue(captured.last().payloadJson?.contains("Lidl") == true)
         assertTrue(captured.last().explanationText?.contains("Route: CLOUD") == true)
+        assertTrue((result as ReceiptAssistGenerationResult.Success).usedImageInput.not())
+    }
+
+    @Test
+    fun `invoke marks image-aware receipt assist in artifact explanation when service used image`() = runTest {
+        val receipt = makeReceipt(confidence = 0.2f)
+        val input = makeInput().copy(imagePath = "receipt.jpg", imageMimeType = "image/jpeg")
+        val receiptAssistService = object : ReceiptAssistService {
+            override suspend fun suggest(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
+                return ReceiptAssistSuggestion(merchant = SuggestedValue("AB Βασιλόπουλος"))
+            }
+
+            override fun usedImageInput(input: ReceiptAssistInput): Boolean = true
+        }
+        useCase = SuggestReceiptExtractionUseCase(
+            aiSettingsRepository = aiSettingsRepository,
+            aiArtifactRepository = aiArtifactRepository,
+            receiptAssistService = receiptAssistService,
+            aiCapabilityRouter = aiCapabilityRouter,
+            inputBuilder = inputBuilder,
+            receiptRepository = receiptRepository,
+            timeProvider = timeProvider
+        )
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings().copy(receiptImageCloudEnabled = true))
+        coEvery { receiptRepository.getReceiptById(1L) } returns receipt
+        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+
+        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(receiptId = 1L)
+
+        assertTrue(result is ReceiptAssistGenerationResult.Success)
+        assertTrue((result as ReceiptAssistGenerationResult.Success).usedImageInput)
+        assertTrue(captured.last().explanationText?.contains("Image-aware cloud assist") == true)
     }
 
     @Test
@@ -194,17 +233,24 @@ class SuggestReceiptExtractionUseCaseTest {
 
         val result = useCase(receiptId = 1L)
 
+        assertTrue(captured.size >= 2)
         assertTrue(result is ReceiptAssistGenerationResult.Error)
         assertEquals(AiArtifactStatus.FAILED, captured.last().status)
         assertTrue(captured.last().errorMessage?.contains("cloud allowed") == true)
         assertTrue(captured.last().errorMessage?.contains("Route: CLOUD") == true)
     }
 
-    private fun enabledSettings() = AiSettings(aiEnabled = true, receiptAssistEnabled = true)
+    private fun enabledSettings() = AiSettings(
+        aiEnabled = true,
+        receiptAssistEnabled = true,
+        allowCloudAi = true
+    )
 
     private fun makeInput() = ReceiptAssistInput(
         receiptId = 1L,
         rawOcrText = "LIDL TOTAL 12.34",
+        imagePath = null,
+        imageMimeType = null,
         parsedMerchant = null,
         parsedTotal = null,
         parsedDate = null,

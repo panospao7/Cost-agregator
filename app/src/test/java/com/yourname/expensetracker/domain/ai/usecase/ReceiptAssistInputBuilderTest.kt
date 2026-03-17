@@ -38,8 +38,24 @@ class ReceiptAssistInputBuilderTest {
 
         assertEquals(receipt.id, result.receiptId)
         assertEquals(receipt.rawOcrText, result.rawOcrText)
+        assertEquals(null, result.imagePath)
+        assertEquals(null, result.imageMimeType)
         assertEquals(receipt.parsedItems, result.lineItemsJson)
         assertEquals(timeProvider.now(), result.currentTimeMs)
+    }
+
+    @Test
+    fun `build includes local image metadata when image cloud assist is enabled`() {
+        every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_EXTRACTION) } returns false
+        val receipt = makeReceipt(rawOcrText = "ΑΒ ΒΑΣΙΛΟΠΟΥΛΟΣ")
+
+        val result = builder.build(
+            receipt.copy(imagePath = "receipt.jpg"),
+            AiSettings(aiEnabled = true, receiptAssistEnabled = true, receiptImageCloudEnabled = true)
+        )
+
+        assertEquals("receipt.jpg", result.imagePath)
+        assertEquals("image/jpeg", result.imageMimeType)
     }
 
     @Test
@@ -54,6 +70,8 @@ class ReceiptAssistInputBuilderTest {
         assertTrue(result.rawOcrText.contains("[REDACTED_CARD]"))
         assertTrue(result.rawOcrText.contains("[REDACTED_IBAN]"))
         assertFalse(result.rawOcrText.contains("2101234567"))
+        assertEquals(null, result.imagePath)
+        assertEquals(null, result.imageMimeType)
         assertEquals(null, result.lineItemsJson)
     }
 

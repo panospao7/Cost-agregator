@@ -406,6 +406,8 @@ class ReceiptScanViewModel @Inject constructor(
                             receiptAssistDiagnostics = diagnostics,
                             receiptAssistMessage = if (result.fromCache) {
                                 "Showing cached AI receipt suggestions."
+                            } else if (result.usedImageInput) {
+                                "Image-aware AI cross-checked the receipt photo and OCR text."
                             } else {
                                 "AI suggested a few receipt fields to review."
                             }

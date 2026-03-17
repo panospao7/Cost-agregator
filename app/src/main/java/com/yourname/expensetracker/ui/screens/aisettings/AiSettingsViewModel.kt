@@ -89,6 +89,7 @@ class AiSettingsViewModel @Inject constructor(
     )
     fun setReviewExplanationEnabled(enabled: Boolean) = update(transform = { it.copy(reviewExplanationEnabled = enabled) })
     fun setReceiptAssistEnabled(enabled: Boolean) = update(transform = { it.copy(receiptAssistEnabled = enabled) })
+    fun setReceiptImageCloudEnabled(enabled: Boolean) = update(transform = { it.copy(receiptImageCloudEnabled = enabled) })
     fun setCategorizationFallbackEnabled(enabled: Boolean) = update(transform = { it.copy(categorizationFallbackEnabled = enabled) })
     fun setDedupeJudgeEnabled(enabled: Boolean) = update(transform = { it.copy(dedupeJudgeEnabled = enabled) })
     fun setProactiveBriefingsEnabled(enabled: Boolean) = update(

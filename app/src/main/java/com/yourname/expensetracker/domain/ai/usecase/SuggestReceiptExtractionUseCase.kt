@@ -75,7 +75,13 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         ) {
             existing.payloadJson
                 ?.toReceiptAssistSuggestionOrNull()
-                ?.let { return ReceiptAssistGenerationResult.Success(it, fromCache = true) }
+                ?.let {
+                    return ReceiptAssistGenerationResult.Success(
+                        suggestion = it,
+                        fromCache = true,
+                        usedImageInput = existing.explanationText?.contains("Image-aware cloud assist") == true
+                    )
+                }
         }
 
         val baseEntity = AiArtifactEntity(
@@ -102,6 +108,7 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
 
         return try {
             val suggestion = receiptAssistService.suggest(input)
+            val usedImageInput = receiptAssistService.usedImageInput(input)
             if (suggestion == null || suggestion.isEmpty()) {
                 aiArtifactRepository.upsert(
                     baseEntity.copy(
@@ -118,12 +125,16 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
                     baseEntity.copy(
                         status = AiArtifactStatus.READY,
                         summaryText = suggestion.toSummaryText(),
-                        explanationText = suggestion.toExplanationText().withRouteDiagnostics(routeDecision),
+                        explanationText = suggestion.toExplanationText(usedImageInput).withRouteDiagnostics(routeDecision),
                         payloadJson = suggestion.toPayloadJson(),
                         updatedAt = timeProvider.now()
                     )
                 )
-                ReceiptAssistGenerationResult.Success(suggestion, fromCache = false)
+                ReceiptAssistGenerationResult.Success(
+                    suggestion = suggestion,
+                    fromCache = false,
+                    usedImageInput = usedImageInput
+                )
             }
         } catch (e: Exception) {
             aiArtifactRepository.upsert(
@@ -175,8 +186,9 @@ private fun ReceiptAssistSuggestion.toSummaryText(): String {
     }
 }
 
-private fun ReceiptAssistSuggestion.toExplanationText(): String? {
+private fun ReceiptAssistSuggestion.toExplanationText(usedImageInput: Boolean): String? {
     val lines = buildList {
+        if (usedImageInput) add("Image-aware cloud assist cross-checked the receipt photo with OCR.")
         merchant?.rationale?.let { add("Merchant: $it") }
         total?.rationale?.let { add("Total: $it") }
         date?.rationale?.let { add("Date: $it") }

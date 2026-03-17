@@ -149,6 +149,16 @@ fun AiSettingsScreen(
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_EXTRACTION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
+                    ToggleRow(
+                        "Allow receipt image for cloud assist",
+                        settings.receiptImageCloudEnabled,
+                        viewModel::setReceiptImageCloudEnabled
+                    )
+                    Text(
+                        text = "When enabled, cloud receipt assist may inspect the saved receipt image in addition to OCR text for harder scans like Greek receipts. This stays suggestion-only and never saves automatically.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     CapabilityMatrixRow(
                         label = "Categorization fallback",
                         enabled = settings.categorizationFallbackEnabled,

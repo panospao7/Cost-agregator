@@ -98,6 +98,27 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
+    fun `decide still routes receipt extraction to cloud when image toggle is enabled`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.RECEIPT_EXTRACTION) } returns OnDeviceModelStatus.UNAVAILABLE
+
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            allowOnDeviceAi = true,
+            receiptAssistEnabled = true,
+            receiptImageCloudEnabled = true,
+            preferredMode = AiMode.CLOUD
+        )
+
+        val result = router.decide(AiCapability.RECEIPT_EXTRACTION, settings)
+
+        assertEquals(AiRoute.CLOUD, result.route)
+        assertEquals(AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER, result.providerName)
+    }
+
+    @Test
     fun `decide returns ON_DEVICE for review explanation when local model available`() = runTest {
         every { environmentMonitor.isNetworkAvailable() } returns false
         every { environmentMonitor.isWifiConnected() } returns false

@@ -22,6 +22,8 @@ data class CategoryOption(
 data class ReceiptAssistInput(
     val receiptId: Long,
     val rawOcrText: String,
+    val imagePath: String?,
+    val imageMimeType: String?,
     val parsedMerchant: String?,
     val parsedTotal: Double?,
     val parsedDate: Long?,
@@ -42,7 +44,8 @@ data class ReceiptAssistSuggestion(
 sealed interface ReceiptAssistGenerationResult {
     data class Success(
         val suggestion: ReceiptAssistSuggestion,
-        val fromCache: Boolean
+        val fromCache: Boolean,
+        val usedImageInput: Boolean = false
     ) : ReceiptAssistGenerationResult
 
     data class Disabled(val reason: String) : ReceiptAssistGenerationResult

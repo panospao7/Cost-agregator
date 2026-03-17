@@ -33,6 +33,8 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val timeProvider: TimeProvider
 ) {
+    private var uncategorizedCategoryIdsCache: Set<Long>? = null
+
 
     suspend operator fun invoke(
         item: PendingReviewWithReceipt,
@@ -93,20 +95,35 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
         )
     }
 
-    private fun needsFallback(item: PendingReviewWithReceipt): Boolean {
+    private suspend fun needsFallback(item: PendingReviewWithReceipt): Boolean {
         val review = item.review
         if (review.suggestedCategoryId == null) return true
+        if (isUncategorizedCategory(review.suggestedCategoryId)) return true
         val weakMatchTypes = setOf("UNKNOWN", "FALLBACK", "ML_PREDICTION")
         val isWeakMatch = review.matchType?.uppercase() in weakMatchTypes
         return isWeakMatch || review.confidence < AppConfig.Ai.MIN_CATEGORY_CONFIDENCE_FOR_AI_FALLBACK
     }
 
-    private fun needsFallback(
+    private suspend fun needsFallback(
         receipt: ScannedReceipt,
         currentCategoryId: Long?
     ): Boolean {
         if (currentCategoryId == null) return true
+        if (isUncategorizedCategory(currentCategoryId)) return true
         return receipt.confidence < AppConfig.Ai.MIN_CATEGORY_CONFIDENCE_FOR_AI_FALLBACK
+    }
+
+    private suspend fun isUncategorizedCategory(categoryId: Long?): Boolean {
+        if (categoryId == null) return false
+        val cached = uncategorizedCategoryIdsCache ?: categoryRepository.getAll()
+            .filter { category ->
+                category.name.equals("Uncategorized", ignoreCase = true) ||
+                    category.name.contains("Uncategorized", ignoreCase = true)
+            }
+            .map { it.id }
+            .toSet()
+            .also { uncategorizedCategoryIdsCache = it }
+        return categoryId in cached
     }
 
     private suspend fun suggestCategory(

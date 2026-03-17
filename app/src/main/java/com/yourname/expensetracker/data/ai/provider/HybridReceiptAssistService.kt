@@ -20,13 +20,26 @@ class HybridReceiptAssistService @Inject constructor(
     private val noOpReceiptAssistService: NoOpReceiptAssistService
 ) : ReceiptAssistService {
 
+    private var lastUsedImageInput = false
+
     override suspend fun suggest(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.RECEIPT_EXTRACTION, settings).route) {
-            AiRoute.CLOUD -> cloudReceiptAssistService.suggest(input)
-            AiRoute.ON_DEVICE -> onDeviceReceiptAssistService.suggest(input)
+            AiRoute.CLOUD -> {
+                lastUsedImageInput = cloudReceiptAssistService.usedImageInput(input) && settings.receiptImageCloudEnabled
+                cloudReceiptAssistService.suggest(input)
+            }
+            AiRoute.ON_DEVICE -> {
+                lastUsedImageInput = false
+                onDeviceReceiptAssistService.suggest(input)
+            }
             AiRoute.DETERMINISTIC_FALLBACK,
-            AiRoute.DISABLED -> noOpReceiptAssistService.suggest(input)
+            AiRoute.DISABLED -> {
+                lastUsedImageInput = false
+                noOpReceiptAssistService.suggest(input)
+            }
         }
     }
+
+    override fun usedImageInput(input: ReceiptAssistInput): Boolean = lastUsedImageInput
 }

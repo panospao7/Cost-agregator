@@ -76,6 +76,14 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `setReceiptImageCloudEnabled updates repository`() = runTest(testDispatcher) {
+        viewModel.setReceiptImageCloudEnabled(true)
+        advanceUntilIdle()
+
+        coVerify { aiSettingsRepository.update(any()) }
+    }
+
+    @Test
     fun `setProactiveBriefingsEnabled syncs work scheduling`() = runTest(testDispatcher) {
         viewModel.setProactiveBriefingsEnabled(true)
         advanceUntilIdle()
