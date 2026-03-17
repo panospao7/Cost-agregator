@@ -328,14 +328,30 @@ private fun ReviewStep(
                         color = MaterialTheme.colorScheme.secondary
                     )
                     HorizontalDivider()
-                    Text("Merchant: ${preview.merchant}", style = MaterialTheme.typography.bodySmall)
-                    Text("Amount: ${getCurrencySymbol(parsed?.currency)}${preview.amountText}", style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        "Date: ${DateFormatterUtils.shortDate().format(Date(preview.date))}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    preview.categoryName?.let {
-                        Text("Category: $it", style = MaterialTheme.typography.bodySmall)
+                    preview.fieldSummaries.forEach { field ->
+                        val renderedValue = when (field.label) {
+                            "Amount" -> "${getCurrencySymbol(parsed?.currency)}${field.value}"
+                            "Date" -> DateFormatterUtils.shortDate().format(Date(preview.date))
+                            else -> field.value
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "${field.label}: $renderedValue",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = field.source,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    preview.diagnostics.forEach { diagnostics ->
+                        Text(
+                            text = diagnostics,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
                     }
                 }
             },

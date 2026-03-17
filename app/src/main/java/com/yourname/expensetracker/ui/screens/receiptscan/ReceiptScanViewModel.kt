@@ -87,7 +87,15 @@ data class ReceiptQuickSavePreview(
     val categoryId: Long?,
     val categoryName: String?,
     val autoAppliedFields: List<String>,
-    val usedCapabilities: Set<AiCapability>
+    val usedCapabilities: Set<AiCapability>,
+    val fieldSummaries: List<ReceiptQuickSaveFieldSummary>,
+    val diagnostics: List<String>
+)
+
+data class ReceiptQuickSaveFieldSummary(
+    val label: String,
+    val value: String,
+    val source: String
 )
 
 private data class ReceiptSaveRequest(
@@ -735,6 +743,10 @@ class ReceiptScanViewModel @Inject constructor(
         var categoryName: String? = categoryId?.let { selectedId ->
             categories.value.firstOrNull { it.id == selectedId }?.name
         }
+        var merchantSource = "Current draft"
+        var amountSource = "Current draft"
+        var dateSource = "Current draft"
+        var categorySource = if (categoryId != null) "Current draft" else null
 
         val autoAppliedFields = mutableListOf<String>()
         val usedCapabilities = linkedSetOf<AiCapability>()
@@ -744,6 +756,7 @@ class ReceiptScanViewModel @Inject constructor(
         if (merchant.isBlank()) {
             receiptSuggestion?.merchant?.value?.takeIf { it.isNotBlank() }?.let {
                 merchant = it
+                merchantSource = "AI receipt assist"
                 autoAppliedFields += "merchant"
                 usedCapabilities += AiCapability.RECEIPT_EXTRACTION
             }
@@ -752,6 +765,7 @@ class ReceiptScanViewModel @Inject constructor(
         if (amount == null || amount <= 0) {
             receiptSuggestion?.total?.value?.takeIf { it > 0 }?.let {
                 amount = it
+                amountSource = "AI receipt assist"
                 autoAppliedFields += "amount"
                 usedCapabilities += AiCapability.RECEIPT_EXTRACTION
             }
@@ -760,6 +774,7 @@ class ReceiptScanViewModel @Inject constructor(
         if (date <= 0L) {
             receiptSuggestion?.date?.value?.let {
                 date = it
+                dateSource = "AI receipt assist"
                 autoAppliedFields += "date"
                 usedCapabilities += AiCapability.RECEIPT_EXTRACTION
             }
@@ -769,6 +784,7 @@ class ReceiptScanViewModel @Inject constructor(
             categorySuggestion?.let {
                 categoryId = it.categoryId
                 categoryName = it.categoryName
+                categorySource = "AI category assist"
                 autoAppliedFields += "category"
                 usedCapabilities += AiCapability.CATEGORIZATION_FALLBACK
             }
@@ -786,7 +802,31 @@ class ReceiptScanViewModel @Inject constructor(
             categoryId = categoryId,
             categoryName = categoryName,
             autoAppliedFields = autoAppliedFields,
-            usedCapabilities = usedCapabilities
+            usedCapabilities = usedCapabilities,
+            fieldSummaries = buildList {
+                add(ReceiptQuickSaveFieldSummary("Merchant", merchant, merchantSource))
+                add(ReceiptQuickSaveFieldSummary("Amount", String.format("%.2f", finalAmount), amountSource))
+                if (date > 0L) {
+                    add(ReceiptQuickSaveFieldSummary("Date", date.toString(), dateSource))
+                }
+                categoryId?.let {
+                    add(
+                        ReceiptQuickSaveFieldSummary(
+                            label = "Category",
+                            value = categoryName ?: "Selected category",
+                            source = categorySource ?: "Current draft"
+                        )
+                    )
+                }
+            },
+            diagnostics = buildList {
+                if (AiCapability.RECEIPT_EXTRACTION in usedCapabilities) {
+                    currentState.receiptAssistDiagnostics?.let(::add)
+                }
+                if (AiCapability.CATEGORIZATION_FALLBACK in usedCapabilities) {
+                    currentState.categoryAssistDiagnostics?.let(::add)
+                }
+            }
         )
     }
 
