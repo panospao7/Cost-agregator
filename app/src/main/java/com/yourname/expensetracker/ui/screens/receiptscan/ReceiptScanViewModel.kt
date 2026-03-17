@@ -8,6 +8,8 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
@@ -287,10 +289,10 @@ class ReceiptScanViewModel @Inject constructor(
 
             when (val result = suggestReceiptExtractionUseCase(receiptId, force = force)) {
                 is ReceiptAssistGenerationResult.Success -> {
-                    val diagnostics = aiArtifactRepository.getLatest(
+                    val diagnostics = latestArtifactDiagnostics(
                         targetKey = "scanned_receipt:$receiptId",
-                        capability = com.yourname.expensetracker.domain.ai.model.AiCapability.RECEIPT_EXTRACTION
-                    )?.toDiagnosticsOrNull()?.toDisplayText()
+                        capability = AiCapability.RECEIPT_EXTRACTION
+                    )
 
                     _state.update {
                         it.copy(
@@ -323,10 +325,15 @@ class ReceiptScanViewModel @Inject constructor(
                     }
                 }
                 is ReceiptAssistGenerationResult.Error -> {
+                    val diagnostics = latestArtifactDiagnostics(
+                        targetKey = "scanned_receipt:$receiptId",
+                        capability = AiCapability.RECEIPT_EXTRACTION,
+                        expectedStatus = AiArtifactStatus.FAILED
+                    )
                     _state.update {
                         it.copy(
                             receiptAssistState = AiLoadState.Error(result.reason),
-                            receiptAssistDiagnostics = null,
+                            receiptAssistDiagnostics = diagnostics,
                             receiptAssistMessage = result.reason
                         )
                     }
@@ -497,5 +504,15 @@ class ReceiptScanViewModel @Inject constructor(
 
     fun reset() {
         _state.update { ReceiptScanState(editDate = timeProvider.now()) }
+    }
+
+    private suspend fun latestArtifactDiagnostics(
+        targetKey: String,
+        capability: AiCapability,
+        expectedStatus: AiArtifactStatus? = null
+    ): String? {
+        val artifact = aiArtifactRepository.getLatest(targetKey, capability) ?: return null
+        if (expectedStatus != null && artifact.status != expectedStatus) return null
+        return artifact.toDiagnosticsOrNull()?.toDisplayText()
     }
 }

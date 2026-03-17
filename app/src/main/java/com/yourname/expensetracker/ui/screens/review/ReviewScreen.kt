@@ -980,7 +980,11 @@ private fun ReviewCaptureAssistSection(
                 )
             }
             is AiLoadState.Error -> {
-                AssistErrorRow(categoryState.message, onRequestCategoryAssist)
+                AssistErrorRow(
+                    message = categoryState.message,
+                    diagnostics = state.categoryDiagnostics,
+                    onRetry = onRequestCategoryAssist
+                )
             }
             is AiLoadState.Disabled -> Unit
         }
@@ -1002,7 +1006,11 @@ private fun ReviewCaptureAssistSection(
                 )
             }
             is AiLoadState.Error -> {
-                AssistErrorRow(dedupeState.message, onRequestDedupeAssist)
+                AssistErrorRow(
+                    message = dedupeState.message,
+                    diagnostics = state.dedupeDiagnostics,
+                    onRetry = onRequestDedupeAssist
+                )
             }
             is AiLoadState.Disabled -> Unit
         }
@@ -1034,9 +1042,10 @@ private fun AssistLoadingRow(label: String) {
 @Composable
 private fun AssistErrorRow(
     message: String,
+    diagnostics: String? = null,
     onRetry: () -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(
@@ -1044,17 +1053,29 @@ private fun AssistErrorRow(
                 RoundedCornerShape(12.dp)
             )
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onErrorContainer,
-            modifier = Modifier.weight(1f)
-        )
-        TextButton(onClick = onRetry) {
-            Text("Retry", color = SemanticColors.PrimaryIndigo)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onRetry) {
+                Text("Retry", color = SemanticColors.PrimaryIndigo)
+            }
+        }
+        diagnostics?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+            )
         }
     }
 }

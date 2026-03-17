@@ -411,6 +411,14 @@ private fun ReviewStep(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
+                        state.receiptAssistDiagnostics?.let { diagnostics ->
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                diagnostics,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                            )
+                        }
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(onClick = { viewModel.requestReceiptAssist(force = true) }) {
                             Text("Retry AI assist")

@@ -194,6 +194,47 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `stress - requestReceiptAssist keeps failed artifact diagnostics on error`() = runTest {
+        coEvery { suggestReceiptExtractionUseCase(7L, false) } returns ReceiptAssistGenerationResult.Error(
+            "AI receipt assist failed."
+        )
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = 7L,
+            targetKey = "scanned_receipt:7",
+            capability = AiCapability.RECEIPT_EXTRACTION,
+            status = AiArtifactStatus.FAILED,
+            mode = AiMode.CLOUD,
+            provider = "google-ai-studio",
+            modelName = "gemini-2.5-flash",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            errorMessage = "backend error",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            rawOcrText = "LIDL TOTAL 12.34"
+        )
+
+        viewModel.requestReceiptAssist()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.receiptAssistState is AiLoadState.Error)
+        assertEquals(
+            "Cloud - google-ai-studio - gemini-2.5-flash",
+            viewModel.state.value.receiptAssistDiagnostics
+        )
+    }
+
+    @Test
     fun `stress - dismissReceiptAssist clears state and marks artifact dismissed`() = runTest {
         coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
             id = 4L,

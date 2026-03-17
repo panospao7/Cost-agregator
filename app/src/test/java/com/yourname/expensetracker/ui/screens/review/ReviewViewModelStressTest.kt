@@ -568,6 +568,64 @@ class ReviewViewModelStressTest {
     }
 
     @Test
+    fun `stress - requestCategoryAssist keeps failed artifact diagnostics on error`() = runTest {
+        val item = PendingReviewWithReceipt(
+            review = mockk(relaxed = true) {
+                every { id } returns 62L
+            },
+            receipt = null
+        )
+        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(62L) } returns item
+        coEvery { suggestCategoryFallbackUseCase(item, false) } returns CategoryAssistGenerationResult.Error(
+            "AI category assist failed."
+        )
+        coEvery {
+            aiArtifactRepository.getLatest("pending_review:62", AiCapability.CATEGORIZATION_FALLBACK)
+        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 62L,
+            targetKey = "pending_review:62",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.FAILED,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.CLOUD,
+            provider = "google-ai-studio",
+            modelName = "gemini-2.5-flash",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            errorMessage = "backend error",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository
+        )
+
+        advanceUntilIdle()
+        viewModel.requestCategoryAssist(62L)
+        advanceUntilIdle()
+
+        val state = viewModel.reviewCaptureAssistStates.value[62L]?.categorySuggestion
+        assertTrue(state is AiLoadState.Error)
+        assertEquals(
+            "Cloud - google-ai-studio - gemini-2.5-flash",
+            viewModel.reviewCaptureAssistStates.value[62L]?.categoryDiagnostics
+        )
+    }
+
+    @Test
     fun `stress - requestDedupeAssist stores Ready state`() = runTest {
         val item = PendingReviewWithReceipt(
             review = mockk(relaxed = true) {
@@ -629,6 +687,64 @@ class ReviewViewModelStressTest {
         assertEquals(
             "On-device - mlkit-genai-nano - gemini-nano-dedupe",
             viewModel.reviewCaptureAssistStates.value[61L]?.dedupeDiagnostics
+        )
+    }
+
+    @Test
+    fun `stress - requestDedupeAssist keeps failed artifact diagnostics on error`() = runTest {
+        val item = PendingReviewWithReceipt(
+            review = mockk(relaxed = true) {
+                every { id } returns 63L
+            },
+            receipt = null
+        )
+        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(63L) } returns item
+        coEvery { judgePendingReviewDuplicateUseCase(item, false) } returns DedupeJudgeGenerationResult.Error(
+            "AI duplicate assist failed."
+        )
+        coEvery {
+            aiArtifactRepository.getLatest("pending_review:63", AiCapability.DEDUPE_JUDGE)
+        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 63L,
+            targetKey = "pending_review:63",
+            capability = AiCapability.DEDUPE_JUDGE,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.FAILED,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.ON_DEVICE,
+            provider = "mlkit-genai-nano",
+            modelName = "gemini-nano-dedupe",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            errorMessage = "backend error",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository
+        )
+
+        advanceUntilIdle()
+        viewModel.requestDedupeAssist(63L)
+        advanceUntilIdle()
+
+        val state = viewModel.reviewCaptureAssistStates.value[63L]?.dedupeSuggestion
+        assertTrue(state is AiLoadState.Error)
+        assertEquals(
+            "On-device - mlkit-genai-nano - gemini-nano-dedupe",
+            viewModel.reviewCaptureAssistStates.value[63L]?.dedupeDiagnostics
         )
     }
 

@@ -10,13 +10,13 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
-import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.toDisplayText
 import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
 import com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState
@@ -321,10 +321,10 @@ class ReviewViewModel @Inject constructor(
 
             when (val result = suggestCategoryFallbackUseCase(item, force = force)) {
                 is CategoryAssistGenerationResult.Success -> {
-                    val diagnostics = aiArtifactRepository.getLatest(
-                        "pending_review:$reviewId",
-                        AiCapability.CATEGORIZATION_FALLBACK
-                    )?.toDiagnosticsOrNull()?.toDisplayText()
+                    val diagnostics = latestArtifactDiagnostics(
+                        targetKey = "pending_review:$reviewId",
+                        capability = AiCapability.CATEGORIZATION_FALLBACK
+                    )
                     updateCategoryAssistState(
                         reviewId = reviewId,
                         state = AiLoadState.Ready(result.suggestion),
@@ -338,7 +338,12 @@ class ReviewViewModel @Inject constructor(
                     updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = null)
                 }
                 is CategoryAssistGenerationResult.Error -> {
-                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = null)
+                    val diagnostics = latestArtifactDiagnostics(
+                        targetKey = "pending_review:$reviewId",
+                        capability = AiCapability.CATEGORIZATION_FALLBACK,
+                        expectedStatus = AiArtifactStatus.FAILED
+                    )
+                    updateCategoryAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = diagnostics)
                 }
             }
         }
@@ -356,10 +361,10 @@ class ReviewViewModel @Inject constructor(
 
             when (val result = judgePendingReviewDuplicateUseCase(item, force = force)) {
                 is DedupeJudgeGenerationResult.Success -> {
-                    val diagnostics = aiArtifactRepository.getLatest(
-                        "pending_review:$reviewId",
-                        AiCapability.DEDUPE_JUDGE
-                    )?.toDiagnosticsOrNull()?.toDisplayText()
+                    val diagnostics = latestArtifactDiagnostics(
+                        targetKey = "pending_review:$reviewId",
+                        capability = AiCapability.DEDUPE_JUDGE
+                    )
                     updateDedupeAssistState(
                         reviewId = reviewId,
                         state = AiLoadState.Ready(result.suggestion),
@@ -373,7 +378,12 @@ class ReviewViewModel @Inject constructor(
                     updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = null)
                 }
                 is DedupeJudgeGenerationResult.Error -> {
-                    updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = null)
+                    val diagnostics = latestArtifactDiagnostics(
+                        targetKey = "pending_review:$reviewId",
+                        capability = AiCapability.DEDUPE_JUDGE,
+                        expectedStatus = AiArtifactStatus.FAILED
+                    )
+                    updateDedupeAssistState(reviewId, AiLoadState.Error(result.reason), diagnostics = diagnostics)
                 }
             }
         }
@@ -551,5 +561,15 @@ class ReviewViewModel @Inject constructor(
                 current + (reviewId to clear(existing))
             }
         }
+    }
+
+    private suspend fun latestArtifactDiagnostics(
+        targetKey: String,
+        capability: AiCapability,
+        expectedStatus: AiArtifactStatus? = null
+    ): String? {
+        val artifact = aiArtifactRepository.getLatest(targetKey, capability) ?: return null
+        if (expectedStatus != null && artifact.status != expectedStatus) return null
+        return artifact.toDiagnosticsOrNull()?.toDisplayText()
     }
 }
