@@ -20,13 +20,19 @@ import timber.log.Timber
 @Singleton
 class CloudReviewExplanationService @Inject constructor() : ReviewExplanationService {
 
+    private var apiKeyOverride: String? = null
+
+    internal constructor(apiKeyOverride: String) : this() {
+        this.apiKeyOverride = apiKeyOverride
+    }
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(AppConfig.Ai.REVIEW_EXPLANATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .readTimeout(AppConfig.Ai.REVIEW_EXPLANATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
 
     private val apiKey: String
-        get() = BuildConfig.GEMINI_API_KEY
+        get() = apiKeyOverride ?: BuildConfig.GEMINI_API_KEY
 
     override suspend fun generate(input: ReviewExplanationInput): ReviewExplanation? {
         if (apiKey.isBlank()) {

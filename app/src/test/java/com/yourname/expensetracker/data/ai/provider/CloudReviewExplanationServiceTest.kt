@@ -8,7 +8,7 @@ class CloudReviewExplanationServiceTest {
 
     @Test
     fun `generate returns null safely when api key is absent`() {
-        val service = CloudReviewExplanationService()
+        val service = CloudReviewExplanationService("")
 
         val result = kotlinx.coroutines.runBlocking {
             service.generate(

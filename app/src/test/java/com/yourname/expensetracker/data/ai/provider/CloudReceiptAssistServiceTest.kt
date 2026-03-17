@@ -8,7 +8,7 @@ class CloudReceiptAssistServiceTest {
 
     @Test
     fun `suggest returns null safely when api key is absent or request unsupported`() {
-        val service = CloudReceiptAssistService()
+        val service = CloudReceiptAssistService("")
 
         val result = kotlinx.coroutines.runBlocking {
             service.suggest(

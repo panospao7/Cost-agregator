@@ -21,13 +21,19 @@ import timber.log.Timber
 @Singleton
 class CloudReceiptAssistService @Inject constructor() : ReceiptAssistService {
 
+    private var apiKeyOverride: String? = null
+
+    internal constructor(apiKeyOverride: String) : this() {
+        this.apiKeyOverride = apiKeyOverride
+    }
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(AppConfig.Ai.RECEIPT_ASSIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .readTimeout(AppConfig.Ai.RECEIPT_ASSIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
 
     private val apiKey: String
-        get() = BuildConfig.GEMINI_API_KEY
+        get() = apiKeyOverride ?: BuildConfig.GEMINI_API_KEY
 
     override suspend fun suggest(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
         if (apiKey.isBlank()) {
