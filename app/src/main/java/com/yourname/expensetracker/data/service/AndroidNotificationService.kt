@@ -19,9 +19,12 @@ class AndroidNotificationService @Inject constructor(
 ) : NotificationService {
 
     companion object {
-        private const val CHANNEL_ID = "budget_alerts"
-        private const val CHANNEL_NAME = "Budget Alerts"
-        private const val CHANNEL_DESC = "Notifications when budget thresholds are exceeded"
+        private const val BUDGET_CHANNEL_ID = "budget_alerts"
+        private const val BUDGET_CHANNEL_NAME = "Budget Alerts"
+        private const val BUDGET_CHANNEL_DESC = "Notifications when budget thresholds are exceeded"
+        private const val AI_CHANNEL_ID = "ai_briefings"
+        private const val AI_CHANNEL_NAME = "AI Briefings"
+        private const val AI_CHANNEL_DESC = "Read-only notifications for proactive AI finance briefings"
     }
 
     private val notificationManager: NotificationManager by lazy {
@@ -29,18 +32,25 @@ class AndroidNotificationService @Inject constructor(
     }
 
     init {
-        createNotificationChannel()
+        createNotificationChannels()
     }
 
-    private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            CHANNEL_NAME,
+    private fun createNotificationChannels() {
+        val budgetChannel = NotificationChannel(
+            BUDGET_CHANNEL_ID,
+            BUDGET_CHANNEL_NAME,
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = CHANNEL_DESC
+            description = BUDGET_CHANNEL_DESC
         }
-        notificationManager.createNotificationChannel(channel)
+        val aiChannel = NotificationChannel(
+            AI_CHANNEL_ID,
+            AI_CHANNEL_NAME,
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = AI_CHANNEL_DESC
+        }
+        notificationManager.createNotificationChannels(listOf(budgetChannel, aiChannel))
     }
 
     override fun sendBudgetAlert(
@@ -52,26 +62,63 @@ class AndroidNotificationService @Inject constructor(
             return
         }
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            0,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(context, BUDGET_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(title)
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(mainActivityIntent())
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .build()
+
+        notificationManager.notify(notificationId, notification)
+    }
+
+    override fun sendAiBriefingReady(
+        notificationId: Int,
+        title: String,
+        message: String
+    ) {
+        if (!notificationManager.areNotificationsEnabled()) {
+            return
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setClass(context, MainActivity::class.java)
+            data = android.net.Uri.parse("expensetracker://dashboard")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, AI_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .build()
 
         notificationManager.notify(notificationId, notification)
+    }
+
+    private fun mainActivityIntent(): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        return PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 }

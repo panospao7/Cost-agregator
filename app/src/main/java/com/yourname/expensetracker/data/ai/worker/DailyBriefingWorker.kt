@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.data.repository.AnalyticsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
@@ -11,6 +12,9 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Periodic WorkManager worker that proactively generates a daily AI dashboard briefing.
@@ -30,16 +34,23 @@ class DailyBriefingWorker @AssistedInject constructor(
     @Assisted workerParams: WorkerParameters,
     private val generateDashboardBriefingUseCase: GenerateDashboardBriefingUseCase,
     private val dashboardDataProvider: DashboardDataProvider,
-    private val analyticsRepository: AnalyticsRepository
+    private val analyticsRepository: AnalyticsRepository,
+    private val deliverProactiveBriefingNotificationUseCase: DeliverProactiveBriefingNotificationUseCase
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Timber.d("DailyBriefingWorker: starting.")
         return try {
+            val startedAt = System.currentTimeMillis()
+            val dateKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(startedAt))
             val processedData = dashboardDataProvider
                 .getProcessedDataFlow(analyticsRepository)
                 .first()
             generateDashboardBriefingUseCase(processedData)
+            deliverProactiveBriefingNotificationUseCase(
+                dateKey = dateKey,
+                startedAt = startedAt
+            )
             Timber.d("DailyBriefingWorker: completed successfully.")
             Result.success()
         } catch (e: Exception) {
