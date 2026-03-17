@@ -130,6 +130,12 @@ class AiArtifactRepositoryImplTest {
         coVerify { dao.markDismissed(id = 7L, dismissed = any(), now = any()) }
     }
 
+    @Test
+    fun `markApplied delegates to dao`() = runTest(testDispatcher) {
+        repository.markApplied(8L)
+        coVerify { dao.markApplied(id = 8L, applied = any(), now = any()) }
+    }
+
     // ── deleteExpired ─────────────────────────────────────────────────────────
 
     @Test

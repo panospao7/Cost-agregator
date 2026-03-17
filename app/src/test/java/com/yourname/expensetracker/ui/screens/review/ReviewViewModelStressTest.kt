@@ -776,10 +776,27 @@ class ReviewViewModelStressTest {
         @Suppress("UNCHECKED_CAST")
         val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
         stateFlow.value = mapOf(70L to viewModelState)
+        coEvery {
+            aiArtifactRepository.getLatest("pending_review:70", AiCapability.CATEGORIZATION_FALLBACK)
+        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            id = 10L,
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 70L,
+            targetKey = "pending_review:70",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.AUTO,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
 
         viewModel.applyCategorySuggestion(70L)
+        advanceUntilIdle()
 
         assertEquals(7L, viewModel.consumePrefilledCategorySuggestion(70L))
+        coVerify { aiArtifactRepository.markApplied(10L) }
     }
 
     @Test

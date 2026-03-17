@@ -26,6 +26,9 @@ interface AiArtifactRepository {
     /** Mark an artifact as dismissed so it is no longer surfaced in the UI. */
     suspend fun markDismissed(id: Long)
 
+    /** Mark an artifact as applied after its suggestion is accepted into local UI state. */
+    suspend fun markApplied(id: Long)
+
     /** Delete all artifacts whose TTL has elapsed. */
     suspend fun deleteExpired(now: Long)
 

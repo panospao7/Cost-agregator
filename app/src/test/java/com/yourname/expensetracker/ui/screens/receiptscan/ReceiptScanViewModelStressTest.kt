@@ -151,10 +151,12 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         assertEquals("Cloud - google-ai-studio - gemini-2.5-flash", viewModel.state.value.receiptAssistDiagnostics)
 
         viewModel.applyAllReceiptAssist()
+        advanceUntilIdle()
 
         assertEquals("Lidl", viewModel.state.value.editMerchant)
         assertEquals("12.34", viewModel.state.value.editAmount)
         assertEquals(999L, viewModel.state.value.editDate)
+        coVerify { aiArtifactRepository.markApplied(any()) }
     }
 
     @Test
@@ -302,8 +304,10 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         assertEquals("Cloud - google-ai-studio - gemini-2.5-flash", viewModel.state.value.categoryAssistDiagnostics)
 
         viewModel.applyCategoryAssist()
+        advanceUntilIdle()
 
         assertEquals(5L, viewModel.state.value.selectedCategoryId)
+        coVerify { aiArtifactRepository.markApplied(any()) }
     }
 
     @Test

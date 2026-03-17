@@ -51,6 +51,9 @@ interface AiArtifactDao {
     @Query("UPDATE ai_artifacts SET status = :dismissed, updatedAt = :now WHERE id = :id")
     suspend fun markDismissed(id: Long, dismissed: String = AiArtifactStatus.DISMISSED.name, now: Long = System.currentTimeMillis())
 
+    @Query("UPDATE ai_artifacts SET status = :applied, updatedAt = :now WHERE id = :id")
+    suspend fun markApplied(id: Long, applied: String = AiArtifactStatus.APPLIED.name, now: Long = System.currentTimeMillis())
+
     /**
      * Delete all artifacts whose TTL has expired.
      * Called by a cleanup worker; pass [now] as epoch-millis.

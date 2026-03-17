@@ -393,6 +393,12 @@ class ReviewViewModel @Inject constructor(
         val suggestion = (_reviewCaptureAssistStates.value[reviewId]?.categorySuggestion as? AiLoadState.Ready)?.value
             ?: return
         _prefilledCategorySuggestions.update { it + (reviewId to suggestion.categoryId) }
+        viewModelScope.launch {
+            aiArtifactRepository.getLatest("pending_review:$reviewId", AiCapability.CATEGORIZATION_FALLBACK)
+                ?.let { artifact ->
+                    aiArtifactRepository.markApplied(artifact.id)
+                }
+        }
     }
 
     fun consumePrefilledCategorySuggestion(reviewId: Long): Long? {

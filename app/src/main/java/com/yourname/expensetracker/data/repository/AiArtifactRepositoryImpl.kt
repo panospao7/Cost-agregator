@@ -25,6 +25,9 @@ class AiArtifactRepositoryImpl @Inject constructor(
     override suspend fun markDismissed(id: Long) =
         dao.markDismissed(id)
 
+    override suspend fun markApplied(id: Long) =
+        dao.markApplied(id)
+
     override suspend fun deleteExpired(now: Long) =
         dao.deleteExpired(now)
 

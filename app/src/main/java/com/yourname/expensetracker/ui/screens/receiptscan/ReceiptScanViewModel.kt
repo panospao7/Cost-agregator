@@ -504,6 +504,7 @@ class ReceiptScanViewModel @Inject constructor(
                 categoryAssistMessage = "Applied AI category suggestion to the draft."
             )
         }
+        markLatestArtifactApplied(AiCapability.CATEGORIZATION_FALLBACK)
     }
 
     fun clearCategoryAssistMessage() {
@@ -516,6 +517,7 @@ class ReceiptScanViewModel @Inject constructor(
                 state.copy(editMerchant = merchant, receiptAssistMessage = "Applied AI merchant suggestion.")
             } ?: state
         }
+        markLatestArtifactApplied(AiCapability.RECEIPT_EXTRACTION)
     }
 
     fun applyReceiptAssistTotal() {
@@ -527,6 +529,7 @@ class ReceiptScanViewModel @Inject constructor(
                 )
             } ?: state
         }
+        markLatestArtifactApplied(AiCapability.RECEIPT_EXTRACTION)
     }
 
     fun applyReceiptAssistDate() {
@@ -535,6 +538,7 @@ class ReceiptScanViewModel @Inject constructor(
                 state.copy(editDate = date, receiptAssistMessage = "Applied AI date suggestion.")
             } ?: state
         }
+        markLatestArtifactApplied(AiCapability.RECEIPT_EXTRACTION)
     }
 
     fun applyAllReceiptAssist() {
@@ -548,6 +552,7 @@ class ReceiptScanViewModel @Inject constructor(
                 receiptAssistMessage = "Applied all AI receipt suggestions to the draft."
             )
         }
+        markLatestArtifactApplied(AiCapability.RECEIPT_EXTRACTION)
     }
 
     fun clearReceiptAssistMessage() {
@@ -560,6 +565,16 @@ class ReceiptScanViewModel @Inject constructor(
     ) {
         val readyState = state as? AiLoadState.Ready ?: return
         _state.update { current -> updater(current, readyState.value) }
+    }
+
+    private fun markLatestArtifactApplied(capability: AiCapability) {
+        val receiptId = _state.value.receiptId ?: return
+        viewModelScope.launch {
+            aiArtifactRepository.getLatest("scanned_receipt:$receiptId", capability)
+                ?.let { artifact ->
+                    aiArtifactRepository.markApplied(artifact.id)
+                }
+        }
     }
 
     fun saveExpense() {
