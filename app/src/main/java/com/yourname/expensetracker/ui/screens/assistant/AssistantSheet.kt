@@ -101,6 +101,13 @@ fun AssistantSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                uiState.runtimeDiagnostics?.let { diagnostics ->
+                    Text(
+                        text = diagnostics,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
                 LazyColumn(
                     modifier = Modifier

@@ -2,13 +2,16 @@ package com.yourname.expensetracker.ui.screens.assistant
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.routeDisplayText
 import com.yourname.expensetracker.domain.ai.service.AiChatRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCase
@@ -37,9 +40,15 @@ data class AssistantUiState(
     val isDisabled: Boolean = false,
     val disabledReason: String? = null,
     val runtimeStatusMessage: String? = null,
+    val runtimeDiagnostics: String? = null,
     val errorMessage: String? = null,
     val canPersistHistory: Boolean = false,
     val currentSessionId: Long? = null
+)
+
+private data class AssistantRuntimePresentation(
+    val message: String?,
+    val diagnostics: String?
 )
 
 sealed interface AssistantConversationItem {
@@ -99,12 +108,18 @@ class AssistantViewModel @Inject constructor(
                     !settings.queryInterpretationEnabled -> "Query interpretation is disabled"
                     else -> null
                 }
+                val runtimePresentation = if (isDisabled) {
+                    AssistantRuntimePresentation(message = null, diagnostics = null)
+                } else {
+                    buildRuntimePresentation(settings)
+                }
 
                 _uiState.value = _uiState.value.copy(
                     isDisabled = isDisabled,
                     disabledReason = disabledReason,
                     canPersistHistory = settings.storeConversationHistory,
-                    runtimeStatusMessage = buildRuntimeStatusMessage(settings)
+                    runtimeStatusMessage = runtimePresentation.message,
+                    runtimeDiagnostics = runtimePresentation.diagnostics
                 )
             }
         }
@@ -332,17 +347,38 @@ class AssistantViewModel @Inject constructor(
             .toString()
     }
 
-    private suspend fun buildRuntimeStatusMessage(settings: com.yourname.expensetracker.domain.ai.model.AiSettings): String? {
-        if (!settings.allowOnDeviceAi) {
-            return null
-        }
-
-        if (settings.allowCloudAi && settings.preferredMode != AiMode.ON_DEVICE) {
-            return null
-        }
-
-        return getAiRuntimeStatusUseCase(
+    private suspend fun buildRuntimePresentation(
+        settings: com.yourname.expensetracker.domain.ai.model.AiSettings
+    ): AssistantRuntimePresentation {
+        val runtime = getAiRuntimeStatusUseCase(
             capabilities = listOf(AiCapability.QUERY_INTERPRETATION)
-        ).highestPriorityMessage
+        ).capabilities.firstOrNull()
+
+        if (runtime == null) {
+            return AssistantRuntimePresentation(message = null, diagnostics = null)
+        }
+
+        val message = runtimeAssistantMessage(settings, runtime)
+        return AssistantRuntimePresentation(
+            message = message,
+            diagnostics = runtime.routeDisplayText()
+        )
+    }
+}
+
+private fun runtimeAssistantMessage(
+    settings: com.yourname.expensetracker.domain.ai.model.AiSettings,
+    runtime: AiCapabilityRuntimeStatus
+): String? {
+    if (!settings.allowOnDeviceAi && runtime.route == AiRoute.CLOUD) {
+        return null
+    }
+
+    return when (runtime.route) {
+        AiRoute.CLOUD,
+        AiRoute.ON_DEVICE -> null
+        AiRoute.DETERMINISTIC_FALLBACK,
+        AiRoute.DISABLED,
+        null -> runtime.message
     }
 }

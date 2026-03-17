@@ -2,6 +2,9 @@ package com.yourname.expensetracker.ui.screens.assistant
 
 import app.cash.turbine.test
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
@@ -63,10 +66,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
                 storeConversationHistory = false
             )
         )
-        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(
-            capabilities = emptyList(),
-            highestPriorityMessage = null
-        )
+        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns runtimeSummary()
 
         viewModel = AssistantViewModel(
             aiSettingsRepository,
@@ -101,9 +101,10 @@ class AssistantViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `uiState shows runtime status when on-device model not installed`() = runTest(testDispatcher) {
-        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(
-            capabilities = emptyList(),
-            highestPriorityMessage = "On-device model is not installed on this device."
+        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns runtimeSummary(
+            route = AiRoute.DETERMINISTIC_FALLBACK,
+            message = "On-device model is not installed on this device.",
+            actionLabel = "Install required"
         )
 
         viewModel = AssistantViewModel(
@@ -121,10 +122,11 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             "On-device model is not installed on this device.",
             viewModel.uiState.value.runtimeStatusMessage
         )
+        assertEquals("Deterministic fallback", viewModel.uiState.value.runtimeDiagnostics)
     }
 
     @Test
-    fun `uiState hides runtime status when cloud is allowed in auto mode`() = runTest(testDispatcher) {
+    fun `uiState hides runtime warning and shows cloud diagnostics when cloud is allowed in auto mode`() = runTest(testDispatcher) {
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(
                 aiEnabled = true,
@@ -134,9 +136,10 @@ class AssistantViewModelTest : ViewModelTestUtils() {
                 allowOnDeviceAi = true
             )
         )
-        coEvery { getAiRuntimeStatusUseCase(any()) } returns com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary(
-            capabilities = emptyList(),
-            highestPriorityMessage = "Cloud AI is enabled, so advisory features can still run when on-device AI is unavailable."
+        coEvery { getAiRuntimeStatusUseCase(any()) } returns runtimeSummary(
+            route = AiRoute.CLOUD,
+            providerName = "google-ai-studio",
+            modelName = "gemini-2.5-flash"
         )
 
         viewModel = AssistantViewModel(
@@ -151,6 +154,29 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertEquals(null, viewModel.uiState.value.runtimeStatusMessage)
+        assertEquals("Cloud - google-ai-studio - gemini-2.5-flash", viewModel.uiState.value.runtimeDiagnostics)
+    }
+
+    @Test
+    fun `uiState hides diagnostics when runtime data is missing`() = runTest(testDispatcher) {
+        coEvery { getAiRuntimeStatusUseCase(any()) } returns AiRuntimeStatusSummary(
+            capabilities = emptyList(),
+            highestPriorityMessage = null
+        )
+
+        viewModel = AssistantViewModel(
+            aiSettingsRepository,
+            aiChatRepository,
+            getAiRuntimeStatusUseCase,
+            interpretFinancialQueryUseCase,
+            executeFinancialQueryUseCase,
+            mapFinancialQueryToNavigationUseCase
+        )
+
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.runtimeStatusMessage)
+        assertEquals(null, viewModel.uiState.value.runtimeDiagnostics)
     }
 
     @Test
@@ -299,4 +325,25 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         assertEquals("", viewModel.uiState.value.input)
         assertTrue(viewModel.uiState.value.messages.isEmpty())
     }
+
+    private fun runtimeSummary(
+        route: AiRoute = AiRoute.ON_DEVICE,
+        message: String? = null,
+        actionLabel: String? = null,
+        providerName: String? = null,
+        modelName: String? = null
+    ) = AiRuntimeStatusSummary(
+        capabilities = listOf(
+            AiCapabilityRuntimeStatus(
+                capability = AiCapability.QUERY_INTERPRETATION,
+                status = OnDeviceModelStatus.AVAILABLE,
+                message = message,
+                actionLabel = actionLabel,
+                route = route,
+                providerName = providerName,
+                modelName = modelName
+            )
+        ),
+        highestPriorityMessage = message
+    )
 }
