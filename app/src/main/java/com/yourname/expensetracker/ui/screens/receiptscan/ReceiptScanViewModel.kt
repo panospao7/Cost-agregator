@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -141,7 +142,11 @@ class ReceiptScanViewModel @Inject constructor(
         viewModelScope.launch {
             aiSettingsRepository.settings().collect { settings ->
                 _state.update {
-                    it.copy(receiptQuickSaveEnabled = settings.aiEnabled && settings.receiptQuickSaveEnabled)
+                    val enabled = settings.aiEnabled && settings.receiptQuickSaveEnabled
+                    it.copy(
+                        receiptQuickSaveEnabled = enabled,
+                        quickSavePreview = if (enabled) it.quickSavePreview else null
+                    )
                 }
             }
         }
@@ -638,6 +643,12 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun requestReceiptQuickSaveConfirmation() {
+        if (!_state.value.receiptQuickSaveEnabled) {
+            _state.update {
+                it.copy(errorMessage = "Receipt quick save is turned off.")
+            }
+            return
+        }
         val preview = buildQuickSavePreview(_state.value)
         if (preview == null) {
             _state.update {
@@ -670,6 +681,15 @@ class ReceiptScanViewModel @Inject constructor(
     fun confirmReceiptQuickSave() {
         val currentState = _state.value
         val preview = currentState.quickSavePreview ?: return
+        if (!currentState.receiptQuickSaveEnabled) {
+            _state.update {
+                it.copy(
+                    quickSavePreview = null,
+                    errorMessage = "Receipt quick save is turned off."
+                )
+            }
+            return
+        }
         val request = ReceiptSaveRequest(
             receiptId = currentState.receiptId ?: return,
             merchant = preview.merchant,

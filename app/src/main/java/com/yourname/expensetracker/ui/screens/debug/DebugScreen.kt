@@ -51,6 +51,7 @@ fun DebugScreen(
     val aiRuntimeStatuses by viewModel.aiRuntimeStatuses.collectAsState()
     val aiRuntimeMeta by viewModel.aiRuntimeMeta.collectAsState()
     val aiRuntimeEvents by viewModel.aiRuntimeEvents.collectAsState()
+    val aiEngagementState by viewModel.aiEngagementState.collectAsState()
     val aiSettings by viewModel.aiSettings.collectAsState()
     
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
@@ -319,6 +320,27 @@ fun DebugScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                             }
+                        }
+
+                        if (aiSettings.proactiveBriefingsEnabled ||
+                            aiEngagementState.lastDeliveredDashboardBriefingKey != null ||
+                            aiEngagementState.lastOpenedDashboardBriefingKey != null
+                        ) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HorizontalDivider()
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Phase 4A rollout state",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = buildPhase4aDebugSummary(aiSettings, aiEngagementState),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp
+                            )
                         }
                     }
                 }
@@ -642,6 +664,17 @@ internal fun debugCloudFallbackHint(
         return null
     }
     return "Cloud fallback available for advisory AI"
+}
+
+internal fun buildPhase4aDebugSummary(
+    aiSettings: AiSettings,
+    engagementState: com.yourname.expensetracker.domain.ai.model.AiEngagementState
+): String = buildString {
+    appendLine("proactiveBriefingsEnabled=${aiSettings.proactiveBriefingsEnabled}")
+    appendLine("receiptQuickSaveEnabled=${aiSettings.receiptQuickSaveEnabled}")
+    appendLine("reviewQuickApproveEnabled=${aiSettings.reviewQuickApproveEnabled}")
+    appendLine("lastDeliveredBriefing=${engagementState.lastDeliveredDashboardBriefingKey ?: "none"}")
+    append("lastOpenedBriefing=${engagementState.lastOpenedDashboardBriefingKey ?: "none"}")
 }
 
 private fun AiCapability.supportsCloudFallback(): Boolean = when (this) {

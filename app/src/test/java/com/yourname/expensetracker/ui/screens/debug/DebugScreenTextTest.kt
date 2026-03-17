@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.debug
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
+import com.yourname.expensetracker.domain.ai.model.AiEngagementState
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
@@ -64,5 +65,26 @@ class DebugScreenTextTest {
         )
 
         assertNull(hint)
+    }
+
+    @Test
+    fun `phase 4a debug summary includes rollout toggles and engagement keys`() {
+        val summary = buildPhase4aDebugSummary(
+            aiSettings = AiSettings(
+                aiEnabled = true,
+                proactiveBriefingsEnabled = true,
+                receiptQuickSaveEnabled = true,
+                reviewQuickApproveEnabled = false
+            ),
+            engagementState = AiEngagementState(
+                lastDeliveredDashboardBriefingKey = "dashboard_home:2026-03-17",
+                lastOpenedDashboardBriefingKey = "dashboard_home:2026-03-16"
+            )
+        )
+
+        assertEquals(
+            "proactiveBriefingsEnabled=true\nreceiptQuickSaveEnabled=true\nreviewQuickApproveEnabled=false\nlastDeliveredBriefing=dashboard_home:2026-03-17\nlastOpenedBriefing=dashboard_home:2026-03-16",
+            summary
+        )
     }
 }

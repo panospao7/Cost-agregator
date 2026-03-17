@@ -129,6 +129,24 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         verify(exactly = 0) { notificationService.sendAiBriefingReady(any(), any(), any(), any()) }
     }
 
+    @Test
+    fun `invoke skips notification when the same briefing was already opened`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(
+                aiEnabled = true,
+                dashboardBriefingEnabled = true,
+                proactiveBriefingsEnabled = true
+            )
+        )
+        coEvery { aiEngagementRepository.getLastDeliveredDashboardBriefingKey() } returns null
+        coEvery { aiEngagementRepository.getLastOpenedDashboardBriefingKey() } returns "dashboard_home:2026-03-17"
+
+        useCase(dateKey = "2026-03-17", startedAt = 1_000L)
+
+        coVerify(exactly = 0) { aiArtifactRepository.getLatest(any(), any()) }
+        verify(exactly = 0) { notificationService.sendAiBriefingReady(any(), any(), any(), any()) }
+    }
+
     private fun briefingArtifact(updatedAt: Long) = AiArtifactEntity(
         targetType = AiTargetType.DASHBOARD,
         targetKey = "dashboard_home:2026-03-17",

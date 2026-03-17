@@ -477,7 +477,7 @@ class ReviewViewModel @Inject constructor(
             )
             handleResult(result, "Failed to quick approve")
             if (result is Result.Success) {
-                markCategoryArtifactApplied(preview.reviewId)
+                markQuickApproveArtifactsApplied(preview.reviewId)
                 aiRuntimeDiagnostics.recordInteraction(
                     type = "phase4_accept",
                     message = "review quick approve confirmed for ${preview.reviewId}"
@@ -665,7 +665,19 @@ class ReviewViewModel @Inject constructor(
     }
 
     private suspend fun markCategoryArtifactApplied(reviewId: Long) {
-        aiArtifactRepository.getLatest("pending_review:$reviewId", AiCapability.CATEGORIZATION_FALLBACK)
+        markArtifactApplied(reviewId, AiCapability.CATEGORIZATION_FALLBACK)
+    }
+
+    private suspend fun markQuickApproveArtifactsApplied(reviewId: Long) {
+        markArtifactApplied(reviewId, AiCapability.CATEGORIZATION_FALLBACK)
+        val dedupeReady = _reviewCaptureAssistStates.value[reviewId]?.dedupeSuggestion as? AiLoadState.Ready
+        if (dedupeReady != null) {
+            markArtifactApplied(reviewId, AiCapability.DEDUPE_JUDGE)
+        }
+    }
+
+    private suspend fun markArtifactApplied(reviewId: Long, capability: AiCapability) {
+        aiArtifactRepository.getLatest("pending_review:$reviewId", capability)
             ?.let { artifact ->
                 aiArtifactRepository.markApplied(artifact.id)
             }

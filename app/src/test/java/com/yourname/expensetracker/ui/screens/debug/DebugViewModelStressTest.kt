@@ -11,9 +11,11 @@ import com.yourname.expensetracker.data.repository.ReviewQueueRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiEngagementState
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
+import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
@@ -52,6 +54,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase
     private lateinit var aiSettingsRepository: AiSettingsRepository
+    private lateinit var aiEngagementRepository: AiEngagementRepository
     private lateinit var viewModel: DebugViewModel
 
     @Before
@@ -68,6 +71,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         diagnostics = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
+        aiEngagementRepository = mockk(relaxed = true)
 
         val now = 1_700_000_000_000L
         val sampleNotification = RawNotification(
@@ -91,6 +95,12 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         every { timeProvider.now() } returns now
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(aiEnabled = true, allowCloudAi = true)
+        )
+        every { aiEngagementRepository.engagementState() } returns flowOf(
+            AiEngagementState(
+                lastDeliveredDashboardBriefingKey = "dashboard_home:2026-03-17",
+                lastOpenedDashboardBriefingKey = "dashboard_home:2026-03-16"
+            )
         )
         getAiRuntimeStatusUseCase = mockk(relaxed = true)
         coEvery { getAiRuntimeStatusUseCase(any()) } returns AiRuntimeStatusSummary(
@@ -123,6 +133,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             diagnostics = diagnostics,
             getAiRuntimeStatusUseCase = getAiRuntimeStatusUseCase,
             aiSettingsRepository = aiSettingsRepository,
+            aiEngagementRepository = aiEngagementRepository,
             aiRuntimeDiagnostics = aiRuntimeDiagnostics
         )
     }
@@ -142,6 +153,19 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         assertEquals(AiRoute.CLOUD, viewModel.aiRuntimeMeta.value.capabilities.first().route)
 
         settingsJob.cancel()
+    }
+
+    @Test
+    fun `stress - engagement state is exposed for phase 4a diagnostics`() = runTest(testDispatcher) {
+        val engagementJob = backgroundScope.launch(testDispatcher) {
+            viewModel.aiEngagementState.collect { }
+        }
+        advanceUntilIdle()
+
+        assertEquals("dashboard_home:2026-03-17", viewModel.aiEngagementState.value.lastDeliveredDashboardBriefingKey)
+        assertEquals("dashboard_home:2026-03-16", viewModel.aiEngagementState.value.lastOpenedDashboardBriefingKey)
+
+        engagementJob.cancel()
     }
 
     @Test

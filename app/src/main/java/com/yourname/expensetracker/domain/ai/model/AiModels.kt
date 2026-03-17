@@ -97,6 +97,11 @@ data class AiSettings(
     val preferredMode: AiMode = AiMode.AUTO
 )
 
+data class AiEngagementState(
+    val lastDeliveredDashboardBriefingKey: String? = null,
+    val lastOpenedDashboardBriefingKey: String? = null
+)
+
 // ---------------------------------------------------------------------------
 // Phase 1 — Dashboard Briefing domain contract
 // ---------------------------------------------------------------------------

@@ -27,8 +27,9 @@ Phase 4A should build on the current advisory stack that already exists:
 
 1. Receipt quick save
 2. Proactive AI briefings
+3. Review quick approve after guarded re-evaluation
 
-These are the safest first Phase 4A features because they either reuse the existing receipt save path with confirmation or remain read-only and notification-driven.
+These are the safest first Phase 4A features because they either reuse existing confirmed save or approve paths or remain read-only and notification-driven.
 
 ## PR slicing
 
@@ -56,7 +57,7 @@ These are the safest first Phase 4A features because they either reuse the exist
 
 - Record accepted, dismissed, and automation-used paths clearly.
 - Add manual QA checks for confirmation clarity, rollback switches, and no-regression behavior.
-- Re-evaluate whether review quick-approve should remain deferred.
+- If review quick approve graduates from deferral, keep it category-only and confirmation-based.
 
 ## Explicit non-goals
 
@@ -72,6 +73,10 @@ These are the safest first Phase 4A features because they either reuse the exist
 - Rollback toggles work immediately.
 - The normal receipt save and review approval flows remain trustworthy when all Phase 4A toggles are off.
 
-## Current execution slice
+## Closeout status
 
-Start with PR1: guardrails and opt-ins foundation.
+- Guardrail toggles, scheduling sync, receipt quick save, proactive briefing delivery, and review quick approve are now implemented.
+- Proactive briefing delivery records delivery/open events and avoids repeat notifications for already delivered or opened dashboard briefing keys.
+- Receipt quick save and review quick approve both require confirmation and re-check rollback toggles before final save or approve.
+- Debug diagnostics expose recent Phase 4A interactions plus the last delivered and opened briefing keys.
+- Manual QA checklist lives at `docs/AI_PHASE4A_QA_CHECKLIST.md`.

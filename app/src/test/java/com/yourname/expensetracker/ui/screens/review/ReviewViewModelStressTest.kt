@@ -949,6 +949,158 @@ class ReviewViewModelStressTest {
     }
 
     @Test
+    fun `stress - confirmQuickApprove marks dedupe artifact applied when assist was used`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, reviewQuickApproveEnabled = true))
+        val item = PendingReviewWithReceipt(
+            review = mockk(relaxed = true) {
+                every { id } returns 73L
+                every { suggestedMerchant } returns "Lidl"
+                every { suggestedAmount } returns 12.34
+            },
+            receipt = null
+        )
+        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        coEvery {
+            reviewQueueRepository.approveReview(
+                reviewId = 73L,
+                finalAmount = null,
+                finalMerchant = null,
+                finalCategoryId = 4L,
+                finalType = null,
+                finalLatitude = null,
+                finalLongitude = null,
+                finalAddress = null
+            )
+        } returns Result.Success(20L)
+        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            id = 31L,
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 73L,
+            targetKey = "pending_review:73",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.AUTO,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.DEDUPE_JUDGE) } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+            id = 32L,
+            targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
+            targetId = 73L,
+            targetKey = "pending_review:73",
+            capability = AiCapability.DEDUPE_JUDGE,
+            status = com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY,
+            mode = com.yourname.expensetracker.domain.ai.model.AiMode.AUTO,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
+        )
+
+        val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
+        stateFlow.value = mapOf(
+            73L to com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState(
+                categorySuggestion = AiLoadState.Ready(CategoryAssistSuggestion(4L, "Groceries")),
+                dedupeSuggestion = AiLoadState.Ready(DedupeJudgeSuggestion(DuplicateVerdict.UNCERTAIN))
+            )
+        )
+
+        advanceUntilIdle()
+        viewModel.requestQuickApprovePreview(73L)
+        viewModel.confirmQuickApprove()
+        advanceUntilIdle()
+
+        coVerify { aiArtifactRepository.markApplied(31L) }
+        coVerify { aiArtifactRepository.markApplied(32L) }
+    }
+
+    @Test
+    fun `stress - confirmQuickApprove stops when toggle turns off`() = runTest {
+        val settingsFlow = MutableStateFlow(AiSettings(aiEnabled = true, reviewQuickApproveEnabled = true))
+        every { aiSettingsRepository.settings() } returns settingsFlow
+        val item = PendingReviewWithReceipt(
+            review = mockk(relaxed = true) {
+                every { id } returns 74L
+                every { suggestedMerchant } returns "Lidl"
+                every { suggestedAmount } returns 12.34
+            },
+            receipt = null
+        )
+        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+
+        viewModel = ReviewViewModel(
+            notificationRepository,
+            reviewQueueRepository,
+            categoryRepository,
+            receiptRepository,
+            expenseRepository,
+            debugDataStorage,
+            geocodingService,
+            explainPendingReviewUseCase,
+            suggestCategoryFallbackUseCase,
+            judgePendingReviewDuplicateUseCase,
+            aiArtifactRepository,
+            aiSettingsRepository,
+            aiRuntimeDiagnostics
+        )
+
+        val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as MutableStateFlow<Map<Long, com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState>>
+        stateFlow.value = mapOf(
+            74L to com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState(
+                categorySuggestion = AiLoadState.Ready(CategoryAssistSuggestion(4L, "Groceries"))
+            )
+        )
+
+        advanceUntilIdle()
+        viewModel.requestQuickApprovePreview(74L)
+        assertNotNull(viewModel.quickApprovePreview.value)
+
+        settingsFlow.value = AiSettings(aiEnabled = true, reviewQuickApproveEnabled = false)
+        advanceUntilIdle()
+
+        assertNull(viewModel.quickApprovePreview.value)
+        viewModel.confirmQuickApprove()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) {
+            reviewQueueRepository.approveReview(
+                reviewId = any(),
+                finalAmount = any(),
+                finalMerchant = any(),
+                finalCategoryId = any(),
+                finalType = any(),
+                finalLatitude = any(),
+                finalLongitude = any(),
+                finalAddress = any()
+            )
+        }
+    }
+
+    @Test
     fun `stress - dismissCategoryAssist resets state and marks artifact dismissed`() = runTest {
         val artifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
             id = 8L,

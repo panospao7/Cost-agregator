@@ -439,6 +439,87 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `stress - requestReceiptQuickSaveConfirmation blocks when toggle is off`() = runTest {
+        settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = false)
+        advanceUntilIdle()
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            editMerchant = "",
+            editAmount = "",
+            editDate = 999L,
+            receiptQuickSaveEnabled = false,
+            receiptAssistState = AiLoadState.Ready(
+                ReceiptAssistSuggestion(
+                    merchant = SuggestedValue("Lidl"),
+                    total = SuggestedValue(12.34)
+                )
+            )
+        )
+
+        viewModel.requestReceiptQuickSaveConfirmation()
+
+        assertEquals("Receipt quick save is turned off.", viewModel.state.value.errorMessage)
+        assertEquals(null, viewModel.state.value.quickSavePreview)
+    }
+
+    @Test
+    fun `stress - receipt quick save preview clears and confirm stops after toggle turns off`() = runTest {
+        settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
+        advanceUntilIdle()
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            editMerchant = "",
+            editAmount = "",
+            editDate = 999L,
+            receiptQuickSaveEnabled = true,
+            receiptAssistState = AiLoadState.Ready(
+                ReceiptAssistSuggestion(
+                    merchant = SuggestedValue("Lidl"),
+                    total = SuggestedValue(12.34)
+                )
+            ),
+            categoryAssistState = AiLoadState.Ready(
+                CategoryAssistSuggestion(categoryId = 5L, categoryName = "Groceries")
+            )
+        )
+
+        viewModel.requestReceiptQuickSaveConfirmation()
+        assertNotNull(viewModel.state.value.quickSavePreview)
+
+        settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = false)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.state.value.quickSavePreview)
+        viewModel.confirmReceiptQuickSave()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) {
+            receiptRepository.createExpenseFromReceipt(
+                receiptId = any(),
+                merchant = any(),
+                amount = any(),
+                currency = any(),
+                categoryId = any(),
+                date = any(),
+                paymentMethod = any(),
+                notes = any()
+            )
+        }
+    }
+
+    @Test
     fun `stress - confirmReceiptQuickSave saves through normal repository path`() = runTest {
         settingsFlow.value = AiSettings(aiEnabled = true, receiptQuickSaveEnabled = true)
         advanceUntilIdle()

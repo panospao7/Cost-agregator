@@ -6,9 +6,11 @@ import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.data.repository.NotificationRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiEngagementState
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
+import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
@@ -33,6 +35,7 @@ class DebugViewModel @Inject constructor(
     private val diagnostics: com.yourname.expensetracker.domain.debug.ServiceDiagnostics,
     private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
     private val aiSettingsRepository: AiSettingsRepository,
+    private val aiEngagementRepository: AiEngagementRepository,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : ViewModel() {
 
@@ -42,6 +45,8 @@ class DebugViewModel @Inject constructor(
     val aiRuntimeMeta: StateFlow<AiRuntimeStatusSummary> = _aiRuntimeMeta
     private val _aiRuntimeEvents = MutableStateFlow(emptyList<com.yourname.expensetracker.domain.debug.AiRuntimeEvent>())
     val aiRuntimeEvents: StateFlow<List<com.yourname.expensetracker.domain.debug.AiRuntimeEvent>> = _aiRuntimeEvents
+    val aiEngagementState: StateFlow<AiEngagementState> = aiEngagementRepository.engagementState()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AiEngagementState())
 
     val aiSettings: StateFlow<AiSettings> = aiSettingsRepository.settings()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AiSettings())
