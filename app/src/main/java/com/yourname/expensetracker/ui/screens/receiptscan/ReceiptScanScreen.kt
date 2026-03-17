@@ -39,6 +39,7 @@ import coil.compose.AsyncImage
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.ui.components.ai.CategoryAssistCard
 import com.yourname.expensetracker.ui.screens.addexpense.CategoryGrid
 import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
 import com.yourname.expensetracker.ui.screens.addexpense.PaymentMethodChip
@@ -430,6 +431,99 @@ private fun ReviewStep(
         Spacer(modifier = Modifier.height(16.dp))
     }
 
+    if (viewModel.shouldOfferCategoryAssist()) {
+        when (val categoryState = state.categoryAssistState) {
+            AiLoadState.Idle,
+            AiLoadState.Disabled -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.25f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "Need help choosing a category?",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            state.categoryAssistMessage ?: "AI can suggest a category from the receipt text and parsed fields.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(onClick = { viewModel.requestCategoryAssist() }) {
+                            Text("Suggest category with AI")
+                        }
+                    }
+                }
+            }
+            AiLoadState.Loading -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.25f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text("AI is checking the best category for this receipt.")
+                    }
+                }
+            }
+            is AiLoadState.Ready -> {
+                CategoryAssistCard(
+                    suggestion = categoryState.value,
+                    diagnostics = state.categoryAssistDiagnostics,
+                    onApply = viewModel::applyCategoryAssist,
+                    onDismiss = viewModel::dismissCategoryAssist
+                )
+            }
+            is AiLoadState.Error -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "AI category assist failed",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            categoryState.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        state.categoryAssistDiagnostics?.let { diagnostics ->
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                diagnostics,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(onClick = { viewModel.requestCategoryAssist(force = true) }) {
+                            Text("Retry category assist")
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+
     state.receiptAssistMessage?.let { message ->
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -448,6 +542,31 @@ private fun ReviewStep(
                     style = MaterialTheme.typography.bodySmall
                 )
                 TextButton(onClick = viewModel::clearReceiptAssistMessage) {
+                    Text("OK")
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+
+    state.categoryAssistMessage?.let { message ->
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.25f)
+            )
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = message,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                TextButton(onClick = viewModel::clearCategoryAssistMessage) {
                     Text("OK")
                 }
             }

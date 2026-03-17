@@ -10,10 +10,13 @@ import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResult
+import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
 import com.yourname.expensetracker.domain.ai.model.toDisplayText
+import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -65,6 +68,9 @@ data class ReceiptScanState(
     val receiptAssistState: AiLoadState<ReceiptAssistSuggestion> = AiLoadState.Idle,
     val receiptAssistMessage: String? = null,
     val receiptAssistDiagnostics: String? = null,
+    val categoryAssistState: AiLoadState<CategoryAssistSuggestion> = AiLoadState.Idle,
+    val categoryAssistMessage: String? = null,
+    val categoryAssistDiagnostics: String? = null,
     
     // Debug data
     val debugData: DebugData? = null
@@ -83,6 +89,7 @@ class ReceiptScanViewModel @Inject constructor(
     private val savedStateHandle: androidx.lifecycle.SavedStateHandle,
     private val timeProvider: TimeProvider,
     private val suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase,
+    private val suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase,
     private val aiArtifactRepository: AiArtifactRepository
 ) : ViewModel() {
 
@@ -128,7 +135,10 @@ class ReceiptScanViewModel @Inject constructor(
                 errorMessage = null,
                 receiptAssistState = AiLoadState.Idle,
                 receiptAssistMessage = null,
-                receiptAssistDiagnostics = null
+                receiptAssistDiagnostics = null,
+                categoryAssistState = AiLoadState.Idle,
+                categoryAssistMessage = null,
+                categoryAssistDiagnostics = null
             )
         }
 
@@ -181,6 +191,9 @@ class ReceiptScanViewModel @Inject constructor(
                         receiptAssistState = AiLoadState.Idle,
                         receiptAssistMessage = null,
                         receiptAssistDiagnostics = null,
+                        categoryAssistState = AiLoadState.Idle,
+                        categoryAssistMessage = null,
+                        categoryAssistDiagnostics = null,
                         debugData = debugData
                     )
                 }
@@ -208,6 +221,9 @@ class ReceiptScanViewModel @Inject constructor(
                             receiptAssistState = AiLoadState.Idle,
                             receiptAssistMessage = null,
                             receiptAssistDiagnostics = null,
+                            categoryAssistState = AiLoadState.Idle,
+                            categoryAssistMessage = null,
+                            categoryAssistDiagnostics = null,
                             debugData = debugData
                         )
                     }
@@ -272,6 +288,13 @@ class ReceiptScanViewModel @Inject constructor(
             parsed?.total == null ||
             parsed?.date == null ||
             currentState.ocrConfidence < com.yourname.expensetracker.domain.config.AppConfig.Ai.MIN_RECEIPT_CONFIDENCE_FOR_AI_FALLBACK
+    }
+
+    fun shouldOfferCategoryAssist(): Boolean {
+        val currentState = _state.value
+        if (currentState.step != ScanStep.REVIEW || currentState.receiptId == null) return false
+        if (currentState.selectedCategoryId == null) return true
+        return currentState.ocrConfidence < com.yourname.expensetracker.domain.config.AppConfig.Ai.MIN_CATEGORY_CONFIDENCE_FOR_AI_FALLBACK
     }
 
     fun requestReceiptAssist(force: Boolean = false) {
@@ -361,6 +384,130 @@ class ReceiptScanViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    fun requestCategoryAssist(force: Boolean = false) {
+        val currentState = _state.value
+        val receiptId = currentState.receiptId ?: return
+
+        viewModelScope.launch {
+            val receipt = receiptRepository.getReceiptById(receiptId)
+            if (receipt == null) {
+                _state.update {
+                    it.copy(
+                        categoryAssistState = AiLoadState.Error("Receipt not found"),
+                        categoryAssistDiagnostics = null,
+                        categoryAssistMessage = "Receipt not found"
+                    )
+                }
+                return@launch
+            }
+
+            _state.update {
+                it.copy(
+                    categoryAssistState = AiLoadState.Loading,
+                    categoryAssistMessage = null,
+                    categoryAssistDiagnostics = null,
+                    errorMessage = null
+                )
+            }
+
+            when (
+                val result = suggestCategoryFallbackUseCase(
+                    receipt = receipt,
+                    draftMerchant = currentState.editMerchant,
+                    draftAmount = AmountUtils.parseAmount(currentState.editAmount),
+                    draftDate = currentState.editDate.takeIf { it > 0L },
+                    currentCategoryId = currentState.selectedCategoryId,
+                    force = force
+                )
+            ) {
+                is CategoryAssistGenerationResult.Success -> {
+                    val diagnostics = latestArtifactDiagnostics(
+                        targetKey = "scanned_receipt:$receiptId",
+                        capability = AiCapability.CATEGORIZATION_FALLBACK
+                    )
+                    _state.update {
+                        it.copy(
+                            categoryAssistState = AiLoadState.Ready(result.suggestion),
+                            categoryAssistDiagnostics = diagnostics,
+                            categoryAssistMessage = if (result.fromCache) {
+                                "Showing cached AI category suggestion."
+                            } else {
+                                "AI suggested a category to review."
+                            }
+                        )
+                    }
+                }
+                is CategoryAssistGenerationResult.Disabled -> {
+                    _state.update {
+                        it.copy(
+                            categoryAssistState = AiLoadState.Disabled,
+                            categoryAssistDiagnostics = null,
+                            categoryAssistMessage = result.reason
+                        )
+                    }
+                }
+                is CategoryAssistGenerationResult.NotNeeded -> {
+                    _state.update {
+                        it.copy(
+                            categoryAssistState = AiLoadState.Idle,
+                            categoryAssistDiagnostics = null,
+                            categoryAssistMessage = result.reason
+                        )
+                    }
+                }
+                is CategoryAssistGenerationResult.Error -> {
+                    val diagnostics = latestArtifactDiagnostics(
+                        targetKey = "scanned_receipt:$receiptId",
+                        capability = AiCapability.CATEGORIZATION_FALLBACK,
+                        expectedStatus = AiArtifactStatus.FAILED
+                    )
+                    _state.update {
+                        it.copy(
+                            categoryAssistState = AiLoadState.Error(result.reason),
+                            categoryAssistDiagnostics = diagnostics,
+                            categoryAssistMessage = result.reason
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun dismissCategoryAssist() {
+        val receiptId = _state.value.receiptId ?: return
+        val targetKey = "scanned_receipt:$receiptId"
+
+        viewModelScope.launch {
+            aiArtifactRepository.getLatest(
+                targetKey = targetKey,
+                capability = AiCapability.CATEGORIZATION_FALLBACK
+            )?.let { artifact ->
+                aiArtifactRepository.markDismissed(artifact.id)
+            }
+            _state.update {
+                it.copy(
+                    categoryAssistState = AiLoadState.Idle,
+                    categoryAssistDiagnostics = null,
+                    categoryAssistMessage = "AI category suggestion dismissed."
+                )
+            }
+        }
+    }
+
+    fun applyCategoryAssist() {
+        val readyState = _state.value.categoryAssistState as? AiLoadState.Ready ?: return
+        _state.update {
+            it.copy(
+                selectedCategoryId = readyState.value.categoryId,
+                categoryAssistMessage = "Applied AI category suggestion to the draft."
+            )
+        }
+    }
+
+    fun clearCategoryAssistMessage() {
+        _state.update { it.copy(categoryAssistMessage = null) }
     }
 
     fun applyReceiptAssistMerchant() {

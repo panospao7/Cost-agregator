@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.ai.usecase
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -54,6 +55,32 @@ class CategorizationAssistInputBuilderTest {
         val result = builder.build(makeItem(), AiSettings(redactBeforeCloud = true))
 
         assertNull(result.supportingText)
+    }
+
+    @Test
+    fun `build receipt input uses scanned receipt target and parsed support text`() = runTest {
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 1L, name = "Groceries", icon = "G", color = "#0000FF")
+        )
+        every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
+
+        val receipt = makeItem().receipt!!
+        val result = builder.build(
+            receipt = receipt,
+            draftMerchant = " Lidl ",
+            draftAmount = 22.5,
+            draftDate = 1234L,
+            currentCategoryId = null,
+            settings = AiSettings()
+        )
+
+        assertEquals(AiTargetType.SCANNED_RECEIPT, result.targetType)
+        assertEquals(receipt.id, result.targetId)
+        assertEquals("Lidl", result.merchant)
+        assertEquals(22.5, result.amount, 0.0)
+        assertEquals("Groceries", result.candidateCategories.single().name)
+        assertNotNull(result.supportingText)
+        assertEquals(null, result.deterministicMatchType)
     }
 
     private fun makeItem(): PendingReviewWithReceipt {

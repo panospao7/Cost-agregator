@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
@@ -31,21 +33,48 @@ class CategorizationAssistInputBuilder @Inject constructor(
             amount = review.suggestedAmount,
             currency = review.suggestedCurrency.take(8),
             transactionType = runCatching {
-                com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(review.suggestedType)
-            }.getOrDefault(com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE),
+                TransactionType.valueOf(review.suggestedType)
+            }.getOrDefault(TransactionType.PURCHASE),
             date = review.suggestedDate,
             currentCategoryId = review.suggestedCategoryId,
             deterministicMatchType = review.matchType?.take(40),
             deterministicExplanation = review.explanation?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS),
-            candidateCategories = categories
-                .sortedBy { it.name }
-                .take(AppConfig.Ai.MAX_CATEGORY_OPTIONS_FOR_AI)
-                .map { CategoryOption(id = it.id, name = it.name) },
-            supportingText = buildSupportingText(item, shouldRedact)
+            candidateCategories = buildCategoryOptions(categories),
+            supportingText = buildReviewSupportingText(item, shouldRedact)
         )
     }
 
-    private fun buildSupportingText(
+    suspend fun build(
+        receipt: ScannedReceipt,
+        draftMerchant: String?,
+        draftAmount: Double?,
+        draftDate: Long?,
+        currentCategoryId: Long?,
+        settings: AiSettings
+    ): CategorizationAssistInput {
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK)
+        val categories = categoryRepository.getAll()
+        val merchant = draftMerchant?.trim()?.takeIf { it.isNotBlank() }
+            ?: receipt.parsedMerchant?.trim()?.takeIf { it.isNotBlank() }
+            ?: ""
+
+        return CategorizationAssistInput(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = receipt.id,
+            merchant = merchant.take(120),
+            amount = draftAmount ?: receipt.parsedTotal ?: 0.0,
+            currency = receipt.currency.take(8),
+            transactionType = TransactionType.PURCHASE,
+            date = draftDate ?: receipt.parsedDate,
+            currentCategoryId = currentCategoryId,
+            deterministicMatchType = null,
+            deterministicExplanation = null,
+            candidateCategories = buildCategoryOptions(categories),
+            supportingText = buildReceiptSupportingText(receipt, shouldRedact)
+        )
+    }
+
+    private fun buildReviewSupportingText(
         item: PendingReviewWithReceipt,
         shouldRedact: Boolean
     ): String? {
@@ -61,5 +90,37 @@ class CategorizationAssistInputBuilder @Inject constructor(
             .trim()
             .takeIf { it.isNotBlank() }
             ?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
+    }
+
+    private fun buildReceiptSupportingText(
+        receipt: ScannedReceipt,
+        shouldRedact: Boolean
+    ): String? {
+        if (shouldRedact) return null
+
+        val usableOcrText = receipt.rawOcrText
+            .takeIf { it.isNotBlank() }
+            ?.takeUnless { it.startsWith("[OCR Failed", ignoreCase = true) }
+            ?.takeUnless { it.startsWith("Scan Failed:", ignoreCase = true) }
+
+        return listOfNotNull(
+            receipt.parsedMerchant?.takeIf { it.isNotBlank() }?.let { "Parsed merchant: $it" },
+            receipt.parsedTotal?.let { "Parsed total: $it ${receipt.currency}" },
+            receipt.parsedDate?.let { "Parsed date: $it" },
+            usableOcrText
+        )
+            .joinToString("\n")
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
+    }
+
+    private fun buildCategoryOptions(
+        categories: List<com.yourname.expensetracker.data.database.entity.Category>
+    ): List<CategoryOption> {
+        return categories
+            .sortedBy { it.name }
+            .take(AppConfig.Ai.MAX_CATEGORY_OPTIONS_FOR_AI)
+            .map { CategoryOption(id = it.id, name = it.name) }
     }
 }

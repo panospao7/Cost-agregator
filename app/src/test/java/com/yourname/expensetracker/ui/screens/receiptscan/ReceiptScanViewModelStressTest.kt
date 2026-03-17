@@ -3,15 +3,19 @@ package com.yourname.expensetracker.ui.screens.receiptscan
 import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResult
+import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
@@ -44,6 +48,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     private lateinit var savedStateHandle: SavedStateHandle
     private lateinit var timeProvider: TimeProvider
     private lateinit var suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase
+    private lateinit var suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase
     private lateinit var aiArtifactRepository: AiArtifactRepository
 
     private lateinit var viewModel: ReceiptScanViewModel
@@ -56,6 +61,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         savedStateHandle = SavedStateHandle()
         timeProvider = mockk(relaxed = true)
         suggestReceiptExtractionUseCase = mockk(relaxed = true)
+        suggestCategoryFallbackUseCase = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
 
         every { timeProvider.now() } returns System.currentTimeMillis()
@@ -68,6 +74,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             savedStateHandle,
             timeProvider,
             suggestReceiptExtractionUseCase,
+            suggestCategoryFallbackUseCase,
             aiArtifactRepository
         )
     }
@@ -232,6 +239,161 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             "Cloud - google-ai-studio - gemini-2.5-flash",
             viewModel.state.value.receiptAssistDiagnostics
         )
+    }
+
+    @Test
+    fun `stress - requestCategoryAssist sets Ready and applies category`() = runTest {
+        val receipt = ScannedReceipt(
+            id = 7L,
+            imagePath = "receipt.jpg",
+            rawOcrText = "LIDL TOTAL 12.34",
+            parsedTotal = 12.34,
+            parsedMerchant = "Lidl",
+            parsedDate = 999L,
+            parsedItems = null,
+            parsedTaxAmount = null,
+            currency = "EUR",
+            confidence = 0.3f
+        )
+        coEvery { receiptRepository.getReceiptById(7L) } returns receipt
+        coEvery {
+            suggestCategoryFallbackUseCase(receipt, "Lidl", 12.34, 999L, null, false)
+        } returns CategoryAssistGenerationResult.Success(
+            suggestion = CategoryAssistSuggestion(
+                categoryId = 5L,
+                categoryName = "Groceries",
+                rationale = "merchant looks like a supermarket"
+            ),
+            fromCache = false
+        )
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactEntity(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = 7L,
+            targetKey = "scanned_receipt:7",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.CLOUD,
+            provider = "google-ai-studio",
+            modelName = "gemini-2.5-flash",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            rawOcrText = "LIDL TOTAL 12.34",
+            editMerchant = "Lidl",
+            editAmount = "12.34",
+            editDate = 999L,
+            ocrConfidence = 0.3f
+        )
+
+        viewModel.requestCategoryAssist()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.categoryAssistState is AiLoadState.Ready)
+        assertEquals("Cloud - google-ai-studio - gemini-2.5-flash", viewModel.state.value.categoryAssistDiagnostics)
+
+        viewModel.applyCategoryAssist()
+
+        assertEquals(5L, viewModel.state.value.selectedCategoryId)
+    }
+
+    @Test
+    fun `stress - requestCategoryAssist keeps failed artifact diagnostics on error`() = runTest {
+        val receipt = ScannedReceipt(
+            id = 7L,
+            imagePath = "receipt.jpg",
+            rawOcrText = "LIDL TOTAL 12.34",
+            parsedTotal = 12.34,
+            parsedMerchant = "Lidl",
+            parsedDate = 999L,
+            parsedItems = null,
+            parsedTaxAmount = null,
+            currency = "EUR",
+            confidence = 0.3f
+        )
+        coEvery { receiptRepository.getReceiptById(7L) } returns receipt
+        coEvery {
+            suggestCategoryFallbackUseCase(receipt, "Lidl", 12.34, 999L, null, false)
+        } returns CategoryAssistGenerationResult.Error("AI category assist failed.")
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactEntity(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = 7L,
+            targetKey = "scanned_receipt:7",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = AiArtifactStatus.FAILED,
+            mode = AiMode.ON_DEVICE,
+            provider = "mlkit-genai-nano",
+            modelName = "gemini-nano",
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            rawOcrText = "LIDL TOTAL 12.34",
+            editMerchant = "Lidl",
+            editAmount = "12.34",
+            editDate = 999L,
+            ocrConfidence = 0.3f
+        )
+
+        viewModel.requestCategoryAssist()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.categoryAssistState is AiLoadState.Error)
+        assertEquals("On-device - mlkit-genai-nano - gemini-nano", viewModel.state.value.categoryAssistDiagnostics)
+    }
+
+    @Test
+    fun `stress - dismissCategoryAssist clears state and marks artifact dismissed`() = runTest {
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactEntity(
+            id = 5L,
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = 7L,
+            targetKey = "scanned_receipt:7",
+            capability = AiCapability.CATEGORIZATION_FALLBACK,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.AUTO,
+            promptVersion = "v1",
+            sourceHash = "hash",
+            createdAt = 0L,
+            updatedAt = 0L
+        )
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            receiptId = 7L,
+            rawOcrText = "TEXT",
+            categoryAssistState = AiLoadState.Ready(CategoryAssistSuggestion(5L, "Groceries")),
+            categoryAssistDiagnostics = "Cloud - google-ai-studio - gemini-2.5-flash"
+        )
+
+        viewModel.dismissCategoryAssist()
+        advanceUntilIdle()
+
+        coVerify { aiArtifactRepository.markDismissed(5L) }
+        assertEquals(AiLoadState.Idle, viewModel.state.value.categoryAssistState)
+        assertEquals(null, viewModel.state.value.categoryAssistDiagnostics)
     }
 
     @Test

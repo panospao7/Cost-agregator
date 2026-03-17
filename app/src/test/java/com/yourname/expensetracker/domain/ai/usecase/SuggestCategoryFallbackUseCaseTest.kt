@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.ai.usecase
 import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
@@ -172,6 +173,68 @@ class SuggestCategoryFallbackUseCaseTest {
         assertTrue(captured.last().errorMessage?.contains("Route: CLOUD") == true)
     }
 
+    @Test
+    fun `invoke for receipt stores scanned receipt artifact when provider returns supported category`() = runTest {
+        val receipt = makeReceipt()
+        val input = CategorizationAssistInput(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = receipt.id,
+            merchant = "Lidl",
+            amount = 10.0,
+            currency = "EUR",
+            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            date = receipt.parsedDate,
+            currentCategoryId = null,
+            deterministicMatchType = null,
+            deterministicExplanation = null,
+            candidateCategories = listOf(CategoryOption(2L, "Groceries"))
+        )
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, categorizationFallbackEnabled = true))
+        coEvery {
+            inputBuilder.build(receipt, "Lidl", 10.0, receipt.parsedDate, null, any())
+        } returns input
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns null
+        coEvery { categoryRepository.getAll() } returns listOf(Category(id = 2L, name = "Groceries", icon = "G", color = "#00FF00"))
+        coEvery { categorizationAssistService.suggest(input) } returns CategoryAssistSuggestion(
+            categoryId = 2L,
+            categoryName = "Groceries",
+            rationale = "Receipt text looks like supermarket shopping"
+        )
+
+        val captured = mutableListOf<AiArtifactEntity>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(
+            receipt = receipt,
+            draftMerchant = "Lidl",
+            draftAmount = 10.0,
+            draftDate = receipt.parsedDate,
+            currentCategoryId = null,
+            force = false
+        )
+
+        assertTrue(result is CategoryAssistGenerationResult.Success)
+        assertEquals(AiTargetType.SCANNED_RECEIPT, captured.first().targetType)
+        assertEquals("scanned_receipt:7", captured.first().targetKey)
+        assertEquals(AppConfig.Ai.RECEIPT_ASSIST_TTL_MS + 1_000L, captured.first().expiresAt)
+    }
+
+    @Test
+    fun `invoke for receipt returns NotNeeded when confidence is strong and category exists`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, categorizationFallbackEnabled = true))
+
+        val result = useCase(
+            receipt = makeReceipt(confidence = 0.95f),
+            draftMerchant = "Lidl",
+            draftAmount = 10.0,
+            draftDate = 123L,
+            currentCategoryId = 4L,
+            force = false
+        )
+
+        assertTrue(result is CategoryAssistGenerationResult.NotNeeded)
+    }
+
     private fun makeItem() = PendingReviewWithReceipt(
         PendingReview(
             id = 1L,
@@ -203,5 +266,18 @@ class SuggestCategoryFallbackUseCaseTest {
         deterministicMatchType = "FALLBACK",
         deterministicExplanation = "weak",
         candidateCategories = listOf(CategoryOption(2L, "Groceries"))
+    )
+
+    private fun makeReceipt(confidence: Float = 0.4f) = ScannedReceipt(
+        id = 7L,
+        imagePath = "receipt.jpg",
+        rawOcrText = "LIDL TOTAL 10.00",
+        parsedTotal = 10.0,
+        parsedMerchant = "Lidl",
+        parsedDate = 123L,
+        parsedItems = null,
+        parsedTaxAmount = null,
+        currency = "EUR",
+        confidence = confidence
     )
 }

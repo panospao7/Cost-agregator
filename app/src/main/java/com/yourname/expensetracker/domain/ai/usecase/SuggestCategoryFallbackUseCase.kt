@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
 import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
@@ -8,7 +9,8 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiMode
-import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
@@ -47,17 +49,83 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
             )
         }
 
-        val input = inputBuilder.build(item, settings)
+        return suggestCategory(
+            input = inputBuilder.build(item, settings),
+            settings = settings,
+            force = force,
+            targetKey = "pending_review:${item.review.id}",
+            expiresInMs = AppConfig.Ai.REVIEW_CAPTURE_ASSIST_TTL_MS
+        )
+    }
+
+    suspend operator fun invoke(
+        receipt: ScannedReceipt,
+        draftMerchant: String?,
+        draftAmount: Double?,
+        draftDate: Long?,
+        currentCategoryId: Long?,
+        force: Boolean = false
+    ): CategoryAssistGenerationResult {
+        val settings = aiSettingsRepository.settings().first()
+        if (!settings.aiEnabled || !settings.categorizationFallbackEnabled) {
+            return CategoryAssistGenerationResult.Disabled("AI category assist is disabled.")
+        }
+
+        if (!force && !needsFallback(receipt, currentCategoryId)) {
+            return CategoryAssistGenerationResult.NotNeeded(
+                "Receipt details already look complete enough to choose a category manually."
+            )
+        }
+
+        return suggestCategory(
+            input = inputBuilder.build(
+                receipt = receipt,
+                draftMerchant = draftMerchant,
+                draftAmount = draftAmount,
+                draftDate = draftDate,
+                currentCategoryId = currentCategoryId,
+                settings = settings
+            ),
+            settings = settings,
+            force = force,
+            targetKey = "scanned_receipt:${receipt.id}",
+            expiresInMs = AppConfig.Ai.RECEIPT_ASSIST_TTL_MS
+        )
+    }
+
+    private fun needsFallback(item: PendingReviewWithReceipt): Boolean {
+        val review = item.review
+        if (review.suggestedCategoryId == null) return true
+        val weakMatchTypes = setOf("UNKNOWN", "FALLBACK", "ML_PREDICTION")
+        val isWeakMatch = review.matchType?.uppercase() in weakMatchTypes
+        return isWeakMatch || review.confidence < AppConfig.Ai.MIN_CATEGORY_CONFIDENCE_FOR_AI_FALLBACK
+    }
+
+    private fun needsFallback(
+        receipt: ScannedReceipt,
+        currentCategoryId: Long?
+    ): Boolean {
+        if (currentCategoryId == null) return true
+        return receipt.confidence < AppConfig.Ai.MIN_CATEGORY_CONFIDENCE_FOR_AI_FALLBACK
+    }
+
+    private suspend fun suggestCategory(
+        input: CategorizationAssistInput,
+        settings: AiSettings,
+        force: Boolean,
+        targetKey: String,
+        expiresInMs: Long
+    ): CategoryAssistGenerationResult {
         val routeDecision = aiCapabilityRouter.decide(AiCapability.CATEGORIZATION_FALLBACK, settings)
         if (routeDecision.route == AiRoute.DISABLED) {
             return CategoryAssistGenerationResult.Disabled(routeDecision.reason)
         }
-        val targetKey = "pending_review:${item.review.id}"
+
         val now = timeProvider.now()
         val sourceHash = input.hashCode().toString()
-
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.CATEGORIZATION_FALLBACK)
-        if (existing != null &&
+        if (!force &&
+            existing != null &&
             existing.status == AiArtifactStatus.READY &&
             existing.promptVersion == AppConfig.Ai.PROMPT_VERSION_CATEGORIZATION &&
             existing.sourceHash == sourceHash &&
@@ -70,8 +138,8 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
         }
 
         val baseEntity = AiArtifactEntity(
-            targetType = AiTargetType.PENDING_REVIEW,
-            targetId = item.review.id,
+            targetType = input.targetType,
+            targetId = input.targetId,
             targetKey = targetKey,
             capability = AiCapability.CATEGORIZATION_FALLBACK,
             status = AiArtifactStatus.RUNNING,
@@ -87,7 +155,7 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
             sourceHash = sourceHash,
             createdAt = now,
             updatedAt = now,
-            expiresAt = now + AppConfig.Ai.REVIEW_CAPTURE_ASSIST_TTL_MS
+            expiresAt = now + expiresInMs
         )
         aiArtifactRepository.upsert(baseEntity)
 
@@ -131,14 +199,6 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
                 e.message?.take(200) ?: "AI category assist failed."
             )
         }
-    }
-
-    private fun needsFallback(item: PendingReviewWithReceipt): Boolean {
-        val review = item.review
-        if (review.suggestedCategoryId == null) return true
-        val weakMatchTypes = setOf("UNKNOWN", "FALLBACK", "ML_PREDICTION")
-        val isWeakMatch = review.matchType?.uppercase() in weakMatchTypes
-        return isWeakMatch || review.confidence < AppConfig.Ai.MIN_CATEGORY_CONFIDENCE_FOR_AI_FALLBACK
     }
 
     private suspend fun validateCategorySuggestion(
