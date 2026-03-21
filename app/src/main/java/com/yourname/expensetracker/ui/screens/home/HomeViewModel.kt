@@ -17,12 +17,17 @@ import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.service.NavigationAction
+import com.yourname.expensetracker.service.NavigationTargetResolver
+import com.yourname.expensetracker.service.RecommendationDismissalHandler
+import com.yourname.expensetracker.service.RecommendationStateManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -88,11 +93,26 @@ class HomeViewModel @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiEnvironmentMonitor: AiEnvironmentMonitor,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val recommendationStateManager: RecommendationStateManager,
+    private val navigationTargetResolver: NavigationTargetResolver,
+    private val recommendationDismissalHandler: RecommendationDismissalHandler
 ) : ViewModel() {
 
     private val isEditMode = MutableStateFlow(false)
     private val dateKeyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    // TODO: Replace with actual UserSessionProvider
+    private val defaultRecommendationUserId = "default_user"
+
+    val recommendations: StateFlow<List<DashboardFollowThroughRecommendation>> =
+        recommendationStateManager.recommendations
+
+    private val _selectedRecommendation = MutableStateFlow<DashboardFollowThroughRecommendation?>(null)
+    val selectedRecommendation: StateFlow<DashboardFollowThroughRecommendation?> =
+        _selectedRecommendation.asStateFlow()
+
+    private val _navigationActions = MutableSharedFlow<NavigationAction>(extraBufferCapacity = 1)
+    val navigationActions: SharedFlow<NavigationAction> = _navigationActions.asSharedFlow()
 
     init {
         viewModelScope.launch {
@@ -102,6 +122,8 @@ class HomeViewModel @Inject constructor(
                 Timber.e(e, "Failed to ensure default categories")
             }
         }
+
+        recommendationStateManager.refreshForUser(defaultRecommendationUserId)
     }
 
     private val processedDataFlow: Flow<CompiledDashboardData> =
@@ -248,6 +270,23 @@ class HomeViewModel @Inject constructor(
                     priority = priority
                 )
             )
+        }
+    }
+
+    fun navigateToRecommendation(rec: DashboardFollowThroughRecommendation) {
+        _selectedRecommendation.value = rec
+        viewModelScope.launch {
+            val action = navigationTargetResolver.resolve(rec.navigationTarget, rec.filterCriteria)
+            _navigationActions.emit(action)
+        }
+    }
+
+    fun dismissRecommendation(rec: DashboardFollowThroughRecommendation) {
+        viewModelScope.launch {
+            recommendationDismissalHandler.dismiss(rec)
+            if (_selectedRecommendation.value?.id == rec.id) {
+                _selectedRecommendation.value = null
+            }
         }
     }
 

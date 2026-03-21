@@ -21,6 +21,9 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvide
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.service.NavigationTargetResolver
+import com.yourname.expensetracker.service.RecommendationDismissalHandler
+import com.yourname.expensetracker.service.RecommendationStateManager
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,6 +55,9 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var aiEnvironmentMonitor: AiEnvironmentMonitor
     private lateinit var timeProvider: TimeProvider
+    private lateinit var recommendationStateManager: RecommendationStateManager
+    private lateinit var navigationTargetResolver: NavigationTargetResolver
+    private lateinit var recommendationDismissalHandler: RecommendationDismissalHandler
 
     private val configFlow = MutableStateFlow(defaultConfig())
     private lateinit var viewModel: HomeViewModel
@@ -69,6 +75,9 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         aiArtifactRepository = mockk(relaxed = true)
         aiEnvironmentMonitor = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
+        recommendationStateManager = mockk(relaxed = true)
+        navigationTargetResolver = mockk(relaxed = true)
+        recommendationDismissalHandler = mockk(relaxed = true)
 
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings())
         every { timeProvider.now() } returns 0L
@@ -132,7 +141,10 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             aiSettingsRepository,
             aiArtifactRepository,
             aiEnvironmentMonitor,
-            timeProvider
+            timeProvider,
+            recommendationStateManager,
+            navigationTargetResolver,
+            recommendationDismissalHandler
         )
     }
 
@@ -215,7 +227,10 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             aiSettingsRepository,
             aiArtifactRepository,
             aiEnvironmentMonitor,
-            timeProvider
+            timeProvider,
+            recommendationStateManager,
+            navigationTargetResolver,
+            recommendationDismissalHandler
         )
 
         viewModel.dashboard.test {
@@ -437,7 +452,10 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             aiSettingsRepository,
             aiArtifactRepository,
             aiEnvironmentMonitor,
-            timeProvider
+            timeProvider,
+            recommendationStateManager,
+            navigationTargetResolver,
+            recommendationDismissalHandler
         )
         advanceUntilIdle()
         assertNotNull(vm.dashboard)

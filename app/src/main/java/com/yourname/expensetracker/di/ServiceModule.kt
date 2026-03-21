@@ -12,6 +12,8 @@ import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.location.NearbyPoiService
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.service.NavigationTargetResolver
+import com.yourname.expensetracker.service.NavigationTargetResolverImpl
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -53,4 +55,10 @@ object ServiceModule {
     fun provideForegroundLocationProvider(
         provider: AndroidForegroundLocationProvider
     ): ForegroundLocationProvider = provider
+
+    @Provides
+    @Singleton
+    fun provideNavigationTargetResolver(
+        impl: NavigationTargetResolverImpl
+    ): NavigationTargetResolver = impl
 }

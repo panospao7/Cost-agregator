@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseC
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
 import javax.inject.Inject
 
 data class AssistantUiState(
@@ -92,6 +94,9 @@ class AssistantViewModel @Inject constructor(
     private val _navigationEvents = Channel<AssistantNavigationEvent>(Channel.BUFFERED)
     val navigationEvents = _navigationEvents.receiveAsFlow()
 
+    private val _isSubmitting = MutableStateFlow(false)
+    private var _currentQueryJob: Job? = null
+
     val settings = aiSettingsRepository.settings().stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -129,91 +134,109 @@ class AssistantViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(input = value, errorMessage = null)
     }
 
-    fun submitQuery(rawQuery: String = _uiState.value.input) {
+    fun submitQuery(rawQuery: String = _uiState.value.input, isClarificationResponse: Boolean = false) {
         val query = rawQuery.trim()
-        if (query.isBlank() || _uiState.value.isLoading) return
+        if (query.isBlank()) return
+        if (!_isSubmitting.compareAndSet(false, true)) return
 
-        viewModelScope.launch {
-            val settings = aiSettingsRepository.settings().first()
-            if (!settings.aiEnabled || !settings.assistantEnabled || !settings.queryInterpretationEnabled) {
-                _uiState.value = _uiState.value.copy(
-                    isDisabled = true,
-                    disabledReason = "Enable AI assistant to use this feature"
+        _currentQueryJob?.cancel()
+
+        _currentQueryJob = viewModelScope.launch {
+            try {
+                val settings = aiSettingsRepository.settings().first()
+                if (!settings.aiEnabled || !settings.assistantEnabled || !settings.queryInterpretationEnabled) {
+                    _uiState.value = _uiState.value.copy(
+                        isDisabled = true,
+                        disabledReason = "Enable AI assistant to use this feature",
+                        isLoading = false
+                    )
+                    return@launch
+                }
+
+                val userItem = AssistantConversationItem.User(
+                    id = "user-${System.nanoTime()}",
+                    text = query
                 )
-                return@launch
-            }
 
-            val userItem = AssistantConversationItem.User(
-                id = "user-${System.nanoTime()}",
-                text = query
-            )
+                val sessionId = ensureSessionIfNeeded()
 
-            _uiState.value = _uiState.value.copy(
-                input = "",
-                isLoading = true,
-                errorMessage = null,
-                messages = _uiState.value.messages + userItem
-            )
+                _uiState.value = _uiState.value.copy(
+                    input = "",
+                    isLoading = true,
+                    errorMessage = null,
+                    messages = _uiState.value.messages + userItem,
+                    currentSessionId = sessionId ?: _uiState.value.currentSessionId
+                )
 
-            val sessionId = ensureSessionIfNeeded()
-            persistUserTurn(sessionId, query)
+                persistUserTurn(sessionId, query)
 
-            val historyMessages = if (settings.storeConversationHistory && sessionId != null) {
-                aiChatRepository.observeMessages(sessionId).first()
-            } else {
-                emptyList()
-            }
-
-            when (val interpretation = interpretFinancialQueryUseCase(query, historyMessages)) {
-                is FinancialQueryInterpretationResult.Structured -> {
-                    val result = executeFinancialQueryUseCase(interpretation.intent)
-                    val navigationFilter = mapFinancialQueryToNavigationUseCase(interpretation.intent)
-                    val resultItem = AssistantConversationItem.Result(
-                        id = "result-${System.nanoTime()}",
-                        queryText = query,
-                        result = result,
-                        drilldownFilter = navigationFilter
-                    )
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        messages = _uiState.value.messages + resultItem,
-                        currentSessionId = sessionId ?: _uiState.value.currentSessionId
-                    )
-                    persistAssistantTurn(sessionId, result)
+                val historyMessages = if (settings.storeConversationHistory && sessionId != null && !isClarificationResponse) {
+                    aiChatRepository.observeMessages(sessionId).first()
+                } else {
+                    emptyList()
                 }
 
-                is FinancialQueryInterpretationResult.Clarification -> {
-                    val result = FinancialQueryResult.Clarification(
-                        prompt = interpretation.prompt,
-                        options = interpretation.options
-                    )
-                    val resultItem = AssistantConversationItem.Result(
-                        id = "clarification-${System.nanoTime()}",
-                        queryText = query,
-                        result = result
-                    )
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        messages = _uiState.value.messages + resultItem,
-                        currentSessionId = sessionId ?: _uiState.value.currentSessionId
-                    )
-                    persistAssistantTurn(sessionId, result)
-                }
+                when (val interpretation = interpretFinancialQueryUseCase(query, historyMessages)) {
+                    is FinancialQueryInterpretationResult.Structured -> {
+                        val result = try {
+                            executeFinancialQueryUseCase(interpretation.intent)
+                        } catch (e: Exception) {
+                            Timber.e(e, "Query execution failed")
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                errorMessage = "Failed to execute query: ${e.message}",
+                                input = query
+                            )
+                            return@launch
+                        }
+                        val navigationFilter = mapFinancialQueryToNavigationUseCase(interpretation.intent)
+                        val resultItem = AssistantConversationItem.Result(
+                            id = "result-${System.nanoTime()}",
+                            queryText = query,
+                            result = result,
+                            drilldownFilter = navigationFilter
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            messages = _uiState.value.messages + resultItem
+                        )
+                        persistAssistantTurn(sessionId, result)
+                    }
 
-                is FinancialQueryInterpretationResult.Unsupported -> {
-                    val result = FinancialQueryResult.Unsupported(interpretation.reason)
-                    val resultItem = AssistantConversationItem.Result(
-                        id = "unsupported-${System.nanoTime()}",
-                        queryText = query,
-                        result = result
-                    )
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        messages = _uiState.value.messages + resultItem,
-                        currentSessionId = sessionId ?: _uiState.value.currentSessionId
-                    )
-                    persistAssistantTurn(sessionId, result)
+                    is FinancialQueryInterpretationResult.Clarification -> {
+                        val result = FinancialQueryResult.Clarification(
+                            prompt = interpretation.prompt,
+                            options = interpretation.options
+                        )
+                        val resultItem = AssistantConversationItem.Result(
+                            id = "clarification-${System.nanoTime()}",
+                            queryText = query,
+                            result = result
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            messages = _uiState.value.messages + resultItem
+                        )
+                        persistAssistantTurn(sessionId, result)
+                    }
+
+                    is FinancialQueryInterpretationResult.Unsupported -> {
+                        val result = FinancialQueryResult.Unsupported(interpretation.reason)
+                        val resultItem = AssistantConversationItem.Result(
+                            id = "unsupported-${System.nanoTime()}",
+                            queryText = query,
+                            result = result
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            messages = _uiState.value.messages + resultItem
+                        )
+                        persistAssistantTurn(sessionId, result)
+                    }
                 }
+            } finally {
+                _isSubmitting.value = false
+                _currentQueryJob = null
             }
         }
     }
@@ -224,9 +247,24 @@ class AssistantViewModel @Inject constructor(
         submitQuery(lastUser.text)
     }
 
+    fun cancelCurrentQuery() {
+        _currentQueryJob?.cancel()
+        _currentQueryJob = null
+        _isSubmitting.value = false
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            errorMessage = "Query cancelled"
+        )
+    }
+
     fun onSuggestionSelected(text: String) {
         updateInput(text)
         submitQuery(text)
+    }
+
+    fun onClarificationSelected(text: String) {
+        updateInput(text)
+        submitQuery(text, isClarificationResponse = true)
     }
 
     fun openDrilldown(filter: TransactionFilter?) {

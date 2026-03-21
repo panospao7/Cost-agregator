@@ -172,6 +172,7 @@ object AppConfig {
         const val ON_DEVICE_QUERY_TEMPERATURE = 0.1f
         const val ON_DEVICE_QUERY_MAX_TOKENS = 220
         const val ON_DEVICE_QUERY_MODEL = "gemini-nano-query"
+        const val ON_DEVICE_QUERY_TIMEOUT_MS = 30_000L  // 30 seconds
         const val ON_DEVICE_BRIEFING_TEMPERATURE = 0.2f
         const val ON_DEVICE_BRIEFING_MAX_TOKENS = 180
         const val ON_DEVICE_BRIEFING_MODEL = "gemini-nano-briefing"

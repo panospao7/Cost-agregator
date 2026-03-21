@@ -78,7 +78,7 @@ data class AiRouteDecision(
 // ---------------------------------------------------------------------------
 
 data class AiSettings(
-    val aiEnabled: Boolean = false,
+    val aiEnabled: Boolean = true,
     val allowCloudAi: Boolean = false,
     val allowOnDeviceAi: Boolean = true,
     val assistantEnabled: Boolean = false,

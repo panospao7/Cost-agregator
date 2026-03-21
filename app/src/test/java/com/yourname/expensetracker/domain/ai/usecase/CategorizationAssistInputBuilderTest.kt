@@ -6,9 +6,13 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.intelligence.ml.MatchType
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
+import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -23,13 +27,17 @@ class CategorizationAssistInputBuilderTest {
 
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var aiPolicy: AiPolicy
+    private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var merchantNormalizer: com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
     private lateinit var builder: CategorizationAssistInputBuilder
 
     @Before
     fun setup() {
         categoryRepository = mockk()
         aiPolicy = mockk()
-        builder = CategorizationAssistInputBuilder(categoryRepository, aiPolicy)
+        expenseRepository = mockk()
+        merchantNormalizer = mockk()
+        builder = CategorizationAssistInputBuilder(categoryRepository, aiPolicy, expenseRepository, merchantNormalizer)
     }
 
     @Test
@@ -39,6 +47,13 @@ class CategorizationAssistInputBuilderTest {
             Category(id = 1L, name = "Groceries", icon = "G", color = "#0000FF")
         )
         every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
+        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+            canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
+            alias = null,
+            confidence = 0.9f,
+            matchType = MatchType.EXACT_MATCH
+        )
+        coEvery { expenseRepository.getRecentTransactionsForMerchant(any(), any()) } returns emptyList()
 
         val result = builder.build(makeItem(), AiSettings())
 
@@ -51,6 +66,13 @@ class CategorizationAssistInputBuilderTest {
     fun `build removes supporting text when redacted`() = runTest {
         coEvery { categoryRepository.getAll() } returns emptyList()
         every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns true
+        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+            canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
+            alias = null,
+            confidence = 0.9f,
+            matchType = MatchType.EXACT_MATCH
+        )
+        coEvery { expenseRepository.getRecentTransactionsForMerchant(any(), any()) } returns emptyList()
 
         val result = builder.build(makeItem(), AiSettings(redactBeforeCloud = true))
 
@@ -63,6 +85,13 @@ class CategorizationAssistInputBuilderTest {
             Category(id = 1L, name = "Groceries", icon = "G", color = "#0000FF")
         )
         every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
+        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+            canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
+            alias = null,
+            confidence = 0.9f,
+            matchType = MatchType.EXACT_MATCH
+        )
+        coEvery { expenseRepository.getRecentTransactionsForMerchant(any(), any()) } returns emptyList()
 
         val receipt = makeItem().receipt!!
         val result = builder.build(

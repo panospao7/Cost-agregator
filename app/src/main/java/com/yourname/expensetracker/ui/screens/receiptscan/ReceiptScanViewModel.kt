@@ -336,11 +336,7 @@ class ReceiptScanViewModel @Inject constructor(
         val currentState = _state.value
         if (currentState.step != ScanStep.REVIEW || currentState.receiptId == null) return false
         if (currentState.rawOcrText.isBlank()) return false
-        val parsed = currentState.parsedReceipt
-        return parsed?.merchantName.isNullOrBlank() ||
-            parsed?.total == null ||
-            parsed?.date == null ||
-            currentState.ocrConfidence < com.yourname.expensetracker.domain.config.AppConfig.Ai.MIN_RECEIPT_CONFIDENCE_FOR_AI_FALLBACK
+        return true
     }
 
     fun shouldOfferCategoryAssist(): Boolean {

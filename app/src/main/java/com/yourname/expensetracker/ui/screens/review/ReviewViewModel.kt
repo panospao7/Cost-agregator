@@ -17,14 +17,18 @@ import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
+import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.toDisplayText
 import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
 import com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState
+import com.yourname.expensetracker.domain.ai.model.ReviewReceiptPrefill
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExplainPendingReviewUseCase
 import com.yourname.expensetracker.domain.ai.usecase.JudgePendingReviewDuplicateUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
+import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.model.Result
 import timber.log.Timber
@@ -73,6 +77,7 @@ class ReviewViewModel @Inject constructor(
     val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
     private val explainPendingReviewUseCase: ExplainPendingReviewUseCase,
     private val suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase,
+    private val suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase,
     private val judgePendingReviewDuplicateUseCase: JudgePendingReviewDuplicateUseCase,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiSettingsRepository: AiSettingsRepository,
@@ -106,6 +111,10 @@ class ReviewViewModel @Inject constructor(
     private val _prefilledCategorySuggestions = MutableStateFlow<Map<Long, Long>>(emptyMap())
     val prefilledCategorySuggestions: StateFlow<Map<Long, Long>> =
         _prefilledCategorySuggestions.asStateFlow()
+
+    private val _prefilledReceiptSuggestions = MutableStateFlow<Map<Long, ReviewReceiptPrefill>>(emptyMap())
+    val prefilledReceiptSuggestions: StateFlow<Map<Long, ReviewReceiptPrefill>> =
+        _prefilledReceiptSuggestions.asStateFlow()
 
     private val _quickApprovePreview = MutableStateFlow<ReviewQuickApprovePreview?>(null)
     val quickApprovePreview: StateFlow<ReviewQuickApprovePreview?> =
@@ -260,6 +269,7 @@ class ReviewViewModel @Inject constructor(
         finalAmount: Double?,
         finalMerchant: String?,
         finalCategoryId: Long?,
+        finalDate: Long?,
         finalType: TransactionType?,
         applyToAll: Boolean = false,
         approveAllPending: Boolean = false,
@@ -273,6 +283,7 @@ class ReviewViewModel @Inject constructor(
                 finalAmount = finalAmount,
                 finalMerchant = finalMerchant,
                 finalCategoryId = finalCategoryId,
+                finalDate = finalDate,
                 finalType = finalType,
                 finalLatitude = finalLatitude,
                 finalLongitude = finalLongitude,
@@ -317,6 +328,7 @@ class ReviewViewModel @Inject constructor(
                                     finalAmount = null, // Keep original amounts for identical transactions
                                     finalMerchant = finalMerchant,
                                     finalCategoryId = finalCategoryId,
+                                    finalDate = finalDate,
                                     finalType = finalType,
                                     finalLatitude = finalLatitude,
                                     finalLongitude = finalLongitude,
@@ -377,6 +389,78 @@ class ReviewViewModel @Inject constructor(
         }
     }
 
+    fun requestReceiptAssist(reviewId: Long, force: Boolean = false) {
+        viewModelScope.launch {
+            val item = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
+                ?: return@launch updateReceiptAssistState(
+                    reviewId,
+                    AiLoadState.Error("Receipt review not found")
+                )
+
+            val receipt = item.receipt
+            if (receipt == null) {
+                updateReceiptAssistState(
+                    reviewId = reviewId,
+                    state = AiLoadState.Error("No scanned receipt is attached to this review."),
+                    diagnostics = null,
+                    message = null
+                )
+                return@launch
+            }
+
+            updateReceiptAssistState(reviewId, AiLoadState.Loading)
+
+            when (val result = suggestReceiptExtractionUseCase(receipt.id, force = force)) {
+                is ReceiptAssistGenerationResult.Success -> {
+                    val diagnostics = latestArtifactDiagnostics(
+                        targetKey = "scanned_receipt:${receipt.id}",
+                        capability = AiCapability.RECEIPT_EXTRACTION
+                    )
+                    val message = when {
+                        result.fromCache -> "Showing cached AI receipt suggestions."
+                        result.usedImageInput -> "Image-aware AI cross-checked the receipt photo and OCR text."
+                        else -> "AI suggested receipt fields you can apply to this review."
+                    }
+                    updateReceiptAssistState(
+                        reviewId = reviewId,
+                        state = AiLoadState.Ready(result.suggestion),
+                        diagnostics = diagnostics,
+                        message = message
+                    )
+                }
+                is ReceiptAssistGenerationResult.Disabled -> {
+                    updateReceiptAssistState(
+                        reviewId = reviewId,
+                        state = AiLoadState.Disabled,
+                        diagnostics = null,
+                        message = result.reason
+                    )
+                }
+                is ReceiptAssistGenerationResult.NotNeeded -> {
+                    updateReceiptAssistState(
+                        reviewId = reviewId,
+                        state = AiLoadState.Idle,
+                        diagnostics = null,
+                        message = result.reason
+                    )
+                }
+                is ReceiptAssistGenerationResult.Error -> {
+                    val diagnostics = latestArtifactDiagnostics(
+                        targetKey = "scanned_receipt:${receipt.id}",
+                        capability = AiCapability.RECEIPT_EXTRACTION,
+                        expectedStatus = AiArtifactStatus.FAILED
+                    )
+                    updateReceiptAssistState(
+                        reviewId = reviewId,
+                        state = AiLoadState.Error(result.reason),
+                        diagnostics = diagnostics,
+                        message = result.reason
+                    )
+                }
+            }
+        }
+    }
+
     fun requestDedupeAssist(reviewId: Long, force: Boolean = false) {
         viewModelScope.launch {
             val item = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
@@ -423,6 +507,20 @@ class ReviewViewModel @Inject constructor(
         _prefilledCategorySuggestions.update { it + (reviewId to suggestion.categoryId) }
         viewModelScope.launch {
             markCategoryArtifactApplied(reviewId)
+        }
+    }
+
+    fun applyReceiptSuggestion(reviewId: Long) {
+        val suggestion = (_reviewCaptureAssistStates.value[reviewId]?.receiptSuggestion as? AiLoadState.Ready)?.value
+            ?: return
+        _prefilledReceiptSuggestions.update { current ->
+            current + (reviewId to suggestion.toPrefill())
+        }
+        viewModelScope.launch {
+            val receiptId = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)?.receipt?.id
+            if (receiptId != null) {
+                markReceiptArtifactApplied(receiptId)
+            }
         }
     }
 
@@ -492,12 +590,38 @@ class ReviewViewModel @Inject constructor(
         return value
     }
 
+    fun consumePrefilledReceiptSuggestion(reviewId: Long): ReviewReceiptPrefill? {
+        val value = _prefilledReceiptSuggestions.value[reviewId]
+        _prefilledReceiptSuggestions.update { it - reviewId }
+        return value
+    }
+
     fun dismissCategoryAssist(reviewId: Long) {
         dismissArtifact(
             reviewId = reviewId,
             capability = com.yourname.expensetracker.domain.ai.model.AiCapability.CATEGORIZATION_FALLBACK,
             clear = { current -> current.copy(categorySuggestion = AiLoadState.Idle, categoryDiagnostics = null) }
         )
+    }
+
+    fun dismissReceiptAssist(reviewId: Long) {
+        viewModelScope.launch {
+            val receiptId = reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)?.receipt?.id
+            if (receiptId != null) {
+                aiArtifactRepository.getLatest("scanned_receipt:$receiptId", AiCapability.RECEIPT_EXTRACTION)
+                    ?.let { artifact ->
+                        aiArtifactRepository.markDismissed(artifact.id)
+                    }
+            }
+            _reviewCaptureAssistStates.update { current ->
+                val existing = current[reviewId] ?: ReviewCaptureAssistState()
+                current + (reviewId to existing.copy(
+                    receiptSuggestion = AiLoadState.Idle,
+                    receiptDiagnostics = null,
+                    receiptMessage = null
+                ))
+            }
+        }
     }
 
     fun dismissDedupeAssist(reviewId: Long) {
@@ -627,6 +751,22 @@ class ReviewViewModel @Inject constructor(
         }
     }
 
+    private fun updateReceiptAssistState(
+        reviewId: Long,
+        state: AiLoadState<ReceiptAssistSuggestion>,
+        diagnostics: String? = null,
+        message: String? = null
+    ) {
+        _reviewCaptureAssistStates.update { current ->
+            val existing = current[reviewId] ?: ReviewCaptureAssistState()
+            current + (reviewId to existing.copy(
+                receiptSuggestion = state,
+                receiptDiagnostics = diagnostics,
+                receiptMessage = message
+            ))
+        }
+    }
+
     private fun updateDedupeAssistState(
         reviewId: Long,
         state: AiLoadState<DedupeJudgeSuggestion>,
@@ -668,6 +808,13 @@ class ReviewViewModel @Inject constructor(
         markArtifactApplied(reviewId, AiCapability.CATEGORIZATION_FALLBACK)
     }
 
+    private suspend fun markReceiptArtifactApplied(receiptId: Long) {
+        aiArtifactRepository.getLatest("scanned_receipt:$receiptId", AiCapability.RECEIPT_EXTRACTION)
+            ?.let { artifact ->
+                aiArtifactRepository.markApplied(artifact.id)
+            }
+    }
+
     private suspend fun markQuickApproveArtifactsApplied(reviewId: Long) {
         markArtifactApplied(reviewId, AiCapability.CATEGORIZATION_FALLBACK)
         val dedupeReady = _reviewCaptureAssistStates.value[reviewId]?.dedupeSuggestion as? AiLoadState.Ready
@@ -702,4 +849,12 @@ class ReviewViewModel @Inject constructor(
             message = "review quick approve preview opened for $reviewId"
         )
     }
+}
+
+private fun ReceiptAssistSuggestion.toPrefill(): ReviewReceiptPrefill {
+    return ReviewReceiptPrefill(
+        merchant = merchant?.value?.takeIf { it.isNotBlank() },
+        amount = total?.value,
+        date = date?.value
+    )
 }

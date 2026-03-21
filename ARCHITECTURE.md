@@ -907,3 +907,108 @@ expensetracker://map        → Tab 5
 | 15: Performance | ~2 | ImageCache, ReceiptOcrService optimizations |
 | 16: Configuration | ~1 | AppConfig |
 | 17: Location | ~15 | CompositeGeocodingService, NominatimGeocodingService, LocationResolver, SpendingMapScreen |
+| 18: AI Follow-Through (Phase 4B) | ~25 | DashboardFollowThroughEngine, RecommendationRepository, RecommendationStateManager, RecommendationCard |
+
+---
+
+## Phase 4B: AI Follow-Through (NEW - Mar 2026)
+
+**Overview:** Dashboard follow-through recommendations system that transforms passive AI insights into actionable guidance. Users tap on AI briefing recommendations to navigate to deterministic filtered views.
+
+**Key Principle:** AI is responsible for summarization only. All navigation targets, filters, and financial truth remain deterministic and authoritative.
+
+### Architecture
+
+```
+AI Briefing (Phase 4A)     Transaction Created
+    ↓                          ↓
+    └─────────────────────┬────┘
+                          ↓
+              DashboardFollowThroughEngine
+              (Deterministic Rules)
+                          ↓
+    ┌─────────────────────┼─────────────────────┐
+    ↓                     ↓                     ↓
+HIGH PRIORITY     MEDIUM PRIORITY     LOW PRIORITY
+(Large tx)        (Category/Merchant) (Recent)
+    ↓                     ↓                     ↓
+    └─────────────────────┬─────────────────────┘
+                          ↓
+    RecommendationRepository
+    (CRUD + Cache)
+                          ↓
+    Room: recommendations table
+    (Multi-user, TTL-based)
+                          ↓
+    RecommendationStateManager
+    (StateFlow for UI)
+                          ↓
+    HomeScreen
+    (RecommendationCards)
+                          ↓
+    User Tap → Navigation
+    User Dismiss → Archive
+```
+
+### Components
+
+| Component | Purpose | Status |
+|-----------|---------|--------|
+| **DashboardFollowThroughEngine** | Rule-based recommendation builder (deterministic) | ✅ Phase 2 |
+| **RecommendationRepository** | CRUD + cache logic | ✅ Phase 1 |
+| **RecommendationStateManager** | Reactive state for UI | ✅ Phase 2 |
+| **RecommendationDismissalHandler** | Dismissal workflow | ✅ Phase 2 |
+| **RecommendationLifecycleManager** | TTL management, periodic cleanup | ✅ Phase 2.1 |
+| **RecommendationCacheService** | LRU in-memory cache | ✅ Phase 2 |
+| **RecommendationCard** | UI component | ✅ Phase 2 |
+
+### Database: `recommendations` Table (v32+)
+
+```sql
+recommendations (
+  id TEXT PRIMARY KEY,
+  userId TEXT NOT NULL,              -- Multi-user isolation
+  recommendationText TEXT NOT NULL,   -- AI-generated summary
+  navigationTarget TEXT NOT NULL,     -- Deterministic target
+  filterCriteria TEXT NOT NULL,      -- Serialized TransactionFilter
+  priority TEXT NOT NULL,             -- HIGH, MEDIUM, LOW
+  status TEXT NOT NULL,               -- ACTIVE, ARCHIVED, EXPIRED
+  createdAt BIGINT NOT NULL,
+  expiresAt BIGINT NOT NULL,          -- TTL = 7 days
+  dismissedAt BIGINT,                 -- Null unless dismissed
+  category TEXT NOT NULL,
+  sourceArtifactId TEXT NOT NULL,     -- Link to ai_artifacts
+  
+  INDEX idx_rec_active (userId, status, expiresAt),
+  INDEX idx_rec_artifact (sourceArtifactId),
+  INDEX idx_rec_created (createdAt),
+  INDEX idx_rec_expiry (expiresAt)
+)
+```
+
+### Configuration
+
+```kotlin
+RECOMMENDATION_TTL_MS = 7 days
+MAX_RECOMMENDATIONS_PER_USER = 5
+RECOMMENDATION_CLEANUP_INTERVAL_MS = 6 hours
+PRIORITY_WEIGHTS: HIGH=3, MEDIUM=2, LOW=1
+```
+
+### Design Principles
+
+1. **Deterministic Authority**: All navigation and filtering is rule-based code
+2. **AI Summarization Only**: Recommendation text comes from AI; decisions do not
+3. **Multi-User Safe**: Complete userId isolation
+4. **TTL-Based Lifecycle**: Automatic expiry after 7 days
+5. **Soft-Delete Pattern**: Archive before hard delete for analytics
+6. **Observable**: Reactive StateFlow for UI observation
+7. **Thread-Safe**: AtomicBoolean guards for concurrent access
+8. **Well-Logged**: Timber integration for debugging
+
+### Related Documents
+
+- **PHASE_4B_MASTER.md**: Complete Phase 4B documentation (master reference)
+- **ARCHITECTURE_ADDENDUM.md**: Extended architecture patterns
+- **PHASE_4B_PHASE1.md**: Phase 1 infrastructure specification
+- **CODEBASE_SEGMENTS.md → Segment 18**: File-level mapping

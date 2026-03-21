@@ -80,9 +80,11 @@ class OnDeviceCategorizationAssistService @Inject constructor() : Categorization
      */
     internal fun buildPrompt(input: CategorizationAssistInput): String {
         val categories = input.candidateCategories.joinToString(", ") { "${it.id}:${it.name}" }
+        val merchantContext = buildMerchantContext(input)
         return buildString {
-            appendLine("Categorize this transaction. Pick ONLY from the allowed categories.")
-            appendLine("Return ONLY a JSON object, nothing else.")
+            appendLine("Categorize this transaction. Pick ONLY from allowed categories.")
+            appendLine("Use common sense to identify merchants from abbreviations/OCR errors.")
+            appendLine("Examples: amzn/amazon → Shopping, goog/google → Services, netflix → Entertainment")
             appendLine()
             appendLine("Merchant: ${input.merchant}")
             appendLine("Amount: ${input.amount} ${input.currency}")
@@ -90,11 +92,20 @@ class OnDeviceCategorizationAssistService @Inject constructor() : Categorization
             if (input.supportingText != null) {
                 appendLine("Context: ${input.supportingText}")
             }
+            if (merchantContext.isNotBlank()) {
+                appendLine("Known history: $merchantContext")
+            }
             appendLine()
             appendLine("Allowed categories: $categories")
             appendLine()
-            appendLine("JSON schema: {\"categoryId\":0,\"categoryName\":\"string\",\"confidence\":0.0,\"rationale\":\"string\"}")
+            appendLine("JSON: {\"categoryId\":0,\"categoryName\":\"string\",\"confidence\":0.0,\"rationale\":\"string\"}")
         }
+    }
+    
+    private fun buildMerchantContext(input: CategorizationAssistInput): String {
+        return input.recentTransactionsWithSameMerchant
+            .take(5)
+            .joinToString("; ") { "${it.merchant} → ${it.categoryName}" }
     }
 
     /**

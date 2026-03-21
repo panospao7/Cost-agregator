@@ -9,11 +9,13 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
@@ -23,6 +25,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import org.junit.Test
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -44,6 +47,10 @@ class NotificationProcessingPipelineReliabilityTest {
     private val directionDetector = mockk<TransferDirectionDetector>(relaxed = true)
     private val analytics = mockk<TransferDirectionAnalytics>(relaxed = true)
     private val locationProvider = mockk<ForegroundLocationProvider>(relaxed = true)
+    private val aiSettingsRepository = mockk<AiSettingsRepository>(relaxed = true)
+    private val dashboardFollowThroughEngine = mockk<DashboardFollowThroughEngine>(relaxed = true)
+    private val recommendationRepository = mockk<RecommendationRepository>(relaxed = true)
+    private val testDispatcher = StandardTestDispatcher()
 
     private val pipeline = NotificationProcessingPipeline(
         database = database,
@@ -60,7 +67,11 @@ class NotificationProcessingPipelineReliabilityTest {
         timeProvider = timeProvider,
         directionDetector = directionDetector,
         analytics = analytics,
-        locationProvider = locationProvider
+        locationProvider = locationProvider,
+        aiSettingsRepository = aiSettingsRepository,
+        dashboardFollowThroughEngine = dashboardFollowThroughEngine,
+        recommendationRepository = recommendationRepository,
+        ioDispatcher = testDispatcher
     )
 
     @Test

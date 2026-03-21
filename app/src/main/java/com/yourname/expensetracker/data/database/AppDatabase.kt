@@ -27,9 +27,10 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         MerchantLocationCorrection::class,
         AiArtifactEntity::class,
         AiChatSessionEntity::class,
-        AiChatMessageEntity::class
+        AiChatMessageEntity::class,
+        RecommendationEntity::class
     ],
-        version = 35,
+        version = 36,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -53,6 +54,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiArtifactDao(): AiArtifactDao
     abstract fun aiChatSessionDao(): AiChatSessionDao
     abstract fun aiChatMessageDao(): AiChatMessageDao
+    abstract fun recommendationDao(): RecommendationDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -786,6 +788,50 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_ai_chat_messages_createdAt
                     ON ai_chat_messages (createdAt)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 35 -> 36: Add recommendations table for Phase 4B AI Follow-Through
+        val MIGRATION_35_36 = object : androidx.room.migration.Migration(35, 36) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS recommendations (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        userId TEXT NOT NULL,
+                        recommendationText TEXT NOT NULL,
+                        navigationTarget TEXT NOT NULL,
+                        filterCriteria TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        dismissedAt INTEGER,
+                        expiresAt INTEGER NOT NULL,
+                        priority TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        sourceArtifactId TEXT NOT NULL,
+                        status TEXT NOT NULL
+                    )
+                """.trimIndent())
+
+                // Create indices for efficient queries
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_recommendations_userId_status_expiresAt
+                    ON recommendations (userId, status, expiresAt)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_recommendations_sourceArtifactId
+                    ON recommendations (sourceArtifactId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_recommendations_createdAt
+                    ON recommendations (createdAt)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_recommendations_expiresAt
+                    ON recommendations (expiresAt)
                 """.trimIndent())
             }
         }

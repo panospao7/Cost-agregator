@@ -225,7 +225,10 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
                             selectedTab = 1
-                        }
+                        },
+                        onNavigateToAnalytics = { selectedTab = 4 },
+                        onNavigateToMap = { selectedTab = 5 },
+                        onNavigateToBudgetDetail = { selectedTab = 3 }
                     )
                     1 -> TransactionsScreen(
                         onNavigateToAnalytics = { selectedTab = 4 },

@@ -11,13 +11,17 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
@@ -25,6 +29,11 @@ import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -58,9 +67,15 @@ class NotificationProcessingPipeline @Inject constructor(
     private val timeProvider: TimeProvider,
     private val directionDetector: TransferDirectionDetector,
     private val analytics: TransferDirectionAnalytics,
-    private val locationProvider: ForegroundLocationProvider
+    private val locationProvider: ForegroundLocationProvider,
+    private val aiSettingsRepository: AiSettingsRepository,
+    private val generateTransactionInsightUseCase: GenerateTransactionInsightUseCase,
+    private val dashboardFollowThroughEngine: DashboardFollowThroughEngine,
+    private val recommendationRepository: RecommendationRepository,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     private val processMutex = Mutex()
+    private val asyncScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
     suspend fun process(notification: RawNotification) {
         processMutex.withLock {
@@ -183,6 +198,7 @@ class NotificationProcessingPipeline @Inject constructor(
     )
 
     internal companion object {
+        private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
         private val CURRENCY_HINT_REGEX = Regex("""(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)""", RegexOption.IGNORE_CASE)
         private val TRANSACTION_HINT_REGEX = Regex(
             """(paid|payment|purchase|transaction|transfer|sent|received|χρεωση|πληρωμη|αγορα|καταθεση|πιστωση)""",
@@ -330,6 +346,27 @@ class NotificationProcessingPipeline @Inject constructor(
             }
             budgetMonitor.checkBudgets()
             classifier.train(fullText, isTransaction = true)
+
+            // Non-blocking recommendation generation (fire-and-forget)
+            asyncScope.launch {
+                try {
+                    val aiSettings = aiSettingsRepository.settings().first()
+                    if (aiSettings.aiEnabled) {
+                        // Generate AI insight for the transaction (with 3s timeout)
+                        val aiArtifact = generateTransactionInsightUseCase(expense.copy(id = expenseId))
+                        
+                        // Generate recommendations (with or without AI text)
+                        val recommendations = dashboardFollowThroughEngine.generateRecommendations(
+                            transaction = expense.copy(id = expenseId),
+                            aiArtifact = aiArtifact,
+                            userId = DEFAULT_RECOMMENDATION_USER_ID
+                        )
+                        recommendationRepository.saveAll(recommendations)
+                    }
+                } catch (_: Exception) {
+                    // Best-effort only.
+                }
+            }
         } else {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())

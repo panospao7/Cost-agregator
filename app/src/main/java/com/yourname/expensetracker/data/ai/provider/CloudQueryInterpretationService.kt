@@ -16,6 +16,7 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.delay
 
 @Singleton
 class CloudQueryInterpretationService @Inject constructor() : QueryInterpretationService {
@@ -52,25 +53,41 @@ class CloudQueryInterpretationService @Inject constructor() : QueryInterpretatio
             .header("Content-Type", "application/json")
             .build()
 
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Timber.w(
-                        "CloudQueryInterpretationService: HTTP ${response.code} ${response.body?.string()?.take(200)}"
-                    )
-                    return@use unsupported()
-                }
+        val maxRetries = 2
+        repeat(maxRetries) { attempt ->
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        Timber.w(
+                            "CloudQueryInterpretationService: HTTP ${response.code} (attempt ${attempt + 1})"
+                        )
+                        if (response.code in 500..599 && attempt < maxRetries - 1) {
+                            val delayMs = 1000L * (attempt + 1)
+                            Timber.d("CloudQueryInterpretationService: retrying after ${delayMs}ms")
+                            kotlinx.coroutines.delay(delayMs)
+                            return@repeat
+                        }
+                        return@use unsupported()
+                    }
 
-                val body = response.body?.string() ?: return@use unsupported()
-                parseResponse(input, body)
+                    val body = response.body?.string() ?: return@use unsupported()
+                    return@use parseResponse(input, body)
+                }
+            } catch (e: IOException) {
+                Timber.w(e, "CloudQueryInterpretationService: network failure (attempt ${attempt + 1})")
+                if (attempt < maxRetries - 1) {
+                    val delayMs = 1000L * (attempt + 1)
+                    Timber.d("CloudQueryInterpretationService: retrying after ${delayMs}ms")
+                    kotlinx.coroutines.delay(delayMs)
+                } else {
+                    return unsupported("Network error: ${e.message}")
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "CloudQueryInterpretationService: parse failure")
+                return unsupported("Failed to parse response: ${e.message}")
             }
-        } catch (e: IOException) {
-            Timber.w(e, "CloudQueryInterpretationService: network failure")
-            unsupported()
-        } catch (e: Exception) {
-            Timber.w(e, "CloudQueryInterpretationService: parse failure")
-            unsupported()
         }
+        return unsupported()
     }
 
     private fun buildRequestBody(input: FinancialQueryInterpretationInput): String {

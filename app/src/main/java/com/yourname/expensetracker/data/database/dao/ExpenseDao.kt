@@ -10,6 +10,7 @@ import androidx.room.Transaction
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -372,6 +373,20 @@ interface ExpenseDao {
         LIMIT 1
     """)
     suspend fun getLargestExpenseForMerchant(merchantKey: String, startMs: Long, endMs: Long): Expense?
+
+    // Get recent transactions for a merchant (for AI categorization hints)
+    @Transaction
+    @Query("""
+        SELECT e.*, c.name as categoryName 
+        FROM expenses e
+        LEFT JOIN categories c ON e.categoryId = c.id
+        WHERE e.merchantKey = :merchantKey
+        AND e.transactionType = 'PURCHASE'
+        AND e.isNotMine = 0
+        ORDER BY e.date DESC
+        LIMIT :limit
+    """)
+    suspend fun getRecentTransactionsForMerchant(merchantKey: String, limit: Int = 10): List<ExpenseWithCategoryName>
 
     // Daily spending totals for a period (for pace calculation)
     @Query("""

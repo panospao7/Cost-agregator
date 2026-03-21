@@ -6,13 +6,23 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,8 +35,19 @@ class ManualExpenseRepository @Inject constructor(
     private val hybridClassifier: HybridExpenseClassifier,
     private val categorizationEngine: CategorizationEngine,
     private val budgetMonitor: BudgetMonitor,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val aiSettingsRepository: AiSettingsRepository,
+    private val generateTransactionInsightUseCase: GenerateTransactionInsightUseCase,
+    private val dashboardFollowThroughEngine: DashboardFollowThroughEngine,
+    private val recommendationRepository: RecommendationRepository,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
+    private val asyncScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+
+    companion object {
+        // TODO: Replace with actual UserSessionProvider
+        private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
+    }
 
     /**
      * Add a manually entered expense
@@ -59,7 +80,9 @@ class ManualExpenseRepository @Inject constructor(
             return Result.Error(message = "Amount exceeds limit")
         }
 
-        return database.withTransaction {
+        var insertedExpenseForHook: Expense? = null
+
+        val result = database.withTransaction {
             // 1. Normalize merchant name
             val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
             val normalizedMerchant = lookupResult.canonical.normalizedName
@@ -104,6 +127,8 @@ class ManualExpenseRepository @Inject constructor(
                 return@withTransaction Result.Duplicate
             }
 
+            insertedExpenseForHook = expense.copy(id = id)
+
             // 4. Check budgets
             budgetMonitor.checkBudgets()
 
@@ -112,6 +137,33 @@ class ManualExpenseRepository @Inject constructor(
 
             Result.Success(id)
         }
+
+        if (result is Result.Success) {
+            // Non-blocking recommendation generation (fire-and-forget)
+            asyncScope.launch {
+                try {
+                    val aiSettings = aiSettingsRepository.settings().first()
+                    if (aiSettings.aiEnabled) {
+                        val insertedExpense = insertedExpenseForHook ?: return@launch
+                        
+                        // Generate AI insight for the transaction (with 3s timeout)
+                        val aiArtifact = generateTransactionInsightUseCase(insertedExpense)
+                        
+                        // Generate recommendations (with or without AI text)
+                        val recommendations = dashboardFollowThroughEngine.generateRecommendations(
+                            transaction = insertedExpense,
+                            aiArtifact = aiArtifact,
+                            userId = DEFAULT_RECOMMENDATION_USER_ID
+                        )
+                        recommendationRepository.saveAll(recommendations)
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to generate recommendations")
+                }
+            }
+        }
+
+        return result
     }
 
     /**

@@ -41,6 +41,7 @@ import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
+import com.yourname.expensetracker.service.NavigationAction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,10 +49,26 @@ fun HomeScreen(
     onNavigateToReview: () -> Unit,
     onNavigateToRecurring: () -> Unit,
     onNavigateToTransactions: (TransactionFilter) -> Unit,
+    onNavigateToAnalytics: () -> Unit = {},
+    onNavigateToMap: () -> Unit = {},
+    onNavigateToBudgetDetail: (String) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
     val categories by viewModel.categories.collectAsState()
+    val recommendations by viewModel.recommendations.collectAsState()
+
+    LaunchedEffect(viewModel) {
+        viewModel.navigationActions.collect { action ->
+            when (action) {
+                is NavigationAction.ToTransactionList -> onNavigateToTransactions(action.filter)
+                is NavigationAction.ToAnalytics -> onNavigateToAnalytics()
+                is NavigationAction.ToBudgetDetail -> onNavigateToBudgetDetail(action.category)
+                is NavigationAction.ToMap -> onNavigateToMap()
+                NavigationAction.NoOp -> Unit
+            }
+        }
+    }
 
     var showQuickSettings by remember { mutableStateOf(false) }
     var showAiSettings by remember { mutableStateOf(false) }
@@ -113,6 +130,20 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                if (recommendations.isNotEmpty()) {
+                    item(span = { GridItemSpan(2) }) {
+                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            recommendations.forEach { recommendation ->
+                                RecommendationCard(
+                                    recommendation = recommendation,
+                                    onClick = { viewModel.navigateToRecommendation(recommendation) },
+                                    onDismiss = { viewModel.dismissRecommendation(recommendation) }
+                                )
+                            }
+                        }
+                    }
+                }
+
                 items(
                     items = state.widgets,
                     key = { HomeViewModel.getWidgetId(it) },

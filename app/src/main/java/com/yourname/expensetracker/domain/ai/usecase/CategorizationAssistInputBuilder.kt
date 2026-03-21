@@ -4,18 +4,23 @@ import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
+import com.yourname.expensetracker.domain.ai.model.MerchantTransactionHint
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import javax.inject.Inject
 
 class CategorizationAssistInputBuilder @Inject constructor(
     private val categoryRepository: CategoryRepository,
-    private val aiPolicy: AiPolicy
+    private val aiPolicy: AiPolicy,
+    private val expenseRepository: ExpenseRepository,
+    private val merchantNormalizer: MerchantNormalizer
 ) {
 
     suspend fun build(
@@ -25,11 +30,14 @@ class CategorizationAssistInputBuilder @Inject constructor(
         val review = item.review
         val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK)
         val categories = categoryRepository.getAll()
+        val merchant = review.suggestedMerchant.trim().take(120)
+        val merchantKey = merchantNormalizer.normalize(merchant).canonical.searchKey
+        val recentHints = fetchRecentTransactionHints(merchantKey, merchant)
 
         return CategorizationAssistInput(
             targetType = AiTargetType.PENDING_REVIEW,
             targetId = review.id,
-            merchant = review.suggestedMerchant.trim().take(120),
+            merchant = merchant,
             amount = review.suggestedAmount,
             currency = review.suggestedCurrency.take(8),
             transactionType = runCatching {
@@ -40,7 +48,8 @@ class CategorizationAssistInputBuilder @Inject constructor(
             deterministicMatchType = review.matchType?.take(40),
             deterministicExplanation = review.explanation?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS),
             candidateCategories = buildCategoryOptions(categories),
-            supportingText = buildReviewSupportingText(item, shouldRedact)
+            supportingText = buildReviewSupportingText(item, shouldRedact),
+            recentTransactionsWithSameMerchant = recentHints
         )
     }
 
@@ -57,6 +66,8 @@ class CategorizationAssistInputBuilder @Inject constructor(
         val merchant = draftMerchant?.trim()?.takeIf { it.isNotBlank() }
             ?: receipt.parsedMerchant?.trim()?.takeIf { it.isNotBlank() }
             ?: ""
+        val normalizedResult = merchantNormalizer.normalize(merchant)
+        val recentHints = fetchRecentTransactionHints(normalizedResult.canonical.searchKey, merchant)
 
         return CategorizationAssistInput(
             targetType = AiTargetType.SCANNED_RECEIPT,
@@ -70,8 +81,25 @@ class CategorizationAssistInputBuilder @Inject constructor(
             deterministicMatchType = null,
             deterministicExplanation = null,
             candidateCategories = buildCategoryOptions(categories),
-            supportingText = buildReceiptSupportingText(receipt, shouldRedact)
+            supportingText = buildReceiptSupportingText(receipt, shouldRedact),
+            recentTransactionsWithSameMerchant = recentHints
         )
+    }
+
+    private suspend fun fetchRecentTransactionHints(merchantKey: String, merchant: String): List<MerchantTransactionHint> {
+        if (merchantKey.isBlank()) return emptyList()
+        
+        return try {
+            val recentExpenses = expenseRepository.getRecentTransactionsForMerchant(merchantKey, 5)
+            recentExpenses.map { expenseWithCategory ->
+                MerchantTransactionHint(
+                    merchant = expenseWithCategory.expense.merchant ?: merchant,
+                    categoryName = expenseWithCategory.categoryName ?: "Uncategorized"
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     private fun buildReviewSupportingText(

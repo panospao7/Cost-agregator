@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -325,6 +326,10 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun getRecentMerchantNames(): List<String> {
         return expenseDao.getRecentMerchantNames()
+    }
+
+    suspend fun getRecentTransactionsForMerchant(merchantKey: String, limit: Int = 10): List<ExpenseWithCategoryName> {
+        return expenseDao.getRecentTransactionsForMerchant(merchantKey, limit)
     }
 
     suspend fun deleteAllExpenses() = expenseDao.deleteAll()

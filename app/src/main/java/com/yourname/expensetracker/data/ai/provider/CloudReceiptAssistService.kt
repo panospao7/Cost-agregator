@@ -117,15 +117,26 @@ class CloudReceiptAssistService @Inject constructor(
 
     private fun buildPrompt(input: ReceiptAssistInput): String {
         val imageMode = if (usedImageInput(input)) {
-            "Receipt image is attached. Use it to cross-check OCR, especially for Greek characters or confusing glyphs."
+            """
+            |CRITICAL - IMAGE IS SOURCE OF TRUTH:
+            |1. Read merchant name, total amount, date, and tax DIRECTLY from the attached receipt image.
+            |2. The OCR text below may be CORRUPTED or WRONG - especially for Greek receipts.
+            |3. Common Greek OCR errors to watch for:
+            |   - ά→α, έ→ε, ή→η, ό→ο, ύ→υ, ώ→ω (Greek accents often lost)
+            |   - ΐ→ί, ΰ→ύ (dieresis marks confused)
+            |   - Numbers: 3→8, 1→7, 5→6, 0→8, 2→ζ
+            |   - Greek-Latin mix: μ→u, α→a, ο→o, κ→k, ε→e, ν→v
+            |4. If the image shows a DIFFERENT value than OCR, TRUST THE IMAGE.
+            |5. Do NOT let OCR text anchor you to wrong values.
+            """.trimMargin()
         } else {
-            "No receipt image is attached. Use only OCR text and parsed fields."
+            "No receipt image available. Use OCR text only - be extra careful with Greek characters."
         }
         return """
-            You are helping recover missing receipt fields from receipt OCR in a finance app.
-            Use the attached image when available and cross-check it with the OCR text and parsed receipt values.
+            You are an expert at reading Greek and European receipts.
+            $imageMode
+
             Stay conservative.
-            Do not invent values when uncertain.
             Return compact JSON only.
 
             JSON schema:
@@ -139,14 +150,11 @@ class CloudReceiptAssistService @Inject constructor(
 
             Rules:
             - Prefer null over guessing.
-            - Only provide a Unix epoch milliseconds date if the date is reasonably supported.
+            - Only provide date if clearly readable on the image.
             - Keep notes short.
-            - If the image and OCR disagree, prefer the image only when it is clearly more legible.
+            - When image and OCR disagree, THE IMAGE IS CORRECT.
 
-            Image guidance:
-            - $imageMode
-
-            Receipt facts:
+            Receipt facts (OCR - may be corrupted, especially for Greek characters):
             - currency: ${input.currency}
             - parsedMerchant: ${input.parsedMerchant ?: "none"}
             - parsedTotal: ${input.parsedTotal?.toString() ?: "none"}

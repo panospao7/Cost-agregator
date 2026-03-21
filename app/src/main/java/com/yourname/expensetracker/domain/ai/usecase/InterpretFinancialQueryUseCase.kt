@@ -49,7 +49,16 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
         return when (providerResult) {
             is FinancialQueryInterpretationResult.Structured -> providerResult
-            is FinancialQueryInterpretationResult.Clarification -> providerResult
+            is FinancialQueryInterpretationResult.Clarification -> {
+                // If provider returns another clarification, try local fallback as safety net
+                val fallbackResult = localFallbackInterpret(input.rawQuery, input.currentTimeMs)
+                // Only use fallback if it produces a structured result
+                if (fallbackResult is FinancialQueryInterpretationResult.Structured) {
+                    fallbackResult
+                } else {
+                    providerResult
+                }
+            }
             is FinancialQueryInterpretationResult.Unsupported ->
                 localFallbackInterpret(input.rawQuery, input.currentTimeMs)
         }
@@ -68,6 +77,39 @@ class InterpretFinancialQueryUseCase @Inject constructor(
                     "Top merchants this month",
                     "Largest purchase this month",
                     "Show groceries this month"
+                )
+            )
+        }
+
+        when {
+            normalized == "this month" || normalized == "this month only" || normalized.contains("for this month") -> return FinancialQueryInterpretationResult.Structured(
+                FinancialQueryIntent(
+                    rawQuery = rawQuery,
+                    normalizedQuery = normalized,
+                    filters = ExpenseQueryFilters(period = PeriodRange(TimePeriodUtils.getStartOfMonth(now), TimePeriodUtils.getEndOfMonth(now))),
+                    metric = QueryMetric.TOTAL,
+                    grouping = QueryGrouping.NONE,
+                    comparison = QueryComparison.NONE
+                )
+            )
+            normalized == "last month" || normalized == "previous month" || normalized.contains("for last month") || normalized.contains("last month") -> return FinancialQueryInterpretationResult.Structured(
+                FinancialQueryIntent(
+                    rawQuery = rawQuery,
+                    normalizedQuery = normalized,
+                    filters = ExpenseQueryFilters(period = PeriodRange(TimePeriodUtils.getStartOfMonth(java.util.Calendar.getInstance().apply { timeInMillis = now; add(java.util.Calendar.MONTH, -1) }.timeInMillis), TimePeriodUtils.getEndOfMonth(java.util.Calendar.getInstance().apply { timeInMillis = now; add(java.util.Calendar.MONTH, -1) }.timeInMillis))),
+                    metric = QueryMetric.TOTAL,
+                    grouping = QueryGrouping.NONE,
+                    comparison = QueryComparison.NONE
+                )
+            )
+            normalized == "this week" || normalized == "current week" || normalized.contains("this week") && !normalized.contains("last") -> return FinancialQueryInterpretationResult.Structured(
+                FinancialQueryIntent(
+                    rawQuery = rawQuery,
+                    normalizedQuery = normalized,
+                    filters = ExpenseQueryFilters(period = PeriodRange(TimePeriodUtils.getStartOfDay(java.util.Calendar.getInstance().apply { timeInMillis = now; add(java.util.Calendar.DAY_OF_MONTH, -7) }.timeInMillis), now)),
+                    metric = QueryMetric.TOTAL,
+                    grouping = QueryGrouping.NONE,
+                    comparison = QueryComparison.NONE
                 )
             )
         }

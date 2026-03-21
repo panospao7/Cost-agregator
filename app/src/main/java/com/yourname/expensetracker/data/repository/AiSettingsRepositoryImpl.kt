@@ -85,7 +85,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
     // -------------------------------------------------------------------------
 
     private fun Preferences.toAiSettings(): AiSettings = AiSettings(
-        aiEnabled                 = this[Keys.AI_ENABLED]                 ?: false,
+        aiEnabled                 = this[Keys.AI_ENABLED]                 ?: true,
         allowCloudAi              = this[Keys.ALLOW_CLOUD_AI]             ?: false,
         allowOnDeviceAi           = this[Keys.ALLOW_ON_DEVICE_AI]         ?: true,
         assistantEnabled          = this[Keys.ASSISTANT_ENABLED]          ?: false,

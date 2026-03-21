@@ -85,4 +85,8 @@ object DaoModule {
     @Provides
     @Singleton
     fun provideMerchantLocationDao(database: AppDatabase): MerchantLocationDao = database.merchantLocationDao()
+
+    @Provides
+    @Singleton
+    fun provideRecommendationDao(database: AppDatabase): RecommendationDao = database.recommendationDao()
 }

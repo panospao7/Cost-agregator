@@ -55,6 +55,11 @@ sealed interface ReceiptAssistGenerationResult {
     data class Error(val reason: String) : ReceiptAssistGenerationResult
 }
 
+data class MerchantTransactionHint(
+    val merchant: String,
+    val categoryName: String
+)
+
 data class CategorizationAssistInput(
     val targetType: AiTargetType,
     val targetId: Long,
@@ -67,7 +72,8 @@ data class CategorizationAssistInput(
     val deterministicMatchType: String?,
     val deterministicExplanation: String?,
     val candidateCategories: List<CategoryOption>,
-    val supportingText: String? = null
+    val supportingText: String? = null,
+    val recentTransactionsWithSameMerchant: List<MerchantTransactionHint> = emptyList()
 )
 
 data class CategoryAssistSuggestion(
@@ -135,8 +141,17 @@ sealed interface DedupeJudgeGenerationResult {
 }
 
 data class ReviewCaptureAssistState(
+    val receiptSuggestion: AiLoadState<ReceiptAssistSuggestion> = AiLoadState.Idle,
+    val receiptDiagnostics: String? = null,
+    val receiptMessage: String? = null,
     val categorySuggestion: AiLoadState<CategoryAssistSuggestion> = AiLoadState.Idle,
     val categoryDiagnostics: String? = null,
     val dedupeSuggestion: AiLoadState<DedupeJudgeSuggestion> = AiLoadState.Idle,
     val dedupeDiagnostics: String? = null
+)
+
+data class ReviewReceiptPrefill(
+    val merchant: String? = null,
+    val amount: Double? = null,
+    val date: Long? = null
 )

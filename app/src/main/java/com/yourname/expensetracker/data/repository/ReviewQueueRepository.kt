@@ -56,6 +56,7 @@ class ReviewQueueRepository @Inject constructor(
         finalAmount: Double? = null,
         finalMerchant: String? = null,
         finalCategoryId: Long? = null,
+        finalDate: Long? = null,
         finalType: TransactionType? = null,
         finalLatitude: Double? = null,
         finalLongitude: Double? = null,
@@ -83,7 +84,7 @@ class ReviewQueueRepository @Inject constructor(
         }
 
         val notification = review.rawNotificationId?.let { rawNotificationDao.getById(it) }
-        val transactionDate: Long = review.suggestedDate ?: notification?.timestamp ?: review.createdAt
+        val transactionDate: Long = finalDate ?: review.suggestedDate ?: notification?.timestamp ?: review.createdAt
 
         val expense = Expense(
             amount = amount,

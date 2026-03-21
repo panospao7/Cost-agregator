@@ -93,11 +93,28 @@ class CloudCategorizationAssistService @Inject constructor() : CategorizationAss
 
     private fun buildPrompt(input: CategorizationAssistInput): String {
         val categories = input.candidateCategories.joinToString("\n") { "- ${it.id}: ${it.name}" }
+        val merchantContext = buildMerchantContext(input)
+        
         return """
             You are helping categorize a pending finance review.
             Choose only from the provided category list.
             Never invent a new category.
-            Prefer the best supported category.
+            Use COMMON SENSE to identify merchants from abbreviations or OCR errors.
+            
+            IMPORTANT - Merchant Identification:
+            - "amzn", "amzn uk", "amazon", "amazon uk" → Amazon (Online Shopping/Electronics)
+            - "goog", "google", "g.co" → Google (Subscriptions/Services)
+            - "msft", "microsoft", "xbox" → Microsoft (Subscriptions/Software)
+            - "netflix", "nfx" → Netflix (Subscriptions/Entertainment)
+            - "spotify", "sptfy" → Spotify (Subscriptions/Music)
+            - "fb", "facebook", "meta" → Meta/Facebook (Subscriptions/Social)
+            - "appl", "apple", "itunes", "appstore" → Apple (Subscriptions/Technology)
+            - "etsy" → Etsy (Shopping)
+            - "airbnb" → Airbnb (Travel/Accommodation)
+            - "uber", "lyft" → Ride Share (Transportation)
+            - "deliv", "doordash", "grubhub" → Food Delivery (Food & Dining)
+            $merchantContext
+            
             Return JSON only.
 
             JSON schema:
@@ -105,7 +122,7 @@ class CloudCategorizationAssistService @Inject constructor() : CategorizationAss
               "categoryId": 0,
               "categoryName": "string",
               "confidence": 0.0,
-              "rationale": "short explanation",
+              "rationale": "short explanation of your reasoning",
               "alternativeCategoryIds": [0]
             }
 
@@ -122,6 +139,23 @@ class CloudCategorizationAssistService @Inject constructor() : CategorizationAss
             Allowed categories:
             $categories
         """.trimIndent()
+    }
+    
+    private fun buildMerchantContext(input: CategorizationAssistInput): String {
+        val parts = mutableListOf<String>()
+        
+        if (input.recentTransactionsWithSameMerchant.isNotEmpty()) {
+            val examples = input.recentTransactionsWithSameMerchant
+                .take(5)
+                .joinToString("; ") { "${it.merchant} → ${it.categoryName}" }
+            parts.add("Known merchant history: $examples")
+        }
+        
+        return if (parts.isNotEmpty()) {
+            "\nContext:\n" + parts.joinToString("\n")
+        } else {
+            ""
+        }
     }
 
     private fun parseResponse(body: String): CategoryAssistSuggestion? {

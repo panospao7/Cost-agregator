@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.config.AppConfig
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -43,7 +44,12 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
         return try {
             val model = getOrCreateModel()
             val request = buildRequest(input)
-            val response = model.generateContent(request)
+            val response = withTimeoutOrNull(AppConfig.Ai.ON_DEVICE_QUERY_TIMEOUT_MS) {
+                model.generateContent(request)
+            } ?: run {
+                Timber.w("OnDeviceQueryInterpretationService: timeout after ${AppConfig.Ai.ON_DEVICE_QUERY_TIMEOUT_MS}ms")
+                return unsupported("Query interpretation timed out")
+            }
             val text = response.candidates.firstOrNull()?.text ?: return unsupported()
             parseResponse(input, text) ?: unsupported()
         } catch (e: GenAiException) {
@@ -64,7 +70,7 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
     }
 
     internal fun buildPrompt(input: FinancialQueryInterpretationInput): String {
-        val history = input.conversationHistory.takeLast(4).joinToString("\n") { message ->
+        val history = input.conversationHistory.takeLast(8).joinToString("\n") { message ->
             "- ${message.role.name}: ${message.text}"
         }.ifBlank { "none" }
 
@@ -136,9 +142,8 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
         )
     }
 
-    private fun unsupported() = FinancialQueryInterpretationResult.Unsupported(
-        "Query interpretation provider unavailable"
-    )
+    private fun unsupported(reason: String = "Query interpretation provider unavailable") = 
+        FinancialQueryInterpretationResult.Unsupported(reason)
 
     private fun extractFirstJsonObject(text: String): String? {
         val start = text.indexOf('{')

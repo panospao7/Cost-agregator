@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.DeleteSweep
@@ -44,12 +45,19 @@ fun AssistantSheet(
     viewModel: AssistantViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.navigationEvents.collect { event ->
             when (event) {
                 is AssistantNavigationEvent.OpenTransactions -> onOpenTransactions(event.filter)
             }
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(uiState.messages.size) {
+        if (uiState.messages.isNotEmpty()) {
+            listState.animateScrollToItem(uiState.messages.size - 1)
         }
     }
 
@@ -110,6 +118,7 @@ fun AssistantSheet(
                 }
 
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f, fill = false),
@@ -141,7 +150,7 @@ fun AssistantSheet(
                                     onOpenTransactions = {
                                         item.drilldownFilter?.let(viewModel::openDrilldown)
                                     },
-                                    onClarificationSelected = viewModel::onSuggestionSelected
+                                    onClarificationSelected = viewModel::onClarificationSelected
                                 )
                             }
                             is AssistantConversationItem.Error -> {

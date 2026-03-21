@@ -416,7 +416,7 @@ private fun ReviewStep(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedButton(onClick = { viewModel.requestReceiptAssist() }) {
+                        OutlinedButton(onClick = { viewModel.requestReceiptAssist(force = true) }) {
                             Text("Try AI assist")
                         }
                     }

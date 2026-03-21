@@ -34,11 +34,14 @@ import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
 import com.yourname.expensetracker.domain.ai.model.ReviewCaptureAssistState
+import com.yourname.expensetracker.domain.ai.model.ReviewReceiptPrefill
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.AmountText
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.ai.CategoryAssistCard
 import com.yourname.expensetracker.ui.components.ai.DedupeAssistCard
+import com.yourname.expensetracker.ui.components.ai.ReceiptAssistCard
+import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
@@ -67,6 +70,7 @@ fun ReviewScreen(
     val quickApprovePreview by viewModel.quickApprovePreview.collectAsState()
     val reviewQuickApproveEnabled by viewModel.reviewQuickApproveEnabled.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
+    var editingReviewReceipt by remember { mutableStateOf<PendingReviewWithReceipt?>(null) }
     var debugReview by remember { mutableStateOf<PendingReview?>(null) }
     // Guard against double-swipes/rapid-fire actions
     val processingIds = remember { mutableStateListOf<Long>() }
@@ -307,7 +311,10 @@ fun ReviewScreen(
                                 categories = categories,
                                 onApprove = { viewModel.approveReview(item.review.id) },
                                 onReject = { viewModel.rejectReview(item.review.id) },
-                                onEdit = { editingReview = item.review },
+                                onEdit = {
+                                    editingReview = item.review
+                                    editingReviewReceipt = item
+                                },
                                 onDebug = {
                                     item.receipt?.let { receipt ->
                                         coroutineScope.launch {
@@ -334,6 +341,15 @@ fun ReviewScreen(
                                 onApplyCategoryAssist = {
                                     viewModel.applyCategorySuggestion(item.review.id)
                                     editingReview = item.review
+                                    editingReviewReceipt = item
+                                },
+                                onLoadReceiptAssist = {
+                                    viewModel.requestReceiptAssist(item.review.id, force = true)
+                                },
+                                onApplyReceiptAssist = {
+                                    viewModel.applyReceiptSuggestion(item.review.id)
+                                    editingReview = item.review
+                                    editingReviewReceipt = item
                                 },
                                 reviewQuickApproveEnabled = reviewQuickApproveEnabled,
                                 canQuickApprove = viewModel.canOfferQuickApprove(item.review.id),
@@ -342,6 +358,9 @@ fun ReviewScreen(
                                 },
                                 onDismissCategoryAssist = {
                                     viewModel.dismissCategoryAssist(item.review.id)
+                                },
+                                onDismissReceiptAssist = {
+                                    viewModel.dismissReceiptAssist(item.review.id)
                                 },
                                 onLoadDedupeAssist = {
                                     viewModel.requestDedupeAssist(item.review.id)
@@ -357,16 +376,22 @@ fun ReviewScreen(
         }
 
         editingReview?.let { review ->
+            val prefilledReceipt = viewModel.consumePrefilledReceiptSuggestion(review.id)
             EditReviewDialog(
                 review = review,
+                receipt = editingReviewReceipt?.receipt,
                 categories = categories,
-                onDismiss = { editingReview = null },
-                onSave = { amount, merchant, categoryId, type, applyToAll, approveAllPending, lat, lon, address, osmId ->
+                onDismiss = {
+                    editingReview = null
+                    editingReviewReceipt = null
+                },
+                onSave = { amount, merchant, categoryId, date, type, applyToAll, approveAllPending, lat, lon, address, osmId ->
                     viewModel.approveReviewWithEdits(
                         reviewId = review.id,
                         finalAmount = amount,
                         finalMerchant = merchant,
                         finalCategoryId = categoryId,
+                        finalDate = date,
                         finalType = type,
                         applyToAll = applyToAll,
                         approveAllPending = approveAllPending,
@@ -375,8 +400,10 @@ fun ReviewScreen(
                         finalAddress = address
                     )
                     editingReview = null
+                    editingReviewReceipt = null
                 },
                 initialCategoryIdOverride = viewModel.consumePrefilledCategorySuggestion(review.id),
+                initialReceiptPrefill = prefilledReceipt,
                 geocodingService = viewModel.geocodingService
             )
         }
@@ -538,10 +565,13 @@ fun ReviewCard(
     onLoadAiExplanation: () -> Unit = {},
     onLoadCategoryAssist: () -> Unit = {},
     onApplyCategoryAssist: () -> Unit = {},
+    onLoadReceiptAssist: () -> Unit = {},
+    onApplyReceiptAssist: () -> Unit = {},
     reviewQuickApproveEnabled: Boolean = false,
     canQuickApprove: Boolean = false,
     onRequestQuickApprove: () -> Unit = {},
     onDismissCategoryAssist: () -> Unit = {},
+    onDismissReceiptAssist: () -> Unit = {},
     onLoadDedupeAssist: () -> Unit = {},
     onDismissDedupeAssist: () -> Unit = {}
 ) {
@@ -777,7 +807,10 @@ fun ReviewCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             ReviewCaptureAssistSection(
+                item = item,
                 state = captureAssistState,
+                onRequestReceiptAssist = onLoadReceiptAssist,
+                onApplyReceiptAssist = onApplyReceiptAssist,
                 onRequestCategoryAssist = onLoadCategoryAssist,
                 onApplyCategoryAssist = onApplyCategoryAssist,
                 reviewQuickApproveEnabled = reviewQuickApproveEnabled,
@@ -785,6 +818,7 @@ fun ReviewCard(
                 onRequestQuickApprove = onRequestQuickApprove,
                 quickApproveBlockedByDuplicate = quickApproveBlockedByDuplicate,
                 onDismissCategoryAssist = onDismissCategoryAssist,
+                onDismissReceiptAssist = onDismissReceiptAssist,
                 onRequestDedupeAssist = onLoadDedupeAssist,
                 onDismissDedupeAssist = onDismissDedupeAssist
             )
@@ -1007,7 +1041,10 @@ private fun AiExplanationSection(
 
 @Composable
 private fun ReviewCaptureAssistSection(
+    item: PendingReviewWithReceipt,
     state: ReviewCaptureAssistState,
+    onRequestReceiptAssist: () -> Unit,
+    onApplyReceiptAssist: () -> Unit,
     onRequestCategoryAssist: () -> Unit,
     onApplyCategoryAssist: () -> Unit,
     reviewQuickApproveEnabled: Boolean,
@@ -1015,10 +1052,50 @@ private fun ReviewCaptureAssistSection(
     onRequestQuickApprove: () -> Unit,
     quickApproveBlockedByDuplicate: Boolean,
     onDismissCategoryAssist: () -> Unit,
+    onDismissReceiptAssist: () -> Unit,
     onRequestDedupeAssist: () -> Unit,
     onDismissDedupeAssist: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (item.receipt != null) {
+            when (val receiptState = state.receiptSuggestion) {
+                is AiLoadState.Idle, is AiLoadState.Disabled -> {
+                    OutlinedButton(onClick = onRequestReceiptAssist, modifier = Modifier.fillMaxWidth()) {
+                        Text("Try AI receipt assist")
+                    }
+                    state.receiptMessage?.let { message ->
+                        AssistInfoRow(message = message)
+                    }
+                }
+                is AiLoadState.Loading -> {
+                    AssistLoadingRow("Reviewing receipt OCR and photo...")
+                }
+                is AiLoadState.Ready -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ReceiptAssistCard(
+                            suggestion = receiptState.value,
+                            diagnostics = state.receiptDiagnostics,
+                            onApplyMerchant = onApplyReceiptAssist,
+                            onApplyTotal = onApplyReceiptAssist,
+                            onApplyDate = onApplyReceiptAssist,
+                            onApplyAll = onApplyReceiptAssist,
+                            onDismiss = onDismissReceiptAssist
+                        )
+                        state.receiptMessage?.let { message ->
+                            AssistInfoRow(message = message)
+                        }
+                    }
+                }
+                is AiLoadState.Error -> {
+                    AssistErrorRow(
+                        message = receiptState.message,
+                        diagnostics = state.receiptDiagnostics,
+                        onRetry = onRequestReceiptAssist
+                    )
+                }
+            }
+        }
+
         when (val categoryState = state.categorySuggestion) {
             is AiLoadState.Idle -> {
                 OutlinedButton(onClick = onRequestCategoryAssist, modifier = Modifier.fillMaxWidth()) {
@@ -1196,14 +1273,19 @@ private fun AssistErrorRow(
 @Composable
 fun EditReviewDialog(
     review: PendingReview,
+    receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt? = null,
     categories: List<Category>,
     onDismiss: () -> Unit,
-    onSave: (Double?, String?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?, String?) -> Unit,
+    onSave: (Double?, String?, Long?, Long?, TransactionType?, Boolean, Boolean, Double?, Double?, String?, String?) -> Unit,
     initialCategoryIdOverride: Long? = null,
+    initialReceiptPrefill: ReviewReceiptPrefill? = null,
     geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) {
-    var amount by remember { mutableStateOf(String.format("%.2f", review.suggestedAmount)) }
-    var merchant by remember { mutableStateOf(review.suggestedMerchant) }
+    var amount by remember {
+        mutableStateOf(String.format("%.2f", initialReceiptPrefill?.amount ?: review.suggestedAmount))
+    }
+    var merchant by remember { mutableStateOf(initialReceiptPrefill?.merchant ?: review.suggestedMerchant) }
+    var selectedDateMs by remember { mutableStateOf(initialReceiptPrefill?.date ?: review.suggestedDate ?: review.createdAt) }
     var selectedCategoryId by remember { mutableStateOf(initialCategoryIdOverride ?: review.suggestedCategoryId) }
     var selectedType by remember { 
         mutableStateOf(
@@ -1313,6 +1395,26 @@ fun EditReviewDialog(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
             )
+
+            DateSelector(
+                dateMs = selectedDateMs,
+                onDateSelected = { selectedDateMs = it }
+            )
+
+            if (initialReceiptPrefill != null || receipt != null) {
+                val aiHints = buildList {
+                    if (initialReceiptPrefill?.merchant != null) add("merchant")
+                    if (initialReceiptPrefill?.amount != null) add("amount")
+                    if (initialReceiptPrefill?.date != null) add("date")
+                }
+                AssistInfoRow(
+                    message = if (aiHints.isNotEmpty()) {
+                        "AI prefilled ${aiHints.joinToString(", ")} from this receipt. Review before approving."
+                    } else {
+                        "This review has a linked scanned receipt, so AI receipt assist can help prefill edits."
+                    }
+                )
+            }
 
             Text(
                 "Assign Category",
@@ -1475,7 +1577,8 @@ fun EditReviewDialog(
                             try { TransactionType.valueOf(review.suggestedType) != it }
                             catch (e: Exception) { true }
                         }
-                        onSave(editedAmount, editedMerchant, editedCategory, editedType, applyToAll, approveAllPending,
+                        val editedDate = selectedDateMs.takeIf { it != (review.suggestedDate ?: review.createdAt) }
+                        onSave(editedAmount, editedMerchant, editedCategory, editedDate, editedType, applyToAll, approveAllPending,
                             locationLat.takeIf { it != review.suggestedLatitude },
                             locationLon.takeIf { it != review.suggestedLongitude },
                             locationAddress.takeIf { locationLat != review.suggestedLatitude || locationLon != review.suggestedLongitude },

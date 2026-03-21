@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.ExplainPendingReviewUseCase
 import com.yourname.expensetracker.domain.ai.usecase.JudgePendingReviewDuplicateUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
+import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.model.Result
@@ -63,6 +64,7 @@ class ReviewViewModelStressTest {
     private lateinit var geocodingService: GeocodingService
     private lateinit var explainPendingReviewUseCase: ExplainPendingReviewUseCase
     private lateinit var suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase
+    private lateinit var suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase
     private lateinit var judgePendingReviewDuplicateUseCase: JudgePendingReviewDuplicateUseCase
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var aiSettingsRepository: AiSettingsRepository
@@ -82,6 +84,7 @@ class ReviewViewModelStressTest {
         geocodingService = mockk(relaxed = true)
         explainPendingReviewUseCase = mockk(relaxed = true)
         suggestCategoryFallbackUseCase = mockk(relaxed = true)
+        suggestReceiptExtractionUseCase = mockk(relaxed = true)
         judgePendingReviewDuplicateUseCase = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
@@ -104,6 +107,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -319,6 +323,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -374,6 +379,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -409,6 +415,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -442,6 +449,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -488,6 +496,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -560,6 +569,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -619,6 +629,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -685,6 +696,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -744,6 +756,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -780,6 +793,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -837,6 +851,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -911,6 +926,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -1009,6 +1025,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
@@ -1059,6 +1076,7 @@ class ReviewViewModelStressTest {
             geocodingService,
             explainPendingReviewUseCase,
             suggestCategoryFallbackUseCase,
+            suggestReceiptExtractionUseCase,
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
