@@ -16,9 +16,19 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,6 +37,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -121,20 +133,26 @@ fun ReceiptScanScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        viewModel.reset()
-                        onDismiss()
-                    }) {
-                        Icon(Icons.Default.Close, "Close")
+                    IconButton(
+                        onClick = {
+                            viewModel.reset()
+                            onDismiss()
+                        },
+                        modifier = Modifier.semantics { contentDescription = "Close receipt scanner" }
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null)
                     }
                 },
                 actions = {
                     // Debug button (only show in review/error steps)
                     if ((state.step == ScanStep.REVIEW || state.step == ScanStep.ERROR) && state.debugData != null) {
-                        IconButton(onClick = { showDebugViewer = true }) {
+                        IconButton(
+                            onClick = { showDebugViewer = true },
+                            modifier = Modifier.semantics { contentDescription = "View debug information" }
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.BugReport,
-                                contentDescription = "Debug Info"
+                                contentDescription = null
                             )
                         }
                     }
@@ -223,9 +241,15 @@ private fun CaptureStep(
             } else {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.semantics { contentDescription = "No receipt image selected. Take a photo or select from gallery to begin." }
                 ) {
-                    Text("🧾", fontSize = 64.sp)
+                    Icon(
+                        imageVector = Icons.Default.ReceiptLong,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         "Take a photo or select from gallery",
@@ -246,17 +270,33 @@ private fun CaptureStep(
     ) {
         Button(
             onClick = onCameraClick,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .semantics { contentDescription = "Take photo with camera" },
             shape = RoundedCornerShape(12.dp)
         ) {
-            Text("📷 Camera")
+            Icon(
+                imageVector = Icons.Default.CameraAlt,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Camera")
         }
         OutlinedButton(
             onClick = onGalleryClick,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .semantics { contentDescription = "Select image from gallery" },
             shape = RoundedCornerShape(12.dp)
         ) {
-            Text("🖼️ Gallery")
+            Icon(
+                imageVector = Icons.Default.PhotoLibrary,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Gallery")
         }
     }
 
@@ -270,11 +310,20 @@ private fun CaptureStep(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "📌 Tips for best results:",
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.labelLarge
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Lightbulb,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    "Tips for best results:",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
             Spacer(modifier = Modifier.height(4.dp))
             Text("• Place receipt on a flat, dark surface", style = MaterialTheme.typography.bodySmall)
             Text("• Ensure good lighting with no shadows", style = MaterialTheme.typography.bodySmall)
@@ -288,7 +337,9 @@ private fun CaptureStep(
 private fun ProcessingStep() {
     Spacer(modifier = Modifier.height(80.dp))
     CircularProgressIndicator(
-        modifier = Modifier.size(64.dp),
+        modifier = Modifier
+            .size(64.dp)
+            .semantics { contentDescription = "Processing receipt, please wait" },
         strokeWidth = 4.dp
     )
     Spacer(modifier = Modifier.height(24.dp))
@@ -642,7 +693,9 @@ private fun ReviewStep(
         label = { Text("Merchant") },
         placeholder = { Text("Store name") },
         singleLine = true,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "Merchant name input field" }
     )
 
     Spacer(modifier = Modifier.height(12.dp))
@@ -657,7 +710,9 @@ private fun ReviewStep(
         },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "Total amount input field" }
     )
 
     Spacer(modifier = Modifier.height(12.dp))
@@ -682,16 +737,20 @@ private fun ReviewStep(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         PaymentMethodChip(
-            label = "💳 Card",
+            label = "Card",
             selected = state.paymentMethod == PaymentMethod.CARD,
             onClick = { viewModel.selectPaymentMethod(PaymentMethod.CARD) },
-            modifier = Modifier.weight(1f)
+            modifier = Modifier
+                .weight(1f)
+                .semantics { contentDescription = "Card payment method, ${if (state.paymentMethod == PaymentMethod.CARD) "selected" else "not selected"}" }
         )
         PaymentMethodChip(
-            label = "💵 Cash",
+            label = "Cash",
             selected = state.paymentMethod == PaymentMethod.CASH,
             onClick = { viewModel.selectPaymentMethod(PaymentMethod.CASH) },
-            modifier = Modifier.weight(1f)
+            modifier = Modifier
+                .weight(1f)
+                .semantics { contentDescription = "Cash payment method, ${if (state.paymentMethod == PaymentMethod.CASH) "selected" else "not selected"}" }
         )
     }
 
@@ -756,9 +815,16 @@ private fun ReviewStep(
                         )
                     } else {
                         TextButton(
-                            onClick = { viewModel.analyzeReceiptItems() }
+                            onClick = { viewModel.analyzeReceiptItems() },
+                            modifier = Modifier.semantics { contentDescription = "Analyze receipt items with AI" }
                         ) {
-                            Text("🔍 Analyze")
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Analyze")
                         }
                     }
                 }
@@ -822,7 +888,9 @@ private fun ReviewStep(
         value = state.notes,
         onValueChange = { viewModel.updateNotes(it) },
         label = { Text("Notes (optional)") },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "Optional notes input field" },
         minLines = 1,
         maxLines = 3
     )
@@ -877,12 +945,22 @@ private fun ReviewStep(
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                "⚠️ $error",
+            Row(
                 modifier = Modifier.padding(12.dp),
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                style = MaterialTheme.typography.bodySmall
-            )
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    error,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
     }
 
@@ -895,11 +973,21 @@ private fun ReviewStep(
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    "⚠️ A similar transaction already exists",
+                Row(
                     modifier = Modifier.padding(12.dp),
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "A similar transaction already exists",
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
             }
         }
         is SaveReceiptResult.Error -> {
@@ -910,11 +998,21 @@ private fun ReviewStep(
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    "❌ ${(state.saveResult as SaveReceiptResult.Error).message}",
+                Row(
                     modifier = Modifier.padding(12.dp),
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Error,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        (state.saveResult as SaveReceiptResult.Error).message,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
             }
         }
         else -> {}
@@ -927,7 +1025,8 @@ private fun ReviewStep(
             onClick = viewModel::requestReceiptQuickSaveConfirmation,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp),
+                .height(52.dp)
+                .semantics { contentDescription = "Quick save expense using AI to fill missing fields" },
             enabled = !state.isSaving,
             shape = RoundedCornerShape(12.dp)
         ) {
@@ -969,7 +1068,8 @@ private fun ReviewStep(
         onClick = { viewModel.saveExpense() },
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp),
+            .height(52.dp)
+            .semantics { contentDescription = "Save expense to database" },
         enabled = !state.isSaving,
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -980,7 +1080,13 @@ private fun ReviewStep(
                 strokeWidth = 2.dp
             )
         } else {
-            Text("💾 Save Expense", fontSize = 16.sp)
+            Icon(
+                imageVector = Icons.Default.Save,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Save Expense", fontSize = 16.sp)
         }
     }
 
@@ -1022,7 +1128,12 @@ private fun ConfidenceIndicator(confidence: Float) {
 @Composable
 private fun DoneStep() {
     Spacer(modifier = Modifier.height(80.dp))
-    Text("✅", fontSize = 72.sp)
+    Icon(
+        imageVector = Icons.Default.CheckCircle,
+        contentDescription = "Success",
+        modifier = Modifier.size(72.dp),
+        tint = MaterialTheme.colorScheme.primary
+    )
     Spacer(modifier = Modifier.height(16.dp))
     Text(
         "Expense saved!",
@@ -1043,7 +1154,12 @@ private fun ErrorStep(
     onRetry: () -> Unit
 ) {
     Spacer(modifier = Modifier.height(80.dp))
-    Text("❌", fontSize = 64.sp)
+    Icon(
+        imageVector = Icons.Default.Error,
+        contentDescription = "Error",
+        modifier = Modifier.size(64.dp),
+        tint = MaterialTheme.colorScheme.error
+    )
     Spacer(modifier = Modifier.height(16.dp))
     Text(
         "Something went wrong",
@@ -1059,8 +1175,15 @@ private fun ErrorStep(
     Spacer(modifier = Modifier.height(24.dp))
     Button(
         onClick = onRetry,
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.semantics { contentDescription = "Retry receipt processing" }
     ) {
-        Text("🔄 Try Again")
+        Icon(
+            imageVector = Icons.Default.Refresh,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("Try Again")
     }
 }
