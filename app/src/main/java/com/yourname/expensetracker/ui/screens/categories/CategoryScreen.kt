@@ -13,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
@@ -38,8 +40,11 @@ fun CategoryScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showAddDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = "Add Category")
+            FloatingActionButton(
+                onClick = { showAddDialog = true },
+                modifier = Modifier.semantics { contentDescription = "Add new category" }
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
             }
         }
     ) { padding ->
@@ -69,8 +74,24 @@ fun CategoryScreen(
 
 @Composable
 fun CategoryItem(category: Category) {
+    val color = remember(category.color) {
+        try {
+            Color(android.graphics.Color.parseColor(category.color))
+        } catch (e: Exception) {
+            Color.Gray
+        }
+    }
+    
+    val cardDescription = buildString {
+        append("${category.name} category")
+        if (category.isDefault) {
+            append(", Default category")
+        }
+    }
+
     Card(
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier = Modifier.semantics { contentDescription = cardDescription }
     ) {
         Row(
             modifier = Modifier
@@ -78,26 +99,28 @@ fun CategoryItem(category: Category) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val color = remember(category.color) {
-                try {
-                    Color(android.graphics.Color.parseColor(category.color))
-                } catch (e: Exception) {
-                    Color.Gray
-                }
-            }
             Box(
                 modifier = Modifier
                     .size(40.dp)
                     .background(color, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(category.icon, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    category.icon,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.semantics { contentDescription = "${category.name} icon" }
+                )
             }
             Spacer(modifier = Modifier.width(16.dp))
             Text(category.name, style = MaterialTheme.typography.bodyLarge)
             if (category.isDefault) {
                 Spacer(modifier = Modifier.weight(1f))
-                Text("Default", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                Text(
+                    "Default",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.Gray,
+                    modifier = Modifier.semantics { contentDescription = "Default category" }
+                )
             }
         }
     }
