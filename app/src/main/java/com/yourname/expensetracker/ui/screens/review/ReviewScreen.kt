@@ -16,13 +16,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -41,6 +45,7 @@ import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.ai.CategoryAssistCard
 import com.yourname.expensetracker.ui.components.ai.DedupeAssistCard
 import com.yourname.expensetracker.ui.components.ai.ReceiptAssistCard
+import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.HapticType
@@ -52,8 +57,6 @@ import java.util.*
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import coil.compose.AsyncImage
 import java.io.File
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.draw.clip
 import com.yourname.expensetracker.ui.screens.debug.DebugViewerScreen
 import com.yourname.expensetracker.domain.util.AmountUtils
 
@@ -130,14 +133,20 @@ fun ReviewScreen(
                 actions = {
                     // Debug viewer button (show when debug data is available)
                     if (debugData != null) {
-                        IconButton(onClick = { showDebugViewer = true }) {
-                            Icon(Icons.Rounded.BugReport, "View Debug Data")
+                        IconButton(
+                            onClick = { showDebugViewer = true },
+                            modifier = Modifier.semantics { contentDescription = "View debug data" }
+                        ) {
+                            Icon(Icons.Rounded.BugReport, contentDescription = null)
                         }
                     }
                     
                     Box {
-                        IconButton(onClick = { showDebugMenu = !showDebugMenu }) {
-                            Icon(Icons.Rounded.MoreVert, "Debug Options")
+                        IconButton(
+                            onClick = { showDebugMenu = !showDebugMenu },
+                            modifier = Modifier.semantics { contentDescription = "Debug options menu" }
+                        ) {
+                            Icon(Icons.Rounded.MoreVert, contentDescription = null)
                         }
                         DropdownMenu(
                             expanded = showDebugMenu,
@@ -149,7 +158,8 @@ fun ReviewScreen(
                                     showDebugMenu = false
                                     batchLauncher.launch(arrayOf("image/*", "application/pdf"))
                                 },
-                                leadingIcon = { Icon(Icons.Rounded.Layers, null) }
+                                leadingIcon = { Icon(Icons.Rounded.Layers, contentDescription = null) },
+                                modifier = Modifier.semantics { contentDescription = "Mass insert batch processing" }
                             )
                             DropdownMenuItem(
                                 text = { Text("Import Bank Statement") },
@@ -157,7 +167,8 @@ fun ReviewScreen(
                                     showDebugMenu = false
                                     statementLauncher.launch(arrayOf("image/*", "application/pdf"))
                                 },
-                                leadingIcon = { Icon(Icons.Rounded.ReceiptLong, null) }
+                                leadingIcon = { Icon(Icons.Rounded.ReceiptLong, contentDescription = null) },
+                                modifier = Modifier.semantics { contentDescription = "Import bank statement" }
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -170,7 +181,8 @@ fun ReviewScreen(
                                         snackbarHostState.showSnackbar("Parser info copied to clipboard")
                                     }
                                 },
-                                leadingIcon = { Icon(Icons.Rounded.ContentCopy, null) }
+                                leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
+                                modifier = Modifier.semantics { contentDescription = "Export parser data to clipboard" }
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -179,11 +191,12 @@ fun ReviewScreen(
                                     showDebugMenu = false
                                     viewModel.clearDebugData()
                                 },
-                                leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                                leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
                                 colors = MenuDefaults.itemColors(
                                     textColor = MaterialTheme.colorScheme.error,
                                     leadingIconColor = MaterialTheme.colorScheme.error
-                                )
+                                ),
+                                modifier = Modifier.semantics { contentDescription = "Clear debug data" }
                             )
                             DropdownMenuItem(
                                 text = { Text("Clear Scanned Data") },
@@ -191,11 +204,12 @@ fun ReviewScreen(
                                     showDebugMenu = false
                                     viewModel.clearScannedData()
                                 },
-                                leadingIcon = { Icon(Icons.Rounded.DeleteSweep, null) },
+                                leadingIcon = { Icon(Icons.Rounded.DeleteSweep, contentDescription = null) },
                                 colors = MenuDefaults.itemColors(
                                     textColor = MaterialTheme.colorScheme.error,
                                     leadingIconColor = MaterialTheme.colorScheme.error
-                                )
+                                ),
+                                modifier = Modifier.semantics { contentDescription = "Clear scanned data" }
                             )
                             DropdownMenuItem(
                                 text = { Text("Clear Review Queue") },
@@ -219,11 +233,17 @@ fun ReviewScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(padding)
+                    .semantics { contentDescription = "All caught up! No transactions need your review." },
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("✅", fontSize = 48.sp)
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = SemanticColors.SuccessGreen
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         "All caught up!",
