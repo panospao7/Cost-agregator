@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.mergeDescendants
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -678,7 +677,7 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .semantics(mergeDescendants = true) {
+            .semantics {
                 contentDescription = "${item.category.name}: €${String.format("%.2f", item.total)}, ${String.format("%.0f", item.percentage)}% of budget"
             },
         verticalAlignment = Alignment.CenterVertically
@@ -733,7 +732,7 @@ fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .semantics(mergeDescendants = true) {
+            .semantics {
                 contentDescription = "${expense.merchant}, ${if (expense.isManualEntry) "manual entry" else ""} €${String.format("%.2f", expense.amount)}, ${DateFormatterUtils.monthDay().format(Date(expense.date))}"
             },
         horizontalArrangement = Arrangement.SpaceBetween,

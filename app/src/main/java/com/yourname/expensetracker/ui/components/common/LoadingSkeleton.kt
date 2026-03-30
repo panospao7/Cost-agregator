@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -47,7 +48,19 @@ fun SkeletonBox(
     color: Color = SemanticColors.SurfaceLight.copy(alpha = 0.6f),
     shimmerColor: Color = SemanticColors.TextSecondary.copy(alpha = 0.3f)
 ) {
-    val shimmerAnimation by rememberShimmerAnimation()
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val shimmerAnimation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = 1000,
+                easing = FastOutSlowInEasing
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer"
+    )
     
     val brush = Brush.linearGradient(
         colors = listOf(
@@ -65,23 +78,6 @@ fun SkeletonBox(
             .background(brush)
             .semantics { contentDescription = "Loading content" }
     )
-}
-
-@Composable
-private fun rememberShimmerAnimation(): Float {
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    return transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = 1000,
-                easing = FastOutSlowInEasing
-            ),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmer"
-    ).value
 }
 
 /**

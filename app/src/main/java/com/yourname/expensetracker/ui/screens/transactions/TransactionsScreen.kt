@@ -35,6 +35,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -217,12 +219,18 @@ fun TransactionsScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = onNavigateToAnalytics) {
-                            Icon(Icons.Rounded.BarChart, contentDescription = "Advanced Analytics")
+                        IconButton(
+                            onClick = onNavigateToAnalytics,
+                            modifier = Modifier.semantics { contentDescription = "Navigate to advanced analytics" }
+                        ) {
+                            Icon(Icons.Rounded.BarChart, contentDescription = null)
                         }
                         Box {
-                            IconButton(onClick = { showSortMenu = true }) {
-                                Icon(Icons.Rounded.Sort, contentDescription = "Sort")
+                            IconButton(
+                                onClick = { showSortMenu = true },
+                                modifier = Modifier.semantics { contentDescription = "Open sort menu, currently sorted by ${sortOrder.displayName}" }
+                            ) {
+                                Icon(Icons.Rounded.Sort, contentDescription = null)
                             }
                             DropdownMenu(
                                 expanded = showSortMenu,
@@ -237,7 +245,7 @@ fun TransactionsScreen(
                                                     Spacer(modifier = Modifier.width(8.dp))
                                                     Icon(
                                                         Icons.Rounded.Check, 
-                                                        contentDescription = "Selected",
+                                                        contentDescription = null,
                                                         modifier = Modifier.size(16.dp),
                                                         tint = MaterialTheme.colorScheme.primary
                                                     )
@@ -247,17 +255,26 @@ fun TransactionsScreen(
                                         onClick = {
                                             viewModel.setSortOrder(order)
                                             showSortMenu = false
+                                        },
+                                        modifier = Modifier.semantics { 
+                                            contentDescription = "Sort by ${order.displayName}, ${if (sortOrder == order) "selected" else "not selected"}"
                                         }
                                     )
                                 }
                             }
                         }
-                        IconButton(onClick = { showFilterSheet = true }) {
-                            Icon(Icons.Rounded.FilterList, contentDescription = "Filter")
+                        IconButton(
+                            onClick = { showFilterSheet = true },
+                            modifier = Modifier.semantics { contentDescription = "Open transaction filters" }
+                        ) {
+                            Icon(Icons.Rounded.FilterList, contentDescription = null)
                         }
                         if (!showSearch) {
-                            IconButton(onClick = { showSearch = true }) {
-                                Icon(Icons.Rounded.Search, contentDescription = "Search")
+                            IconButton(
+                                onClick = { showSearch = true },
+                                modifier = Modifier.semantics { contentDescription = "Open search" }
+                            ) {
+                                Icon(Icons.Rounded.Search, contentDescription = null)
                             }
                         }
                     }
@@ -310,6 +327,9 @@ fun TransactionsScreen(
                                         }
                                     }
                                 }
+                            },
+                            modifier = Modifier.semantics { 
+                                contentDescription = "${tab.label} tab, ${if (selectedTab == tab) "selected" else "not selected"}, ${count} transactions"
                             }
                         )
                     }
@@ -361,11 +381,13 @@ fun TransactionsScreen(
                             
                             IconButton(
                                 onClick = { viewModel.clearFilter() },
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .semantics { contentDescription = "Clear all filters" }
                             ) {
                                 Icon(
                                     Icons.Rounded.Close,
-                                    contentDescription = "Clear filter",
+                                    contentDescription = null,
                                     tint = SemanticColors.PrimaryIndigo,
                                     modifier = Modifier.size(16.dp)
                                 )
@@ -628,7 +650,11 @@ private fun EmptyTransactionsState(
     onAddClick: () -> Unit
 ) {
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .semantics { 
+                contentDescription = if (hasSearch) "No search results found. Try a different search term." else "No transactions yet. Add your first expense to get started."
+            },
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -679,7 +705,8 @@ private fun EmptyTransactionsState(
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f),
                         contentColor = SemanticColors.PrimaryIndigo
-                    )
+                    ),
+                    modifier = Modifier.semantics { contentDescription = "Add your first expense" }
                 ) {
                     Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -780,11 +807,23 @@ private fun TransactionItem(
             SemanticColors.PrimaryIndigo
         }
     }
+    
+    // Build accessibility description for the transaction
+    val accessibilityDescription = buildString {
+        append("${expense.merchant}, ${transaction.formattedAmount}")
+        category?.name?.let { append(", Category: $it") }
+        if (expense.isManualEntry) append(", Manual entry")
+        if (expense.resolvedAddress != null) append(", Location: ${expense.resolvedAddress}")
+        expense.transferDirection?.let { append(", ${it.name}") }
+    }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .semantics {
+                contentDescription = accessibilityDescription
+            },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
@@ -811,13 +850,24 @@ private fun TransactionItem(
                         shape = CircleShape
                     )
                     .clickable { onEditCategory() }
-                    .padding(4.dp),
+                    .padding(4.dp)
+                    .semantics { contentDescription = "${category?.name ?: "Uncategorized"} category, double tap to change category" },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = category?.icon ?: "❓",
-                    fontSize = 26.sp
-                )
+                if (category?.icon != null) {
+                    Text(
+                        text = category.icon,
+                        fontSize = 26.sp,
+                        modifier = Modifier.semantics { contentDescription = "${category.name} icon" }
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.HelpOutline,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(14.dp))
@@ -841,6 +891,7 @@ private fun TransactionItem(
                         modifier = Modifier
                             .weight(1f, fill = false)
                             .clickable { onRename() }
+                            .semantics { contentDescription = "${expense.merchant}, double tap to rename" }
                     )
                     
                     // Manual entry indicator
@@ -849,10 +900,13 @@ private fun TransactionItem(
                             shape = RoundedCornerShape(4.dp),
                             color = SemanticColors.PrimaryIndigo.copy(alpha = 0.15f)
                         ) {
-                            Text(
-                                text = "✏️",
-                                fontSize = 10.sp,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            Icon(
+                                imageVector = Icons.Rounded.Edit,
+                                contentDescription = "Manual entry",
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                                tint = SemanticColors.PrimaryIndigo
                             )
                         }
                     }
@@ -860,8 +914,10 @@ private fun TransactionItem(
                     // Edit icon hint
                     Icon(
                         imageVector = Icons.Rounded.Edit,
-                        contentDescription = "Tap to rename",
-                        modifier = Modifier.size(14.dp),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .semantics { contentDescription = "Double tap merchant name to edit" },
                         tint = SemanticColors.TextMuted.copy(alpha = 0.5f)
                     )
                 }
@@ -873,14 +929,19 @@ private fun TransactionItem(
                 ) {
                     // Payment method icon
                     val (methodIcon, methodDesc) = when (expense.paymentMethod) {
-                        PaymentMethod.CASH -> "💵" to "Cash"
-                        PaymentMethod.BANK_TRANSFER -> "🏦" to "Bank"
-                        PaymentMethod.CARD -> "💳" to "Card"
-                        else -> "" to ""
+                        PaymentMethod.CASH -> Icons.Rounded.Payments to "Cash"
+                        PaymentMethod.BANK_TRANSFER -> Icons.Rounded.AccountBalance to "Bank transfer"
+                        PaymentMethod.CARD -> Icons.Rounded.CreditCard to "Card"
+                        else -> null to null
                     }
                     
-                    if (methodIcon.isNotEmpty()) {
-                        Text(methodIcon, fontSize = 12.sp)
+                    if (methodIcon != null) {
+                        Icon(
+                            imageVector = methodIcon,
+                            contentDescription = methodDesc,
+                            modifier = Modifier.size(14.dp),
+                            tint = SemanticColors.TextSecondary
+                        )
                         Spacer(modifier = Modifier.width(2.dp))
                     }
                     
@@ -888,7 +949,9 @@ private fun TransactionItem(
                         text = category?.name ?: stringResource(R.string.uncategorized_label),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary,
-                        modifier = Modifier.clickable { onEditCategory() }
+                        modifier = Modifier
+                            .clickable { onEditCategory() }
+                            .semantics { contentDescription = "${category?.name ?: "Uncategorized"}, double tap to change category" }
                     )
                 }
                 
@@ -957,46 +1020,56 @@ private fun TransactionItem(
                     // Change type action
                     IconButton(
                         onClick = onChangeType,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(40.dp)
+                            .semantics { contentDescription = "Change transaction type, currently ${expense.transactionType.name}" }
                     ) {
-                        val typeIcon = when (expense.transactionType) {
-                            TransactionType.PURCHASE -> "💸"
-                            TransactionType.DEPOSIT -> "💰"
-                            TransactionType.WITHDRAWAL -> "🏧"
-                            TransactionType.TRANSFER -> "🔄"
-                            else -> "❓"
+                        val (typeIcon, typeDesc) = when (expense.transactionType) {
+                            TransactionType.PURCHASE -> Icons.Rounded.ShoppingCart to "Purchase"
+                            TransactionType.DEPOSIT -> Icons.Rounded.ArrowCircleDown to "Deposit"
+                            TransactionType.WITHDRAWAL -> Icons.Rounded.ArrowCircleUp to "Withdrawal"
+                            TransactionType.TRANSFER -> Icons.Rounded.SyncAlt to "Transfer"
+                            else -> Icons.Rounded.HelpOutline to "Unknown"
                         }
-                        Text(
-                            text = typeIcon,
-                            fontSize = 16.sp
+                        Icon(
+                            imageVector = typeIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.6f)
                         )
                     }
 
                     // Edit ownership/not-mine/shared action
                     IconButton(
                         onClick = onEditOwnership,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(40.dp)
+                            .semantics { contentDescription = "Edit ownership" }
                     ) {
-                        val ownershipIcon = when {
-                            expense.isNotMine -> "👤"
-                            expense.isSharedExpense -> "🤝"
-                            expense.transactionType == TransactionType.TRANSFER -> "🔄"
-                            else -> "⚙️"
+                        val (ownershipIcon, ownershipDesc) = when {
+                            expense.isNotMine -> Icons.Rounded.Person to "Not mine"
+                            expense.isSharedExpense -> Icons.Rounded.People to "Shared"
+                            expense.transactionType == TransactionType.TRANSFER -> Icons.Rounded.SyncAlt to "Transfer"
+                            else -> Icons.Rounded.Settings to "Settings"
                         }
-                        Text(
-                            text = ownershipIcon,
-                            fontSize = 16.sp
+                        Icon(
+                            imageVector = ownershipIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.6f)
                         )
                     }
 
                     // Recurring action
                     IconButton(
                         onClick = onMarkRecurring,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(40.dp)
+                            .semantics { contentDescription = "Mark as recurring" }
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Repeat,
-                            contentDescription = stringResource(R.string.mark_recurring_content_description),
+                            contentDescription = null,
                             tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.6f),
                             modifier = Modifier.size(18.dp)
                         )
@@ -1005,11 +1078,13 @@ private fun TransactionItem(
                     // Location pin action
                     IconButton(
                         onClick = onEditLocation,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(40.dp)
+                            .semantics { contentDescription = if (expense.latitude != null) "Edit location" else "Add location" }
                     ) {
                         Icon(
                             imageVector = if (expense.latitude != null) Icons.Filled.LocationOn else Icons.Rounded.AddLocationAlt,
-                            contentDescription = "Edit location",
+                            contentDescription = null,
                             tint = if (expense.latitude != null)
                                 SemanticColors.PrimaryIndigo.copy(alpha = 0.8f)
                             else
@@ -1021,11 +1096,13 @@ private fun TransactionItem(
                     // Delete action
                     IconButton(
                         onClick = onDelete,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(40.dp)
+                            .semantics { contentDescription = "Delete transaction" }
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Delete,
-                            contentDescription = stringResource(R.string.delete_button),
+                            contentDescription = null,
                             tint = SemanticColors.DangerRed.copy(alpha = 0.6f),
                             modifier = Modifier.size(18.dp)
                         )
