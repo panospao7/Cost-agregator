@@ -33,6 +33,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -64,9 +66,16 @@ fun AiSettingsScreen(
                 },
                 actions = {
                     if (uiState.isRefreshingRuntime) {
-                        CircularProgressIndicator(modifier = Modifier.padding(end = 16.dp))
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .padding(end = 16.dp)
+                                .semantics { contentDescription = "Refreshing runtime status" }
+                        )
                     } else {
-                        TextButton(onClick = viewModel::refreshRuntimeStatus) {
+                        TextButton(
+                            onClick = viewModel::refreshRuntimeStatus,
+                            modifier = Modifier.semantics { contentDescription = "Refresh AI runtime status" }
+                        ) {
                             Text("Refresh")
                         }
                     }
@@ -102,7 +111,10 @@ fun AiSettingsScreen(
                             FilterChip(
                                 selected = settings.preferredMode == mode,
                                 onClick = { viewModel.setPreferredMode(mode) },
-                                label = { Text(mode.displayLabel()) }
+                                label = { Text(mode.displayLabel()) },
+                                modifier = Modifier.semantics {
+                                    contentDescription = "${mode.displayLabel()} mode, ${if (settings.preferredMode == mode) "selected" else "not selected"}"
+                                }
                             )
                         }
                     }
@@ -332,12 +344,19 @@ private fun ToggleRow(
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$label, ${if (checked) "enabled" else "disabled"}, double tap to toggle"
+            },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, style = MaterialTheme.typography.bodyLarge)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
     }
 }
 
@@ -349,11 +368,32 @@ private fun CapabilityMatrixRow(
     runtime: AiCapabilityRuntimeStatus?,
     cloudFallbackAvailable: Boolean
 ) {
+    val runtimeText = when {
+        !enabled -> "Disabled in settings"
+        runtime == null -> "Runtime status not loaded"
+        runtime.message == null -> "Ready"
+        else -> runtime.message
+    }
+    
+    val accessibilityDescription = buildString {
+        append("$label, ${if (enabled) "enabled" else "disabled"}")
+        append(", Status: $runtimeText")
+        if (enabled && runtime?.routeDisplayText() != null) {
+            append(", Route: ${runtime.routeDisplayText()}")
+        }
+        if (enabled && runtime?.actionLabel != null) {
+            append(", Action: ${runtime.actionLabel}")
+        }
+    }
+
     ElevatedCard {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(12.dp)
+                .semantics {
+                    contentDescription = accessibilityDescription
+                },
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
@@ -368,13 +408,6 @@ private fun CapabilityMatrixRow(
                     }
                 }
                 Switch(checked = enabled, onCheckedChange = onEnabledChange)
-            }
-
-            val runtimeText = when {
-                !enabled -> "Disabled in settings"
-                runtime == null -> "Runtime status not loaded"
-                runtime.message == null -> "Ready"
-                else -> runtime.message
             }
 
             Text(
