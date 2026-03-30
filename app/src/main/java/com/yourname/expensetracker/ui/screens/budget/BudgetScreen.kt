@@ -7,8 +7,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Warning
+import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -17,8 +19,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import com.yourname.expensetracker.ui.util.budgetScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -29,6 +33,8 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.ui.util.budgetScale
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -57,8 +63,27 @@ fun BudgetScreen(
         }
     ) { padding ->
         if (uiState.isLoading) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp)
+            ) {
+                // Summary card skeleton
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(80.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    )
+                ) {
+                    Box(modifier = Modifier.fillMaxSize())
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                // Budget cards skeleton
+                ListSkeleton(itemCount = 4)
             }
         } else {
             LazyColumn(
@@ -121,16 +146,21 @@ fun BudgetSummaryCard(budgets: List<BudgetStatus>) {
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceAround
         ) {
-            SummaryItem("On Track", onTrack, Color(0xFF4CAF50))
-            SummaryItem("Warning", warning, Color(0xFFFFC107))
-            SummaryItem("Exceeded", exceeded, Color(0xFFFF5722))
+            SummaryItem("On Track", onTrack, SemanticColors.SuccessGreen)
+            SummaryItem("Warning", warning, SemanticColors.WarningOrange)
+            SummaryItem("Exceeded", exceeded, SemanticColors.DangerRed)
         }
     }
 }
 
 @Composable
 fun SummaryItem(label: String, count: Int, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.semantics {
+            contentDescription = "$count budgets $label"
+        }
+    ) {
         Text(
             text = count.toString(),
             fontSize = 20.sp,
@@ -150,22 +180,43 @@ fun BudgetCard(
     onDelete: (Budget) -> Unit
 ) {
     val progressColor = when (status.healthStatus) {
-        BudgetHealthStatus.ON_TRACK -> Color(0xFF4CAF50)
-        BudgetHealthStatus.WARNING -> Color(0xFFFFC107)
-        BudgetHealthStatus.CRITICAL -> Color(0xFFFF9800)
-        BudgetHealthStatus.EXCEEDED -> Color(0xFFFF5722)
+        BudgetHealthStatus.ON_TRACK -> SemanticColors.SuccessGreen
+        BudgetHealthStatus.WARNING -> SemanticColors.WarningOrange
+        BudgetHealthStatus.CRITICAL -> SemanticColors.WarningOrange
+        BudgetHealthStatus.EXCEEDED -> SemanticColors.DangerRed
+    }
+
+    val cardDescription = buildString {
+        append("${status.category?.name ?: "Overall Budget"} budget, ")
+        append("${if (status.budget.isActive) "active" else "inactive"}, ")
+        append("€${"%.2f".format(status.spentAmount)} spent of €${"%.2f".format(status.budget.amount)} limit, ")
+        append("${(status.percentUsed * 100).toInt()}% used, ")
+        append("Status: ${status.healthStatus.name.lowercase().replaceFirstChar { it.titlecase() }}")
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = cardDescription },
         onClick = onEdit
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    status.category?.icon ?: "💰",
-                    fontSize = 24.sp
-                )
+                // Replace emoji with Material icon
+                if (status.category?.icon != null) {
+                    Text(
+                        status.category.icon,
+                        fontSize = 24.sp,
+                        modifier = Modifier.semantics { contentDescription = "${status.category.name} category icon" }
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.AccountBalanceWallet,
+                        contentDescription = "Budget icon",
+                        modifier = Modifier.size(24.dp),
+                        tint = SemanticColors.PrimaryIndigo
+                    )
+                }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -182,7 +233,9 @@ fun BudgetCard(
                 Switch(
                     checked = status.budget.isActive,
                     onCheckedChange = onToggle,
-                    modifier = Modifier.budgetScale(0.8f)
+                    modifier = Modifier
+                        .budgetScale(0.8f)
+                        .semantics { contentDescription = "Budget ${if (status.budget.isActive) "enabled" else "disabled"}, double tap to toggle" }
                 )
             }
 
@@ -212,7 +265,7 @@ fun BudgetCard(
             if (status.percentUsed > 1f) {
                 Text(
                     "€${"%.2f".format(status.spentAmount - status.budget.amount)} over budget",
-                    color = Color(0xFFFF5722),
+                    color = SemanticColors.DangerRed,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(top = 4.dp)
@@ -238,13 +291,22 @@ fun SuggestionsBanner(
     var currentIndex by remember { mutableIntStateOf(0) }
     val suggestion = suggestions.getOrNull(currentIndex) ?: return
 
+    val bannerDescription = "Smart budget suggestion for ${suggestion.categoryName}: " +
+            "Suggested monthly budget of €${"%.0f".format(suggestion.suggestedAmount)}"
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = bannerDescription },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = "Suggestion",
+                    tint = MaterialTheme.colorScheme.primary
+                )
                 Spacer(Modifier.width(8.dp))
                 Text("Smart Suggestion", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             }
@@ -255,17 +317,23 @@ fun SuggestionsBanner(
             )
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                TextButton(onClick = { if (currentIndex < suggestions.size - 1) currentIndex++ else currentIndex = 0 }) {
+                TextButton(
+                    onClick = { if (currentIndex < suggestions.size - 1) currentIndex++ else currentIndex = 0 },
+                    modifier = Modifier.semantics { contentDescription = "Skip this suggestion" }
+                ) {
                     Text("Skip")
                 }
-                Button(onClick = {
-                    onAdd(Budget(
-                        categoryId = suggestion.categoryId,
-                        amount = suggestion.suggestedAmount,
-                        period = BudgetPeriod.MONTHLY,
-                        startDate = System.currentTimeMillis()
-                    ))
-                }) {
+                Button(
+                    onClick = {
+                        onAdd(Budget(
+                            categoryId = suggestion.categoryId,
+                            amount = suggestion.suggestedAmount,
+                            period = BudgetPeriod.MONTHLY,
+                            startDate = System.currentTimeMillis()
+                        ))
+                    },
+                    modifier = Modifier.semantics { contentDescription = "Create budget for ${suggestion.categoryName}" }
+                ) {
                     Text("Create Budget")
                 }
             }
@@ -276,18 +344,24 @@ fun SuggestionsBanner(
 @Composable
 fun EmptyBudgetsState(onAdd: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(48.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(48.dp)
+            .semantics { contentDescription = "No budgets set yet. Track your spending by category to save more money." },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Text("No budgets set yet", style = MaterialTheme.typography.titleMedium)
         Text(
             "Track your spending by category to save more money.",
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(vertical = 8.dp)
         )
-        Button(onClick = onAdd) {
+        Button(
+            onClick = onAdd,
+            modifier = Modifier.semantics { contentDescription = "Set your first budget" }
+        ) {
             Text("Set Your First Budget")
         }
     }
