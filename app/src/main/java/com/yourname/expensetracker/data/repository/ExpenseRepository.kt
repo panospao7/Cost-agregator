@@ -353,6 +353,9 @@ class ExpenseRepository @Inject constructor(
     suspend fun getTotalForPeriod(startMs: Long, endMs: Long): Double =
         expenseDao.getTotalForPeriod(startMs, endMs)
 
+    suspend fun getTransactionCountForPeriod(startMs: Long, endMs: Long): Int =
+        expenseDao.getCountForPeriod(startMs, endMs)
+
     suspend fun getCategoryTotalsForPeriod(startMs: Long, endMs: Long): List<CategoryTotal> =
         expenseDao.getCategoryTotalsForPeriod(startMs, endMs)
 

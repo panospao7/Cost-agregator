@@ -487,4 +487,8 @@ private fun AiCapability.label(): String = when (this) {
     AiCapability.CATEGORIZATION_FALLBACK -> "Categorization"
     AiCapability.DEDUPE_JUDGE -> "Duplicate detection"
     AiCapability.LOCATION_SUMMARY -> "Location summary"
+    AiCapability.NOTIFICATION_PARSE -> "Notification parsing"
+    AiCapability.REVIEW_PRIORITIZATION -> "Review prioritization"
+    AiCapability.SEMANTIC_DEDUPE -> "Semantic duplicate detection"
+    AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "Receipt item categorization"
 }

@@ -22,6 +22,10 @@ class AiPolicyImpl @Inject constructor() : AiPolicy {
             AiCapability.CATEGORIZATION_FALLBACK -> settings.categorizationFallbackEnabled
             AiCapability.DEDUPE_JUDGE -> settings.dedupeJudgeEnabled
             AiCapability.LOCATION_SUMMARY -> settings.aiEnabled
+            AiCapability.NOTIFICATION_PARSE -> false // On-device only, no cloud
+            AiCapability.REVIEW_PRIORITIZATION -> false // On-device only, no cloud
+            AiCapability.SEMANTIC_DEDUPE -> false // On-device only, no cloud
+            AiCapability.RECEIPT_ITEM_CATEGORIZATION -> settings.receiptItemCategorizationEnabled
         }
     }
 
@@ -36,6 +40,10 @@ class AiPolicyImpl @Inject constructor() : AiPolicy {
             AiCapability.CATEGORIZATION_FALLBACK -> settings.categorizationFallbackEnabled
             AiCapability.DEDUPE_JUDGE -> settings.dedupeJudgeEnabled
             AiCapability.LOCATION_SUMMARY -> settings.aiEnabled
+            AiCapability.NOTIFICATION_PARSE -> settings.aiEnabled
+            AiCapability.REVIEW_PRIORITIZATION -> settings.aiEnabled
+            AiCapability.SEMANTIC_DEDUPE -> settings.aiEnabled
+            AiCapability.RECEIPT_ITEM_CATEGORIZATION -> settings.receiptItemCategorizationEnabled
         }
     }
 

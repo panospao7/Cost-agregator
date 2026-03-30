@@ -112,6 +112,9 @@ object AppConfig {
         /** How long review capture assist artifacts stay fresh before regeneration. */
         const val REVIEW_CAPTURE_ASSIST_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
 
+        /** How long receipt item categorization artifacts stay fresh before regeneration. */
+        const val RECEIPT_ITEMS_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
+
         // Input size limits (cloud privacy)
         /** Max characters of raw notification text sent to the cloud for a review explanation. */
         const val MAX_REVIEW_TEXT_CHARS_FOR_CLOUD = 500
@@ -124,6 +127,7 @@ object AppConfig {
         const val PROMPT_VERSION_REVIEW    = "v1"
         const val PROMPT_VERSION_QUERY     = "v1"
         const val PROMPT_VERSION_RECEIPT   = "v1"
+        const val PROMPT_VERSION_RECEIPT_ITEMS = "v1" // NEW: Receipt item categorization
         const val PROMPT_VERSION_CATEGORIZATION = "v1"
         const val PROMPT_VERSION_DEDUPE    = "v1"
         const val DASHBOARD_BRIEFING_CLOUD_PROVIDER = "google-ai-studio"
@@ -138,6 +142,8 @@ object AppConfig {
         const val CATEGORIZATION_ASSIST_CLOUD_MODEL = "gemini-2.5-flash"
         const val DEDUPE_JUDGE_CLOUD_PROVIDER = "google-ai-studio"
         const val DEDUPE_JUDGE_CLOUD_MODEL = "gemini-2.5-flash"
+        const val RECEIPT_ITEM_CATEGORIZATION_CLOUD_PROVIDER = "google-ai-studio"
+        const val RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL = "gemini-2.5-flash"
         const val GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
         const val DASHBOARD_BRIEFING_TIMEOUT_SECONDS = 12L
         const val QUERY_INTERPRETATION_TIMEOUT_SECONDS = 12L
@@ -169,6 +175,9 @@ object AppConfig {
         const val ON_DEVICE_DEDUPE_TEMPERATURE = 0.1f
         const val ON_DEVICE_DEDUPE_MAX_TOKENS = 180
         const val ON_DEVICE_DEDUPE_MODEL = "gemini-nano-dedupe"
+        const val ON_DEVICE_RECEIPT_ITEM_TEMPERATURE = 0.1f
+        const val ON_DEVICE_RECEIPT_ITEM_MAX_TOKENS = 300
+        const val ON_DEVICE_RECEIPT_ITEM_MODEL = "gemini-nano-receipt-items"
         const val ON_DEVICE_QUERY_TEMPERATURE = 0.1f
         const val ON_DEVICE_QUERY_MAX_TOKENS = 220
         const val ON_DEVICE_QUERY_MODEL = "gemini-nano-query"
@@ -176,6 +185,12 @@ object AppConfig {
         const val ON_DEVICE_BRIEFING_TEMPERATURE = 0.2f
         const val ON_DEVICE_BRIEFING_MAX_TOKENS = 180
         const val ON_DEVICE_BRIEFING_MODEL = "gemini-nano-briefing"
+        
+        // On-device notification parsing constants
+        const val ON_DEVICE_NOTIFICATION_TEMPERATURE = 0.1f
+        const val ON_DEVICE_NOTIFICATION_MAX_TOKENS = 180
+        const val ON_DEVICE_NOTIFICATION_MODEL = "gemini-nano-notification"
+        const val MAX_NOTIFICATION_TEXT_CHARS_FOR_AI = 300
 
         // Query interpretation / assistant limits
         const val MAX_QUERY_INPUT_CHARS = 400

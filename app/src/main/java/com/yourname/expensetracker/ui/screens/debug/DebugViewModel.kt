@@ -36,7 +36,8 @@ class DebugViewModel @Inject constructor(
     private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiEngagementRepository: AiEngagementRepository,
-    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
+    private val databaseBackupRepository: com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 ) : ViewModel() {
 
     private val _aiRuntimeStatuses = MutableStateFlow<Map<AiCapability, OnDeviceModelStatus>>(emptyMap())
@@ -247,5 +248,137 @@ class DebugViewModel @Inject constructor(
             )
             _aiRuntimeEvents.value = aiRuntimeDiagnostics.getRecentEvents()
         }
+    }
+    
+    // Database Backup Operations
+    private val _databaseExportResult = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseExportResult?>(null)
+    val databaseExportResult: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseExportResult?> = _databaseExportResult
+    
+    private val _databaseImportResult = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseImportResult?>(null)
+    val databaseImportResult: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseImportResult?> = _databaseImportResult
+    
+    private val _databaseStats = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?>(null)
+    val databaseStats: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?> = _databaseStats
+    
+    fun loadDatabaseStats() {
+        viewModelScope.launch {
+            _databaseStats.value = databaseBackupRepository.getDatabaseStats()
+        }
+    }
+    
+    fun exportDatabase() {
+        viewModelScope.launch {
+            _databaseExportResult.value = com.yourname.expensetracker.domain.backup.DatabaseExportResult.Loading
+            val result = databaseBackupRepository.exportDatabase()
+            _databaseExportResult.value = if (result.isSuccess) {
+                com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success(result.getOrNull()!!.absolutePath)
+            } else {
+                com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error(result.exceptionOrNull()?.message ?: "Unknown error")
+            }
+        }
+    }
+    
+    fun importDatabase(uri: android.net.Uri, context: android.content.Context) {
+        viewModelScope.launch {
+            _databaseImportResult.value = com.yourname.expensetracker.domain.backup.DatabaseImportResult.Loading
+            
+            // Preflight validation
+            val contentResolver = context.contentResolver
+            
+            // Check if we can open the file
+            val canOpen = try {
+                contentResolver.openInputStream(uri)?.use { it.read() }
+                true
+            } catch (e: Exception) {
+                false
+            }
+            
+            if (!canOpen) {
+                _databaseImportResult.value = com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error(
+                    "Cannot read selected file. Please choose a valid database file."
+                )
+                return@launch
+            }
+            
+            // Check file size
+            val fileSize = try {
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                        if (sizeIndex >= 0) cursor.getLong(sizeIndex) else -1L
+                    } else -1L
+                } ?: -1L
+            } catch (e: Exception) {
+                -1L
+            }
+            
+            if (fileSize == 0L) {
+                _databaseImportResult.value = com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error(
+                    "Selected file is empty."
+                )
+                return@launch
+            }
+            
+            // Create temp file from URI
+            val tempFile = withContext(Dispatchers.IO) {
+                try {
+                    val temp = java.io.File.createTempFile("import_", ".db", context.cacheDir)
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        temp.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    temp
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            
+            if (tempFile == null) {
+                _databaseImportResult.value = com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error(
+                    "Failed to prepare file for import."
+                )
+                return@launch
+            }
+            
+            // Perform import
+            val result = databaseBackupRepository.importDatabase(tempFile)
+            
+            // Clean up temp file
+            tempFile.delete()
+            
+            _databaseImportResult.value = if (result.isSuccess) {
+                val summary = result.getOrNull()
+                val needsRestart = summary?.transactionCount == -1
+                if (needsRestart) {
+                    com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart
+                } else {
+                    com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success(summary!!)
+                }
+            } else {
+                val errorMsg = result.exceptionOrNull()?.message ?: "Unknown error"
+                com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error(
+                    if (errorMsg.contains("not found", ignoreCase = true)) {
+                        "Import failed: Database file not accessible."
+                    } else {
+                        errorMsg
+                    }
+                )
+            }
+        }
+    }
+    
+    fun resetDatabase() {
+        viewModelScope.launch {
+            databaseBackupRepository.resetDatabase()
+        }
+    }
+    
+    fun clearExportResult() {
+        _databaseExportResult.value = null
+    }
+    
+    fun clearImportResult() {
+        _databaseImportResult.value = null
     }
 }

@@ -55,8 +55,27 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
 
     internal fun buildPrompt(input: ReceiptAssistInput): String {
         return buildString {
-            appendLine("Recover missing receipt fields from OCR text.")
-            appendLine("Be conservative. Prefer null over guessing.")
+            // Check if we're in image analysis mode
+            val imageModeInstructions = if (input.isImageAnalysisMode) {
+                """
+                |CRITICAL - IMAGE ANALYSIS MODE:
+                |1. This receipt should have an associated image being analyzed.
+                |2. The OCR text below may be CORRUPTED or WRONG - especially for Greek receipts.
+                |3. Common Greek OCR errors to watch for:
+                |   - Greek accents: ά→α, έ→ε, ή→η, ό→ο, ύ→υ, ώ→ω
+                |   - Dieresis: ΐ→ί, ΰ→ύ
+                |   - Numbers: 3→8, 1→7, 5→6, 0→8, 2→ζ
+                |   - Greek-Latin mix: μ→u, α→a, ο→o, κ→k, ε→e, ν→v, ρ→p
+                |4. Cross-reference with visual context if available.
+                |5. Be extra conservative with uncertain values.
+                """.trimMargin()
+            } else {
+                "Analyze OCR text carefully. Be conservative. Prefer null over guessing."
+            }
+            
+            appendLine("Recover missing receipt fields.")
+            appendLine(imageModeInstructions)
+            appendLine()
             appendLine("Return ONLY one JSON object.")
             appendLine()
             appendLine("Currency: ${input.currency}")

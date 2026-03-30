@@ -106,7 +106,7 @@ class NotificationProcessingPipeline @Inject constructor(
             classifier.initialize()
         }
 
-        val parsed = parserRegistry.parse(
+        val parsed = parserRegistry.parseWithAiFallback(
             title = notification.title,
             text = notification.text,
             bigText = notification.bigText,

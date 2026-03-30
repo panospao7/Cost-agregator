@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.ui.screens.debug
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.animation.animateContentSize
@@ -99,6 +102,11 @@ fun DebugScreen(
                 ) {
                     Text("Open Notification Access Settings")
                 }
+            }
+
+            // Database Management Section
+            item {
+                DatabaseManagementSection(viewModel)
             }
 
             // 1.5 Service Diagnostics
@@ -682,9 +690,13 @@ private fun AiCapability.supportsCloudFallback(): Boolean = when (this) {
     AiCapability.REVIEW_EXPLANATION,
     AiCapability.QUERY_INTERPRETATION,
     AiCapability.RECEIPT_EXTRACTION,
+    AiCapability.RECEIPT_ITEM_CATEGORIZATION,
     AiCapability.CATEGORIZATION_FALLBACK,
     AiCapability.DEDUPE_JUDGE -> true
-    AiCapability.LOCATION_SUMMARY -> false
+    AiCapability.LOCATION_SUMMARY,
+    AiCapability.NOTIFICATION_PARSE -> false // On-device only
+    AiCapability.REVIEW_PRIORITIZATION -> false // On-device only
+    AiCapability.SEMANTIC_DEDUPE -> false // On-device only
 }
 
 private fun AiCapability.debugRuntimeLabel(): String = when (this) {
@@ -695,6 +707,10 @@ private fun AiCapability.debugRuntimeLabel(): String = when (this) {
     AiCapability.CATEGORIZATION_FALLBACK -> "categorization"
     AiCapability.DEDUPE_JUDGE -> "duplicate detection"
     AiCapability.LOCATION_SUMMARY -> "location summaries"
+    AiCapability.NOTIFICATION_PARSE -> "notification parsing"
+    AiCapability.REVIEW_PRIORITIZATION -> "review prioritization"
+    AiCapability.SEMANTIC_DEDUPE -> "semantic duplicate detection"
+    AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "receipt item categorization"
 }
 
 @Composable
@@ -946,4 +962,334 @@ fun MlStatsSection(
             }
         }
     }
+}
+
+@Composable
+private fun DatabaseManagementSection(viewModel: DebugViewModel) {
+    val context = LocalContext.current
+    val databaseStats by viewModel.databaseStats.collectAsState()
+    val exportResult by viewModel.databaseExportResult.collectAsState()
+    val importResult by viewModel.databaseImportResult.collectAsState()
+    
+    // Load stats when section becomes visible
+    LaunchedEffect(Unit) {
+        viewModel.loadDatabaseStats()
+    }
+    
+    // Handle export/import results
+    LaunchedEffect(exportResult) {
+        when (exportResult) {
+            is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success -> {
+                val path = (exportResult as com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success).filePath
+                android.widget.Toast.makeText(context, "✅ Exported to: $path", android.widget.Toast.LENGTH_LONG).show()
+                viewModel.clearExportResult()
+            }
+            is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error -> {
+                val message = (exportResult as com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error).message
+                android.widget.Toast.makeText(context, "❌ Export failed: $message", android.widget.Toast.LENGTH_LONG).show()
+                viewModel.clearExportResult()
+            }
+            else -> {}
+        }
+    }
+    
+    LaunchedEffect(importResult) {
+        when (importResult) {
+            is com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success -> {
+                val summary = (importResult as com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success).summary
+                val isEmptyData = summary.transactionCount == 0 && summary.categoryCount == 0
+                
+                val message = if (isEmptyData) {
+                    buildString {
+                        append("⚠️ Import completed but no data found!")
+                        append("\n• ${summary.transactionCount} transactions")
+                        append("\n• ${summary.categoryCount} categories")
+                        append("\n\nThe backup may be corrupted or from a very old version.")
+                    }
+                } else {
+                    buildString {
+                        append("✅ Import verified!")
+                        if (summary.transactionCount > 0) {
+                            append("\n📊 Imported ${summary.transactionCount} transactions")
+                        }
+                        if (summary.categoryCount > 0) {
+                            append("\n📂 ${summary.categoryCount} categories")
+                        }
+                        if (summary.merchantCount > 0) {
+                            append("\n🏪 ${summary.merchantCount} merchants")
+                        }
+                        if (summary.budgetCount > 0) {
+                            append("\n💰 ${summary.budgetCount} budgets")
+                        }
+                        if (summary.pendingReviewCount > 0) {
+                            append("\n⏳ ${summary.pendingReviewCount} pending reviews")
+                        }
+                        append("\n\nRestart app to use all data.")
+                    }
+                }
+                android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+                viewModel.clearImportResult()
+                viewModel.loadDatabaseStats() // Refresh stats
+            }
+            is com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart -> {
+                android.widget.Toast.makeText(context, "✅ Database imported successfully!\n\nPlease restart the app to access all imported data.", android.widget.Toast.LENGTH_LONG).show()
+                viewModel.clearImportResult()
+                viewModel.loadDatabaseStats() // Refresh stats
+            }
+            is com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error -> {
+                val message = (importResult as com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error).message
+                // Show full error message with detailed explanation
+                android.widget.Toast.makeText(context, "❌ Import blocked:\n$message", android.widget.Toast.LENGTH_LONG).show()
+                viewModel.clearImportResult()
+            }
+            else -> {}
+        }
+    }
+    
+    var showImportDialog by remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
+    
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "💾 Database Management",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Database Stats
+            databaseStats?.let { stats ->
+                Text(
+                    "📊 Current Data:",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "• ${stats.transactionCount} transactions",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "• ${stats.categoryCount} categories",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "• ${stats.merchantCount} merchants",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "• ${stats.pendingReviewCount} pending reviews",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+            
+            // Action Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Export Button
+                Button(
+                    onClick = { viewModel.exportDatabase() },
+                    modifier = Modifier.weight(1f),
+                    enabled = exportResult !is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Loading
+                ) {
+                    if (exportResult is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Export", fontSize = 12.sp)
+                    }
+                }
+                
+                // Import Button
+                Button(
+                    onClick = { showImportDialog = true },
+                    modifier = Modifier.weight(1f),
+                    enabled = importResult !is com.yourname.expensetracker.domain.backup.DatabaseImportResult.Loading
+                ) {
+                    if (importResult is com.yourname.expensetracker.domain.backup.DatabaseImportResult.Loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Import", fontSize = 12.sp)
+                    }
+                }
+                
+                // Reset Button
+                OutlinedButton(
+                    onClick = { showResetDialog = true },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Reset", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                "💡 Export saves to Downloads folder. Import replaces current data (auto-backup created).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+    
+    // Import Dialog
+    if (showImportDialog) {
+        ImportDatabaseDialog(
+            context = context,
+            onDismiss = { showImportDialog = false },
+            onImport = { uri ->
+                viewModel.importDatabase(uri, context)
+                showImportDialog = false
+            }
+        )
+    }
+    
+    // Reset Confirmation Dialog
+    if (showResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+            title = { Text("⚠️ Reset Database?") },
+            text = { 
+                Text("This will delete ALL your data. A safety backup will be created first. This action cannot be undone.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.resetDatabase()
+                        showResetDialog = false
+                        android.widget.Toast.makeText(context, "Database reset. Safety backup created. Restart app.", android.widget.Toast.LENGTH_LONG).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Reset")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ImportDatabaseDialog(
+    context: Context,
+    onDismiss: () -> Unit,
+    onImport: (android.net.Uri) -> Unit
+) {
+    var selectedFileName by remember { mutableStateOf<String?>(null) }
+    var selectedUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        uri?.let { selectedUri = it }
+        selectedUri?.let { uri ->
+            // Get filename from URI
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0 && cursor.moveToFirst()) {
+                    selectedFileName = cursor.getString(nameIndex)
+                }
+            }
+        }
+    }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Import Database") },
+        text = {
+            Column {
+                Text(
+                    "Select a backup file to import. Current data will be backed up first.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // File picker button
+                OutlinedButton(
+                    onClick = { launcher.launch(arrayOf("application/octet-stream", "*/*")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (selectedFileName == null) "Select File" else "Change File")
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Show selected file info
+                if (selectedFileName != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Selected:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                selectedFileName!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        "No file selected",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    "⚠️ This will replace all current data. A safety backup will be created first.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { 
+                    selectedUri?.let { onImport(it) }
+                },
+                enabled = selectedUri != null
+            ) {
+                Text("Import")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

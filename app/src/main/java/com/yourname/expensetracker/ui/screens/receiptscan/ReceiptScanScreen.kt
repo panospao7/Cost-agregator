@@ -45,6 +45,7 @@ import com.yourname.expensetracker.ui.screens.addexpense.CategoryGrid
 import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
 import com.yourname.expensetracker.ui.screens.addexpense.PaymentMethodChip
 import com.yourname.expensetracker.ui.components.ai.ReceiptAssistCard
+import com.yourname.expensetracker.ui.components.ai.ReceiptItemBreakdownCard
 import kotlinx.coroutines.delay
 import java.util.Currency
 import java.util.Date
@@ -709,10 +710,26 @@ private fun ReviewStep(
         onSelect = { viewModel.selectCategory(it) }
     )
 
-    // Line items preview
-    if (parsed?.lineItems?.isNotEmpty() == true) {
+    // Line items breakdown with AI categorization
+    val itemCategorizations = state.itemCategorizations
+    if (itemCategorizations.isNotEmpty() && state.showItemBreakdown) {
         Spacer(modifier = Modifier.height(16.dp))
-
+        
+        ReceiptItemBreakdownCard(
+            items = itemCategorizations,
+            categories = categories,
+            isLoading = state.isAnalyzingItems,
+            onItemCategoryChanged = { item, category ->
+                viewModel.updateItemCategory(item, category)
+            },
+            onShowRationale = { item ->
+                viewModel.showItemRationale(item)
+            }
+        )
+    } else if (parsed?.lineItems?.isNotEmpty() == true) {
+        // Show simple preview with analyze button if AI not yet run
+        Spacer(modifier = Modifier.height(16.dp))
+        
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -720,11 +737,32 @@ private fun ReviewStep(
             )
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    "Detected Items (${parsed.lineItems.size})",
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.labelLarge
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Detected Items (${parsed.lineItems.size})",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    
+                    // Analyze button
+                    if (state.isAnalyzingItems) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        TextButton(
+                            onClick = { viewModel.analyzeReceiptItems() }
+                        ) {
+                            Text("🔍 Analyze")
+                        }
+                    }
+                }
+                
                 Spacer(modifier = Modifier.height(8.dp))
 
                 parsed.lineItems.forEachIndexed { index, item ->

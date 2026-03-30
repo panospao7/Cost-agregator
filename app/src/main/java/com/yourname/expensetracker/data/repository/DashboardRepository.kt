@@ -106,18 +106,19 @@ class DashboardRepository @Inject constructor(
         return listOf(
             DashboardWidgetConfig("financial_weather", 0),
             DashboardWidgetConfig("totals_dashboard", 1),
-            DashboardWidgetConfig("safe_to_spend", 2),
-            DashboardWidgetConfig("financial_runway", 3),
-            DashboardWidgetConfig("monte_carlo_forecast", 4),
-            DashboardWidgetConfig("spending_pace", 5),
-            DashboardWidgetConfig("review_alert", 6),
-            DashboardWidgetConfig("spending_trend", 7),
-            DashboardWidgetConfig("insight", 8),
-            DashboardWidgetConfig("period_summary", 9),
-            DashboardWidgetConfig("budget_health", 10),
-            DashboardWidgetConfig("top_categories", 11),
-            DashboardWidgetConfig("recent_transactions", 12),
-            DashboardWidgetConfig("budget_block_party", 13)
+            DashboardWidgetConfig("no_spend_streak", 2),  // NEW: Gamification widget
+            DashboardWidgetConfig("safe_to_spend", 3),
+            DashboardWidgetConfig("financial_runway", 4),
+            DashboardWidgetConfig("monte_carlo_forecast", 5),
+            DashboardWidgetConfig("spending_pace", 6),
+            DashboardWidgetConfig("review_alert", 7),
+            DashboardWidgetConfig("spending_trend", 8),
+            DashboardWidgetConfig("insight", 9),
+            DashboardWidgetConfig("period_summary", 10),
+            DashboardWidgetConfig("budget_health", 11),
+            DashboardWidgetConfig("top_categories", 12),
+            DashboardWidgetConfig("recent_transactions", 13),
+            DashboardWidgetConfig("budget_block_party", 14)
         )
     }
 }

@@ -516,7 +516,7 @@ class AnalyticsViewModel @Inject constructor(
                 val start = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
                 Pair(start, now)
             }
-            TimePeriod.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 7)
+            TimePeriod.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getWeekRange(now, 0).let { (start, end) -> start to end }
             TimePeriod.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now, 0) // Current month
             TimePeriod.YEAR -> {
                  // Start of year logic wasn't in Utils yet, let's keep local or add to Utils.

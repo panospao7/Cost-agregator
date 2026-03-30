@@ -28,9 +28,10 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         AiArtifactEntity::class,
         AiChatSessionEntity::class,
         AiChatMessageEntity::class,
-        RecommendationEntity::class
+        RecommendationEntity::class,
+        ReceiptItemCategorization::class
     ],
-        version = 36,
+        version = 37,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -55,6 +56,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiChatSessionDao(): AiChatSessionDao
     abstract fun aiChatMessageDao(): AiChatMessageDao
     abstract fun recommendationDao(): RecommendationDao
+    abstract fun receiptItemCategorizationDao(): ReceiptItemCategorizationDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -832,6 +834,63 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_recommendations_expiresAt
                     ON recommendations (expiresAt)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 36 -> 37: Add receipt item categorization table and status column
+        val MIGRATION_36_37 = object : androidx.room.migration.Migration(36, 37) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create receipt item categorizations table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS receipt_item_categorizations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        receiptId INTEGER NOT NULL,
+                        expenseId INTEGER,
+                        itemDescription TEXT NOT NULL,
+                        itemAmount REAL NOT NULL,
+                        suggestedCategoryId INTEGER,
+                        suggestedCategoryName TEXT,
+                        confidence REAL NOT NULL,
+                        aiRationale TEXT,
+                        alternativeCategoriesJson TEXT,
+                        userCorrectedCategoryId INTEGER,
+                        userCorrectedCategoryName TEXT,
+                        userCorrectedAt INTEGER,
+                        taxAmount REAL,
+                        isNewCategorySuggestion INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+                        FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+
+                // Create indices for efficient queries
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_receipt_item_categorizations_receiptId
+                    ON receipt_item_categorizations (receiptId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_receipt_item_categorizations_expenseId
+                    ON receipt_item_categorizations (expenseId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_receipt_item_categorizations_suggestedCategoryId
+                    ON receipt_item_categorizations (suggestedCategoryId)
+                """.trimIndent())
+
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_receipt_item_categorizations_userCorrectedCategoryId
+                    ON receipt_item_categorizations (userCorrectedCategoryId)
+                """.trimIndent())
+
+                // Add itemCategorizationStatus column to scanned_receipts
+                database.execSQL("""
+                    ALTER TABLE scanned_receipts 
+                    ADD COLUMN itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING'
                 """.trimIndent())
             }
         }

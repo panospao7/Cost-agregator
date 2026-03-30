@@ -38,13 +38,19 @@ import com.patrykandpatrick.vico.core.entry.FloatEntry
 import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
 import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.domain.analytics.*
+import com.yourname.expensetracker.domain.analytics.EnhancedCategoryAnalytics
+import com.yourname.expensetracker.domain.analytics.EnhancedMerchantAnalytics
+import com.yourname.expensetracker.domain.analytics.SpendingPatternAnalysis
+import com.yourname.expensetracker.domain.analytics.StatisticalInsights
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.ui.components.BentoCard
+import com.yourname.expensetracker.ui.components.analytics.*
+import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.domain.analytics.*
 import com.yourname.expensetracker.domain.location.AreaSpending
 import com.yourname.expensetracker.domain.location.TravelInsight
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
-import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,6 +89,14 @@ fun AnalyticsScreen(
                 // 3. Statistical Highlights (daily avg, largest spend, volatility)
                 state.statisticalInsights?.let { stats ->
                     item { StatisticalHighlights(stats) }
+                    
+                    // NEW: Percentile Grid - Shows P10, P25, P50, P75, P90
+                    item { PercentileGridCard(percentiles = stats.percentiles) }
+                    
+                    // NEW: Transaction Histogram - Visual distribution of transaction sizes
+                    if (stats.histogramBins.isNotEmpty()) {
+                        item { TransactionHistogramChart(bins = stats.histogramBins) }
+                    }
                 }
 
                 // 4. AI Insights (Natural Language)
@@ -158,8 +172,17 @@ fun AnalyticsScreen(
                 if (state.enhancedMerchants.isNotEmpty()) {
                     item { AnalyticsSectionHeader("Merchant Intelligence", "Top places & loyalty stats") }
                     items(state.enhancedMerchants) { merch ->
-                        EnhancedMerchantItem(
-                            item = merch,
+                        // NEW: Rich merchant card with loyalty, streak, consistency, and price trends
+                        RichMerchantCard(
+                            merchant = merch.merchant,
+                            totalSpent = merch.totalSpent,
+                            transactionCount = merch.transactionCount,
+                            averagePerVisit = merch.averagePerVisit,
+                            loyaltyScore = merch.loyaltyScore,
+                            consecutiveMonthsVisited = merch.consecutiveMonthsVisited,
+                            consistencyRating = merch.consistencyRating.name,
+                            priceChangePercent = merch.priceChangePercent,
+                            predictedNextVisitDate = merch.predictedNextVisitDate,
                             onClick = {
                                 onNavigateToTransactions?.invoke(
                                     TransactionFilter(
@@ -365,6 +388,14 @@ fun EnhancedCategoryItem(
                         .height(40.dp)
                 )
             }
+            
+            // NEW: Percentile and velocity badges
+            Spacer(modifier = Modifier.height(8.dp))
+            CategoryPercentileBadge(
+                percentile25 = item.percentile25,
+                percentile75 = item.percentile75,
+                velocity = item.velocity
+            )
         }
     }
 }

@@ -302,7 +302,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
                     recentTransactions = transactions.take(5)
                 )
             }
-            .sortedByDescending { it.totalSpent }
+            // Sort by: 1) Visit frequency (more visits = higher priority)
+            //          2) Total spent (as tiebreaker)
+            // This ensures loyal regular merchants rank above one-time expensive purchases
+            .sortedWith(compareByDescending<EnhancedMerchantAnalytics> { it.transactionCount }
+                .thenByDescending { it.totalSpent })
             .take(limit)
     }
 }

@@ -11,7 +11,11 @@ enum class AiCapability {
     RECEIPT_EXTRACTION,
     CATEGORIZATION_FALLBACK,
     DEDUPE_JUDGE,
-    LOCATION_SUMMARY
+    LOCATION_SUMMARY,
+    NOTIFICATION_PARSE,
+    REVIEW_PRIORITIZATION,
+    SEMANTIC_DEDUPE,
+    RECEIPT_ITEM_CATEGORIZATION // NEW: AI categorization of individual receipt items
 }
 
 enum class AiMode {
@@ -85,8 +89,9 @@ data class AiSettings(
     val queryInterpretationEnabled: Boolean = false,
     val dashboardBriefingEnabled: Boolean = false,
     val reviewExplanationEnabled: Boolean = false,
-    val receiptAssistEnabled: Boolean = false,
-    val receiptImageCloudEnabled: Boolean = false,
+    val receiptAssistEnabled: Boolean = true,  // Changed: Enable by default for better accuracy
+    val receiptImageCloudEnabled: Boolean = true,  // Changed: Enable image analysis by default
+    val receiptItemCategorizationEnabled: Boolean = false, // NEW
     val categorizationFallbackEnabled: Boolean = false,
     val dedupeJudgeEnabled: Boolean = false,
     val proactiveBriefingsEnabled: Boolean = false,

@@ -5,6 +5,14 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+enum class CategorizationStatus {
+    PENDING,      // Not yet analyzed
+    ANALYZING,    // AI working
+    READY,        // Complete, user reviewed
+    CORRECTED,    // User made corrections
+    SKIPPED       // User opted out
+}
+
 @Entity(
     tableName = "scanned_receipts",
     foreignKeys = [
@@ -32,5 +40,6 @@ data class ScannedReceipt(
     val currency: String = "EUR",
     val confidence: Float,
     val expenseId: Long? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val itemCategorizationStatus: CategorizationStatus = CategorizationStatus.PENDING
 )

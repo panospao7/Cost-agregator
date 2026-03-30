@@ -31,6 +31,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.ui.components.*
+import com.yourname.expensetracker.ui.components.analytics.NoSpendStreakWidget
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
 import com.yourname.expensetracker.ui.components.PeriodLevel
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -452,6 +453,14 @@ fun HomeScreen(
                             is DashboardWidget.MonteCarloForecast -> {
                                 MonteCarloForecastCard(
                                     result = widget.result
+                                )
+                            }
+                            
+                            is DashboardWidget.NoSpendStreak -> {
+                                NoSpendStreakWidget(
+                                    currentStreak = widget.currentStreak,
+                                    personalBest = widget.personalBest,
+                                    daysWithoutSpendingThisMonth = widget.daysWithoutSpendingThisMonth
                                 )
                             }
                         }

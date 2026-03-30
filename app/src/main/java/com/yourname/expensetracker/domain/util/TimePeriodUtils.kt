@@ -132,7 +132,44 @@ object TimePeriodUtils {
         return start to now
     }
     /**
-     * getStartOfQuarter - Returns the start of the quarter (1st of Jan, Apr, Jul, Oct)
+     * getWeekRange - Returns a pair of (start, end) timestamps for the current calendar week.
+     * Week starts on Monday 00:00:00.000 and ends on Sunday 23:59:59.999.
+     * @param timestamp Reference time to determine which week
+     * @param weekOffset 0 for current week, -1 for previous week, etc.
+     */
+    fun getWeekRange(timestamp: Long, weekOffset: Int = 0): Pair<Long, Long> {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.firstDayOfWeek = Calendar.MONDAY
+        
+        // Apply week offset
+        cal.add(Calendar.WEEK_OF_YEAR, weekOffset)
+        
+        // Calculate Monday of this week
+        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
+        val daysFromMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
+        cal.add(Calendar.DAY_OF_MONTH, -daysFromMonday)
+        
+        // Start of week: Monday 00:00:00.000
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val startMs = cal.timeInMillis
+        
+        // End of week: Sunday 23:59:59.999
+        cal.add(Calendar.DAY_OF_MONTH, 6) // Sunday
+        cal.set(Calendar.HOUR_OF_DAY, 23)
+        cal.set(Calendar.MINUTE, 59)
+        cal.set(Calendar.SECOND, 59)
+        cal.set(Calendar.MILLISECOND, 999)
+        val endMs = cal.timeInMillis
+        
+        return startMs to endMs
+    }
+
+    /**
+     * getEndOfWeek - Returns the end of the week (Sunday 23:59:59.999) for a given timestamp.
      */
     fun getStartOfQuarter(timestamp: Long): Long {
         val cal = Calendar.getInstance()

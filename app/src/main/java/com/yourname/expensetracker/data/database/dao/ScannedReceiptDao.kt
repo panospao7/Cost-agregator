@@ -39,4 +39,7 @@ interface ScannedReceiptDao {
 
     @Query("UPDATE scanned_receipts SET expenseId = :expenseId WHERE id = :receiptId")
     suspend fun linkToExpense(receiptId: Long, expenseId: Long)
+
+    @Query("UPDATE scanned_receipts SET itemCategorizationStatus = :status WHERE id = :receiptId")
+    suspend fun updateCategorizationStatus(receiptId: Long, status: String)
 }

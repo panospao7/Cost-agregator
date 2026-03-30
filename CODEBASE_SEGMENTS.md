@@ -13,7 +13,7 @@
 | 1 | ~20 | Financial Forecast/Weather (+ Monte Carlo) |
 | 2 | ~8 | Budget Management |
 | 3 | ~20 | Notification Parsing |
-| 4 | ~8 | Receipt Scanning (OCR) |
+| 4 | ~12 | Receipt Scanning (OCR) - **NEW: AI Item Categorization** |
 | 5 | ~15 | Merchant Categorization |
 | 6 | ~5 | Recurring Expenses |
 | 7 | ~15 | Analytics & Insights |
@@ -29,6 +29,7 @@
 | 17 | ~15 | Location Enrichment (NEW Mar 2026) |
 | 18 | ~8 | AI Follow-Through (Phase 4B - NEW Mar 2026) |
 | 19 | ~10 | Totals Dashboard (NEW Mar 2026) |
+| 20 | ~12 | AI Receipt Item Categorization (NEW Mar 2026) |
 
 ---
 
@@ -198,15 +199,16 @@ When analyzing a specific feature, check files in this order:
 
 ---
 
-## SEGMENT 4: RECEIPT SCANNING (OCR)
+## SEGMENT 4: RECEIPT SCANNING (OCR) - **ENHANCED Mar 2026**
 
-**Description:** OCR-based receipt scanning to extract transaction details.
+**Description:** OCR-based receipt scanning to extract transaction details. **NEW:** AI-powered item-level categorization that analyzes each line item separately.
 
 ### UI Layer
 | File | Purpose |
 |------|---------|
-| `ui/screens/receiptscan/ReceiptScanScreen.kt` | Camera/gallery receipt capture |
-| `ui/screens/receiptscan/ReceiptScanViewModel.kt` | OCR processing coordination |
+| `ui/screens/receiptscan/ReceiptScanScreen.kt` | Camera/gallery receipt capture + item breakdown display |
+| `ui/screens/receiptscan/ReceiptScanViewModel.kt` | OCR processing + AI item categorization |
+| `ui/components/ai/ReceiptItemBreakdownCard.kt` | **NEW** - Interactive item categorization UI |
 
 ### Domain Layer
 | File | Purpose |
@@ -214,17 +216,33 @@ When analyzing a specific feature, check files in this order:
 | `domain/receipt/ReceiptOcrService.kt` | **MAIN ENGINE** - ML Kit OCR processing |
 | `domain/receipt/ReceiptParser.kt` | Parses OCR text into structured data |
 | `domain/receipt/BankStatementParser.kt` | Parses bank statement images |
+| `domain/ai/usecase/CategorizeReceiptItemsUseCase.kt` | **NEW** - Item categorization orchestrator |
+| `domain/ai/usecase/ReceiptItemCategorizationInputBuilder.kt` | **NEW** - AI input preparation |
+| `domain/ai/model/ReceiptItemCategorizationModels.kt` | **NEW** - Categorization data models |
 
 ### Data Layer
 | File | Purpose |
 |------|---------|
 | `data/repository/ReceiptRepository.kt` | **MAIN REPO** - Receipt storage and processing |
+| `data/ai/provider/CloudReceiptItemCategorizationService.kt` | **NEW** - Gemini AI service |
+| `data/ai/provider/OnDeviceReceiptItemCategorizationService.kt` | **NEW** - Keyword-based fallback |
+| `data/ai/provider/HybridReceiptItemCategorizationService.kt` | **NEW** - Smart routing (cloud/on-device) |
 
 ### Database Layer
 | File | Purpose |
 |------|---------|
-| `data/database/entity/ScannedReceipt.kt` | Scanned receipt entity |
-| `data/database/dao/ScannedReceiptDao.kt` | Receipt queries |
+| `data/database/entity/ScannedReceipt.kt` | Scanned receipt entity + CategorizationStatus |
+| `data/database/entity/ReceiptItemCategorization.kt` | **NEW** - Item categorization entity (v37) |
+| `data/database/dao/ScannedReceiptDao.kt` | Receipt queries + status updates |
+| `data/database/dao/ReceiptItemCategorizationDao.kt` | **NEW** - Item categorization DAO |
+
+### AI Integration
+**Capability:** `RECEIPT_ITEM_CATEGORIZATION`
+- Auto-triggers after receipt scan if AI enabled
+- Categorizes each line item with confidence score
+- Shows alternative suggestions for uncertain items (< 70% confidence)
+- User can correct categories (AI learns from corrections)
+- Tax distribution calculated proportionally
 
 ---
 
@@ -318,13 +336,15 @@ When analyzing a specific feature, check files in this order:
 ### UI Layer
 | File | Purpose |
 |------|---------|
-| `ui/screens/analytics/AnalyticsScreen.kt` | Basic analytics UI |
+| `ui/screens/analytics/AnalyticsScreen.kt` | Main analytics UI with statistical cards |
 | `ui/screens/analytics/AnalyticsViewModel.kt` | Analytics data preparation |
 | `ui/screens/analytics/AdvancedAnalyticsScreen.kt` | Advanced analytics UI |
 | `ui/screens/analytics/AdvancedAnalyticsViewModel.kt` | Advanced analytics data |
 | `ui/components/SpendingTrendChart.kt` | Trend visualization |
 | `ui/components/SpendingPaceGauge.kt` | Spending pace gauge |
 | `ui/components/ChartMarker.kt` | Chart markers |
+| `ui/components/analytics/StatisticalVisualizations.kt` | **NEW** - Percentile grid, histogram, category badges, rich merchant cards |
+| `ui/components/analytics/NoSpendStreakWidget.kt` | **NEW** - Gamified streak widget with 🔥 emoji |
 
 ### Domain Layer (NEW - Focused Analytics Engines)
 | File | Purpose |
@@ -336,8 +356,9 @@ When analyzing a specific feature, check files in this order:
 | `domain/analytics/CategoryInsightEngine.kt` | Analyzes category spending |
 | `domain/analytics/MerchantInsightEngine.kt` | Analyzes merchant patterns |
 | `domain/analytics/DayOfWeekAnalyzer.kt` | Analyzes day-of-week patterns |
-| `domain/analytics/AdvancedAnalyticsEngine.kt` | Advanced pattern analysis |
+| `domain/analytics/AdvancedAnalyticsEngine.kt` | Advanced pattern analysis (percentiles, histograms, velocity) |
 | `domain/analytics/AnalyticsModels.kt` | Analytics data models |
+| `domain/analytics/AdvancedAnalyticsModels.kt` | **NEW** - Statistical insights, enhanced category/merchant analytics |
 
 ### Data Layer
 | File | Purpose |
@@ -414,6 +435,7 @@ When analyzing a specific feature, check files in this order:
 | `ui/components/PeriodGridView.kt` | Period grid display with blocks (NEW Mar 2026) |
 | `ui/components/PeriodBlock.kt` | Individual period block (NEW Mar 2026) |
 | `ui/components/CategoryBreakdownSheet.kt` | Category breakdown bottom sheet (NEW Mar 2026) |
+| `ui/components/analytics/NoSpendStreakWidget.kt` | **NEW** - Gamified no-spend streak widget (Mar 2026) |
 
 ### Domain Layer
 | File | Purpose |
@@ -432,6 +454,7 @@ When analyzing a specific feature, check files in this order:
 |------|---------|
 | `data/repository/DashboardRepository.kt` | **MAIN REPO** - Widget configuration |
 | `data/repository/ExpenseRepository.kt` | Added methods for weekly/monthly/daily totals and category breakdown |
+| `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` | **UPDATED** - Widget computation with NoSpendStreak calculation (Mar 2026) |
 
 ### Database Layer
 | File | Purpose |
@@ -459,6 +482,10 @@ When analyzing a specific feature, check files in this order:
 - **Filter chips not working**: Only show accessible levels (can go back)
 - **Category breakdown empty**: Load current month when no period selected
 - **Widget not showing**: Added totals_dashboard to default dashboard config
+- **Drill-up navigation broken**: Fixed `HomeViewModel.drillUp()` to handle all paths (DAY→WEEK→MONTH→YEAR)
+- **Weekly partial weeks**: Fixed `TotalsAggregationEngine.getWeeklyTotals()` to show all weeks touching month (with partial week labels)
+- **DashboardWidget.NoSpendStreak**: **NEW** - Gamified streak widget added to widget list (Mar 2026)
+- **calculateStreakData()**: **NEW** - Function to compute current streak, personal best, and monthly dry days (Mar 2026)
 
 ---
 
@@ -522,7 +549,8 @@ When analyzing a specific feature, check files in this order:
 
 | File | Purpose |
 |------|---------|
-| `data/database/AppDatabase.kt` | Main Room database definition |
+| `data/database/AppDatabase.kt` | Main Room database definition (v37) |
+| `MIGRATION_36_37` | **NEW** - Adds receipt_item_categorizations table and CategorizationStatus column |
 
 ---
 
@@ -540,7 +568,7 @@ When analyzing a specific feature, check files in this order:
 | `domain/util/AmountExtractionUtils.kt` | Regex patterns for extraction |
 | `domain/util/CurrencyNormalizer.kt` | Currency handling |
 | `domain/util/DateFormatterUtils.kt` | Date formatting |
-| `domain/util/TimePeriodUtils.kt` | Date range calculations |
+| `domain/util/TimePeriodUtils.kt` | Date range calculations, **NEW: getWeekRange() for Monday-Sunday weeks** |
 | `domain/util/CommonPatterns.kt` | Regex patterns |
 | `domain/util/StringDistanceUtils.kt` | String similarity |
 | `domain/util/BKTree.kt` | BK-tree for fuzzy search |
@@ -604,6 +632,59 @@ When analyzing a specific feature, check files in this order:
   - Filter chips not working: Only show accessible levels (can go back)
   - Category breakdown empty: Load current month when no period selected
   - Widget not showing: Added totals_dashboard to default dashboard config
+  - **Drill-up navigation fixed**: Complete rewrite of drillUp() in HomeViewModel (DAY→WEEK→MONTH→YEAR all work)
+
+### Check Week Standardization Issues (Mar 2026)
+→ Files: `TimePeriodUtils.getWeekRange()`, `TransactionsViewModel`, `AnalyticsViewModel`, `InterpretFinancialQueryUseCase`
+→ **Recent Fixes**:
+  - Standardized all week calculations to Monday-Sunday calendar weeks
+  - Removed inconsistent rolling 7-day windows
+  - Added getWeekRange() function for proper week boundaries
+  - All screens now show consistent week data
+
+### Check SQL Date Boundary Issues (Mar 2026)
+→ Files: `ExpenseDao.kt` (10 queries)
+→ **Recent Fixes**:
+  - Standardized all date queries to half-open intervals `[start, end)`
+  - Changed from `date <= :end` to `date < :end` (10 queries fixed)
+  - No more double-counting or missing expenses at boundaries
+  - Affected queries: getExpensesBetween, getTotalSpentBetween, getCategoryTotalsBetween, getMerchantTotalsBetween, getDepositsBetween
+
+### Check Weekly Totals Partial Week Issues (Mar 2026)
+→ Files: `TotalsAggregationEngine.getWeeklyTotals()`
+→ **Recent Fixes**:
+  - Fixed March showing 6 weeks due to partial weeks at boundaries
+  - Now includes all weeks that touch the month (partial week handling)
+  - Week of Feb 24-Mar 2 shows as "W1 (1-1 Mar)" in March view
+  - No expenses lost at month boundaries
+
+### Check Spending Totals Navigation Issues (Mar 2026)
+→ Files: `HomeViewModel.drillUp()`, `HomeViewModel.drillDownToPeriod()`, `TotalsAggregationEngine`
+→ **Recent Fixes**:
+  - Fixed drillUp() to handle all navigation paths (DAY→WEEK→MONTH→YEAR)
+  - Added getYearlyTotals() to TotalsAggregationEngine
+  - Fixed parent/grandparent tracking in drill-down state
+  - Back button and filter chips now work correctly at all levels
+
+### Check AI Receipt Item Categorization Issues (Mar 2026)
+→ Files: `CategorizeReceiptItemsUseCase`, `ReceiptItemBreakdownCard`, `ReceiptScanViewModel`, `ReceiptItemCategorizationDao`
+→ **Recent Implementation**:
+  - AI analyzes each receipt item separately with confidence scoring
+  - Auto-triggers after receipt scan if AI enabled
+  - Shows alternative suggestions for uncertain items (< 70% confidence)
+  - User corrections saved and learned from
+  - Tax distribution calculated proportionally
+  - Cloud (Gemini) + on-device (keyword) hybrid approach
+
+### Check Statistical Visualization Issues (NEW Mar 2026)
+→ Files: `StatisticalVisualizations.kt`, `AdvancedAnalyticsEngine`, `AnalyticsScreen`, `ComputeDashboardWidgetsUseCase`
+→ **Recent Implementation**:
+  - **Percentile Grid Card**: Shows P10, P25, P50, P75, P90 transaction size distribution
+  - **Transaction Histogram**: 10-bin bar chart of transaction distribution
+  - **Category Percentile Badges**: P25/P75 ranges with velocity indicators (🚀🐢➡️)
+  - **No-Spend Streak Widget**: Gamification with 🔥 streaks, personal best tracking
+  - **Enhanced Merchant Cards**: Loyalty scores, streaks, consistency, price trends
+  - All statistical calculations now surfaced in UI (previously hidden in code)
 
 ### Check ML Training Issues
 → Files: `TransactionClassifier`, `MerchantNormalizer`, `ExpenseCategoryClassifier`, `UserCorrectionRepository`
@@ -1012,6 +1093,189 @@ val PRIORITY_WEIGHTS = mapOf(
 
 **Check Dismissal Issues:**
 → RecommendationDismissalHandler, RecommendationStateManager.removeFromState()
+
+---
+
+## SEGMENT 20: AI RECEIPT ITEM CATEGORIZATION (NEW Mar 2026)
+
+**Description:** AI-powered analysis of individual receipt items to categorize each line item separately. Provides detailed breakdown of spending by item category with confidence scoring and user correction support.
+
+### Overview
+When a user scans a receipt with multiple items (e.g., grocery receipt with food, household, and personal care items), the AI analyzes each line item individually and suggests the most appropriate category from the user's existing categories.
+
+### Key Features
+- **Item-level categorization**: Each item categorized separately (e.g., "Apples → Food", "Detergent → Household")
+- **Confidence scoring**: 90%+ = High (green), 70-89% = Good (yellow), <70% = Needs review (red)
+- **Alternative suggestions**: Shows 2-3 alternative categories for uncertain items
+- **Tax distribution**: Calculates proportional tax for each category
+- **User corrections**: Users can fix AI suggestions; system learns from corrections
+- **New category suggestions**: AI can suggest creating categories for items that don't fit existing ones
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| `ui/components/ai/ReceiptItemBreakdownCard.kt` | **MAIN UI** - Interactive breakdown with category chips |
+| `ui/screens/receiptscan/ReceiptScanScreen.kt` | Integrates breakdown card in review screen |
+| `ui/screens/receiptscan/ReceiptScanViewModel.kt` | State management for item categorization |
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/ai/usecase/CategorizeReceiptItemsUseCase.kt` | **MAIN ORCHESTRATOR** - Coordinates AI categorization |
+| `domain/ai/usecase/ReceiptItemCategorizationInputBuilder.kt` | Builds AI input from receipt data |
+| `domain/ai/model/ReceiptItemCategorizationModels.kt` | Data models (Input, Result, CategorizedItem) |
+| `domain/ai/service/ReceiptItemCategorizationService.kt` | Service interface |
+| `domain/ai/policy/DefaultAiCapabilityRouter.kt` | Routes to cloud/on-device |
+| `domain/ai/policy/AiPolicyImpl.kt` | Policy rules for new capability |
+| `domain/config/AppConfig.kt` | Configuration constants |
+
+### Data Layer (AI Services)
+| File | Purpose |
+|------|---------|
+| `data/ai/provider/CloudReceiptItemCategorizationService.kt` | **Cloud** - Gemini API integration |
+| `data/ai/provider/OnDeviceReceiptItemCategorizationService.kt` | **On-Device** - Keyword-based fallback |
+| `data/ai/provider/HybridReceiptItemCategorizationService.kt` | **Hybrid** - Smart routing between cloud/on-device |
+
+### Data Layer (Repository)
+| File | Purpose |
+|------|---------|
+| `data/repository/ReceiptRepository.kt` | Updated with categorization status methods |
+
+### Database Layer
+| File | Purpose |
+|------|---------|
+| `data/database/entity/ReceiptItemCategorization.kt` | **Entity** - Stores categorization per item |
+| `data/database/entity/ScannedReceipt.kt` | Updated with CategorizationStatus field |
+| `data/database/dao/ReceiptItemCategorizationDao.kt` | **DAO** - 12 query methods |
+| `data/database/dao/ScannedReceiptDao.kt` | Updated with status update method |
+| `data/database/AppDatabase.kt` | Version 37, includes new entity |
+| `MIGRATION_36_37` | Creates receipt_item_categorizations table |
+
+### DI Layer
+| File | Purpose |
+|------|---------|
+| `di/AiModule.kt` | Binds ReceiptItemCategorizationService, provides service instances |
+| `di/DaoModule.kt` | Provides ReceiptItemCategorizationDao |
+| `di/DatabaseModule.kt` | Includes MIGRATION_36_37 |
+
+### AI Models
+| Model | Purpose |
+|-------|---------|
+| `ReceiptItemCategorizationInput` | Input data (receiptId, merchant, lineItems, categories, tax) |
+| `CategorizedReceiptItem` | Single item result (description, amount, category, confidence) |
+| `CategorySuggestion` | Category with confidence and new-flag |
+| `ReceiptItemCategorizationResult` | Full result (items, avg confidence, tax distribution) |
+| `CategorizationResult` | Sealed interface (Success, AlreadyAnalyzed, Disabled, Error) |
+
+### AI Prompt Design
+The AI receives:
+- Store/merchant name
+- Available user categories with IDs
+- Line items with descriptions and amounts
+- Total tax amount (optional)
+
+Returns JSON with:
+- Each item's categoryId, categoryName, confidence (0.0-1.0)
+- Rationale for each categorization
+- Alternative categories for uncertain items
+- Suggested new categories if applicable
+- Tax distribution by category
+
+### Auto-Trigger Conditions
+Automatically runs when:
+1. Receipt successfully scanned
+2. `aiEnabled = true` in settings
+3. `receiptItemCategorizationEnabled = true` in settings
+4. Receipt has line items (`parsedItems.isNotEmpty()`)
+
+### UI Flow
+1. User scans receipt
+2. System detects line items
+3. AI analyzes items automatically (shows "Analyzing..." indicator)
+4. Displays breakdown card with:
+   - Item descriptions and amounts
+   - Category chips with confidence badges
+   - Alternative suggestions for low-confidence items
+   - Info button showing AI rationale
+5. User can tap any category chip to open category picker
+6. Corrections saved and AI learns from them
+
+### Database Schema
+```sql
+receipt_item_categorizations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  receiptId INTEGER NOT NULL,
+  expenseId INTEGER,
+  itemDescription TEXT NOT NULL,
+  itemAmount REAL NOT NULL,
+  suggestedCategoryId INTEGER,
+  suggestedCategoryName TEXT,
+  confidence REAL NOT NULL,
+  aiRationale TEXT,                    -- Why AI chose this category
+  alternativeCategoriesJson TEXT,      -- JSON array of alternatives
+  userCorrectedCategoryId INTEGER,     -- Null if user accepted AI
+  userCorrectedCategoryName TEXT,
+  userCorrectedAt INTEGER,
+  taxAmount REAL,                      -- Proportional tax for this item
+  isNewCategorySuggestion INTEGER DEFAULT 0,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  
+  FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+  FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+)
+
+Indices:
+- idx_receipt_item_categorizations_receiptId
+- idx_receipt_item_categorizations_expenseId
+- idx_receipt_item_categorizations_suggestedCategoryId
+- idx_receipt_item_categorizations_userCorrectedCategoryId
+```
+
+### Configuration (AppConfig.Ai)
+```kotlin
+const val RECEIPT_ITEM_CATEGORIZATION_CLOUD_PROVIDER = "google-ai-studio"
+const val RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL = "gemini-2.5-flash"
+const val ON_DEVICE_RECEIPT_ITEM_TEMPERATURE = 0.1f
+const val ON_DEVICE_RECEIPT_ITEM_MAX_TOKENS = 300
+const val ON_DEVICE_RECEIPT_ITEM_MODEL = "gemini-nano-receipt-items"
+const val RECEIPT_ITEMS_TTL_MS = 30L * 24 * 60 * 60 * 1000  // 30 days
+const val PROMPT_VERSION_RECEIPT_ITEMS = "v1"
+```
+
+### AI Settings Integration
+```kotlin
+data class AiSettings(
+    // ... existing fields ...
+    val receiptItemCategorizationEnabled: Boolean = false  // NEW
+)
+```
+
+### Quick Reference: AI Receipt Item Categorization Issues
+
+**Check Item Categorization Not Working:**
+→ ReceiptScanViewModel.analyzeReceiptItems(), aiSettingsRepository.settings()
+
+**Check AI Service Issues:**
+→ CloudReceiptItemCategorizationService.categorizeItems(), HybridReceiptItemCategorizationService
+
+**Check UI Not Showing:**
+→ ReceiptScanScreen item breakdown section, ReceiptItemBreakdownCard
+
+**Check Database Issues:**
+→ ReceiptItemCategorizationDao, MIGRATION_36_37, AppDatabase v37
+
+**Check DI Issues:**
+→ AiModule.bindReceiptItemCategorizationService(), DaoModule.provideReceiptItemCategorizationDao()
+
+**Check User Corrections Not Saving:**
+→ ReceiptScanViewModel.updateItemCategory(), ReceiptItemCategorizationDao.updateUserCorrection()
+
+### Related Documentation
+- **ARCHITECTURE.md** → "Recent Changes & Fixes" section
+- See also: Segment 4 (Receipt Scanning), Segment 18 (AI Follow-Through)
+
+---
 
 ### Phase 3+ Future Enhancements
 

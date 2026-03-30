@@ -54,7 +54,9 @@ class CloudReceiptAssistService @Inject constructor(
         }
 
         val settings = aiSettingsRepository.settings().first()
-        val requestBody = buildRequestBody(input, settings.receiptImageCloudEnabled)
+        // NEW: Use input.isImageAnalysisMode to decide if we should include the image
+        val useImageAnalysis = input.isImageAnalysisMode && settings.receiptImageCloudEnabled
+        val requestBody = buildRequestBody(input, useImageAnalysis)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL}:generateContent?key=$apiKey"
         val request = Request.Builder()
             .url(url)

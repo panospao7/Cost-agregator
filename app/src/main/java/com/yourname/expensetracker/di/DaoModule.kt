@@ -89,4 +89,9 @@ object DaoModule {
     @Provides
     @Singleton
     fun provideRecommendationDao(database: AppDatabase): RecommendationDao = database.recommendationDao()
+
+    @Provides
+    @Singleton
+    fun provideReceiptItemCategorizationDao(database: AppDatabase): ReceiptItemCategorizationDao = 
+        database.receiptItemCategorizationDao()
 }

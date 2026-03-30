@@ -103,6 +103,12 @@ sealed class DashboardWidget {
     ) : DashboardWidget()
 
     data object TotalsDashboard : DashboardWidget()
+
+    data class NoSpendStreak(
+        val currentStreak: Int,
+        val personalBest: Int,
+        val daysWithoutSpendingThisMonth: Int
+    ) : DashboardWidget()
 }
 
 data class CategorySpending(
@@ -411,10 +417,24 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             if (exceeded > 0) "$exceeded budgets exceeded!" else "All budgets on track"
         } else null
 
+        // ── Calculate No-Spend Streak Data ────────────────────────────────────
+        val (currentStreak, personalBest, daysWithoutSpendingThisMonth) = calculateStreakData(
+            calendar, expenses, monthStart
+        )
+
         // ── Assemble widget list ─────────────────────────────────────────────
         val widgets = buildList {
             add(DashboardWidget.FinancialWeatherWidget(weather))
             add(DashboardWidget.TotalsDashboard)
+            
+            // NEW: No-Spend Streak Widget (gamification)
+            // Always show to encourage streak building, even at 0
+            add(DashboardWidget.NoSpendStreak(
+                currentStreak = currentStreak,
+                personalBest = personalBest,
+                daysWithoutSpendingThisMonth = daysWithoutSpendingThisMonth
+            ))
+            
             add(
                 DashboardWidget.SafeToSpend(
                     amount = if (overallBudget != null) safeToSpend else monthSpent,
@@ -469,5 +489,83 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             )
         }
         return null
+    }
+
+    /**
+     * Calculates no-spend streak data for gamification.
+     * @return Triple of (currentStreak, personalBest, daysWithoutSpendingThisMonth)
+     */
+    private fun calculateStreakData(
+        calendar: java.util.Calendar,
+        expenses: List<Expense>,
+        startOfMonth: Long
+    ): Triple<Int, Int, Int> {
+        val now = calendar.timeInMillis
+        val oneDayMs = 24 * 60 * 60 * 1000L
+        
+        // Get all expense dates
+        val expenseDates = expenses
+            .filter { it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE }
+            .map { it.date }
+            .distinct()
+            .sortedDescending()
+        
+        // Calculate current streak (from today backward)
+        var currentStreak = 0
+        var checkDate = now
+        
+        while (true) {
+            val dayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(checkDate)
+            val dayEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfDay(checkDate)
+            
+            val hasExpense = expenseDates.any { it in dayStart..dayEnd }
+            
+            if (!hasExpense) {
+                currentStreak++
+                checkDate -= oneDayMs
+            } else {
+                break
+            }
+        }
+        
+        // Calculate personal best (max streak ever)
+        var personalBest = currentStreak
+        var tempStreak = 0
+        var lastDate: Long? = null
+        
+        val sortedDates = expenseDates.sortedDescending()
+        
+        for (date in sortedDates) {
+            if (lastDate == null) {
+                lastDate = date
+                continue
+            }
+            
+            val daysBetween = ((lastDate - date) / oneDayMs).toInt()
+            
+            if (daysBetween > 1) {
+                // Gap found - count the streak
+                tempStreak = daysBetween - 1
+                if (tempStreak > personalBest) {
+                    personalBest = tempStreak
+                }
+            }
+            
+            lastDate = date
+        }
+        
+        // Calculate days without spending this month
+        val endOfMonth = com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(now)
+        val totalDaysInMonth = ((endOfMonth - startOfMonth) / oneDayMs).toInt() + 1
+        
+        val expenseDaysThisMonth = expenseDates
+            .filter { it >= startOfMonth && it <= endOfMonth }
+            .map { com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(it) }
+            .distinct()
+            .count()
+        
+        val daysWithoutSpendingThisMonth = totalDaysInMonth - expenseDaysThisMonth
+        
+        return Triple(currentStreak, personalBest.coerceAtLeast(currentStreak), daysWithoutSpendingThisMonth)
     }
 }

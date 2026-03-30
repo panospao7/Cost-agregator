@@ -49,7 +49,7 @@ interface ExpenseDao {
     @Transaction
     @Query("""
         SELECT * FROM expenses 
-        WHERE date >= :startMs AND date <= :endMs 
+        WHERE date >= :startMs AND date < :endMs 
         AND (:type IS NULL OR transactionType = :type)
         AND (:categoryId IS NULL OR categoryId = :categoryId)
         AND (:merchantKey IS NULL OR merchantKey = :merchantKey)
@@ -64,7 +64,7 @@ interface ExpenseDao {
     ): Flow<List<ExpenseWithCategory>>
 
     @Transaction
-    @Query("SELECT * FROM expenses WHERE date >= :startMs AND date <= :endMs ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE date >= :startMs AND date < :endMs ORDER BY date DESC")
     fun getExpensesWithCategoryInPeriodFlow(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>>
 
     @Deprecated("Use getAllFlow(limit) or getPage(limit, offset) to prevent OOM", ReplaceWith("getAllFlow(500)"))
@@ -203,16 +203,16 @@ interface ExpenseDao {
     """)
     suspend fun getAmountsForPercentileCalc(startMs: Long, endMs: Long): List<Double>
 
-    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense>
 
-    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String): List<Expense>
 
-    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
     fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
 
-    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
     fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String): Flow<List<Expense>>
 
     @Query("""
@@ -220,7 +220,7 @@ interface ExpenseDao {
                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                         ELSE amount END) FROM expenses 
         WHERE transactionType = 'PURCHASE' 
-        AND date >= :startDate AND date <= :endDate
+        AND date >= :startDate AND date < :endDate
         AND isNotMine = 0
     """)
     suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
@@ -232,7 +232,7 @@ interface ExpenseDao {
                          ELSE amount END) as total, COUNT(*) as cnt 
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
-        AND date >= :startDate AND date <= :endDate
+        AND date >= :startDate AND date < :endDate
         AND isNotMine = 0
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
@@ -246,7 +246,7 @@ interface ExpenseDao {
                                     ELSE amount END) as total, COUNT(*) as txCount
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
-        AND date >= :startDate AND date <= :endDate
+        AND date >= :startDate AND date < :endDate
         AND categoryId IS NOT NULL
         AND isNotMine = 0
         GROUP BY categoryId
@@ -462,10 +462,10 @@ interface ExpenseDao {
 
     // === Deposit/Income Queries ===
 
-    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getDepositsBetween(startDate: Long, endDate: Long): List<Expense>
 
-    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
+    @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
     fun getDepositsBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
 
     @Query("SELECT COALESCE(SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0 ELSE amount END), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs AND isNotMine = 0")

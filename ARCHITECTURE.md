@@ -46,7 +46,8 @@ Use **Check Bug Sources** table to find likely causes
 4. [Key Components](#key-components)
 5. [Dependency Injection](#dependency-injection)
 6. [Database Schema](#database-schema)
-7. [Quick Reference](#quick-reference)
+7. [Recent Changes & Fixes](#recent-changes--fixes)
+8. [Quick Reference](#quick-reference)
 
 ---
 
@@ -583,6 +584,324 @@ index_raw_notifications_packageName_timestamp_title_text UNIQUE
 
 ---
 
+## Recent Changes & Fixes (Mar 2026)
+
+### 1. AI Receipt Item Categorization (NEW)
+**Overview:** AI-powered analysis of individual receipt items to categorize each line item separately, providing better spending insights.
+
+**Key Features:**
+- Automatically categorizes each item on a receipt (e.g., "Apples → Food", "Detergent → Household")
+- Confidence scoring for each categorization (90%+ = High, 70-89% = Good, <70% = Needs Review)
+- Alternative category suggestions for uncertain items
+- Tax distribution calculation across categories
+- User can manually correct AI suggestions (learns from corrections)
+- Can suggest creating new categories when items don't fit existing ones
+
+**Components:**
+| Component | File | Purpose |
+|-----------|------|---------|
+| **Entity** | `ReceiptItemCategorization.kt` | Stores categorization for each item |
+| **DAO** | `ReceiptItemCategorizationDao.kt` | Database operations |
+| **Use Case** | `CategorizeReceiptItemsUseCase.kt` | Main orchestrator |
+| **Input Builder** | `ReceiptItemCategorizationInputBuilder.kt` | Prepares AI input |
+| **Cloud Service** | `CloudReceiptItemCategorizationService.kt` | Gemini API integration |
+| **On-Device Service** | `OnDeviceReceiptItemCategorizationService.kt` | Keyword-based fallback |
+| **Hybrid Service** | `HybridReceiptItemCategorizationService.kt` | Smart routing |
+| **UI Component** | `ReceiptItemBreakdownCard.kt` | Interactive item breakdown |
+| **AI Capability** | `RECEIPT_ITEM_CATEGORIZATION` | Registered in AiCapability enum |
+
+**Database Schema (v37):**
+```sql
+receipt_item_categorizations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  receiptId INTEGER NOT NULL,
+  expenseId INTEGER,
+  itemDescription TEXT NOT NULL,
+  itemAmount REAL NOT NULL,
+  suggestedCategoryId INTEGER,
+  suggestedCategoryName TEXT,
+  confidence REAL NOT NULL,
+  aiRationale TEXT,
+  alternativeCategoriesJson TEXT,
+  userCorrectedCategoryId INTEGER,
+  userCorrectedCategoryName TEXT,
+  userCorrectedAt INTEGER,
+  taxAmount REAL,
+  isNewCategorySuggestion INTEGER NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+  FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+)
+```
+
+**AI Prompt Design:**
+- Sends merchant name, available categories, and line items to AI
+- AI returns JSON with category assignments, confidence scores, and rationale
+- Alternative categories provided for items with confidence < 70%
+- Tax distributed proportionally by item amount
+
+**Auto-Trigger:**
+- Automatically runs after receipt scan if:
+  - AI is enabled (`aiEnabled = true`)
+  - Receipt item categorization is enabled (`receiptItemCategorizationEnabled = true`)
+  - Receipt has line items (`parsedItems.isNotEmpty()`)
+
+**UI Flow:**
+1. User scans receipt → Items detected
+2. AI categorizes items automatically (shows loading state)
+3. Displays breakdown with confidence badges
+4. User can tap category chip to change it
+5. Shows alternatives for low-confidence items
+6. Rationale available via info button
+
+---
+
+### 2. Week Standardization Fix
+**Problem:** Inconsistent week definitions across the app:
+- Some screens used rolling 7-day windows (Wed→Wed)
+- Others used calendar weeks (Mon→Sun)
+- This caused confusion when comparing "weekly" data
+
+**Solution:** Standardized all week calculations to Monday-Sunday calendar weeks.
+
+**Files Changed:**
+- `domain/util/TimePeriodUtils.kt` - Added `getWeekRange()` function
+- `ui/screens/transactions/TransactionsViewModel.kt` - Changed WEEK tab
+- `ui/screens/analytics/AnalyticsViewModel.kt` - Changed WEEK period
+- `domain/ai/usecase/InterpretFinancialQueryUseCase.kt` - Changed "this week" query
+
+**New Function:**
+```kotlin
+fun getWeekRange(timestamp: Long, weekOffset: Int = 0): Pair<Long, Long>
+// Returns Monday 00:00:00.000 → Sunday 23:59:59.999
+```
+
+**Benefits:**
+- Consistent week boundaries across all screens
+- Matches traditional financial tracking (payroll, budgeting)
+- No more confusion when comparing week data
+
+---
+
+### 3. SQL Date Boundary Fixes
+**Problem:** Mixed inclusive/exclusive date boundaries in SQL queries caused:
+- Expenses at exact boundary timestamps being double-counted or missed
+- Inconsistent totals between list queries and aggregation queries
+
+**Solution:** Standardized all queries to use half-open intervals `[start, end)`:
+```sql
+-- Standard pattern (inclusive start, exclusive end)
+date >= :startMs AND date < :endMs
+```
+
+**Files Changed (10 queries in ExpenseDao.kt):**
+- `getExpensesWithCategoryFilteredFlow()` 
+- `getExpensesWithCategoryInPeriodFlow()`
+- `getExpensesBetween()` / `getExpensesBetweenFlow()`
+- `getExpensesByTypeBetween()` / `getExpensesByTypeBetweenFlow()`
+- `getTotalSpentBetween()`
+- `getMerchantTotalsBetween()`
+- `getCategoryTotalsBetween()`
+- `getDepositsBetween()` / `getDepositsBetweenFlow()`
+
+**Before:** `date >= :start AND date <= :end` (inclusive-inclusive)
+**After:** `date >= :start AND date < :end` (half-open)
+
+**Benefits:**
+- No double-counting at boundaries
+- Consistent expense counting across all queries
+- Clean mathematical intervals
+
+---
+
+### 4. Weekly Totals Partial Week Fix
+**Problem:** March showing 6 weeks due to partial weeks at month boundaries:
+- Week of Feb 24-Mar 2 had only 1 day (Mar 1) in March
+- Week of Mar 30-Apr 5 had only 2 days in March
+- These partial weeks were being counted as full weeks
+
+**Solution:** Modified `TotalsAggregationEngine.getWeeklyTotals()` to include all weeks that touch the month:
+```kotlin
+// Include ALL weeks that have at least one day in the month
+val monthWeeks = weeklyTotals.filter { weekly ->
+    weekly.startDate < monthEndMs && weekly.endDate > monthStartMs
+}
+```
+
+**Partial Week Labels:**
+- Week 1 (Feb 24-Mar 2) shows as "W1 (1-1 Mar)" when viewed in March
+- Week 6 (Mar 30-Apr 5) shows as "W6 (30-31 Mar)" when viewed in March
+- Only the days actually in the month are counted
+
+**Benefits:**
+- No expenses lost at month boundaries
+- Clear labeling of partial weeks
+- Accurate monthly totals
+
+---
+
+### 5. Spending Totals Navigation Fix
+**Problem:** Drill-up (back button) in spending totals widget was broken:
+- Only handled MONTH→YEAR navigation
+- Returned empty lists for other paths
+- DAY→WEEK and WEEK→MONTH navigation didn't work
+
+**Solution:** Complete rewrite of `HomeViewModel.drillUp()`:
+- Properly handles all navigation paths: DAY→WEEK→MONTH→YEAR
+- Loads appropriate data for each level
+- Tracks parent/grandparent hierarchy correctly
+- Shows proper loading states
+
+**Files Changed:**
+- `ui/screens/home/HomeViewModel.kt` - Fixed `drillUp()` function
+- `domain/analytics/TotalsAggregationEngine.kt` - Added `getYearlyTotals()` method
+- `data/repository/ExpenseRepository.kt` - Added `getTransactionCountForPeriod()`
+
+**Navigation Flow:**
+```
+YEAR (2024, 2023, 2022, 2021, 2020)
+  ↓ Click on 2024
+MONTH (Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec)
+  ↓ Click on March
+WEEK (W1, W2, W3, W4, W5)
+  ↓ Click on W2
+DAY (Mon, Tue, Wed, Thu, Fri, Sat, Sun)
+  ↓ Click on Mon
+Category Breakdown (Food, Transport, etc.)
+
+← Back button works at every level
+← Filter chips work (click YEAR chip to go back from MONTH)
+```
+
+---
+
+### 6. Statistical UI Enhancements (NEW Mar 2026)
+
+**Problem:** Rich statistical calculations were being performed but not exposed in the UI:
+- Percentiles (P10-P99) calculated but only P50 shown
+- Histogram data built but never visualized
+- Category velocity computed but not displayed
+- Days without spending tracked but not gamified
+- Merchant intelligence rich but underutilized
+
+**Solution:** Created comprehensive statistical visualization layer:
+
+#### **6.1 Percentile Grid Card**
+**Location:** Analytics Screen (after Statistical Highlights)
+**Shows:** P10, P25, P50, P75, P90 with visual gradient
+**Value:** Users understand their "typical" transaction size spectrum
+**Data Source:** `StatisticalInsights.percentiles`
+**UI Component:** `PercentileGridCard()` in `StatisticalVisualizations.kt`
+
+```kotlin
+Your Spending Profile:
+┌─────────────────────────────────────┐
+│  Small (P10):    €12.50            │
+│  Low (P25):      €28.30            │
+│  Median (P50):   €45.00 ← Typical  │
+│  High (P75):     €78.90            │
+│  Large (P90):    €125.00           │
+└─────────────────────────────────────┘
+```
+
+#### **6.2 Transaction Histogram Chart**
+**Location:** Analytics Screen (below Percentile Grid)
+**Shows:** 10-bin bar chart of transaction size distribution
+**Value:** Visual understanding of spending concentration
+**Data Source:** `StatisticalInsights.histogramBins`
+**UI Component:** `TransactionHistogramChart()` in `StatisticalVisualizations.kt`
+
+**Features:**
+- X-axis: Amount ranges (€0-10, €10-25, etc.)
+- Y-axis: Transaction count
+- Highlight peak bin with percentage
+- Insight text: "Peak: 36% of transactions are €25-€50"
+
+#### **6.3 Category Percentile Badges**
+**Location:** Analytics Screen (Enhanced Category cards)
+**Shows:** P25/P75 ranges + velocity indicator
+**Value:** Category-level spending patterns and trends
+**Data Source:** `EnhancedCategoryAnalytics.percentile25/75, velocity`
+**UI Component:** `CategoryPercentileBadge()` in `StatisticalVisualizations.kt`
+
+**Velocity Indicators:**
+- 🚀 Accelerating (velocity > 1.2) - Spending faster than typical
+- 🐢 Slowing (velocity < 0.8) - Spending slower than typical  
+- ➡️ Steady (0.8-1.2) - Consistent spending pace
+
+**Example:**
+```
+Food: €450 (12 transactions)
+  P25: €25 · P75: €55 · Steady ➡️
+```
+
+#### **6.4 No-Spend Streak Widget** (Gamification)
+**Location:** Dashboard (Home Screen)
+**Shows:** Current streak, personal best, progress bar, motivational messages
+**Value:** Encourages mindful spending through gamification
+**Data Source:** `ComputeDashboardWidgetsUseCase.calculateStreakData()`
+**UI Component:** `NoSpendStreakWidget()` in `NoSpendStreakWidget.kt`
+
+**Features:**
+- 🔥 Fire emoji multiplies with streak length (up to 5)
+- Progress bar toward personal best
+- "NEW RECORD! 🏆" celebration when beaten
+- Monthly dry days counter
+- Motivational messages (rotating)
+- Percentage of month saved calculation
+
+**Calculation Logic:**
+```kotlin
+calculateStreakData(calendar, expenses, monthStart): Triple<Int, Int, Int>
+- Current streak: Days from today backward until expense found
+- Personal best: Maximum gap between any two expense dates
+- Days without spending this month: Total days - expense days
+```
+
+#### **6.5 Enhanced Merchant Intelligence**
+**Location:** Analytics Screen (Merchant cards)
+**Shows:** Loyalty score, streaks, consistency, price trends, predictions
+**Value:** Rich insights into merchant relationships
+**Data Source:** `EnhancedMerchantAnalytics`
+**UI Component:** `RichMerchantCard()` in `StatisticalVisualizations.kt`
+
+**Card Features:**
+1. **Loyalty Bar (0-100)**
+   - Color-coded: Green (80+), Yellow (50-79), Primary (<50)
+   - 5-star rating display
+   - Numeric score
+
+2. **Streak Counter**
+   - 🔥 Consecutive months visited
+   - "8 months" streak badge
+
+3. **Consistency Rating**
+   - 🟢 Highly Consistent / 🟡 Consistent / 🔴 Variable
+   - Based on coefficient of variation
+
+4. **Price Trends**
+   - 📈📉 Directional indicators
+   - Percentage change vs last quarter
+   - "+5% vs last quarter" labels
+
+5. **Predicted Next Visit**
+   - 📅 Calendar icon
+   - "Soon" or "X days"
+   - Based on average days between visits
+
+**Files Changed:**
+- `ui/components/analytics/StatisticalVisualizations.kt` - New components
+- `ui/components/analytics/NoSpendStreakWidget.kt` - Gamification widget
+- `ui/screens/analytics/AnalyticsScreen.kt` - Integration
+- `ui/screens/home/HomeScreen.kt` - Dashboard integration
+- `ui/screens/home/HomeViewModel.kt` - Widget ID mapping
+- `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` - Streak calculation
+
+**Total Lines Added:** ~650 lines across 6 files
+
+---
+
 ## Quick Reference
 
 ### Add New Parser
@@ -618,6 +937,11 @@ index_raw_notifications_packageName_timestamp_title_text UNIQUE
 | Weekly data wrong | getMonthRange (0-indexed), ExpenseDao.getWeeklyTotalsForPeriod |
 | Category breakdown empty | loadCategoryBreakdownForCurrentPeriod(), ExpenseDao.getCategoryBreakdown |
 | Drill-down not working | PeriodNavigationBar (filter chips), HomeViewModel.drillDownToPeriod() |
+| Statistical data not showing | AdvancedAnalyticsEngine, AnalyticsScreen, AnalyticsViewModel |
+| Percentile grid missing | StatisticalVisualizations.kt, TransactionPercentiles |
+| Histogram not displayed | StatisticalVisualizations.kt, HistogramBin data |
+| Category velocity hidden | EnhancedCategoryAnalytics, CategoryPercentileBadge |
+| Streak widget not appearing | ComputeDashboardWidgetsUseCase, NoSpendStreakWidget |
 
 ---
 

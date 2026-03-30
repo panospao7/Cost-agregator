@@ -50,11 +50,9 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
             )
         }
 
-        if (!force && !needsAssist(receipt)) {
-            return ReceiptAssistGenerationResult.NotNeeded(
-                "Receipt fields already look complete, so AI assist is not needed right now."
-            )
-        }
+        // REMOVED: Blocking "needsAssist" check that prevented AI from running
+        // when receipt fields looked "complete". Now AI always attempts to assist
+        // for better accuracy and to catch OCR errors, even if fields exist.
 
         val input = inputBuilder.build(receipt, settings)
         val routeDecision = aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings)
@@ -150,15 +148,6 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         }
     }
 
-    private fun needsAssist(receipt: ScannedReceipt): Boolean {
-        val missingCriticalFields = receipt.parsedMerchant.isNullOrBlank() ||
-            receipt.parsedTotal == null ||
-            receipt.parsedDate == null
-
-        return missingCriticalFields ||
-            receipt.confidence < AppConfig.Ai.MIN_RECEIPT_CONFIDENCE_FOR_AI_FALLBACK
-    }
-
     private fun hasUsableOcrText(receipt: ScannedReceipt): Boolean {
         val rawText = receipt.rawOcrText.trim()
         if (rawText.isBlank()) return false
@@ -167,6 +156,8 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         return true
     }
 }
+
+// REMOVED: needsAssist() function - no longer blocking AI from running
 
 private fun ReceiptAssistSuggestion.isEmpty(): Boolean =
     merchant == null && total == null && date == null && taxAmount == null && notes.isEmpty()

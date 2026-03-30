@@ -1,0 +1,301 @@
+package com.yourname.expensetracker.domain.ai.usecase
+
+import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.data.database.entity.CategorizationStatus
+import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
+import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
+import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.model.CategorizationResult
+import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationPayload
+import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
+import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
+import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
+import com.yourname.expensetracker.domain.receipt.ReceiptParser.LineItem
+import kotlinx.coroutines.flow.first
+import org.json.JSONArray
+import org.json.JSONObject
+import timber.log.Timber
+import javax.inject.Inject
+
+/**
+ * Use case for categorizing individual receipt items using AI.
+ */
+class CategorizeReceiptItemsUseCase @Inject constructor(
+    private val aiSettingsRepository: AiSettingsRepository,
+    private val aiCapabilityRouter: AiCapabilityRouter,
+    private val aiArtifactRepository: AiArtifactRepository,
+    private val receiptRepository: ReceiptRepository,
+    private val itemCategorizationDao: ReceiptItemCategorizationDao,
+    private val inputBuilder: ReceiptItemCategorizationInputBuilder,
+    private val onDeviceService: ReceiptItemCategorizationService,
+    private val cloudService: ReceiptItemCategorizationService,
+    private val timeProvider: TimeProvider
+) {
+
+    suspend operator fun invoke(receiptId: Long, force: Boolean = false): CategorizationResult {
+        // 1. Check AI enabled
+        val settings = aiSettingsRepository.settings().first()
+        if (!settings.aiEnabled || !settings.receiptItemCategorizationEnabled) {
+            Timber.d("Receipt item categorization disabled")
+            return CategorizationResult.Disabled
+        }
+
+        // 2. Check if already analyzed (unless forced)
+        if (!force) {
+            val existing = itemCategorizationDao.getByReceiptId(receiptId)
+            if (existing.isNotEmpty()) {
+                Timber.d("Receipt $receiptId already analyzed, returning cached results")
+                return CategorizationResult.AlreadyAnalyzed(existing)
+            }
+        } else {
+            // Clear previous results if forcing re-analysis
+            itemCategorizationDao.deleteByReceiptId(receiptId)
+        }
+
+        // 3. Get receipt
+        val receipt = receiptRepository.getReceiptById(receiptId)
+            ?: return CategorizationResult.Error
+
+        // 4. Check if there are items to categorize
+        if (receipt.parsedItems.isNullOrBlank()) {
+            Timber.d("Receipt $receiptId has no line items to categorize")
+            return CategorizationResult.Error
+        }
+
+        // 5. Build input
+        val input = inputBuilder.build(receipt)
+        if (input.lineItems.isEmpty()) {
+            Timber.d("No line items found for receipt $receiptId")
+            return CategorizationResult.Error
+        }
+
+        // 6. Route to AI
+        val route = aiCapabilityRouter.decide(AiCapability.RECEIPT_ITEM_CATEGORIZATION, settings)
+        if (route.route == AiRoute.DISABLED) {
+            Timber.d("Router disabled receipt item categorization")
+            return CategorizationResult.Disabled
+        }
+
+        // 7. Update receipt status to analyzing
+        receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.ANALYZING)
+
+        // 8. Create artifact (RUNNING)
+        val targetKey = "receipt_items:$receiptId"
+        val now = timeProvider.now()
+        val baseEntity = AiArtifactEntity(
+            targetType = AiTargetType.SCANNED_RECEIPT,
+            targetId = receiptId,
+            targetKey = targetKey,
+            capability = AiCapability.RECEIPT_ITEM_CATEGORIZATION,
+            status = AiArtifactStatus.RUNNING,
+            mode = when (route.route) {
+                AiRoute.ON_DEVICE -> AiMode.ON_DEVICE
+                AiRoute.CLOUD -> AiMode.CLOUD
+                else -> AiMode.AUTO
+            },
+            provider = route.providerName,
+            modelName = route.modelName,
+            promptVersion = AppConfig.Ai.PROMPT_VERSION_RECEIPT_ITEMS,
+            sourceHash = input.hashCode().toString(),
+            createdAt = now,
+            updatedAt = now,
+            expiresAt = now + AppConfig.Ai.RECEIPT_ITEMS_TTL_MS
+        )
+        aiArtifactRepository.upsert(baseEntity)
+
+        // 9. Call AI service
+        return try {
+            val result = when (route.route) {
+                AiRoute.ON_DEVICE -> onDeviceService.categorizeItems(input)
+                AiRoute.CLOUD -> cloudService.categorizeItems(input)
+                AiRoute.DETERMINISTIC_FALLBACK -> {
+                    // Use simple keyword matching as fallback
+                    createFallbackResult(input)
+                }
+                else -> {
+                    updateArtifactFailed(baseEntity, "Invalid route")
+                    return CategorizationResult.Error
+                }
+            }
+
+            if (result == null) {
+                updateArtifactFailed(baseEntity, "Service returned null")
+                return CategorizationResult.Error
+            }
+
+            // 10. Store results
+            storeResults(receiptId, result)
+
+            // 11. Update receipt status to READY
+            receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.READY)
+
+            // 12. Update artifact to READY
+            updateArtifactReady(baseEntity, result)
+
+            CategorizationResult.Success(result)
+        } catch (e: Exception) {
+            Timber.e(e, "Error categorizing receipt items for $receiptId")
+            updateArtifactFailed(baseEntity, e.message ?: "Unknown error")
+            receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
+            CategorizationResult.Error
+        }
+    }
+
+    private fun createFallbackResult(
+        input: ReceiptItemCategorizationInput
+    ): ReceiptItemCategorizationResult {
+        // Simple fallback: categorize based on merchant
+        val defaultCategory = input.userCategories.firstOrNull { it.name.contains("Shopping", true) }
+            ?: input.userCategories.firstOrNull { it.name.contains("Food", true) }
+            ?: input.userCategories.firstOrNull()
+
+        val categorizedItems = input.lineItems.map { item ->
+            com.yourname.expensetracker.domain.ai.model.CategorizedReceiptItem(
+                itemDescription = item.description,
+                amount = item.totalPrice,
+                suggestedCategory = defaultCategory?.let {
+                    com.yourname.expensetracker.domain.ai.model.CategorySuggestion(
+                        categoryId = it.id,
+                        categoryName = it.name,
+                        confidence = 0.5f
+                    )
+                },
+                confidence = 0.5f,
+                rationale = "Default categorization (AI unavailable)",
+                alternatives = emptyList(),
+                needsReview = true
+            )
+        }
+
+        return ReceiptItemCategorizationResult(
+            items = categorizedItems,
+            totalConfidence = 0.5f,
+            needsReview = true,
+            suggestedNewCategories = emptyList(),
+            taxDistribution = emptyMap()
+        )
+    }
+
+    private suspend fun storeResults(
+        receiptId: Long,
+        result: ReceiptItemCategorizationResult
+    ) {
+        val now = timeProvider.now()
+
+        result.items.forEach { item ->
+            val alternativesJson = JSONArray().apply {
+                item.alternatives.forEach { alt ->
+                    put(JSONObject().apply {
+                        put("id", alt.categoryId)
+                        put("name", alt.categoryName)
+                        put("confidence", alt.confidence)
+                    })
+                }
+            }.toString()
+
+            val categorization = ReceiptItemCategorization(
+                receiptId = receiptId,
+                itemDescription = item.itemDescription,
+                itemAmount = item.amount,
+                suggestedCategoryId = item.suggestedCategory?.categoryId,
+                suggestedCategoryName = item.suggestedCategory?.categoryName,
+                confidence = item.confidence,
+                aiRationale = item.rationale,
+                alternativeCategoriesJson = alternativesJson,
+                userCorrectedCategoryId = null,
+                userCorrectedCategoryName = null,
+                userCorrectedAt = null,
+                taxAmount = result.taxDistribution[item.suggestedCategory?.categoryId],
+                isNewCategorySuggestion = item.suggestedCategory?.isNewCategorySuggestion ?: false,
+                createdAt = now,
+                updatedAt = now
+            )
+            itemCategorizationDao.insert(categorization)
+        }
+    }
+
+    private suspend fun updateArtifactReady(
+        baseEntity: AiArtifactEntity,
+        result: ReceiptItemCategorizationResult
+    ) {
+        val itemsArray = JSONArray().apply {
+            result.items.forEach { item ->
+                put(JSONObject().apply {
+                    put("description", item.itemDescription)
+                    put("amount", item.amount)
+                    put("categoryName", item.suggestedCategory?.categoryName ?: "Unknown")
+                    put("categoryId", item.suggestedCategory?.categoryId)
+                    put("confidence", item.confidence)
+                    put("rationale", item.rationale)
+                    put("isNewCategorySuggestion", item.suggestedCategory?.isNewCategorySuggestion ?: false)
+                    put("alternatives", JSONArray().apply {
+                        item.alternatives.forEach { alt ->
+                            put(JSONObject().apply {
+                                put("categoryName", alt.categoryName)
+                                put("categoryId", alt.categoryId)
+                                put("confidence", alt.confidence)
+                            })
+                        }
+                    })
+                })
+            }
+        }
+
+        val taxObject = JSONObject().apply {
+            result.taxDistribution.forEach { (categoryId, taxAmount) ->
+                put(categoryId.toString(), taxAmount)
+            }
+        }
+
+        val payload = JSONObject().apply {
+            put("items", itemsArray)
+            put("suggestedNewCategories", JSONArray(result.suggestedNewCategories))
+            put("taxDistribution", taxObject)
+        }
+
+        aiArtifactRepository.upsert(
+            baseEntity.copy(
+                status = AiArtifactStatus.READY,
+                summaryText = "Categorized ${result.items.size} items",
+                explanationText = buildExplanation(result),
+                payloadJson = payload.toString(),
+                updatedAt = timeProvider.now()
+            )
+        )
+    }
+
+    private fun buildExplanation(result: ReceiptItemCategorizationResult): String {
+        val lines = buildList {
+            add("Categorized ${result.items.size} receipt items")
+            if (result.needsReview) {
+                val uncertainCount = result.items.count { it.needsReview }
+                add("⚠️ $uncertainCount items need review (confidence < 70%)")
+            }
+            if (result.suggestedNewCategories.isNotEmpty()) {
+                add("💡 Suggested new categories: ${result.suggestedNewCategories.joinToString()}")
+            }
+            add("Average confidence: ${(result.totalConfidence * 100).toInt()}%")
+        }
+        return lines.joinToString("\n")
+    }
+
+    private suspend fun updateArtifactFailed(baseEntity: AiArtifactEntity, reason: String) {
+        aiArtifactRepository.upsert(
+            baseEntity.copy(
+                status = AiArtifactStatus.FAILED,
+                errorMessage = reason.take(200),
+                updatedAt = timeProvider.now()
+            )
+        )
+    }
+}

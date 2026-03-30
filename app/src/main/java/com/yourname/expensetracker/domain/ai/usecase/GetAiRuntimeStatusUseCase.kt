@@ -94,4 +94,8 @@ private fun AiCapability.runtimeLabel(): String = when (this) {
     AiCapability.CATEGORIZATION_FALLBACK -> "categorization"
     AiCapability.DEDUPE_JUDGE -> "duplicate detection"
     AiCapability.LOCATION_SUMMARY -> "location summaries"
+    AiCapability.NOTIFICATION_PARSE -> "notification parsing"
+    AiCapability.REVIEW_PRIORITIZATION -> "review prioritization"
+    AiCapability.SEMANTIC_DEDUPE -> "semantic duplicate detection"
+    AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "receipt item categorization"
 }

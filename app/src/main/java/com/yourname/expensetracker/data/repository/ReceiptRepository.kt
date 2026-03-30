@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.CategorizationStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
@@ -284,6 +285,10 @@ class ReceiptRepository @Inject constructor(
 
     suspend fun getReceiptById(id: Long): ScannedReceipt? {
         return scannedReceiptDao.getById(id)
+    }
+
+    suspend fun updateCategorizationStatus(receiptId: Long, status: CategorizationStatus) {
+        scannedReceiptDao.updateCategorizationStatus(receiptId, status.name)
     }
 
     suspend fun deleteReceipt(receipt: ScannedReceipt) {

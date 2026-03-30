@@ -114,7 +114,8 @@ class AppParserRegistry @Inject constructor(
     private val revolutParser: RevolutParser,
     private val smsParser: SmsParser,
     private val googleWalletParser: GoogleWalletParser,
-    private val genericParser: GenericTransactionParser
+    private val genericParser: GenericTransactionParser,
+    private val aiFallbackParser: com.yourname.expensetracker.domain.ai.service.NotificationFallbackParser
 ) {
     private val parsers = mutableListOf<AppNotificationParser>()
     private val packageToParserMap = mutableMapOf<String, AppNotificationParser>()
@@ -156,10 +157,41 @@ class AppParserRegistry @Inject constructor(
         }
 
         // 2. Fallback to generic parser when package parser fails or cannot parse this format.
-        return try {
+        val genericResult = try {
             genericParser.parse(title, text, bigText, subText, packageName)
         } catch (e: Exception) {
             Timber.w(e, "Generic parser failed for package: $packageName")
+            null
+        }
+        
+        return genericResult
+    }
+    
+    /**
+     * Parse with AI fallback. This is a suspend function that can use AI when
+     * deterministic parsers fail.
+     * 
+     * Use this in NotificationProcessingPipeline for better multilingual support.
+     */
+    suspend fun parseWithAiFallback(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        packageName: String
+    ): ParsedTransaction? {
+        // 1. Try deterministic parsers first
+        val deterministicResult = parse(title, text, bigText, subText, packageName)
+        if (deterministicResult != null) {
+            return deterministicResult
+        }
+        
+        // 2. Try AI fallback for multilingual/unstructured notifications
+        Timber.d("AppParserRegistry: Trying AI fallback for package: $packageName")
+        return try {
+            aiFallbackParser.parse(title, text, bigText, packageName)
+        } catch (e: Exception) {
+            Timber.w(e, "AI fallback parser failed for package: $packageName")
             null
         }
     }

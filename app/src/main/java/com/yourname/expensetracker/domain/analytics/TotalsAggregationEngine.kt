@@ -57,12 +57,32 @@ class TotalsAggregationEngine @Inject constructor(
 
     suspend fun getWeeklyTotals(year: Int, month: Int): List<PeriodTotal> = withContext(Dispatchers.IO) {
         try {
-            val (startMs, endMs) = getMonthRange(year, month)
-            val weeklyTotals = expenseRepository.getWeeklyTotalsForPeriod(startMs, endMs)
+            val (monthStartMs, monthEndMs) = getMonthRange(year, month)
+            val weeklyTotals = expenseRepository.getWeeklyTotalsForPeriod(monthStartMs, monthEndMs)
             val average = getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = false)
 
-            weeklyTotals.mapIndexed { index, weekly ->
-                val weekLabel = "W${index + 1}"
+            // Include ALL weeks that touch this month (have at least one day in the month)
+            // This ensures no expenses are lost at month boundaries
+            val monthWeeks = weeklyTotals.filter { weekly ->
+                // Week touches month if: weekStart < monthEnd AND weekEnd > monthStart
+                weekly.startDate < monthEndMs && weekly.endDate > monthStartMs
+            }
+
+            monthWeeks.mapIndexed { index, weekly ->
+                // Check if this is a partial week (spans month boundary)
+                val weekStartMonday = TimePeriodUtils.getStartOfWeek(weekly.startDate)
+                val isPartialWeek = weekStartMonday < monthStartMs || weekly.endDate > monthEndMs
+                
+                // Format label: W1, W2, etc. Partial weeks show date range
+                val weekLabel = if (isPartialWeek) {
+                    val dateFormat = SimpleDateFormat("d MMM", Locale.getDefault())
+                    val startStr = dateFormat.format(Date(maxOf(weekly.startDate, monthStartMs)))
+                    val endStr = dateFormat.format(Date(minOf(weekly.endDate, monthEndMs - 1)))
+                    "W${index + 1} ($startStr-$endStr)"
+                } else {
+                    "W${index + 1}"
+                }
+                
                 PeriodTotal(
                     periodLabel = weekLabel,
                     periodKey = weekly.weekKey,
@@ -101,6 +121,38 @@ class TotalsAggregationEngine @Inject constructor(
             }
         } catch (e: Exception) {
             Timber.tag("TotalsAggregationEngine").e(e, "Error getting daily totals for $year week $weekOfYear")
+            emptyList()
+        }
+    }
+
+    suspend fun getYearlyTotals(): List<PeriodTotal> = withContext(Dispatchers.IO) {
+        try {
+            val now = timeProvider.now()
+            val cal = Calendar.getInstance().apply { timeInMillis = now }
+            val currentYear = cal.get(Calendar.YEAR)
+            
+            // Get data for last 5 years
+            val years = (currentYear - 4..currentYear).toList()
+            val average = getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = false)
+            
+            years.map { year ->
+                val (startMs, endMs) = getYearRange(year)
+                val total = expenseRepository.getTotalForPeriod(startMs, endMs)
+                val count = expenseRepository.getTransactionCountForPeriod(startMs, endMs)
+                
+                PeriodTotal(
+                    periodLabel = year.toString(),
+                    periodKey = year.toString(),
+                    totalAmount = total,
+                    transactionCount = count,
+                    periodType = PeriodType.YEAR,
+                    startDateMs = startMs,
+                    endDateMs = endMs,
+                    status = getPeriodStatus(total, average)
+                )
+            }.filter { it.totalAmount > 0 || it.periodKey == currentYear.toString() }
+        } catch (e: Exception) {
+            Timber.tag("TotalsAggregationEngine").e(e, "Error getting yearly totals")
             emptyList()
         }
     }

@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
+import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
@@ -19,6 +21,7 @@ import com.yourname.expensetracker.domain.ai.model.toDisplayText
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
+import com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCase
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -31,11 +34,13 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.AmountUtils
+import timber.log.Timber
 import javax.inject.Inject
 
 enum class ScanStep {
@@ -76,6 +81,11 @@ data class ReceiptScanState(
     val categoryAssistDiagnostics: String? = null,
     val receiptQuickSaveEnabled: Boolean = false,
     val quickSavePreview: ReceiptQuickSavePreview? = null,
+    
+    // Item categorization
+    val itemCategorizations: List<ReceiptItemCategorization> = emptyList(),
+    val isAnalyzingItems: Boolean = false,
+    val showItemBreakdown: Boolean = false,
     
     // Debug data
     val debugData: DebugData? = null
@@ -125,6 +135,8 @@ class ReceiptScanViewModel @Inject constructor(
     private val timeProvider: TimeProvider,
     private val suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase,
     private val suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase,
+    private val categorizeReceiptItemsUseCase: CategorizeReceiptItemsUseCase,
+    private val itemCategorizationDao: ReceiptItemCategorizationDao,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : ViewModel() {
@@ -248,6 +260,16 @@ class ReceiptScanViewModel @Inject constructor(
                         quickSavePreview = null,
                         debugData = debugData
                     )
+                }
+                
+                // Auto-trigger item categorization if AI enabled and items exist
+                if (parsed.lineItems.isNotEmpty()) {
+                    viewModelScope.launch {
+                        val settings = aiSettingsRepository.settings().first()
+                        if (settings.aiEnabled && settings.receiptItemCategorizationEnabled) {
+                            analyzeReceiptItems()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 parsingLogs.add("OCR Error: ${e.message}")
@@ -957,5 +979,78 @@ class ReceiptScanViewModel @Inject constructor(
         val artifact = aiArtifactRepository.getLatest(targetKey, capability) ?: return null
         if (expectedStatus != null && artifact.status != expectedStatus) return null
         return artifact.toDiagnosticsOrNull()?.toDisplayText()
+    }
+
+    // -------------------------------------------------------------------------
+    // Item Categorization
+    // -------------------------------------------------------------------------
+
+    fun analyzeReceiptItems() {
+        val receiptId = _state.value.receiptId ?: return
+        
+        viewModelScope.launch {
+            _state.update { it.copy(isAnalyzingItems = true) }
+            
+            try {
+                val result = categorizeReceiptItemsUseCase(receiptId)
+                
+                when (result) {
+                    is com.yourname.expensetracker.domain.ai.model.CategorizationResult.Success -> {
+                        // Load the stored categorizations
+                        val items = itemCategorizationDao.getByReceiptId(receiptId)
+                        _state.update { 
+                            it.copy(
+                                itemCategorizations = items,
+                                showItemBreakdown = true,
+                                isAnalyzingItems = false
+                            )
+                        }
+                    }
+                    is com.yourname.expensetracker.domain.ai.model.CategorizationResult.AlreadyAnalyzed -> {
+                        _state.update { 
+                            it.copy(
+                                itemCategorizations = result.items,
+                                showItemBreakdown = true,
+                                isAnalyzingItems = false
+                            )
+                        }
+                    }
+                    else -> {
+                        _state.update { it.copy(isAnalyzingItems = false) }
+                    }
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(isAnalyzingItems = false) }
+            }
+        }
+    }
+
+    fun updateItemCategory(item: ReceiptItemCategorization, category: Category?) {
+        viewModelScope.launch {
+            val now = timeProvider.now()
+            
+            // Update in database
+            itemCategorizationDao.updateUserCorrection(
+                itemId = item.id,
+                categoryId = category?.id,
+                categoryName = category?.name,
+                timestamp = now
+            )
+            
+            // Reload items
+            val receiptId = _state.value.receiptId ?: return@launch
+            val updatedItems = itemCategorizationDao.getByReceiptId(receiptId)
+            
+            _state.update { it.copy(itemCategorizations = updatedItems) }
+        }
+    }
+
+    fun toggleItemBreakdown() {
+        _state.update { it.copy(showItemBreakdown = !it.showItemBreakdown) }
+    }
+
+    fun showItemRationale(item: ReceiptItemCategorization) {
+        // This would show a dialog with AI rationale - for now just log it
+        Timber.d("Item rationale: ${item.aiRationale}")
     }
 }

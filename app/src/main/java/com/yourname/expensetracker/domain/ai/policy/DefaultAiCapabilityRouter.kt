@@ -243,6 +243,10 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.CATEGORIZATION_FALLBACK -> settings.categorizationFallbackEnabled
             AiCapability.DEDUPE_JUDGE -> settings.dedupeJudgeEnabled
             AiCapability.LOCATION_SUMMARY -> settings.aiEnabled
+            AiCapability.NOTIFICATION_PARSE -> settings.aiEnabled // Uses general AI toggle
+            AiCapability.REVIEW_PRIORITIZATION -> settings.aiEnabled // Uses general AI toggle
+            AiCapability.SEMANTIC_DEDUPE -> settings.aiEnabled // Uses general AI toggle
+            AiCapability.RECEIPT_ITEM_CATEGORIZATION -> settings.receiptItemCategorizationEnabled
         }
     }
 
@@ -266,6 +270,10 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.CATEGORIZATION_FALLBACK -> "Categorization fallback"
         AiCapability.DEDUPE_JUDGE -> "Duplicate detection"
         AiCapability.LOCATION_SUMMARY -> "Location summary"
+        AiCapability.NOTIFICATION_PARSE -> "Notification parsing"
+        AiCapability.REVIEW_PRIORITIZATION -> "Review prioritization"
+        AiCapability.SEMANTIC_DEDUPE -> "Semantic duplicate detection"
+        AiCapability.RECEIPT_ITEM_CATEGORIZATION -> "Receipt item categorization"
     }
 
     private fun AiCapability.defaultCloudProviderName(): String = when (this) {
@@ -276,6 +284,10 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_PROVIDER
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.DEDUPE_JUDGE_CLOUD_PROVIDER
         AiCapability.LOCATION_SUMMARY -> "google-ai-studio"
+        AiCapability.NOTIFICATION_PARSE -> "unsupported" // On-device only for privacy
+        AiCapability.REVIEW_PRIORITIZATION -> "unsupported" // On-device only for privacy
+        AiCapability.SEMANTIC_DEDUPE -> "unsupported" // On-device only for privacy
+        AiCapability.RECEIPT_ITEM_CATEGORIZATION -> AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_PROVIDER
     }
 
     private fun AiCapability.defaultCloudModelName(): String = when (this) {
@@ -286,6 +298,10 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL
         AiCapability.LOCATION_SUMMARY -> "gemini-cloud-location"
+        AiCapability.NOTIFICATION_PARSE -> "unsupported" // On-device only for privacy
+        AiCapability.REVIEW_PRIORITIZATION -> "unsupported" // On-device only for privacy
+        AiCapability.SEMANTIC_DEDUPE -> "unsupported" // On-device only for privacy
+        AiCapability.RECEIPT_ITEM_CATEGORIZATION -> AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL
     }
 
     private fun AiCapability.defaultOnDeviceModelName(): String = when (this) {
@@ -296,6 +312,10 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL
         AiCapability.LOCATION_SUMMARY -> "gemini-nano-location"
+        AiCapability.NOTIFICATION_PARSE -> AppConfig.Ai.ON_DEVICE_NOTIFICATION_MODEL
+        AiCapability.REVIEW_PRIORITIZATION -> "gemini-nano-priority" // On-device only
+        AiCapability.SEMANTIC_DEDUPE -> "gemini-nano-semantic" // On-device only
+        AiCapability.RECEIPT_ITEM_CATEGORIZATION -> AppConfig.Ai.ON_DEVICE_RECEIPT_ITEM_MODEL
     }
 
     private companion object {
@@ -311,7 +331,11 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.QUERY_INTERPRETATION,
             AiCapability.RECEIPT_EXTRACTION,
             AiCapability.CATEGORIZATION_FALLBACK,
-            AiCapability.DEDUPE_JUDGE
+            AiCapability.DEDUPE_JUDGE,
+            AiCapability.NOTIFICATION_PARSE, // NEW: On-device only, no cloud for privacy
+            AiCapability.REVIEW_PRIORITIZATION, // NEW: On-device only for privacy and latency
+            AiCapability.SEMANTIC_DEDUPE, // NEW: On-device only for privacy
+            AiCapability.RECEIPT_ITEM_CATEGORIZATION // NEW: Receipt item categorization
         )
     }
 }

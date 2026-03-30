@@ -392,52 +392,80 @@ class HomeViewModel @Inject constructor(
 
     fun drillUp() {
         val state = _totalsDrillDownState.value
-        val parentPeriod = state.parentPeriod ?: return
-
+        
+        // Calculate new level (go up one level)
         val newLevel = when (state.currentLevel) {
             PeriodType.DAY -> PeriodType.WEEK
             PeriodType.WEEK -> PeriodType.MONTH
             PeriodType.MONTH -> PeriodType.YEAR
-            PeriodType.YEAR -> PeriodType.YEAR
+            PeriodType.YEAR -> return // Already at top, can't go up
         }
 
         viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }
             try {
-                val result: Triple<List<PeriodTotal>, com.yourname.expensetracker.domain.model.PeriodTotal?, Unit> = when (newLevel) {
-                    PeriodType.MONTH -> {
-                        val year = parseYear(parentPeriod.periodKey)
-                        Triple(
-                            totalsAggregationEngine.getMonthlyTotals(year),
-                            null,
-                            Unit
-                        )
-                    }
+                // Load data for the new level
+                val (newTotals, newSelectedPeriod, newParentPeriod) = when (newLevel) {
                     PeriodType.YEAR -> {
-                        Triple(emptyList<PeriodTotal>(), null, Unit)
+                        val years = totalsAggregationEngine.getYearlyTotals()
+                        val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = false)
+                        val updatedYears = years.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
+                        Triple(updatedYears, null, null)
                     }
-                    else -> Triple(emptyList<PeriodTotal>(), null, Unit)
-                }
-
-                val newTotals = result.first
-                val grandparent = result.second
-
-                val average = totalsAggregationEngine.getAverageForPeriodType(newLevel, excludeCurrent = false)
-                val updatedTotals = newTotals.map { p ->
-                    p.copy(status = totalsAggregationEngine.getPeriodStatus(p.totalAmount, average))
+                    PeriodType.MONTH -> {
+                        // Going from WEEK to MONTH or from DAY to MONTH via parent
+                        val parent = state.parentPeriod
+                        if (parent != null) {
+                            val year = parseYear(parent.periodKey)
+                            val months = totalsAggregationEngine.getMonthlyTotals(year)
+                            val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
+                            val updatedMonths = months.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
+                            // Find grandparent (year) for the month
+                            val years = totalsAggregationEngine.getYearlyTotals()
+                            val grandparent = years.find { it.periodKey == year.toString() }
+                            Triple(updatedMonths, parent, grandparent)
+                        } else {
+                            // Fallback: show all months of current year
+                            val cal = Calendar.getInstance()
+                            val currentYear = cal.get(Calendar.YEAR)
+                            val months = totalsAggregationEngine.getMonthlyTotals(currentYear)
+                            val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
+                            val updatedMonths = months.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
+                            Triple(updatedMonths, null, null)
+                        }
+                    }
+                    PeriodType.WEEK -> {
+                        // Going from DAY to WEEK
+                        val parent = state.parentPeriod
+                        if (parent != null) {
+                            val (year, month) = parseYearMonth(parent.periodKey)
+                            val weeks = totalsAggregationEngine.getWeeklyTotals(year, month)
+                            val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = false)
+                            val updatedWeeks = weeks.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
+                            // Find grandparent (month) for the week
+                            val months = totalsAggregationEngine.getMonthlyTotals(year)
+                            val grandparent = months.find { it.periodKey == parent.periodKey }
+                            Triple(updatedWeeks, parent, grandparent)
+                        } else {
+                            Triple(emptyList(), null, null)
+                        }
+                    }
+                    PeriodType.DAY -> Triple(emptyList(), null, null) // Should never happen
                 }
 
                 _totalsDrillDownState.update {
                     it.copy(
                         currentLevel = newLevel,
-                        selectedPeriod = parentPeriod,
-                        parentPeriod = grandparent,
-                        periodTotals = updatedTotals,
+                        selectedPeriod = newSelectedPeriod,
+                        parentPeriod = newParentPeriod,
+                        periodTotals = newTotals,
                         categoryBreakdown = emptyList(),
-                        isLoading = false
+                        isLoading = false,
+                        error = null
                     )
                 }
             } catch (e: Exception) {
+                Timber.e(e, "Error drilling up from ${state.currentLevel} to $newLevel")
                 _totalsDrillDownState.update { it.copy(isLoading = false, error = "Unable to go back. Please try again.") }
             }
         }
@@ -515,6 +543,7 @@ class HomeViewModel @Inject constructor(
             is DashboardWidget.FinancialRunway      -> "financial_runway"
             is DashboardWidget.TotalsDashboard      -> "totals_dashboard"
             is DashboardWidget.MonteCarloForecast   -> "monte_carlo_forecast"
+            is DashboardWidget.NoSpendStreak        -> "no_spend_streak"
         }
     }
 }

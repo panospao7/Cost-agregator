@@ -14,6 +14,11 @@ import com.yourname.expensetracker.data.ai.provider.DefaultAiEnvironmentMonitor
 import com.yourname.expensetracker.data.ai.provider.HybridCategorizationAssistService
 import com.yourname.expensetracker.data.ai.provider.HybridDedupeJudgeService
 import com.yourname.expensetracker.data.ai.provider.HybridReceiptAssistService
+import com.yourname.expensetracker.data.ai.provider.HybridReceiptItemCategorizationService
+import com.yourname.expensetracker.data.ai.provider.OnDeviceReceiptItemCategorizationService
+import com.yourname.expensetracker.data.ai.provider.CloudReceiptItemCategorizationService
+import com.yourname.expensetracker.data.ai.provider.SmartReceiptAssistService  // NEW: Smart retry service
+import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
 import com.yourname.expensetracker.data.ai.provider.HybridReviewExplanationService
 import com.yourname.expensetracker.data.ai.provider.NoOpCategorizationAssistService
 import com.yourname.expensetracker.data.ai.provider.NoOpDedupeJudgeService
@@ -117,7 +122,7 @@ abstract class AiModule {
     @Binds
     @Singleton
     abstract fun bindReceiptAssistService(
-        impl: HybridReceiptAssistService
+        impl: SmartReceiptAssistService  // NEW: Smart retry service with image priority
     ): ReceiptAssistService
 
     @Binds
@@ -138,6 +143,30 @@ abstract class AiModule {
         impl: HybridQueryInterpretationService
     ): QueryInterpretationService
 
+    @Binds
+    @Singleton
+    abstract fun bindReceiptItemCategorizationService(
+        impl: HybridReceiptItemCategorizationService
+    ): ReceiptItemCategorizationService
+
+    @Binds
+    @Singleton
+    abstract fun bindNotificationFallbackParser(
+        impl: com.yourname.expensetracker.data.ai.provider.OnDeviceNotificationParser
+    ): com.yourname.expensetracker.domain.ai.service.NotificationFallbackParser
+
+    @Binds
+    @Singleton
+    abstract fun bindReviewPriorityScorer(
+        impl: com.yourname.expensetracker.data.ai.provider.OnDeviceReviewPriorityScorer
+    ): com.yourname.expensetracker.domain.ai.service.ReviewPriorityScorer
+
+    @Binds
+    @Singleton
+    abstract fun bindSemanticDuplicateDetector(
+        impl: com.yourname.expensetracker.data.ai.provider.OnDeviceSemanticDuplicateDetector
+    ): com.yourname.expensetracker.domain.ai.service.SemanticDuplicateDetector
+
     // -------------------------------------------------------------------------
     // DAO provision (companion object)
     // -------------------------------------------------------------------------
@@ -157,5 +186,15 @@ abstract class AiModule {
         @Singleton
         fun provideAiChatMessageDao(database: AppDatabase): AiChatMessageDao =
             database.aiChatMessageDao()
+
+        @Provides
+        @Singleton
+        fun provideOnDeviceReceiptItemCategorizationService(): 
+            OnDeviceReceiptItemCategorizationService = OnDeviceReceiptItemCategorizationService()
+
+        @Provides
+        @Singleton
+        fun provideCloudReceiptItemCategorizationService(): 
+            CloudReceiptItemCategorizationService = CloudReceiptItemCategorizationService()
     }
 }

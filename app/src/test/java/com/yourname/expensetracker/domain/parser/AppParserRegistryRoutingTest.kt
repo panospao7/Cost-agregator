@@ -26,7 +26,8 @@ class AppParserRegistryRoutingTest {
             revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
             smsParser = SmsParser(currencyNormalizer, merchantCleaner),
             googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
-            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector)
+            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector),
+            aiFallbackParser = io.mockk.mockk()
         )
     }
 

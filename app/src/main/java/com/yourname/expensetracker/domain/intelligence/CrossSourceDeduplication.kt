@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.domain.ai.model.DuplicateCheckCandidate
+import com.yourname.expensetracker.domain.ai.service.SemanticDuplicateDetector
 import com.yourname.expensetracker.domain.util.GeoUtils
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -16,9 +19,16 @@ import javax.inject.Singleton
  * - Pending reviews (not yet approved)
  * 
  * Prevents duplicates when importing bank statements from multiple sources.
+ * 
+ * Uses hybrid approach:
+ * 1. Fast deterministic checks (date, amount, basic merchant matching)
+ * 2. Levenshtein distance for merchant names
+ * 3. [NEW] AI semantic analysis for ambiguous cases (multilingual, variations)
  */
 @Singleton
-class CrossSourceDeduplication @Inject constructor() {
+class CrossSourceDeduplication @Inject constructor(
+    private val semanticDetector: SemanticDuplicateDetector
+) {
 
     companion object {
         private const val TIME_WINDOW_MS = 24 * 60 * 60 * 1000L // 24 hours
@@ -197,21 +207,110 @@ class CrossSourceDeduplication @Inject constructor() {
         
         return false
     }
-
+    
+    /**
+     * Check for semantic duplicates using AI when deterministic check is inconclusive.
+     * 
+     * This method is called when merchant similarity is between 0.4 and 0.9,
+     * indicating an ambiguous case that would benefit from semantic analysis.
+     * 
+     * @param amount Transaction amount
+     * @param merchant1 First merchant name
+     * @param merchant2 Second merchant name
+     * @param date1 First transaction date
+     * @param date2 Second transaction date
+     * @param notificationText1 Optional notification text from first source
+     * @param notificationText2 Optional notification text from second source
+     * @return AI semantic duplicate result, or null if AI unavailable
+     */
+    suspend fun checkSemanticDuplicate(
+        amount: Double,
+        currency: String,
+        merchant1: String,
+        merchant2: String,
+        date1: Long,
+        date2: Long,
+        notificationText1: String?,
+        notificationText2: String?,
+        transactionType: com.yourname.expensetracker.data.database.entity.TransactionType
+    ): com.yourname.expensetracker.domain.ai.model.SemanticDuplicateResult? {
+        val candidate1 = DuplicateCheckCandidate(
+            amount = amount,
+            currency = currency,
+            merchant = merchant1,
+            date = date1,
+            notificationText = notificationText1,
+            transactionType = transactionType
+        )
+        
+        val candidate2 = DuplicateCheckCandidate(
+            amount = amount,
+            currency = currency,
+            merchant = merchant2,
+            date = date2,
+            notificationText = notificationText2,
+            transactionType = transactionType
+        )
+        
+        return try {
+            semanticDetector.calculateSimilarity(candidate1, candidate2)
+        } catch (e: Exception) {
+            Timber.w(e, "CrossSourceDeduplication: AI semantic detection failed, using deterministic fallback")
+            null
+        }
+    }
+    
+    /**
+     * Calculate merchant similarity including AI semantic analysis for ambiguous cases.
+     * 
+     * @param merchantA First merchant name
+     * @param merchantB Second merchant name
+     * @return Similarity score from 0.0 to 1.0
+     */
+    fun calculateMerchantSimilarityWithAi(
+        merchantA: String,
+        merchantB: String
+    ): Float {
+        // First, deterministic check
+        val deterministicSim = calculateDeterministicMerchantSimilarity(merchantA, merchantB)
+        
+        // If clearly same or clearly different, return deterministic result
+        if (deterministicSim >= 0.9f || deterministicSim <= 0.3f) {
+            return deterministicSim
+        }
+        
+        // For ambiguous cases (0.3 < sim < 0.9), we'd ideally use AI
+        // But since this is a non-suspend function, we return the deterministic
+        // result and the caller should use checkSemanticDuplicate for AI enhancement
+        return deterministicSim
+    }
+    
+    /**
+     * Check if two merchant names are similar (deterministic only).
+     * Legacy method - uses deterministic similarity with 80% threshold.
+     */
     private fun isMerchantSimilar(merchantA: String, merchantB: String): Boolean {
-        if (merchantA == merchantB) return true
+        return calculateDeterministicMerchantSimilarity(merchantA, merchantB) >= 0.8f
+    }
+    
+    private fun calculateDeterministicMerchantSimilarity(merchantA: String, merchantB: String): Float {
+        if (merchantA == merchantB) return 1.0f
         
         // Check if one contains the other
         if (merchantA.contains(merchantB) || merchantB.contains(merchantA)) {
-            return true
+            return 0.85f
         }
         
         // Check Levenshtein distance
         val distance = levenshteinDistance(merchantA, merchantB)
         val maxLen = maxOf(merchantA.length, merchantB.length)
         
-        // Allow 2 character difference for OCR errors
-        return distance <= 2
+        // Convert distance to similarity score
+        return if (maxLen > 0) {
+            1.0f - (distance.toFloat() / maxLen.toFloat()).coerceIn(0f, 1f)
+        } else {
+            0.0f
+        }
     }
 
     private fun levenshteinDistance(s1: String, s2: String): Int {

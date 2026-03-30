@@ -204,7 +204,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
     private fun resolvePeriod(query: String, now: Long): PeriodRange? {
         val pair = when {
             query.contains("today") -> TimePeriodUtils.getStartOfDay(now) to now
-            query.contains("this week") || query.contains("week") -> TimePeriodUtils.getLastNDaysRange(now, 7)
+            query.contains("this week") || query.contains("week") -> TimePeriodUtils.getWeekRange(now, 0).let { (start, end) -> start to end }
             query.contains("this month") || query.contains("month") -> TimePeriodUtils.getMonthRange(now, 0)
             query.contains("last month") || query.contains("previous month") -> TimePeriodUtils.getMonthRange(now, -1)
             query.contains("this quarter") || query.contains("quarter") -> TimePeriodUtils.getStartOfQuarter(now) to now
