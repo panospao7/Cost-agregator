@@ -109,6 +109,10 @@ sealed class DashboardWidget {
         val personalBest: Int,
         val daysWithoutSpendingThisMonth: Int
     ) : DashboardWidget()
+
+    data class FinancialHealthScoreWidget(
+        val healthScore: com.yourname.expensetracker.domain.health.HealthScoreResult
+    ) : DashboardWidget()
 }
 
 data class CategorySpending(
@@ -136,7 +140,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private val insightsEngine: InsightsEngine,
     private val synthesisEngine: SynthesisEngine,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val healthCalculator: com.yourname.expensetracker.domain.health.FinancialHealthCalculator
 ) {
 
     /** Pure computation: maps raw dashboard data → a list of ordered [DashboardWidget]s. */
@@ -422,9 +427,24 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             calendar, expenses, monthStart
         )
 
+        // ── Calculate Financial Health Score ───────────────────────────────────
+        val healthScore = healthCalculator.calculateHealthScores(
+            expenses = expenses,
+            budgetStatuses = budgetStatuses,
+            pendingReviews = pendingCount,
+            todayStreak = calculateStreakForPeriod(expenses, todayStart, now),
+            weekStreak = calculateStreakForPeriod(expenses, weekStart, now),
+            monthStreak = calculateStreakForPeriod(expenses, monthStart, now),
+            noSpendStreak = currentStreak
+        )
+
         // ── Assemble widget list ─────────────────────────────────────────────
         val widgets = buildList {
             add(DashboardWidget.FinancialWeatherWidget(weather))
+            
+            // NEW: Financial Health Score Widget
+            add(DashboardWidget.FinancialHealthScoreWidget(healthScore))
+            
             add(DashboardWidget.TotalsDashboard)
             
             // NEW: No-Spend Streak Widget (gamification)
@@ -567,5 +587,45 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val daysWithoutSpendingThisMonth = totalDaysInMonth - expenseDaysThisMonth
         
         return Triple(currentStreak, personalBest.coerceAtLeast(currentStreak), daysWithoutSpendingThisMonth)
+    }
+    
+    /**
+     * Calculates consecutive days without spending for a specific period.
+     */
+    private fun calculateStreakForPeriod(
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        periodStart: Long,
+        periodEnd: Long
+    ): Int {
+        val periodExpenses = expenses.filter { it.date in periodStart..periodEnd }
+        if (periodExpenses.isEmpty()) return 0
+        
+        // Get unique days with expenses in this period
+        val expenseDays = periodExpenses
+            .map { com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(it.date) }
+            .distinct()
+            .sortedDescending()
+        
+        if (expenseDays.isEmpty()) return 0
+        
+        // Calculate current streak (consecutive days without spending ending today)
+        var streak = 0
+        val today = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(periodEnd)
+        
+        // Check if today has no expenses
+        if (!expenseDays.contains(today)) {
+            streak = 1
+            
+            // Check previous days
+            val oneDayMs = 24 * 60 * 60 * 1000
+            var checkDay = today - oneDayMs
+            
+            while (!expenseDays.contains(checkDay) && checkDay >= periodStart) {
+                streak++
+                checkDay -= oneDayMs
+            }
+        }
+        
+        return streak
     }
 }

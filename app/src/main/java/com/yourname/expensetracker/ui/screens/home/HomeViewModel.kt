@@ -549,6 +549,7 @@ class HomeViewModel @Inject constructor(
             is DashboardWidget.TotalsDashboard      -> "totals_dashboard"
             is DashboardWidget.MonteCarloForecast   -> "monte_carlo_forecast"
             is DashboardWidget.NoSpendStreak        -> "no_spend_streak"
+            is DashboardWidget.FinancialHealthScoreWidget -> "financial_health_score"
         }
     }
 }

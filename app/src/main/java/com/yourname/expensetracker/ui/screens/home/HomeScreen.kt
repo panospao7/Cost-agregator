@@ -37,6 +37,7 @@ import com.yourname.expensetracker.ui.components.analytics.NoSpendStreakWidget
 import com.yourname.expensetracker.ui.components.common.ErrorState
 import com.yourname.expensetracker.ui.components.common.ErrorType
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
+import com.yourname.expensetracker.ui.components.health.HealthScoreWidget
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
 import com.yourname.expensetracker.ui.components.PeriodLevel
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -510,6 +511,14 @@ fun HomeScreen(
                                     currentStreak = widget.currentStreak,
                                     personalBest = widget.personalBest,
                                     daysWithoutSpendingThisMonth = widget.daysWithoutSpendingThisMonth
+                                )
+                            }
+                            is DashboardWidget.FinancialHealthScoreWidget -> {
+                                var isExpanded by remember { mutableStateOf(false) }
+                                com.yourname.expensetracker.ui.components.health.HealthScoreWidget(
+                                    healthScore = widget.healthScore,
+                                    isExpanded = isExpanded,
+                                    onToggleExpand = { isExpanded = !isExpanded }
                                 )
                             }
                         }
