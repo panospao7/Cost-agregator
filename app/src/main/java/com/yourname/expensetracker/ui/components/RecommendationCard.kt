@@ -12,10 +12,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
+import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -24,8 +27,18 @@ fun RecommendationCard(
     onClick: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val priorityLabel = when (recommendation.priority) {
+        RecommendationPriority.HIGH -> "High priority"
+        RecommendationPriority.MEDIUM -> "Medium priority"
+        RecommendationPriority.LOW -> "Low priority"
+    }
+    
     BentoCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$priorityLabel recommendation: ${recommendation.recommendationText}. Double tap to view details."
+            },
         onClick = onClick,
         containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
         border = BorderStroke(1.dp, SemanticColors.PrimaryIndigo.copy(alpha = 0.2f))
@@ -49,11 +62,13 @@ fun RecommendationCard(
 
                 IconButton(
                     onClick = onDismiss, 
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier
+                        .size(Dimens.TouchTargetMin)
+                        .semantics { contentDescription = "Dismiss recommendation" }
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
-                        contentDescription = "Dismiss recommendation",
+                        contentDescription = null,
                         tint = SemanticColors.TextSecondary,
                         modifier = Modifier.size(18.dp)
                     )

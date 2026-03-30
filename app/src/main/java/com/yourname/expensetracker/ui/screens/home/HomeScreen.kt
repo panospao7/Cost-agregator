@@ -20,6 +20,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.mergeDescendants
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,17 +106,27 @@ fun HomeScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.toggleEditMode() }) {
+                    IconButton(
+                        onClick = { viewModel.toggleEditMode() },
+                        modifier = Modifier.semantics { 
+                            contentDescription = if (state.isEditMode) "Exit edit mode" else "Enter edit mode to customize dashboard layout"
+                        }
+                    ) {
                         Icon(
                             if (state.isEditMode) Icons.Rounded.Check else Icons.Rounded.EditAttributes, 
-                            contentDescription = "Edit Layout",
+                            contentDescription = null,
                             tint = if (state.isEditMode) SemanticColors.SuccessGreen else SemanticColors.TextSecondary
                         )
                     }
-                    IconButton(onClick = { showQuickSettings = true }) {
+                    IconButton(
+                        onClick = { showQuickSettings = true },
+                        modifier = Modifier.semantics { 
+                            contentDescription = "Open settings menu"
+                        }
+                    ) {
                         Icon(
                             Icons.Rounded.Settings, 
-                            contentDescription = "Settings",
+                            contentDescription = null,
                             tint = SemanticColors.TextSecondary
                         )
                     }
@@ -565,14 +578,23 @@ fun WidgetWrapper(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onMoveUp) {
-                        Icon(Icons.Rounded.ArrowUpward, "Move Up", tint = Color.White)
+                    IconButton(
+                        onClick = onMoveUp,
+                        modifier = Modifier.semantics { contentDescription = "Move widget up" }
+                    ) {
+                        Icon(Icons.Rounded.ArrowUpward, contentDescription = null, tint = Color.White)
                     }
-                    IconButton(onClick = onToggleVisibility) {
-                        Icon(Icons.Rounded.VisibilityOff, "Hide", tint = Color.White)
+                    IconButton(
+                        onClick = onToggleVisibility,
+                        modifier = Modifier.semantics { contentDescription = "Hide widget" }
+                    ) {
+                        Icon(Icons.Rounded.VisibilityOff, contentDescription = null, tint = Color.White)
                     }
-                    IconButton(onClick = onMoveDown) {
-                        Icon(Icons.Rounded.ArrowDownward, "Move Down", tint = Color.White)
+                    IconButton(
+                        onClick = onMoveDown,
+                        modifier = Modifier.semantics { contentDescription = "Move widget down" }
+                    ) {
+                        Icon(Icons.Rounded.ArrowDownward, contentDescription = null, tint = Color.White)
                     }
                 }
             }
@@ -602,18 +624,45 @@ fun QuickSettingsDialog(
             Column {
                 ListItem(
                     headlineContent = { Text("AI Settings") },
-                    leadingContent = { Text("✨") },
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onNavigateToAiSettings() }
+                    leadingContent = { 
+                        Icon(
+                            Icons.Rounded.AutoAwesome,
+                            contentDescription = null,
+                            tint = SemanticColors.PrimaryIndigo
+                        )
+                    },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onNavigateToAiSettings() }
+                        .semantics { contentDescription = "Navigate to AI settings" }
                 )
                 ListItem(
                     headlineContent = { Text("Categories") },
-                    leadingContent = { Text("🏷️") },
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onNavigateToCategories() }
+                    leadingContent = { 
+                        Icon(
+                            Icons.Rounded.Label,
+                            contentDescription = null,
+                            tint = SemanticColors.PrimaryIndigo
+                        )
+                    },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onNavigateToCategories() }
+                        .semantics { contentDescription = "Navigate to categories management" }
                 )
                 ListItem(
                     headlineContent = { Text("Debug Menu") },
-                    leadingContent = { Text("🛠️") },
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onNavigateToDebug() }
+                    leadingContent = { 
+                        Icon(
+                            Icons.Rounded.Build,
+                            contentDescription = null,
+                            tint = SemanticColors.PrimaryIndigo
+                        )
+                    },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onNavigateToDebug() }
+                        .semantics { contentDescription = "Navigate to debug menu" }
                 )
             }
         },
@@ -628,7 +677,10 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "${item.category.name}: €${String.format("%.2f", item.total)}, ${String.format("%.0f", item.percentage)}% of budget"
+            },
         verticalAlignment = Alignment.CenterVertically
     ) {
         val categoryColor = remember(item.category.color) {
@@ -641,7 +693,11 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
                 .background(categoryColor, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(item.category.icon, fontSize = 18.sp)
+            Text(
+                item.category.icon, 
+                fontSize = 18.sp,
+                modifier = Modifier.semantics { contentDescription = "${item.category.name} category icon" }
+            )
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -676,7 +732,10 @@ fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "${expense.merchant}, ${if (expense.isManualEntry) "manual entry" else ""} €${String.format("%.2f", expense.amount)}, ${DateFormatterUtils.monthDay().format(Date(expense.date))}"
+            },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -696,7 +755,12 @@ fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
                     Text(expense.merchant, style = MaterialTheme.typography.bodyMedium)
                     if (expense.isManualEntry) {
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("✏️", fontSize = 12.sp)
+                        Icon(
+                            imageVector = Icons.Rounded.Edit,
+                            contentDescription = "Manual entry",
+                            modifier = Modifier.size(12.dp),
+                            tint = SemanticColors.TextSecondary
+                        )
                     }
                 }
                 Text(
@@ -775,7 +839,10 @@ fun AddPlannedExpenseDialog(
                             FilterChip(
                                 selected = priority == p,
                                 onClick = { priority = p },
-                                label = { Text(p.name) }
+                                label = { Text(p.name) },
+                                modifier = Modifier.semantics { 
+                                    contentDescription = "Priority ${p.name}, ${if (priority == p) "selected" else "not selected"}"
+                                }
                             )
                         }
                     }
@@ -804,7 +871,8 @@ fun AddPlannedExpenseDialog(
                                 FilterChip(
                                     selected = selectedCategoryId == null,
                                     onClick = { selectedCategoryId = null },
-                                    label = { Text("None") }
+                                    label = { Text("None") },
+                                    modifier = Modifier.semantics { contentDescription = "No category selected" }
                                 )
                             }
                             items(categories.size) { idx ->
@@ -812,7 +880,17 @@ fun AddPlannedExpenseDialog(
                                 FilterChip(
                                     selected = selectedCategoryId == cat.id,
                                     onClick = { selectedCategoryId = cat.id },
-                                    label = { Text("${cat.icon} ${cat.name}") }
+                                    label = { Text(cat.name) },
+                                    leadingIcon = {
+                                        Text(
+                                            text = cat.icon,
+                                            fontSize = 16.sp,
+                                            modifier = Modifier.semantics { contentDescription = "${cat.name} icon" }
+                                        )
+                                    },
+                                    modifier = Modifier.semantics { 
+                                        contentDescription = "${cat.name} category, ${if (selectedCategoryId == cat.id) "selected" else "not selected"}"
+                                    }
                                 )
                             }
                         }
