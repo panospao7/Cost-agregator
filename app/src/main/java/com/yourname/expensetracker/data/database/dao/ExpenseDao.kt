@@ -188,6 +188,21 @@ interface ExpenseDao {
 
     // === Analytics Queries ===
 
+    /**
+     * Fetch raw expense amounts for percentile calculation.
+     * Used by [SpendingThresholdCalculator] for adaptive high-amount detection.
+     * Only includes purchases owned by the user (not "not mine" or deposits).
+     * Sorted ascending for efficient percentile computation.
+     */
+    @Query("""
+        SELECT amount FROM expenses 
+        WHERE transactionType = 'PURCHASE' 
+        AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
+        ORDER BY amount ASC
+    """)
+    suspend fun getAmountsForPercentileCalc(startMs: Long, endMs: Long): List<Double>
+
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date <= :endDate AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense>
 
@@ -390,7 +405,8 @@ interface ExpenseDao {
 
     // Daily spending totals for a period (for pace calculation)
     @Query("""
-        SELECT (date / 86400000) as dayEpoch, SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+        SELECT (date / 86400000) as dayEpoch, MIN(date) as startDate, MAX(date) as endDate,
+               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                                                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                                                         ELSE amount END) as total, COUNT(*) as txCount
         FROM expenses 
@@ -634,6 +650,90 @@ interface ExpenseDao {
      */
     @Query("UPDATE expenses SET merchantKey = :merchantKey WHERE id = :expenseId")
     suspend fun updateMerchantKey(expenseId: Long, merchantKey: String)
+
+    // === Monthly/Weekly Totals Dashboard Queries ===
+
+    @Query("""
+        SELECT strftime('%Y-%W', date/1000, 'unixepoch') as weekKey,
+               MIN(date) as startDate,
+               MAX(date) as endDate,
+               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
+                        ELSE amount END) as total,
+               COUNT(*) as txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+        AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
+        GROUP BY weekKey
+        ORDER BY weekKey ASC
+    """)
+    suspend fun getWeeklyTotalsForPeriod(startMs: Long, endMs: Long): List<WeeklyTotal>
+
+    @Query("""
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch') as monthKey,
+               MIN(date) as startDate,
+               MAX(date) as endDate,
+               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
+                        ELSE amount END) as total,
+               COUNT(*) as txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+        AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
+        GROUP BY monthKey
+        ORDER BY monthKey ASC
+    """)
+    suspend fun getMonthlyTotalsForPeriod(startMs: Long, endMs: Long): List<MonthlyTotal>
+
+    @Query("""
+        SELECT (date / 86400000) as dayEpoch,
+               MIN(date) as startDate,
+               MAX(date) as endDate,
+               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
+                         ELSE amount END) as total,
+               COUNT(*) as txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+        AND date >= :startMs AND date < :endMs
+        AND isNotMine = 0
+        GROUP BY dayEpoch
+        ORDER BY dayEpoch ASC
+    """)
+    suspend fun getDailyTotalsWithDatesForPeriod(startMs: Long, endMs: Long): List<DailyTotal>
+
+    @Query("""
+        SELECT AVG(daily_total) FROM (
+            SELECT SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+                            WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
+                            ELSE amount END) as daily_total
+            FROM expenses
+            WHERE transactionType = 'PURCHASE'
+            AND date >= :startMs AND date < :endMs
+            AND isNotMine = 0
+            GROUP BY date / 86400000
+        )
+    """)
+    suspend fun getAverageDailySpend(startMs: Long, endMs: Long): Double?
+
+    @Query("""
+        SELECT c.id, c.name, c.icon, c.color,
+               SUM(CASE WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount
+                         WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0
+                         ELSE e.amount END) as total,
+               COUNT(*) as txCount
+        FROM expenses e
+        LEFT JOIN categories c ON e.categoryId = c.id
+        WHERE e.transactionType = 'PURCHASE'
+        AND e.date >= :startMs AND e.date < :endMs
+        AND e.isNotMine = 0
+        GROUP BY c.id
+        ORDER BY total DESC
+        LIMIT 10
+    """)
+    suspend fun getCategoryBreakdown(startMs: Long, endMs: Long): List<CategoryTotalResult>
 }
 
 data class MerchantSuggestion(
@@ -668,7 +768,7 @@ data class MerchantStats(
     val lastDate: Long
 )
 
-data class DailyTotal(
+data class DailyTotalLegacy(
     val dayEpoch: Long,
     val total: Double,
     val txCount: Int
@@ -692,5 +792,40 @@ data class LocationCluster(
     val centerLat: Double,
     val centerLon: Double,
     val count: Int
+)
+
+// === Monthly/Weekly Totals Dashboard Data Classes ===
+
+data class WeeklyTotal(
+    val weekKey: String,
+    val startDate: Long,
+    val endDate: Long,
+    val total: Double,
+    val txCount: Int
+)
+
+data class MonthlyTotal(
+    val monthKey: String,
+    val startDate: Long,
+    val endDate: Long,
+    val total: Double,
+    val txCount: Int
+)
+
+data class DailyTotal(
+    val dayEpoch: Long,
+    val startDate: Long,
+    val endDate: Long,
+    val total: Double,
+    val txCount: Int
+)
+
+data class CategoryTotalResult(
+    val id: Long?,
+    val name: String?,
+    val icon: String?,
+    val color: String?,
+    val total: Double,
+    val txCount: Int
 )
 

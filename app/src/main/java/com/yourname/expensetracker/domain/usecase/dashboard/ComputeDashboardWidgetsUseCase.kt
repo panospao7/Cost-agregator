@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
-import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.FinancialWeather
@@ -16,6 +15,7 @@ import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.BlockPartyStatus
+import com.yourname.expensetracker.domain.model.CategoryInfo
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
@@ -101,10 +101,12 @@ sealed class DashboardWidget {
     data class MonteCarloForecast(
         val result: MonteCarloResult
     ) : DashboardWidget()
+
+    data object TotalsDashboard : DashboardWidget()
 }
 
 data class CategorySpending(
-    val category: Category,
+    val category: CategoryInfo,
     val total: Double,
     val percentage: Float
 )
@@ -304,7 +306,17 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         // ── Category totals ──────────────────────────────────────────────────
         val categoryTotals = categoryBreakdown.map {
-            CategorySpending(it.category, it.total, it.percentage)
+            CategorySpending(
+                category = CategoryInfo(
+                    id = it.category.id,
+                    name = it.category.name,
+                    icon = it.category.icon,
+                    color = it.category.color,
+                    isIncome = false
+                ),
+                total = it.total,
+                percentage = it.percentage
+            )
         }
 
         // ── Spending Pace widget ─────────────────────────────────────────────
@@ -402,6 +414,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // ── Assemble widget list ─────────────────────────────────────────────
         val widgets = buildList {
             add(DashboardWidget.FinancialWeatherWidget(weather))
+            add(DashboardWidget.TotalsDashboard)
             add(
                 DashboardWidget.SafeToSpend(
                     amount = if (overallBudget != null) safeToSpend else monthSpent,

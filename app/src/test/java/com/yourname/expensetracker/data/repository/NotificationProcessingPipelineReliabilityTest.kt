@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
@@ -48,6 +49,7 @@ class NotificationProcessingPipelineReliabilityTest {
     private val analytics = mockk<TransferDirectionAnalytics>(relaxed = true)
     private val locationProvider = mockk<ForegroundLocationProvider>(relaxed = true)
     private val aiSettingsRepository = mockk<AiSettingsRepository>(relaxed = true)
+    private val generateTransactionInsightUseCase = mockk<GenerateTransactionInsightUseCase>(relaxed = true)
     private val dashboardFollowThroughEngine = mockk<DashboardFollowThroughEngine>(relaxed = true)
     private val recommendationRepository = mockk<RecommendationRepository>(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
@@ -69,6 +71,7 @@ class NotificationProcessingPipelineReliabilityTest {
         analytics = analytics,
         locationProvider = locationProvider,
         aiSettingsRepository = aiSettingsRepository,
+        generateTransactionInsightUseCase = generateTransactionInsightUseCase,
         dashboardFollowThroughEngine = dashboardFollowThroughEngine,
         recommendationRepository = recommendationRepository,
         ioDispatcher = testDispatcher

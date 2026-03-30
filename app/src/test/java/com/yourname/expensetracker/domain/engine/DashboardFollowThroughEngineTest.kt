@@ -8,7 +8,11 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.TransactionFilterSerializer
+import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -30,12 +34,16 @@ class DashboardFollowThroughEngineTest {
     private lateinit var engine: DashboardFollowThroughEngine
     private lateinit var serializer: TransactionFilterSerializer
     private val testDispatcher = StandardTestDispatcher()
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val expenseDao = mockk<ExpenseDao>(relaxed = true)
+    private lateinit var thresholdCalculator: SpendingThresholdCalculator
 
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         serializer = TransactionFilterSerializer()
-        engine = DashboardFollowThroughEngine(serializer, testDispatcher)
+        thresholdCalculator = SpendingThresholdCalculator(expenseDao, timeProvider, testDispatcher)
+        engine = DashboardFollowThroughEngine(serializer, thresholdCalculator, testDispatcher)
     }
 
     @Test

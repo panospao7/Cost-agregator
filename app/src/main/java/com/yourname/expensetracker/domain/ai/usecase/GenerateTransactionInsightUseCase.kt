@@ -71,20 +71,25 @@ class GenerateTransactionInsightUseCase @Inject constructor(
     private suspend fun generateInsightInternal(transaction: Expense): AiArtifactEntity? {
         // ── 1. Settings gate ─────────────────────────────────────────────────
         val settings = aiSettingsRepository.settings().first()
+        Timber.d("GenerateTransactionInsightUseCase: Step 1 - Settings: aiEnabled=${settings.aiEnabled}, dashboardBriefingEnabled=${settings.dashboardBriefingEnabled}")
+        
         if (!settings.aiEnabled || !settings.dashboardBriefingEnabled) {
-            Timber.d("GenerateTransactionInsightUseCase: AI or briefing disabled")
+            Timber.d("GenerateTransactionInsightUseCase: Step 1 FAILED - AI or briefing disabled")
             return null
         }
 
         // ── 2. Router check ──────────────────────────────────────────────────
         val routeDecision = aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, settings)
+        Timber.d("GenerateTransactionInsightUseCase: Step 2 - Router: route=${routeDecision.route}, provider=${routeDecision.providerName}, model=${routeDecision.modelName}")
+        
         if (routeDecision.route == AiRoute.DISABLED) {
-            Timber.d("GenerateTransactionInsightUseCase: router disabled briefing")
+            Timber.d("GenerateTransactionInsightUseCase: Step 2 FAILED - router disabled briefing")
             return null
         }
 
         // ── 3. Build minimal input ───────────────────────────────────────────
         val input = buildTransactionInput(transaction)
+        Timber.d("GenerateTransactionInsightUseCase: Step 3 - Input built: headline='${input.weatherHeadline}', summary='${input.weatherSummary}', amount=${input.totalCommitted}")
 
         // ── 4. Generate insight ──────────────────────────────────────────────
         val now = timeProvider.now()
@@ -107,17 +112,19 @@ class GenerateTransactionInsightUseCase @Inject constructor(
             expiresAt = now + AppConfig.Ai.DASHBOARD_BRIEFING_TTL_MS
         )
 
+        Timber.d("GenerateTransactionInsightUseCase: Step 4 - Calling dashboardBriefingService.generate()...")
         val briefing = dashboardBriefingService.generate(input)
-
-        return if (briefing != null) {
-            baseEntity.copy(
+        
+        if (briefing != null) {
+            Timber.d("GenerateTransactionInsightUseCase: Step 4 SUCCESS - briefing text length: ${briefing.text.length}")
+            return baseEntity.copy(
                 status = AiArtifactStatus.READY,
                 summaryText = briefing.text.take(AppConfig.Ai.MAX_BRIEFING_LENGTH_CHARS),
                 updatedAt = timeProvider.now()
             )
         } else {
-            Timber.d("GenerateTransactionInsightUseCase: service returned null")
-            null
+            Timber.w("GenerateTransactionInsightUseCase: Step 4 FAILED - briefing was null/empty")
+            return null
         }
     }
 

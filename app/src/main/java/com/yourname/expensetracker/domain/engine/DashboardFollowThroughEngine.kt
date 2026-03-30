@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.DefaultDispatcher
+import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
 import com.yourname.expensetracker.service.TransactionFilterSerializer
@@ -24,10 +25,14 @@ import javax.inject.Singleton
  * 2. Applies deterministic rules to generate navigation targets
  * 3. Creates TransactionFilter objects programmatically
  * 4. Returns up to 5 recommendations, sorted by priority
+ * 
+ * **Phase 3A**: Adaptive thresholds - uses [SpendingThresholdCalculator] instead of
+ * hardcoded €100 for high-amount detection.
  */
 @Singleton
 class DashboardFollowThroughEngine @Inject constructor(
     private val filterSerializer: TransactionFilterSerializer,
+    private val thresholdCalculator: SpendingThresholdCalculator,
     @DefaultDispatcher private val defaultDispatcher: CoroutineDispatcher
 ) {
     
@@ -57,8 +62,11 @@ class DashboardFollowThroughEngine @Inject constructor(
         return withContext(defaultDispatcher) {
             val recommendations = mutableListOf<DashboardFollowThroughRecommendation>()
             
-            // Rule 1: High-amount transaction recommendation
-            if (transaction.amount > 100.0) {
+            // Calculate adaptive threshold (P90 of last 90 days, minimum €50)
+            val highAmountThreshold = thresholdCalculator.getThreshold()
+            
+            // Rule 1: High-amount transaction recommendation (adaptive threshold)
+            if (transaction.amount > highAmountThreshold) {
                 recommendations.add(
                     createHighAmountRecommendation(transaction, aiArtifact, userId)
                 )

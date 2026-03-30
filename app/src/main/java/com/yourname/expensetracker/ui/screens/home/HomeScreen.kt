@@ -32,6 +32,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
+import com.yourname.expensetracker.ui.components.PeriodLevel
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
@@ -39,8 +40,9 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
-import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
+import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
+import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending as DomainCategorySpending
 import com.yourname.expensetracker.service.NavigationAction
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,11 +72,17 @@ fun HomeScreen(
         }
     }
 
+    LaunchedEffect(Unit) {
+        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+        viewModel.loadTotalsForYear(currentYear)
+    }
+
     var showQuickSettings by remember { mutableStateOf(false) }
     var showAiSettings by remember { mutableStateOf(false) }
     var showCategories by remember { mutableStateOf(false) }
     var showDebug by remember { mutableStateOf(false) }
     var showAddPlannedExpenseDialog by remember { mutableStateOf(false) }
+    var showCategoryBreakdown by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
@@ -130,20 +138,6 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                if (recommendations.isNotEmpty()) {
-                    item(span = { GridItemSpan(2) }) {
-                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            recommendations.forEach { recommendation ->
-                                RecommendationCard(
-                                    recommendation = recommendation,
-                                    onClick = { viewModel.navigateToRecommendation(recommendation) },
-                                    onDismiss = { viewModel.dismissRecommendation(recommendation) }
-                                )
-                            }
-                        }
-                    }
-                }
-
                 items(
                     items = state.widgets,
                     key = { HomeViewModel.getWidgetId(it) },
@@ -428,6 +422,22 @@ fun HomeScreen(
                                     onPlanClick = { showAddPlannedExpenseDialog = true }
                                 )
                             }
+                            is DashboardWidget.TotalsDashboard -> {
+                                val totalsState by viewModel.totalsDrillDownState.collectAsState()
+                                TotalsDashboardCard(
+                                    periods = totalsState.periodTotals,
+                                    currentLevel = totalsState.currentLevel.toPeriodLevel(),
+                                    selectedPeriod = totalsState.selectedPeriod,
+                                    isLoading = totalsState.isLoading,
+                                    onPeriodSelected = { viewModel.drillDownToPeriod(it) },
+                                    onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
+                                    onShowCategoryBreakdown = { 
+                                        viewModel.loadCategoryBreakdownForCurrentPeriod()
+                                        showCategoryBreakdown = true 
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                             is DashboardWidget.FinancialRunway -> {
                                 FinancialRunwayCard(
                                     daysRemaining = widget.daysRemaining,
@@ -442,6 +452,20 @@ fun HomeScreen(
                             is DashboardWidget.MonteCarloForecast -> {
                                 MonteCarloForecastCard(
                                     result = widget.result
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                if (recommendations.isNotEmpty()) {
+                    item(span = { GridItemSpan(2) }) {
+                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            recommendations.forEach { recommendation ->
+                                RecommendationCard(
+                                    recommendation = recommendation,
+                                    onClick = { viewModel.navigateToRecommendation(recommendation) },
+                                    onDismiss = { viewModel.dismissRecommendation(recommendation) }
                                 )
                             }
                         }
@@ -494,6 +518,15 @@ fun HomeScreen(
                     viewModel.addPlannedExpense(desc, amount, date, catId, priority)
                     showAddPlannedExpenseDialog = false
                 }
+            )
+        }
+
+        if (showCategoryBreakdown) {
+            val totalsState by viewModel.totalsDrillDownState.collectAsState()
+            CategoryBreakdownSheet(
+                periodLabel = totalsState.selectedPeriod?.periodLabel ?: "Period",
+                categories = totalsState.categoryBreakdown,
+                onDismiss = { showCategoryBreakdown = false }
             )
         }
     }
@@ -582,7 +615,7 @@ fun QuickSettingsDialog(
 }
 
 @Composable
-fun CategorySpendingRow(item: CategorySpending) {
+fun CategorySpendingRow(item: DomainCategorySpending) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -869,4 +902,11 @@ fun DateSelector(
             DatePicker(state = datePickerState)
         }
     }
+}
+
+private fun com.yourname.expensetracker.domain.model.PeriodType.toPeriodLevel(): PeriodLevel = when (this) {
+    com.yourname.expensetracker.domain.model.PeriodType.YEAR -> PeriodLevel.YEAR
+    com.yourname.expensetracker.domain.model.PeriodType.MONTH -> PeriodLevel.MONTH
+    com.yourname.expensetracker.domain.model.PeriodType.WEEK -> PeriodLevel.WEEK
+    com.yourname.expensetracker.domain.model.PeriodType.DAY -> PeriodLevel.DAY
 }

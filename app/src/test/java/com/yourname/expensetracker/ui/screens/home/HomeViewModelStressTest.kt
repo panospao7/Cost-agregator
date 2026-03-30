@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidg
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
+import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.RecommendationDismissalHandler
@@ -58,6 +59,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
     private lateinit var recommendationStateManager: RecommendationStateManager
     private lateinit var navigationTargetResolver: NavigationTargetResolver
     private lateinit var recommendationDismissalHandler: RecommendationDismissalHandler
+    private lateinit var totalsAggregationEngine: TotalsAggregationEngine
 
     private val configFlow = MutableStateFlow(defaultConfig())
     private lateinit var viewModel: HomeViewModel
@@ -78,6 +80,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         recommendationStateManager = mockk(relaxed = true)
         navigationTargetResolver = mockk(relaxed = true)
         recommendationDismissalHandler = mockk(relaxed = true)
+        totalsAggregationEngine = mockk(relaxed = true)
 
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings())
         every { timeProvider.now() } returns 0L
@@ -144,7 +147,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             timeProvider,
             recommendationStateManager,
             navigationTargetResolver,
-            recommendationDismissalHandler
+            recommendationDismissalHandler,
+            totalsAggregationEngine
         )
     }
 
@@ -230,7 +234,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             timeProvider,
             recommendationStateManager,
             navigationTargetResolver,
-            recommendationDismissalHandler
+            recommendationDismissalHandler,
+            totalsAggregationEngine
         )
 
         viewModel.dashboard.test {
@@ -455,7 +460,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             timeProvider,
             recommendationStateManager,
             navigationTargetResolver,
-            recommendationDismissalHandler
+            recommendationDismissalHandler,
+            totalsAggregationEngine
         )
         advanceUntilIdle()
         assertNotNull(vm.dashboard)

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
+import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.DayOfWeekTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -18,6 +19,8 @@ import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.MonthlyDepositTotal
 import com.yourname.expensetracker.data.database.dao.LocationCluster
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
+import com.yourname.expensetracker.data.database.dao.MonthlyTotal
+import com.yourname.expensetracker.data.database.dao.WeeklyTotal
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import androidx.sqlite.db.SimpleSQLiteQuery
 import kotlinx.coroutines.flow.*
@@ -371,6 +374,9 @@ class ExpenseRepository @Inject constructor(
     suspend fun getDailyTotalsForPeriod(startMs: Long, endMs: Long): List<DailyTotal> =
         expenseDao.getDailyTotalsForPeriod(startMs, endMs)
 
+    suspend fun getWeeklyTotalsForPeriod(startMs: Long, endMs: Long): List<WeeklyTotal> =
+        expenseDao.getWeeklyTotalsForPeriod(startMs, endMs)
+
     suspend fun getRecurringCandidates(): List<MerchantStats> =
         expenseDao.getRecurringCandidates()
 
@@ -449,4 +455,18 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun updateMerchantKey(expenseId: Long, merchantKey: String) =
         expenseDao.updateMerchantKey(expenseId, merchantKey)
+
+    // === Monthly/Weekly Totals Dashboard Methods ===
+
+    suspend fun getDailyTotalsWithDatesForPeriod(startMs: Long, endMs: Long): List<DailyTotal> =
+        expenseDao.getDailyTotalsWithDatesForPeriod(startMs, endMs)
+
+    suspend fun getMonthlyTotalsForPeriod(startMs: Long, endMs: Long): List<MonthlyTotal> =
+        expenseDao.getMonthlyTotalsForPeriod(startMs, endMs)
+
+    suspend fun getCategoryBreakdown(startMs: Long, endMs: Long): List<CategoryTotalResult> =
+        expenseDao.getCategoryBreakdown(startMs, endMs)
+
+    suspend fun getAverageDailySpend(startMs: Long, endMs: Long): Double? =
+        expenseDao.getAverageDailySpend(startMs, endMs)
 }

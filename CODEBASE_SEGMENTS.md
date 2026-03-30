@@ -6,7 +6,7 @@
 
 ---
 
-## FILES COVERED: 170+ Total Kotlin Files
+## FILES COVERED: 185+ Total Kotlin Files
 
 | Segment | Files | Description |
 |---------|-------|-------------|
@@ -18,7 +18,7 @@
 | 6 | ~5 | Recurring Expenses |
 | 7 | ~15 | Analytics & Insights |
 | 8 | ~20 | Core Expense Management |
-| 9 | ~10 | Dashboard & Widgets |
+| 9 | ~20 | Dashboard & Widgets (NEW: Totals Dashboard) |
 | 10 | ~3 | Notifications |
 | 11 | ~8 | Debug & Diagnostics |
 | 12 | ~6 | Dependency Injection (Updated) |
@@ -28,6 +28,7 @@
 | 16 | ~1 | Configuration (NEW) |
 | 17 | ~15 | Location Enrichment (NEW Mar 2026) |
 | 18 | ~8 | AI Follow-Through (Phase 4B - NEW Mar 2026) |
+| 19 | ~10 | Totals Dashboard (NEW Mar 2026) |
 
 ---
 
@@ -395,7 +396,7 @@ When analyzing a specific feature, check files in this order:
 
 ## SEGMENT 9: DASHBOARD & WIDGETS
 
-**Description:** Home screen dashboard with configurable widgets.
+**Description:** Home screen dashboard with configurable widgets. Includes the new Totals Dashboard with hierarchical drill-down (Year → Month → Week → Day).
 
 ### UI Layer
 | File | Purpose |
@@ -408,26 +409,56 @@ When analyzing a specific feature, check files in this order:
 | `ui/components/AppNavigationBar.kt` | Navigation bar (6 tabs: Home, Activity, Review, Plan, Analytics, **Map**) |
 | `ui/components/AppFabMenu.kt` | FAB menu (NEW) |
 | `ui/components/NotificationPermissionDialog.kt` | Permission dialog (NEW) |
+| `ui/components/TotalsDashboardCard.kt` | Monthly/weekly totals with drill-down (NEW Mar 2026) |
+| `ui/components/PeriodNavigationBar.kt` | Period navigation with filter chips (NEW Mar 2026) |
+| `ui/components/PeriodGridView.kt` | Period grid display with blocks (NEW Mar 2026) |
+| `ui/components/PeriodBlock.kt` | Individual period block (NEW Mar 2026) |
+| `ui/components/CategoryBreakdownSheet.kt` | Category breakdown bottom sheet (NEW Mar 2026) |
 
 ### Domain Layer
 | File | Purpose |
 |------|---------|
 | `domain/model/BlockPartyDay.kt` | Block party day model |
+| `domain/model/PeriodTotal.kt` | Period totals with drill-down (NEW Mar 2026) |
+| `domain/model/PeriodType.kt` | Period type enum (YEAR, MONTH, WEEK, DAY) (NEW Mar 2026) |
+| `domain/model/PeriodStatus.kt` | Period status enum (UNDER_AVERAGE, OVER_AVERAGE, CURRENT, NO_DATA) (NEW Mar 2026) |
+| `domain/model/CategoryBreakdown.kt` | Category spending breakdown (NEW Mar 2026) |
+| `domain/model/CategoryInfo.kt` | Domain model for category info (NEW Mar 2026) |
+| `domain/model/PeriodDrillDownState.kt` | UI state for drill-down feature (NEW Mar 2026) |
+| `domain/analytics/TotalsAggregationEngine.kt` | Period totals aggregation engine (NEW Mar 2026) |
 
 ### Data Layer
 | File | Purpose |
 |------|---------|
 | `data/repository/DashboardRepository.kt` | **MAIN REPO** - Widget configuration |
+| `data/repository/ExpenseRepository.kt` | Added methods for weekly/monthly/daily totals and category breakdown |
 
 ### Database Layer
 | File | Purpose |
 |------|---------|
 | `data/database/model/DashboardWidgetConfig.kt` | Widget configuration model |
+| `data/database/dao/ExpenseDao.kt` | Added DAO queries for weekly/monthly/daily totals (NEW Mar 2026) |
 
 ### App Entry Point
 | File | Purpose |
 |------|---------|
 | `ExpenseTrackerApp.kt` | Application class (Hilt setup) |
+
+### Totals Dashboard Design Notes (Mar 2026)
+- **Drill-down**: Year → Month → Week → Day (hierarchical navigation)
+- **Data source**: ExpenseDao with strftime grouping for periods
+- **Status colors**: Green (under avg), Red (over avg), Indigo (current), Gray (no data)
+- **Category breakdown**: Loaded on-demand when user clicks "View Category Breakdown"
+- **Filter chips**: Only show accessible levels (can go back, not forward)
+- **Empty state**: Shows "No spending data yet" when no expenses exist
+
+### Bug Fixes (Totals Dashboard - Mar 2026)
+- **getMonthRange off-by-one**: Fixed Calendar.MONTH to use 0-indexed (month-1)
+- **DailyTotal column mismatch**: Fixed query to return dayEpoch, startDate, endDate
+- **CategoryTotalResult isIncome**: Removed non-existent isIncome column from query
+- **Filter chips not working**: Only show accessible levels (can go back)
+- **Category breakdown empty**: Load current month when no period selected
+- **Widget not showing**: Added totals_dashboard to default dashboard config
 
 ---
 
@@ -563,6 +594,16 @@ When analyzing a specific feature, check files in this order:
 ### Check Shared Expense Calculation Issues (Mar 2026)
 → Files: `Expense.effectiveAmount`, `ExpenseDao` SUM queries, all analytics engines
 → **Recent Fix**: Added effectiveAmount property, updated all sumOf/SUM calls
+
+### Check Totals Dashboard Issues (Mar 2026)
+→ Files: `TotalsAggregationEngine`, `ExpenseDao.getWeeklyTotalsForPeriod`, `ExpenseDao.getMonthlyTotalsForPeriod`, `DashboardRepository.getDefaultConfig()`, `PeriodNavigationBar`
+→ **Recent Fixes**:
+  - getMonthRange off-by-one: Fixed Calendar.MONTH to use 0-indexed (month-1)
+  - DailyTotal column mismatch: Fixed query to return dayEpoch, startDate, endDate
+  - CategoryTotalResult isIncome: Removed non-existent isIncome column from query
+  - Filter chips not working: Only show accessible levels (can go back)
+  - Category breakdown empty: Load current month when no period selected
+  - Widget not showing: Added totals_dashboard to default dashboard config
 
 ### Check ML Training Issues
 → Files: `TransactionClassifier`, `MerchantNormalizer`, `ExpenseCategoryClassifier`, `UserCorrectionRepository`

@@ -5,6 +5,8 @@ import com.yourname.expensetracker.data.database.entity.RecommendationEntity
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationStatus
+import com.yourname.expensetracker.service.RecommendationDeduplicator
+import com.yourname.expensetracker.service.TransactionFilterSerializer
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -31,13 +33,16 @@ class RecommendationRepositoryTest {
 
     private lateinit var dao: RecommendationDao
     private lateinit var repository: RecommendationRepository
+    private lateinit var deduplicator: RecommendationDeduplicator
     private val testDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         dao = mockk()
-        repository = RecommendationRepository(dao, testDispatcher)
+        val filterSerializer = mockk<TransactionFilterSerializer>()
+        deduplicator = RecommendationDeduplicator(filterSerializer)
+        repository = RecommendationRepository(dao, deduplicator, testDispatcher)
     }
 
     @Test

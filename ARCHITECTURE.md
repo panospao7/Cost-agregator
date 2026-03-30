@@ -326,6 +326,7 @@ FinancialWeatherRepository
 | Category Insights | `domain/analytics/CategoryInsightEngine.kt` | Category analysis |
 | Merchant Insights | `domain/analytics/MerchantInsightEngine.kt` | Merchant patterns |
 | Day of Week | `domain/analytics/DayOfWeekAnalyzer.kt` | Day patterns |
+| Totals Aggregation | `domain/analytics/TotalsAggregationEngine.kt` | Period totals aggregation (NEW Mar 2026) |
 | Dashboard Widgets | `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` | Dashboard widget computation |
 | Dashboard Data | `domain/usecase/dashboard/DashboardDataProvider.kt` | Dashboard data provider (flatMapLatest) |
 
@@ -612,74 +613,11 @@ index_raw_notifications_packageName_timestamp_title_text UNIQUE
 | OCR issues | ReceiptOcrService, ReceiptParser, ML Kit config |
 | Category wrong | CategorizationEngine, MerchantNormalizer, HybridExpenseClassifier |
 | Recurring missed | RecurringExpenseEngine, RecurringExpenseRepository |
-
-### Recent Critical Fixes (2026)
-| Issue | Fix |
-|-------|-----|
-| ExpenseRepository memory leak | Removed local CoroutineScope, uses direct flow |
-| InsightsEngine God Object | Split into 6 focused engines |
-| Input validation | Added max 200 char limit to MerchantNormalizer |
-| Flow error handling | Added catch + emit empty in FinancialWeatherRepository |
-| Category learning race | Added Mutex to updateExpenseCategory |
-| Statement vs Notification duplicates | Added CrossSourceDeduplication check in ReceiptRepository |
-| PendingReview duplicates | Added duplicate detection against pending reviews before creating new ones |
-| Greek pattern matching | Added accent-insensitive Greek patterns to TransferDirectionDetector |
-| Keyword false positives | Added regex word boundaries to SemanticKeywordMatcher |
-| Grocery amount inference | Added €20-€150 bracket to ContextualInferenceEngine |
-| Monte Carlo Simulator | NEW: Probabilistic month-end spending forecast (Mar 2026) |
-| AnomalyDetector ordinal priority | Fixed < to > so MAD beats IQR |
-| AnomalyDetector division by zero | Added guards for categoryAvg/contextAvg = 0 |
-| ComputeDashboardWidgetsUseCase txCount | Now uses today's count instead of month-wide |
-| detectSuspectTransactions round-amount | Added >2x average requirement |
-| computeVelocityAnomalies unused param | Removed unused periodStartMs |
-| computePostSalaryPattern force-unwrap | Replaced !! with safe unwrap |
-| String.format locale | Added Locale.US for decimal consistency |
-| FinancialRunway daily rate | Fixed to use actual MTD spend, not projected total |
-| DashboardDataProvider stale timestamp | Now recomputes monthStart/monthEnd on every emission |
-| AnalyticsScreen Tab 4 | Switched to AnalyticsScreen with all 6 features |
-
-### Recent Bug Fixes (Mar 2026)
-| Issue | Fix |
-|-------|-----|
-| Cross-source Greek/Latin merchant duplicate detection | Greek→Latin transliteration in MerchantNormalizer.createSearchKey(), Expense.generateDedupeKey(), MerchantRulesRepository regex (Fix 1a-c) |
-| Revolut duplicate detection | Removed AND transactionType='PURCHASE' filter from isDuplicate() query in ExpenseDao (Fix 2) |
-| Revolut trust score inflation | Trust score denominator changed from totalNotifications to totalNotifications - autoRejected in SourceStats (Fix 3) |
-| Shared expense amounts not in totals | Added effectiveAmount computed property to Expense entity, updated all SUM queries and Kotlin sumOf calls across 15+ files (Fix 4a-c) |
-
-### Location Feature Bug Fixes (Mar 2026)
-| Issue | Fix |
-|-------|-----|
-| F1: Map always visible in LocationSearchPicker | Made map collapsible (hidden by default, toggle button, auto-expand on search results) |
-| F2: Long-press pin not resolving address | Added reverseGeocode override in CompositeGeocodingService |
-| F3: FAB centre-on-device not working | Wired FAB onClick → centreOnDeviceRequest flag → OsmMapView animateTo |
-| F4: osmdroid config loading race condition | Moved Configuration.getInstance().load() from LaunchedEffect to factory lambda |
-| F5: Map tiles not loading immediately | Added mv.onResume() in factory lambda |
-| F6: Map markers disappear on recomposition | Added key-based diff guard in OsmMapView.update |
-| F7: OSM ID not captured in Review | Captured osmId in onResult callback, added to onSave |
-| F8: Map too small | Increased map height from 200dp to 260dp |
-| F1 Regression: Map breaks dialog layouts | Map now collapsed by default, toggle to show/hide |
-
-### Transfer Direction Detection Feature (Updated Feb 2026)
-| Component | File | Purpose |
-|-----------|------|---------|
-| Detector | `domain/parser/TransferDirectionDetector.kt` | 60+ patterns for EN/GR, Greek accent handling |
-| Analytics | `domain/analytics/TransferDirectionAnalytics.kt` | Detection rate tracking |
-| UI Badge | `ui/components/TransferDirectionBadge.kt` | Direction visual indicator |
-| Deduplication | `domain/intelligence/CrossSourceDeduplication.kt` | Cross-source duplicate detection (ENHANCED) |
-
-### Cross-Source Deduplication (Feb 2026)
-| Component | File | Purpose |
-|-----------|------|---------|
-| Deduplication | `CrossSourceDeduplication.kt` | Detects duplicates across notifications, statements, pending reviews |
-| DAO | `PendingReviewDao.kt` | Date range queries for duplicate checking |
-| Repository | `ReceiptRepository.kt` | Skips duplicate pending reviews when processing statements |
-
-### Transaction Types Supported
-- **PURCHASE** - Regular purchases
-- **DEPOSIT** - Money received (salary, etc.)
-- **TRANSFER** - Between accounts (with INCOMING/OUTGOING direction)
-- **WITHDRAWAL** - Cash withdrawals
 | Analytics slow | InsightsEngine, AdvancedAnalyticsEngine, AnalyticsRepository |
+| Totals not showing | TotalsAggregationEngine, ExpenseDao, DashboardRepository |
+| Weekly data wrong | getMonthRange (0-indexed), ExpenseDao.getWeeklyTotalsForPeriod |
+| Category breakdown empty | loadCategoryBreakdownForCurrentPeriod(), ExpenseDao.getCategoryBreakdown |
+| Drill-down not working | PeriodNavigationBar (filter chips), HomeViewModel.drillDownToPeriod() |
 
 ---
 
@@ -803,6 +741,11 @@ expensetracker://map        → Tab 5
 | `LocationSearchPicker.kt` | Location search + picker (collapsible map) |
 | `LocationCorrectionSheet.kt` | "Correct pin" bottom sheet |
 | `LocationPermissionDialog.kt` | Location permission dialog |
+| `TotalsDashboardCard.kt` | Monthly/weekly totals with drill-down (NEW Mar 2026) |
+| `PeriodNavigationBar.kt` | Period navigation with filter chips (NEW Mar 2026) |
+| `PeriodGridView.kt` | Period grid display with blocks (NEW Mar 2026) |
+| `PeriodBlock.kt` | Individual period block (NEW Mar 2026) |
+| `CategoryBreakdownSheet.kt` | Category breakdown bottom sheet (NEW Mar 2026) |
 
 ### Domain Models (`domain/model/`)
 | Model | Purpose |
@@ -816,6 +759,12 @@ expensetracker://map        → Tab 5
 | `PeriodRange.kt` | Date period range |
 | `Result.kt` | Result wrapper (Success/Error/Loading) |
 | `BlockPartyDay.kt` | Block party day model |
+| `PeriodTotal.kt` | Period totals with drill-down (NEW Mar 2026) |
+| `PeriodType.kt` | Period type enum (YEAR, MONTH, WEEK, DAY) (NEW Mar 2026) |
+| `PeriodStatus.kt` | Period status enum (UNDER_AVERAGE, OVER_AVERAGE, CURRENT, NO_DATA) (NEW Mar 2026) |
+| `CategoryBreakdown.kt` | Category spending breakdown (NEW Mar 2026) |
+| `CategoryInfo.kt` | Domain model for category info (NEW Mar 2026) |
+| `PeriodDrillDownState.kt` | UI state for drill-down feature (NEW Mar 2026) |
 
 ### All Repositories (`data/repository/`)
 | Repository | Purpose |
@@ -898,7 +847,7 @@ expensetracker://map        → Tab 5
 | 6: Recurring | ~5 | RecurringExpenseEngine, RecurringExpenseRepository |
 | 7: Analytics | ~20 | InsightsEngine, AnomalyDetector, AdvancedAnalyticsEngine, AnalyticsViewModel, AnalyticsScreen |
 | 8: Core Expense | ~20 | ExpenseRepository, TransactionsScreen, AddExpenseSheet |
-| 9: Dashboard | ~15 | MainActivity, DashboardRepository, HomeViewModel, ComputeDashboardWidgetsUseCase, DashboardDataProvider |
+| 9: Dashboard | ~20 | MainActivity, DashboardRepository, HomeViewModel, ComputeDashboardWidgetsUseCase, DashboardDataProvider, TotalsDashboardCard, TotalsAggregationEngine |
 | 10: Notifications | ~3 | AndroidNotificationService, NotificationService |
 | 11: Debug | ~8 | DebugScreen, DebugViewModel, ServiceDiagnostics |
 | 12: DI | ~6 | AppModule, DatabaseModule, DaoModule, ServiceModule |
@@ -908,6 +857,7 @@ expensetracker://map        → Tab 5
 | 16: Configuration | ~1 | AppConfig |
 | 17: Location | ~15 | CompositeGeocodingService, NominatimGeocodingService, LocationResolver, SpendingMapScreen |
 | 18: AI Follow-Through (Phase 4B) | ~25 | DashboardFollowThroughEngine, RecommendationRepository, RecommendationStateManager, RecommendationCard |
+| 19: Totals Dashboard (NEW) | ~10 | TotalsDashboardCard, PeriodGridView, PeriodBlock, TotalsAggregationEngine, PeriodNavigationBar, CategoryBreakdownSheet |
 
 ---
 

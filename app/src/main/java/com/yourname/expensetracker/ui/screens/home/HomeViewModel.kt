@@ -17,6 +17,10 @@ import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
+import com.yourname.expensetracker.domain.model.PeriodDrillDownState
+import com.yourname.expensetracker.domain.model.PeriodTotal
+import com.yourname.expensetracker.domain.model.PeriodType
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
@@ -34,6 +38,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
@@ -96,8 +101,21 @@ class HomeViewModel @Inject constructor(
     private val timeProvider: TimeProvider,
     private val recommendationStateManager: RecommendationStateManager,
     private val navigationTargetResolver: NavigationTargetResolver,
-    private val recommendationDismissalHandler: RecommendationDismissalHandler
+    private val recommendationDismissalHandler: RecommendationDismissalHandler,
+    private val totalsAggregationEngine: TotalsAggregationEngine
 ) : ViewModel() {
+
+    private val _totalsDrillDownState = MutableStateFlow(PeriodDrillDownState(
+        currentLevel = PeriodType.MONTH,  // Start at MONTH level since we load monthly data
+        selectedPeriod = null,
+        parentPeriod = null,
+        periodTotals = emptyList(),
+        categoryBreakdown = emptyList(),
+        isLoading = true  // Start with loading state
+    ))
+
+    val totalsDrillDownState: StateFlow<PeriodDrillDownState> = 
+        _totalsDrillDownState.asStateFlow()
 
     private val isEditMode = MutableStateFlow(false)
     private val dateKeyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
@@ -290,6 +308,197 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun loadTotalsForYear(year: Int) {
+        viewModelScope.launch {
+            _totalsDrillDownState.update { it.copy(isLoading = true) }
+            try {
+                Timber.d("Loading totals for year $year")
+                val totals = totalsAggregationEngine.getMonthlyTotals(year)
+                Timber.d("Got ${totals.size} monthly totals for year $year")
+                val average = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
+                Timber.d("Average for month: $average")
+                
+                val updatedTotals = totals.map { period ->
+                    period.copy(status = totalsAggregationEngine.getPeriodStatus(period.totalAmount, average))
+                }
+                
+                _totalsDrillDownState.update { state ->
+                    state.copy(
+                        currentLevel = PeriodType.MONTH,
+                        periodTotals = updatedTotals,
+                        isLoading = false,
+                        error = null
+                    )
+                }
+                Timber.d("Totals loaded successfully")
+            } catch (e: Exception) {
+                Timber.e(e, "Error loading totals for year $year")
+                _totalsDrillDownState.update { it.copy(isLoading = false, error = "Unable to load totals. Please try again.") }
+            }
+        }
+    }
+
+    fun drillDownToPeriod(period: PeriodTotal) {
+        viewModelScope.launch {
+            _totalsDrillDownState.update { it.copy(isLoading = true) }
+            try {
+                val (newLevel, newTotals, categories) = when (period.periodType) {
+                    PeriodType.YEAR -> {
+                        Triple(PeriodType.MONTH, 
+                               totalsAggregationEngine.getMonthlyTotals(parseYear(period.periodKey)),
+                               emptyList())
+                    }
+                    PeriodType.MONTH -> {
+                        val (year, month) = parseYearMonth(period.periodKey)
+                        Triple(PeriodType.WEEK,
+                               totalsAggregationEngine.getWeeklyTotals(year, month),
+                               emptyList())
+                    }
+                    PeriodType.WEEK -> {
+                        val (year, week) = parseYearWeek(period.periodKey)
+                        Triple(PeriodType.DAY,
+                               totalsAggregationEngine.getDailyTotals(year, week),
+                               emptyList())
+                    }
+                    PeriodType.DAY -> {
+                        Triple(PeriodType.DAY,
+                               listOf(period),
+                               totalsAggregationEngine.getCategoryBreakdown(
+                                   period.startDateMs, period.endDateMs, period.periodLabel
+                               ))
+                    }
+                }
+                
+                val average = totalsAggregationEngine.getAverageForPeriodType(newLevel, excludeCurrent = false)
+                val updatedTotals = newTotals.map { p ->
+                    p.copy(status = totalsAggregationEngine.getPeriodStatus(p.totalAmount, average))
+                }
+
+                _totalsDrillDownState.update { state ->
+                    state.copy(
+                        currentLevel = newLevel,
+                        selectedPeriod = period,
+                        parentPeriod = state.selectedPeriod,
+                        periodTotals = updatedTotals,
+                        categoryBreakdown = categories,
+                        isLoading = false
+                    )
+                }
+            } catch (e: Exception) {
+                _totalsDrillDownState.update { it.copy(isLoading = false, error = "Unable to load breakdown. Please try again.") }
+            }
+        }
+    }
+
+    fun drillUp() {
+        val state = _totalsDrillDownState.value
+        val parentPeriod = state.parentPeriod ?: return
+
+        val newLevel = when (state.currentLevel) {
+            PeriodType.DAY -> PeriodType.WEEK
+            PeriodType.WEEK -> PeriodType.MONTH
+            PeriodType.MONTH -> PeriodType.YEAR
+            PeriodType.YEAR -> PeriodType.YEAR
+        }
+
+        viewModelScope.launch {
+            _totalsDrillDownState.update { it.copy(isLoading = true) }
+            try {
+                val result: Triple<List<PeriodTotal>, com.yourname.expensetracker.domain.model.PeriodTotal?, Unit> = when (newLevel) {
+                    PeriodType.MONTH -> {
+                        val year = parseYear(parentPeriod.periodKey)
+                        Triple(
+                            totalsAggregationEngine.getMonthlyTotals(year),
+                            null,
+                            Unit
+                        )
+                    }
+                    PeriodType.YEAR -> {
+                        Triple(emptyList<PeriodTotal>(), null, Unit)
+                    }
+                    else -> Triple(emptyList<PeriodTotal>(), null, Unit)
+                }
+
+                val newTotals = result.first
+                val grandparent = result.second
+
+                val average = totalsAggregationEngine.getAverageForPeriodType(newLevel, excludeCurrent = false)
+                val updatedTotals = newTotals.map { p ->
+                    p.copy(status = totalsAggregationEngine.getPeriodStatus(p.totalAmount, average))
+                }
+
+                _totalsDrillDownState.update {
+                    it.copy(
+                        currentLevel = newLevel,
+                        selectedPeriod = parentPeriod,
+                        parentPeriod = grandparent,
+                        periodTotals = updatedTotals,
+                        categoryBreakdown = emptyList(),
+                        isLoading = false
+                    )
+                }
+            } catch (e: Exception) {
+                _totalsDrillDownState.update { it.copy(isLoading = false, error = "Unable to go back. Please try again.") }
+            }
+        }
+    }
+
+    private fun parseYear(key: String): Int = key.split("-").first().toInt()
+
+    private fun parseYearMonth(key: String): Pair<Int, Int> {
+        val parts = key.split("-")
+        return Pair(parts[0].toInt(), parts[1].toInt())
+    }
+
+    private fun parseYearWeek(key: String): Pair<Int, Int> {
+        val parts = key.split("-W")
+        return Pair(parts[0].toInt(), parts[1].toInt())
+    }
+
+    /**
+     * Load category breakdown for the current period.
+     * If a period is selected, load breakdown for that period.
+     * Otherwise, load breakdown for the current month.
+     */
+    fun loadCategoryBreakdownForCurrentPeriod() {
+        viewModelScope.launch {
+            try {
+                val state = _totalsDrillDownState.value
+                val (startMs, endMs, label) = if (state.selectedPeriod != null) {
+                    Triple(
+                        state.selectedPeriod.startDateMs,
+                        state.selectedPeriod.endDateMs,
+                        state.selectedPeriod.periodLabel
+                    )
+                } else {
+                    // Default to current month
+                    val now = timeProvider.now()
+                    val cal = Calendar.getInstance().apply { timeInMillis = now }
+                    cal.set(Calendar.DAY_OF_MONTH, 1)
+                    cal.set(Calendar.HOUR_OF_DAY, 0)
+                    cal.set(Calendar.MINUTE, 0)
+                    cal.set(Calendar.SECOND, 0)
+                    cal.set(Calendar.MILLISECOND, 0)
+                    val startOfMonth = cal.timeInMillis
+                    
+                    cal.add(Calendar.MONTH, 1)
+                    val endOfMonth = cal.timeInMillis
+                    
+                    val monthLabel = java.text.SimpleDateFormat("MMM yyyy", java.util.Locale.getDefault()).format(Date(now))
+                    Triple(startOfMonth, endOfMonth, monthLabel)
+                }
+                
+                val categories = totalsAggregationEngine.getCategoryBreakdown(startMs, endMs, label)
+                
+                _totalsDrillDownState.update { 
+                    it.copy(categoryBreakdown = categories)
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Error loading category breakdown")
+            }
+        }
+    }
+
     companion object {
         fun getWidgetId(widget: DashboardWidget): String = when (widget) {
             is DashboardWidget.SafeToSpend          -> "safe_to_spend"
@@ -304,6 +513,7 @@ class HomeViewModel @Inject constructor(
             is DashboardWidget.FinancialWeatherWidget -> "financial_weather"
             is DashboardWidget.BudgetBlockParty     -> "budget_block_party"
             is DashboardWidget.FinancialRunway      -> "financial_runway"
+            is DashboardWidget.TotalsDashboard      -> "totals_dashboard"
             is DashboardWidget.MonteCarloForecast   -> "monte_carlo_forecast"
         }
     }

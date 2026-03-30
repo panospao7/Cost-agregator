@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.service
 
 import com.yourname.expensetracker.data.repository.RecommendationRepository
+import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationStatus
@@ -30,6 +31,7 @@ class RecommendationLifecycleManagerTest {
     private lateinit var repository: RecommendationRepository
     private lateinit var stateManager: RecommendationStateManager
     private lateinit var cacheService: RecommendationCacheService
+    private lateinit var thresholdCalculator: SpendingThresholdCalculator
     private lateinit var lifecycleManager: RecommendationLifecycleManager
     private val testDispatcher = StandardTestDispatcher()
 
@@ -39,10 +41,12 @@ class RecommendationLifecycleManagerTest {
         repository = mockk(relaxed = true)
         stateManager = mockk(relaxed = true)
         cacheService = mockk(relaxed = true)
+        thresholdCalculator = mockk(relaxed = true)
         lifecycleManager = RecommendationLifecycleManager(
             repository = repository,
             stateManager = stateManager,
             cacheService = cacheService,
+            thresholdCalculator = thresholdCalculator,
             ioDispatcher = testDispatcher,
             applicationScope = kotlinx.coroutines.test.TestScope(testDispatcher)
         )

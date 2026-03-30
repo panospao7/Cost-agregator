@@ -105,18 +105,19 @@ class DashboardRepository @Inject constructor(
     private fun getDefaultConfig(): List<DashboardWidgetConfig> {
         return listOf(
             DashboardWidgetConfig("financial_weather", 0),
-            DashboardWidgetConfig("safe_to_spend", 1),
-            DashboardWidgetConfig("financial_runway", 2),
-            DashboardWidgetConfig("monte_carlo_forecast", 3),
-            DashboardWidgetConfig("spending_pace", 4),
-            DashboardWidgetConfig("review_alert", 5),
-            DashboardWidgetConfig("spending_trend", 6),
-            DashboardWidgetConfig("insight", 7),
-            DashboardWidgetConfig("period_summary", 8),
-            DashboardWidgetConfig("budget_health", 9),
-            DashboardWidgetConfig("top_categories", 10),
-            DashboardWidgetConfig("recent_transactions", 11),
-            DashboardWidgetConfig("budget_block_party", 12)
+            DashboardWidgetConfig("totals_dashboard", 1),
+            DashboardWidgetConfig("safe_to_spend", 2),
+            DashboardWidgetConfig("financial_runway", 3),
+            DashboardWidgetConfig("monte_carlo_forecast", 4),
+            DashboardWidgetConfig("spending_pace", 5),
+            DashboardWidgetConfig("review_alert", 6),
+            DashboardWidgetConfig("spending_trend", 7),
+            DashboardWidgetConfig("insight", 8),
+            DashboardWidgetConfig("period_summary", 9),
+            DashboardWidgetConfig("budget_health", 10),
+            DashboardWidgetConfig("top_categories", 11),
+            DashboardWidgetConfig("recent_transactions", 12),
+            DashboardWidgetConfig("budget_block_party", 13)
         )
     }
 }
