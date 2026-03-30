@@ -18,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +47,7 @@ import com.yourname.expensetracker.domain.analytics.StatisticalInsights
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.ui.components.BentoCard
 import com.yourname.expensetracker.ui.components.analytics.*
+import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.analytics.*
 import com.yourname.expensetracker.domain.location.AreaSpending
@@ -69,8 +72,28 @@ fun AnalyticsScreen(
         }
     ) { padding ->
         if (state.isLoading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+            // Skeleton loading state
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp)
+            ) {
+                // Hero card skeleton
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    )
+                ) {
+                    Box(modifier = Modifier.fillMaxSize())
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                // Analytics cards skeleton
+                ListSkeleton(itemCount = 6)
             }
         } else {
             LazyColumn(
@@ -927,11 +950,15 @@ fun PeriodSelector(selected: TimePeriod, onSelect: (TimePeriod) -> Unit) {
         modifier = Modifier.fillMaxWidth()
     ) {
         items(TimePeriod.values()) { period ->
+            val label = period.name.lowercase().replaceFirstChar { it.titlecase(Locale.getDefault()) }
             FilterChip(
                 selected = selected == period,
                 onClick = { onSelect(period) },
-                label = { Text(period.name.lowercase().replaceFirstChar { it.titlecase(Locale.getDefault()) }) },
-                shape = RoundedCornerShape(20.dp)
+                label = { Text(label) },
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.semantics {
+                    contentDescription = "$label period, ${if (selected == period) "selected" else "not selected"}"
+                }
             )
         }
     }
