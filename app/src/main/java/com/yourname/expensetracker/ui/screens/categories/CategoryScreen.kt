@@ -93,10 +93,12 @@ fun CategoryItem(category: Category) {
         }
     }
     
-    val cardDescription = buildString {
-        append("${category.name} category")
-        if (category.isDefault) {
-            append(", Default category")
+    val cardDescription = remember(category.name, category.isDefault) {
+        buildString {
+            append("${category.name} category")
+            if (category.isDefault) {
+                append(", Default category")
+            }
         }
     }
 
@@ -148,8 +150,9 @@ fun AddCategoryDialog(
     var isNameError by remember { mutableStateOf(false) }
     var isColorError by remember { mutableStateOf(false) }
     
-    val isValidName = name.matches(Regex("^[a-zA-Z0-9\\s\\-_'.]*$"))
-    val isValidColor = color.matches(Regex("^#[0-9A-Fa-f]{6}$"))
+    // Remember validation results to avoid recalculating regex on every recomposition
+    val isValidName = remember(name) { name.matches(Regex("^[a-zA-Z0-9\\s\\-_'.]*$")) }
+    val isValidColor = remember(color) { color.matches(Regex("^#[0-9A-Fa-f]{6}$")) }
     
     AlertDialog(
         onDismissRequest = onDismiss,
