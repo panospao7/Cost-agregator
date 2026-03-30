@@ -2,8 +2,7 @@ package com.yourname.expensetracker.ui.components.health
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -12,8 +11,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.*
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -24,6 +26,10 @@ import com.yourname.expensetracker.domain.health.HealthStatus
 import com.yourname.expensetracker.domain.health.PeriodHealthScore
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
+/**
+ * Retro 8-bit game style health score widget.
+ * Features pixel aesthetics, scanlines, segmented health bars, and retro gaming colors.
+ */
 @Composable
 fun HealthScoreWidget(
     healthScore: HealthScoreResult,
@@ -31,335 +37,578 @@ fun HealthScoreWidget(
     onToggleExpand: () -> Unit = {}
 ) {
     val compositeStatus = healthScore.getCompositeStatus()
-    val compositeColor = getHealthColor(compositeStatus)
+    val compositeColor = getRetroHealthColor(compositeStatus)
     
-    Card(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clickable { onToggleExpand() },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = SemanticColors.GlassSurface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(
+        // Retro card with pixel border effect
+        RetroGameCard(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .clickable { onToggleExpand() },
+            borderColor = compositeColor,
+            backgroundColor = RetroColors.DarkBackground
         ) {
-            // Header with heart icon and title
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                HealthHeartIcon(
-                    healthStatus = compositeStatus,
-                    modifier = Modifier.size(32.dp)
-                )
-                
-                Spacer(modifier = Modifier.width(12.dp))
-                
-                Text(
-                    text = "Financial Health",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = SemanticColors.TextPrimary
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Three period scores side by side
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                PeriodHealthIndicator(
-                    label = "TODAY",
-                    score = healthScore.today,
-                    modifier = Modifier.weight(1f)
-                )
-                
-                PeriodHealthIndicator(
-                    label = "WEEK",
-                    score = healthScore.week,
-                    modifier = Modifier.weight(1f)
-                )
-                
-                PeriodHealthIndicator(
-                    label = "MONTH",
-                    score = healthScore.month,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Composite score
-            CompositeScoreDisplay(
-                score = healthScore.composite,
-                status = compositeStatus
-            )
-            
-            // Expandable details
-            if (isExpanded) {
-                Spacer(modifier = Modifier.height(16.dp))
-                HealthBreakdownDetails(healthScore = healthScore)
-            }
-            
-            // Expand/collapse hint
-            Text(
-                text = if (isExpanded) "Tap to collapse ↑" else "Tap for breakdown ↓",
-                style = MaterialTheme.typography.labelSmall,
-                color = SemanticColors.TextSecondary,
-                textAlign = TextAlign.Center,
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp)
-            )
+                    .padding(16.dp)
+            ) {
+                // Retro header with pixel heart
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    RetroPixelHeart(
+                        healthStatus = compositeStatus,
+                        modifier = Modifier.size(36.dp)
+                    )
+                    
+                    Spacer(modifier = Modifier.width(12.dp))
+                    
+                    // Retro title with pixel font styling
+                    Text(
+                        text = "FINANCIAL HP",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 2.sp
+                        ),
+                        color = RetroColors.NeonWhite,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    )
+                    
+                    Spacer(modifier = Modifier.weight(1f))
+                    
+                    // Composite score badge
+                    RetroBadge(
+                        text = "${healthScore.composite}%",
+                        color = compositeColor
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                // Segmented health bars (like Zelda/Metroid heart containers)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    RetroHealthContainer(
+                        label = "DAY",
+                        score = healthScore.today.score,
+                        maxSegments = 10,
+                        color = getRetroHealthColor(getStatusFromScore(healthScore.today.score)),
+                        modifier = Modifier.weight(1f)
+                    )
+                    
+                    Spacer(modifier = Modifier.width(8.dp))
+                    
+                    RetroHealthContainer(
+                        label = "WEEK", 
+                        score = healthScore.week.score,
+                        maxSegments = 10,
+                        color = getRetroHealthColor(getStatusFromScore(healthScore.week.score)),
+                        modifier = Modifier.weight(1f)
+                    )
+                    
+                    Spacer(modifier = Modifier.width(8.dp))
+                    
+                    RetroHealthContainer(
+                        label = "MONTH",
+                        score = healthScore.month.score,
+                        maxSegments = 10,
+                        color = getRetroHealthColor(getStatusFromScore(healthScore.month.score)),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // Status text in retro style
+                RetroStatusText(
+                    status = compositeStatus,
+                    score = healthScore.composite
+                )
+                
+                // Expandable breakdown with retro styling
+                if (isExpanded) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    RetroDivider()
+                    Spacer(modifier = Modifier.height(12.dp))
+                    RetroBreakdownDetails(healthScore = healthScore)
+                }
+                
+                // Retro expand/collapse hint
+                Text(
+                    text = if (isExpanded) "▲ PRESS TO CLOSE ▲" else "▼ PRESS TO OPEN ▼",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        letterSpacing = 1.sp
+                    ),
+                    color = RetroColors.NeonCyan.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                )
+            }
         }
+        
+        // Scanline overlay effect
+        ScanlineOverlay()
     }
 }
 
+/**
+ * Retro game card with pixel border effect
+ */
 @Composable
-private fun HealthHeartIcon(
+private fun RetroGameCard(
+    modifier: Modifier = Modifier,
+    borderColor: Color,
+    backgroundColor: Color,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .background(backgroundColor)
+            .border(3.dp, borderColor) // Thick pixel border
+            .border(1.dp, RetroColors.NeonWhite.copy(alpha = 0.3f)) // Inner glow
+            .padding(2.dp) // Padding for pixel effect
+    ) {
+        // Corner decorations (like old school RPG UI)
+        RetroCornerDecoration(alignment = Alignment.TopStart, color = borderColor)
+        RetroCornerDecoration(alignment = Alignment.TopEnd, color = borderColor)
+        RetroCornerDecoration(alignment = Alignment.BottomStart, color = borderColor)
+        RetroCornerDecoration(alignment = Alignment.BottomEnd, color = borderColor)
+        
+        content()
+    }
+}
+
+/**
+ * Corner bracket decorations for retro feel
+ */
+@Composable
+private fun RetroCornerDecoration(
+    alignment: Alignment,
+    color: Color
+) {
+    Box(
+        modifier = Modifier
+            .size(12.dp)
+            .background(Color.Transparent)
+            .then(
+                when (alignment) {
+                    Alignment.TopStart -> Modifier
+                        .drawBehind {
+                            drawLine(
+                                color = color,
+                                start = Offset(0f, 0f),
+                                end = Offset(size.width * 0.7f, 0f),
+                                strokeWidth = 3f
+                            )
+                            drawLine(
+                                color = color,
+                                start = Offset(0f, 0f),
+                                end = Offset(0f, size.height * 0.7f),
+                                strokeWidth = 3f
+                            )
+                        }
+                    Alignment.TopEnd -> Modifier
+                        .drawBehind {
+                            drawLine(
+                                color = color,
+                                start = Offset(size.width, 0f),
+                                end = Offset(size.width * 0.3f, 0f),
+                                strokeWidth = 3f
+                            )
+                            drawLine(
+                                color = color,
+                                start = Offset(size.width, 0f),
+                                end = Offset(size.width, size.height * 0.7f),
+                                strokeWidth = 3f
+                            )
+                        }
+                    Alignment.BottomStart -> Modifier
+                        .drawBehind {
+                            drawLine(
+                                color = color,
+                                start = Offset(0f, size.height),
+                                end = Offset(size.width * 0.7f, size.height),
+                                strokeWidth = 3f
+                            )
+                            drawLine(
+                                color = color,
+                                start = Offset(0f, size.height),
+                                end = Offset(0f, size.height * 0.3f),
+                                strokeWidth = 3f
+                            )
+                        }
+                    else -> Modifier
+                        .drawBehind {
+                            drawLine(
+                                color = color,
+                                start = Offset(size.width, size.height),
+                                end = Offset(size.width * 0.3f, size.height),
+                                strokeWidth = 3f
+                            )
+                            drawLine(
+                                color = color,
+                                start = Offset(size.width, size.height),
+                                end = Offset(size.width, size.height * 0.3f),
+                                strokeWidth = 3f
+                            )
+                        }
+                }
+            )
+    )
+}
+
+/**
+ * Pixel-style animated heart
+ */
+@Composable
+private fun RetroPixelHeart(
     healthStatus: HealthStatus,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val infiniteTransition = rememberInfiniteTransition(label = "retro_pulse")
     
-    // Pulse animation intensity based on health status
     val pulseIntensity = when (healthStatus) {
         HealthStatus.EXCELLENT -> 0f
-        HealthStatus.GOOD -> 0.05f
-        HealthStatus.FAIR -> 0.1f
-        HealthStatus.WARNING -> 0.15f
-        HealthStatus.CRITICAL -> 0.2f
+        HealthStatus.GOOD -> 0.08f
+        HealthStatus.FAIR -> 0.15f
+        HealthStatus.WARNING -> 0.25f
+        HealthStatus.CRITICAL -> 0.35f
     }
     
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
         targetValue = 1f + pulseIntensity,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = EaseInOutSine),
+            animation = tween(800, easing = FastOutLinearInEasing), // Faster retro pulse
             repeatMode = RepeatMode.Reverse
         ),
-        label = "pulse"
+        label = "retro_pulse"
     )
     
-    val color = getHealthColor(healthStatus)
+    val color = getRetroHealthColor(healthStatus)
     val animatedColor by animateColorAsState(
         targetValue = color,
-        animationSpec = tween(500),
-        label = "color"
+        animationSpec = tween(300),
+        label = "retro_color"
     )
     
     Box(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = Icons.Filled.Favorite,
-            contentDescription = "Health Status: ${healthStatus.name}",
-            tint = animatedColor,
-            modifier = Modifier
-                .size(28.dp * scale)
-        )
-    }
-}
-
-@Composable
-private fun PeriodHealthIndicator(
-    label: String,
-    score: PeriodHealthScore,
-    modifier: Modifier = Modifier
-) {
-    val status = getStatusFromScore(score.score)
-    val color = getHealthColor(status)
-    val animatedColor by animateColorAsState(
-        targetValue = color,
-        animationSpec = tween(500),
-        label = "period_color"
-    )
-    
-    Column(
-        modifier = modifier.padding(horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = SemanticColors.TextSecondary,
-            fontWeight = FontWeight.Medium
-        )
-        
-        Spacer(modifier = Modifier.height(4.dp))
-        
-        // Health bar
+        // Glow effect
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(SemanticColors.SurfaceLight.copy(alpha = 0.3f))
+                .size(28.dp * scale)
+                .background(animatedColor.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
+        )
+        
+        // Pixel heart icon
+        Icon(
+            imageVector = Icons.Filled.Favorite,
+            contentDescription = "HP: ${healthStatus.name}",
+            tint = animatedColor,
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+
+/**
+ * Segmented health container like classic games (Zelda hearts, Metroid energy tanks)
+ */
+@Composable
+private fun RetroHealthContainer(
+    label: String,
+    score: Int,
+    maxSegments: Int,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    val filledSegments = (score / 100.0 * maxSegments).toInt().coerceIn(0, maxSegments)
+    
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Retro label
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            ),
+            color = RetroColors.NeonCyan
+        )
+        
+        Spacer(modifier = Modifier.height(6.dp))
+        
+        // Segmented health bar (like classic RPG)
+        Column(
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(score.score / 100f)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(animatedColor)
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                repeat(5) { index ->
+                    RetroSegment(
+                        filled = index < filledSegments,
+                        color = color
+                    )
+                }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                repeat(5) { index ->
+                    RetroSegment(
+                        filled = (index + 5) < filledSegments,
+                        color = color
+                    )
+                }
+            }
         }
         
         Spacer(modifier = Modifier.height(4.dp))
         
-        // Score percentage
+        // Score in retro style
         Text(
-            text = "${score.score}%",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Bold,
-            color = animatedColor
+            text = "$score",
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontWeight = FontWeight.ExtraBold
+            ),
+            color = color
         )
     }
 }
 
+/**
+ * Individual pixel segment for health bar
+ */
 @Composable
-private fun CompositeScoreDisplay(
-    score: Int,
-    status: HealthStatus
+private fun RetroSegment(
+    filled: Boolean,
+    color: Color
 ) {
-    val color = getHealthColor(status)
-    val animatedColor by animateColorAsState(
-        targetValue = color,
-        animationSpec = tween(500),
-        label = "composite_color"
+    Box(
+        modifier = Modifier
+            .size(width = 8.dp, height = 10.dp)
+            .background(
+                if (filled) color else RetroColors.DarkSegment,
+                RoundedCornerShape(1.dp)
+            )
+            .border(1.dp, if (filled) RetroColors.NeonWhite.copy(alpha = 0.5f) else RetroColors.DarkBorder)
     )
-    
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-        modifier = Modifier.fillMaxWidth()
+}
+
+/**
+ * Retro badge for score display
+ */
+@Composable
+private fun RetroBadge(
+    text: String,
+    color: Color
+) {
+    Box(
+        modifier = Modifier
+            .background(RetroColors.DarkBackground, RoundedCornerShape(2.dp))
+            .border(2.dp, color, RoundedCornerShape(2.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
         Text(
-            text = "Composite: ",
-            style = MaterialTheme.typography.bodyMedium,
-            color = SemanticColors.TextSecondary
+            text = text,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontWeight = FontWeight.Bold
+            ),
+            color = color
         )
-        
-        Text(
-            text = "$score%",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = animatedColor
-        )
-        
-        Spacer(modifier = Modifier.width(8.dp))
-        
-        // Status indicator
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = animatedColor.copy(alpha = 0.2f)
-        ) {
-            Text(
-                text = status.name.replace("_", " "),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = animatedColor,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-            )
-        }
     }
 }
 
+/**
+ * Status text in retro gaming style
+ */
 @Composable
-private fun HealthBreakdownDetails(
+private fun RetroStatusText(
+    status: HealthStatus,
+    score: Int
+) {
+    val statusText = when (status) {
+        HealthStatus.EXCELLENT -> "★ EXCELLENT ★"
+        HealthStatus.GOOD -> "◆ GOOD ◆"
+        HealthStatus.FAIR -> "● FAIR ●"
+        HealthStatus.WARNING -> "▲ WARNING ▲"
+        HealthStatus.CRITICAL -> "▼ CRITICAL ▼"
+    }
+    
+    val color = getRetroHealthColor(status)
+    
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Blinking cursor effect
+        val infiniteTransition = rememberInfiniteTransition(label = "cursor")
+        val cursorAlpha by infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(500),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "cursor"
+        )
+        
+        Text(
+            text = "> ",
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontWeight = FontWeight.Bold
+            ),
+            color = RetroColors.NeonCyan.copy(alpha = cursorAlpha)
+        )
+        
+        Text(
+            text = statusText,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            ),
+            color = color
+        )
+        
+        Text(
+            text = " <",
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontWeight = FontWeight.Bold
+            ),
+            color = RetroColors.NeonCyan.copy(alpha = cursorAlpha)
+        )
+    }
+}
+
+/**
+ * Retro divider with pixel styling
+ */
+@Composable
+private fun RetroDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(2.dp)
+            .background(
+                Brush.horizontalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        RetroColors.NeonCyan.copy(alpha = 0.5f),
+                        RetroColors.NeonCyan,
+                        RetroColors.NeonCyan.copy(alpha = 0.5f),
+                        Color.Transparent
+                    )
+                )
+            )
+    )
+}
+
+/**
+ * Retro-styled breakdown details
+ */
+@Composable
+private fun RetroBreakdownDetails(
     healthScore: HealthScoreResult
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp)
+        modifier = Modifier.fillMaxWidth()
     ) {
-        HorizontalDivider(
-            modifier = Modifier.padding(vertical = 8.dp),
-            color = SemanticColors.TextMuted.copy(alpha = 0.2f)
-        )
-        
         Text(
-            text = "Score Breakdown",
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            color = SemanticColors.TextPrimary,
+            text = "◄ SCORE BREAKDOWN ►",
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            ),
+            color = RetroColors.NeonYellow,
             modifier = Modifier.padding(bottom = 8.dp)
         )
         
-        // Today breakdown
-        PeriodBreakdownSection(
-            period = "Today",
+        RetroBreakdownSection(
+            period = "TODAY",
             breakdown = healthScore.today.breakdown
         )
         
         Spacer(modifier = Modifier.height(8.dp))
         
-        // Week breakdown
-        PeriodBreakdownSection(
-            period = "Week",
+        RetroBreakdownSection(
+            period = "WEEK",
             breakdown = healthScore.week.breakdown
         )
         
         Spacer(modifier = Modifier.height(8.dp))
         
-        // Month breakdown
-        PeriodBreakdownSection(
-            period = "Month",
+        RetroBreakdownSection(
+            period = "MONTH",
             breakdown = healthScore.month.breakdown
         )
     }
 }
 
+/**
+ * Individual period breakdown in retro style
+ */
 @Composable
-private fun PeriodBreakdownSection(
+private fun RetroBreakdownSection(
     period: String,
     breakdown: HealthBreakdown
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                SemanticColors.SurfaceLight.copy(alpha = 0.1f),
-                RoundedCornerShape(8.dp)
-            )
-            .padding(12.dp)
+            .background(RetroColors.DarkSurface, RoundedCornerShape(2.dp))
+            .border(1.dp, RetroColors.DarkBorder, RoundedCornerShape(2.dp))
+            .padding(10.dp)
     ) {
         Text(
-            text = period,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = SemanticColors.TextPrimary
+            text = "[$period]",
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontWeight = FontWeight.Bold
+            ),
+            color = RetroColors.NeonCyan
         )
         
         Spacer(modifier = Modifier.height(4.dp))
         
-        BreakdownRow(label = "Budget Health", value = breakdown.budgetHealth, max = 25)
-        BreakdownRow(label = "Spending Control", value = breakdown.spendingControl, max = 25)
-        BreakdownRow(label = "Cleanliness", value = breakdown.cleanliness, max = 10)
+        RetroStatRow(label = "BUDGET", value = breakdown.budgetHealth, max = 25)
+        RetroStatRow(label = "CONTROL", value = breakdown.spendingControl, max = 25)
+        RetroStatRow(label = "CLEAN", value = breakdown.cleanliness, max = 10)
         
         if (breakdown.bonusPoints > 0) {
-            BreakdownRow(
-                label = "Bonus Points",
-                value = breakdown.bonusPoints,
-                max = 15,
-                isBonus = true
-            )
+            RetroStatRow(label = "BONUS", value = breakdown.bonusPoints, max = 15, isBonus = true)
         }
     }
 }
 
+/**
+ * Retro stat row with pixel styling
+ */
 @Composable
-private fun BreakdownRow(
+private fun RetroStatRow(
     label: String,
     value: Int,
     max: Int,
@@ -368,40 +617,86 @@ private fun BreakdownRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
+            .padding(vertical = 1.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = SemanticColors.TextSecondary
+            text = "$label:",
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+            ),
+            color = RetroColors.NeonWhite.copy(alpha = 0.7f)
         )
         
         val color = when {
-            isBonus -> SemanticColors.SuccessGreen
-            value >= max * 0.8 -> SemanticColors.SuccessGreen
-            value >= max * 0.5 -> SemanticColors.WarningOrange
-            else -> SemanticColors.DangerRed
+            isBonus -> RetroColors.NeonYellow
+            value >= max * 0.8 -> RetroColors.NeonGreen
+            value >= max * 0.5 -> RetroColors.NeonOrange
+            else -> RetroColors.NeonRed
         }
         
         Text(
-            text = "$value/$max",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
+            text = String.format("%02d/%02d", value, max),
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontWeight = FontWeight.Bold
+            ),
             color = color
         )
     }
 }
 
+/**
+ * Scanline overlay effect for retro CRT look
+ */
 @Composable
-private fun getHealthColor(status: HealthStatus): Color {
+private fun ScanlineOverlay() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(4.dp)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        RetroColors.Scanline.copy(alpha = 0.1f),
+                        RetroColors.Scanline.copy(alpha = 0.2f),
+                        RetroColors.Scanline.copy(alpha = 0.1f),
+                        Color.Transparent
+                    )
+                )
+            )
+    )
+}
+
+/**
+ * Retro color palette
+ */
+private object RetroColors {
+    val NeonGreen = Color(0xFF39FF14)      // Classic arcade green
+    val NeonYellow = Color(0xFFFFFF00)     // Coin-up yellow
+    val NeonOrange = Color(0xFFFF6600)    // Warning orange
+    val NeonRed = Color(0xFFFF0040)       // Critical red
+    val NeonCyan = Color(0xFF00FFFF)      // CRT cyan
+    val NeonWhite = Color(0xFFF0F0F0)     // Pixel white
+    val DarkBackground = Color(0xFF1A1A2E) // Deep retro blue-black
+    val DarkSurface = Color(0xFF16213E)    // Slightly lighter
+    val DarkBorder = Color(0xFF0F3460)     // Border color
+    val DarkSegment = Color(0xFF2D2D2D)    // Empty segment
+    val Scanline = Color(0xFF000000)       // Scanline black
+}
+
+/**
+ * Get retro color for health status
+ */
+private fun getRetroHealthColor(status: HealthStatus): Color {
     return when (status) {
-        HealthStatus.EXCELLENT -> Color(0xFF4CAF50)  // Green
-        HealthStatus.GOOD -> Color(0xFF8BC34A)       // Light Green
-        HealthStatus.FAIR -> Color(0xFFFFC107)         // Yellow
-        HealthStatus.WARNING -> Color(0xFFFF9800)    // Orange
-        HealthStatus.CRITICAL -> Color(0xFFFF5722)   // Red
+        HealthStatus.EXCELLENT -> RetroColors.NeonGreen
+        HealthStatus.GOOD -> Color(0xFF7FFF00)      // Chartreuse
+        HealthStatus.FAIR -> RetroColors.NeonYellow
+        HealthStatus.WARNING -> RetroColors.NeonOrange
+        HealthStatus.CRITICAL -> RetroColors.NeonRed
     }
 }
 
