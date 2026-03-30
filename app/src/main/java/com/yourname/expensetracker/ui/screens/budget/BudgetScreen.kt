@@ -189,19 +189,32 @@ fun BudgetCard(
     onToggle: (Boolean) -> Unit,
     onDelete: (Budget) -> Unit
 ) {
-    val progressColor = when (status.healthStatus) {
-        BudgetHealthStatus.ON_TRACK -> SemanticColors.SuccessGreen
-        BudgetHealthStatus.WARNING -> SemanticColors.WarningOrange
-        BudgetHealthStatus.CRITICAL -> SemanticColors.WarningOrange
-        BudgetHealthStatus.EXCEEDED -> SemanticColors.DangerRed
+    // Remember expensive calculations
+    val progressColor = remember(status.healthStatus) {
+        when (status.healthStatus) {
+            BudgetHealthStatus.ON_TRACK -> SemanticColors.SuccessGreen
+            BudgetHealthStatus.WARNING -> SemanticColors.WarningOrange
+            BudgetHealthStatus.CRITICAL -> SemanticColors.WarningOrange
+            BudgetHealthStatus.EXCEEDED -> SemanticColors.DangerRed
+        }
     }
 
-    val cardDescription = buildString {
-        append("${status.category?.name ?: "Overall Budget"} budget, ")
-        append("${if (status.budget.isActive) "active" else "inactive"}, ")
-        append("€${"%.2f".format(status.spentAmount)} spent of €${"%.2f".format(status.budget.amount)} limit, ")
-        append("${(status.percentUsed * 100).toInt()}% used, ")
-        append("Status: ${status.healthStatus.name.lowercase().replaceFirstChar { it.titlecase() }}")
+    val cardDescription = remember(status.spentAmount, status.budget.amount, status.healthStatus) {
+        buildString {
+            append("${status.category?.name ?: "Overall Budget"} budget, ")
+            append("${if (status.budget.isActive) "active" else "inactive"}, ")
+            append("€${"%.2f".format(status.spentAmount)} spent of €${"%.2f".format(status.budget.amount)} limit, ")
+            append("${(status.percentUsed * 100).toInt()}% used, ")
+            append("Status: ${status.healthStatus.name.lowercase().replaceFirstChar { it.titlecase() }}")
+        }
+    }
+    
+    val formattedDate = remember(status.budget.startDate) {
+        DateFormatterUtils.monthDay().format(Date(status.budget.startDate))
+    }
+    
+    val formattedPeriod = remember(status.budget.period) {
+        status.budget.period.name.lowercase().replaceFirstChar { it.titlecase(java.util.Locale.getDefault()) }
     }
 
     Card(
@@ -235,7 +248,7 @@ fun BudgetCard(
                         fontSize = 18.sp
                     )
                     Text(
-                        "${status.budget.period.name.lowercase().replaceFirstChar { it.titlecase(java.util.Locale.getDefault()) }} • Starts ${DateFormatterUtils.monthDay().format(Date(status.budget.startDate))}",
+                        "$formattedPeriod • Starts $formattedDate",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
