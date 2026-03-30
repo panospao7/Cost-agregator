@@ -20,9 +20,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -149,7 +152,9 @@ fun AddExpenseSheet(
                     isError = state.amountError != null,
                     supportingText = state.amountError?.let { { Text(it) } },
                     leadingIcon = { Text(Currency.getInstance("EUR").symbol, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = "Amount field, current value ${state.amount} Euro" }
                 )
 
                 // === Payment Method ===
@@ -597,7 +602,9 @@ fun PaymentMethodChip(
 ) {
     Surface(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.semantics {
+            contentDescription = "$label payment method, ${if (selected) "selected" else "not selected"}"
+        },
         shape = RoundedCornerShape(12.dp),
         color = if (selected)
             MaterialTheme.colorScheme.primaryContainer
@@ -649,7 +656,11 @@ fun CategoryGrid(
                     }
                     Surface(
                         onClick = { onSelect(category.id) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .semantics {
+                                contentDescription = "${category.name} category, ${if (isSelected) "selected" else "not selected"}"
+                            },
                         shape = RoundedCornerShape(12.dp),
                         color = if (isSelected) catColor.copy(alpha = 0.2f)
                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -661,7 +672,11 @@ fun CategoryGrid(
                             modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text(category.icon, fontSize = 20.sp)
+                            Text(
+                                category.icon,
+                                fontSize = 20.sp,
+                                modifier = Modifier.semantics { contentDescription = "${category.name} icon" }
+                            )
                             Text(
                                 category.name,
                                 fontSize = 10.sp,
@@ -692,10 +707,13 @@ fun DateSelector(
         initialSelectedDateMillis = dateMs
     )
 
+    val formattedDate = dateFormat.format(Instant.ofEpochMilli(dateMs).atZone(ZoneId.systemDefault()))
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { showDatePicker = true },
+            .clickable { showDatePicker = true }
+            .semantics { contentDescription = "Date selector, current date $formattedDate, double tap to change" },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -711,7 +729,7 @@ fun DateSelector(
                 fontWeight = FontWeight.Medium
             )
             Text(
-                dateFormat.format(Instant.ofEpochMilli(dateMs).atZone(ZoneId.systemDefault())),
+                formattedDate,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
