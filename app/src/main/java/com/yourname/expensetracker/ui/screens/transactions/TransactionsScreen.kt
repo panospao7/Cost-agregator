@@ -59,6 +59,7 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
+import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -410,15 +411,11 @@ fun TransactionsScreen(
         ) {
             when {
                 isLoading && transactions.isEmpty() -> {
-                    // Initial loading state
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            color = SemanticColors.PrimaryIndigo
-                        )
-                    }
+                    // Initial loading state with skeleton
+                    ListSkeleton(
+                        itemCount = 8,
+                        modifier = Modifier.padding(16.dp)
+                    )
                 }
                 transactions.isEmpty() -> {
                     // Empty state with illustration
