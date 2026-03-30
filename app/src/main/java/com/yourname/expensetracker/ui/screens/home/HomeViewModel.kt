@@ -74,6 +74,7 @@ data class DashboardState(
     val isServiceRunning: Boolean = true,
     val isEditMode: Boolean = false,
     val isLoading: Boolean = true,
+    val error: String? = null,
     /**
      * AI briefing surface state.
      * [AiLoadState.Disabled] when AI is off — the screen shows deterministic fallback.
@@ -238,8 +239,12 @@ class HomeViewModel @Inject constructor(
             transactionCount = compiledData.txCount,
             isEditMode       = editMode,
             isLoading        = false,
+            error            = null,
             aiBriefing       = aiBriefing
         )
+    }.catch { e ->
+        Timber.e(e, "Error loading dashboard data")
+        emit(DashboardState(isLoading = false, error = "Unable to load dashboard. Pull to refresh."))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardState())
 
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories

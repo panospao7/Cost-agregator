@@ -34,6 +34,8 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.components.analytics.NoSpendStreakWidget
+import com.yourname.expensetracker.ui.components.common.ErrorState
+import com.yourname.expensetracker.ui.components.common.ErrorType
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
 import com.yourname.expensetracker.ui.components.PeriodLevel
@@ -138,7 +140,20 @@ fun HomeScreen(
             )
         }
     ) { padding ->
-        if (state.isLoading) {
+        when {
+            state.error != null -> {
+                ErrorState(
+                    type = ErrorType.UNKNOWN,
+                    title = "Error Loading Dashboard",
+                    message = state.error,
+                    onRetry = { 
+                        viewModel.toggleEditMode()
+                        viewModel.toggleEditMode()
+                    },
+                    modifier = Modifier.padding(padding)
+                )
+            }
+            state.isLoading -> {
             // Show skeleton loading state
             Column(
                 modifier = Modifier
@@ -162,8 +177,9 @@ fun HomeScreen(
                 // Grid of skeleton cards
                 ListSkeleton(itemCount = 6)
             }
-        } else {
-            LazyVerticalGrid(
+            }
+            else -> {
+                LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier
                     .fillMaxSize()
@@ -515,6 +531,7 @@ fun HomeScreen(
                 }
             }
         }
+    }
 
         if (showQuickSettings) {
             QuickSettingsDialog(
