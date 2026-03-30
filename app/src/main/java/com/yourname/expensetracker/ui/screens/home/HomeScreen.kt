@@ -34,6 +34,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.components.analytics.NoSpendStreakWidget
+import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
 import com.yourname.expensetracker.ui.components.PeriodLevel
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -138,8 +139,28 @@ fun HomeScreen(
         }
     ) { padding ->
         if (state.isLoading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
+            // Show skeleton loading state
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp)
+            ) {
+                // Hero card skeleton
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    )
+                ) {
+                    Box(modifier = Modifier.fillMaxSize())
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                // Grid of skeleton cards
+                ListSkeleton(itemCount = 6)
             }
         } else {
             LazyVerticalGrid(
