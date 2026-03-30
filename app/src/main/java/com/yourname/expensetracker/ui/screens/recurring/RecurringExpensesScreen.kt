@@ -12,6 +12,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -212,7 +214,10 @@ fun RecurringExpensesScreen(
                     Tab(
                         selected = selectedTabIndex == index,
                         onClick = { selectedTabIndex = index },
-                        text = { Text(title) }
+                        text = { Text(title) },
+                        modifier = Modifier.semantics {
+                            contentDescription = "$title tab, ${if (selectedTabIndex == index) "selected" else "not selected"}"
+                        }
                     )
                 }
             }
@@ -220,7 +225,12 @@ fun RecurringExpensesScreen(
             if (selectedTabIndex == 0) {
                 // Recurring Tab
                 if (patterns.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .semantics { contentDescription = "No recurring expenses found" },
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text("No recurring expenses found.")
                     }
                 } else {
@@ -247,7 +257,12 @@ fun RecurringExpensesScreen(
             } else {
                 // Planned Tab
                 if (planned.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .semantics { contentDescription = "No planned expenses found" },
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text("No planned expenses found.")
                     }
                 } else {
@@ -275,7 +290,11 @@ fun PlannedExpenseItem(
     onDelete: () -> Unit
 ) {
     Card(
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier = Modifier.semantics {
+            contentDescription = "${expense.description}, €${String.format("%.2f", expense.amount)}, " +
+                    "${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }} priority"
+        }
     ) {
         Row(
             modifier = Modifier
@@ -301,10 +320,13 @@ fun PlannedExpenseItem(
                 )
             }
             
-            IconButton(onClick = onDelete) {
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.semantics { contentDescription = "Delete planned expense ${expense.description}" }
+            ) {
                 Icon(
                     Icons.Default.Delete, 
-                    contentDescription = "Delete Planned",
+                    contentDescription = null,
                     tint = MaterialTheme.colorScheme.error
                 )
             }
@@ -322,8 +344,20 @@ fun RecurringExpenseItem(
 
     val isManual = pattern.id != null || pattern.confidence >= 0.99f
     
+    val cardDescription = buildString {
+        append("${pattern.merchantName}, ")
+        append("${String.format("%.2f", pattern.averageAmount)} ${pattern.currency}, ")
+        append("${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}")
+        if (isManual) {
+            append(", Confirmed recurring expense")
+        } else {
+            append(", Suggested pattern, tap to confirm")
+        }
+    }
+    
     Card(
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier = Modifier.semantics { contentDescription = cardDescription }
     ) {
         Row(
             modifier = Modifier
@@ -351,17 +385,21 @@ fun RecurringExpenseItem(
             }
             
             if (isManual) {
-                IconButton(onClick = onDelete) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.semantics { contentDescription = "Delete recurring rule for ${pattern.merchantName}" }
+                ) {
                     Icon(
                         Icons.Default.Delete, 
-                        contentDescription = "Delete Rule",
+                        contentDescription = null,
                         tint = MaterialTheme.colorScheme.error
                     )
                 }
             } else {
                 SuggestionChip(
                     onClick = onConfirm,
-                    label = { Text("Confirm Pattern") }
+                    label = { Text("Confirm Pattern") },
+                    modifier = Modifier.semantics { contentDescription = "Confirm recurring pattern for ${pattern.merchantName}" }
                 )
             }
 
