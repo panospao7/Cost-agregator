@@ -319,13 +319,20 @@ fun PlannedExpenseItem(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
+                // Remember expensive string calculations
+                val amountAndPriority = remember(expense.amount, expense.priority) {
+                    "€${String.format("%.2f", expense.amount)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}"
+                }
                 Text(
-                    text = "€${String.format("%.2f", expense.amount)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    text = amountAndPriority,
                     style = MaterialTheme.typography.bodyMedium
                 )
                 val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
+                val formattedDate = remember(expense.date) {
+                    dateFormat.format(Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()))
+                }
                 Text(
-                    text = "Date: ${dateFormat.format(Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()))}",
+                    text = "Date: $formattedDate",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -353,17 +360,30 @@ fun RecurringExpenseItem(
     onMerchantClick: () -> Unit = {}
 ) {
 
-    val isManual = pattern.id != null || pattern.confidence >= 0.99f
+    val isManual = remember(pattern.id, pattern.confidence) { 
+        pattern.id != null || pattern.confidence >= 0.99f 
+    }
     
-    val cardDescription = buildString {
-        append("${pattern.merchantName}, ")
-        append("${String.format("%.2f", pattern.averageAmount)} ${pattern.currency}, ")
-        append("${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}")
-        if (isManual) {
-            append(", Confirmed recurring expense")
-        } else {
-            append(", Suggested pattern, tap to confirm")
+    // Remember expensive string calculations
+    val cardDescription = remember(pattern, isManual) {
+        buildString {
+            append("${pattern.merchantName}, ")
+            append("${String.format("%.2f", pattern.averageAmount)} ${pattern.currency}, ")
+            append("${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}")
+            if (isManual) {
+                append(", Confirmed recurring expense")
+            } else {
+                append(", Suggested pattern, tap to confirm")
+            }
         }
+    }
+    
+    val amountAndCurrency = remember(pattern.averageAmount, pattern.currency) {
+        "${String.format("%.2f", pattern.averageAmount)} ${pattern.currency}"
+    }
+    
+    val frequencyText = remember(pattern.frequency) {
+        pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }
     }
     
     Card(
@@ -384,12 +404,15 @@ fun RecurringExpenseItem(
                     modifier = Modifier.clickable { onMerchantClick() }
                 )
                 Text(
-                    text = "${String.format("%.2f", pattern.averageAmount)} ${pattern.currency} • ${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    text = "$amountAndCurrency • $frequencyText",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault()) }
+                val formattedDate = remember(pattern.nextExpectedDate) {
+                    dateFormat.format(Instant.ofEpochMilli(pattern.nextExpectedDate).atZone(ZoneId.systemDefault()))
+                }
                 Text(
-                    text = "Next: ${dateFormat.format(Instant.ofEpochMilli(pattern.nextExpectedDate).atZone(ZoneId.systemDefault()))}",
+                    text = "Next: $formattedDate",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
