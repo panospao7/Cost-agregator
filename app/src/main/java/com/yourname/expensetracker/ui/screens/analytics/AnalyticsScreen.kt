@@ -436,10 +436,25 @@ fun EnhancedCategoryItem(
 
 // ── Enhanced Merchant Item (from AdvancedAnalyticsScreen) ─────────────
 @Composable
-fun EnhancedMerchantItem(
+private fun EnhancedMerchantItem(
     item: EnhancedMerchantAnalytics,
     onClick: () -> Unit
 ) {
+    // Remember expensive string calculations
+    val merchantInitial by remember(item.merchant) {
+        derivedStateOf { item.merchant.take(1).uppercase() }
+    }
+    val visitorType by remember(item.visitFrequency) {
+        derivedStateOf { 
+            item.visitFrequency.name.lowercase().replaceFirstChar { it.titlecase(Locale.getDefault()) }
+        }
+    }
+    val consistencyText by remember(item.consistencyRating) {
+        derivedStateOf {
+            item.consistencyRating.name.lowercase().replaceFirstChar { it.titlecase(Locale.getDefault()) }
+        }
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -455,14 +470,14 @@ fun EnhancedMerchantItem(
                     color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text(item.merchant.take(1).uppercase(), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text(merchantInitial, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(item.merchant, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Text(
-                        "${item.visitFrequency.name.lowercase().replaceFirstChar { it.titlecase(Locale.getDefault()) }} visitor · ${item.consistencyRating.name.lowercase().replaceFirstChar { it.titlecase(Locale.getDefault()) }} spend",
+                        "$visitorType visitor · $consistencyText spend",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
