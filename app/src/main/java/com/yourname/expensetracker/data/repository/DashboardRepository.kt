@@ -105,20 +105,21 @@ class DashboardRepository @Inject constructor(
     private fun getDefaultConfig(): List<DashboardWidgetConfig> {
         return listOf(
             DashboardWidgetConfig("financial_weather", 0),
-            DashboardWidgetConfig("totals_dashboard", 1),
-            DashboardWidgetConfig("no_spend_streak", 2),  // NEW: Gamification widget
-            DashboardWidgetConfig("safe_to_spend", 3),
-            DashboardWidgetConfig("financial_runway", 4),
-            DashboardWidgetConfig("monte_carlo_forecast", 5),
-            DashboardWidgetConfig("spending_pace", 6),
-            DashboardWidgetConfig("review_alert", 7),
-            DashboardWidgetConfig("spending_trend", 8),
-            DashboardWidgetConfig("insight", 9),
-            DashboardWidgetConfig("period_summary", 10),
-            DashboardWidgetConfig("budget_health", 11),
-            DashboardWidgetConfig("top_categories", 12),
-            DashboardWidgetConfig("recent_transactions", 13),
-            DashboardWidgetConfig("budget_block_party", 14)
+            DashboardWidgetConfig("financial_health_score", 1),  // NEW: Game-like health score
+            DashboardWidgetConfig("totals_dashboard", 2),
+            DashboardWidgetConfig("no_spend_streak", 3),  // NEW: Gamification widget
+            DashboardWidgetConfig("safe_to_spend", 4),
+            DashboardWidgetConfig("financial_runway", 5),
+            DashboardWidgetConfig("monte_carlo_forecast", 6),
+            DashboardWidgetConfig("spending_pace", 7),
+            DashboardWidgetConfig("review_alert", 8),
+            DashboardWidgetConfig("spending_trend", 9),
+            DashboardWidgetConfig("insight", 10),
+            DashboardWidgetConfig("period_summary", 11),
+            DashboardWidgetConfig("budget_health", 12),
+            DashboardWidgetConfig("top_categories", 13),
+            DashboardWidgetConfig("recent_transactions", 14),
+            DashboardWidgetConfig("budget_block_party", 15)
         )
     }
 }
