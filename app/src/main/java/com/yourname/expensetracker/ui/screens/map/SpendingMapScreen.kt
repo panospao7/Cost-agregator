@@ -30,6 +30,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,6 +44,7 @@ import com.yourname.expensetracker.ui.components.LocationPermissionDialog
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.NearbyShopSuggestionCard
 import com.yourname.expensetracker.ui.components.PlaceInsightCard
+import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -154,15 +157,32 @@ fun SpendingMapScreen(
         )
     }
 
-    Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
+    Scaffold(
+        containerColor = SemanticColors.BaseNavy,
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
         if (state.isLoading) {
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
+                    .padding(padding)
+                    .padding(16.dp)
             ) {
-                CircularProgressIndicator()
+                // Map area skeleton
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(0.55f),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    )
+                ) {
+                    Box(modifier = Modifier.fillMaxSize())
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                // Stats bar skeleton
+                ListSkeleton(itemCount = 3)
             }
             return@Scaffold
         }
@@ -198,20 +218,22 @@ fun SpendingMapScreen(
                         onClick = { centreOnDeviceRequest = true },  // F3: trigger centre
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(12.dp),
+                            .padding(12.dp)
+                            .semantics { contentDescription = "Center map on my current location" },
                         containerColor = MaterialTheme.colorScheme.surface
                     ) {
-                        Icon(Icons.Default.MyLocation, contentDescription = "My location")
+                        Icon(Icons.Default.MyLocation, contentDescription = null)
                     }
                 } else if (!state.locationPermissionGranted) {
                     FloatingActionButton(
                         onClick = { viewModel.onShowPermissionRationale(true) },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(12.dp),
+                            .padding(12.dp)
+                            .semantics { contentDescription = "Enable location permission to center map on my location" },
                         containerColor = MaterialTheme.colorScheme.surface
                     ) {
-                        Icon(Icons.Default.LocationSearching, contentDescription = "Enable location")
+                        Icon(Icons.Default.LocationSearching, contentDescription = null)
                     }
                 }
             }
