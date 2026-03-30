@@ -58,6 +58,7 @@ import com.yourname.expensetracker.ui.screens.addexpense.DateSelector
 import com.yourname.expensetracker.ui.screens.addexpense.PaymentMethodChip
 import com.yourname.expensetracker.ui.components.ai.ReceiptAssistCard
 import com.yourname.expensetracker.ui.components.ai.ReceiptItemBreakdownCard
+import com.yourname.expensetracker.ui.theme.SemanticColors
 import kotlinx.coroutines.delay
 import java.util.Currency
 import java.util.Date
@@ -119,6 +120,7 @@ fun ReceiptScanScreen(
     }
 
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         topBar = {
             TopAppBar(
                 title = {
@@ -129,7 +131,8 @@ fun ReceiptScanScreen(
                             ScanStep.REVIEW -> "Review & Save"
                             ScanStep.DONE -> "Saved!"
                             ScanStep.ERROR -> "Error"
-                        }
+                        },
+                        color = SemanticColors.TextPrimary
                     )
                 },
                 navigationIcon = {
@@ -156,7 +159,11 @@ fun ReceiptScanScreen(
                             )
                         }
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
             )
         }
     ) { padding ->

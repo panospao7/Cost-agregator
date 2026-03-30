@@ -29,6 +29,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -44,6 +45,7 @@ import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.routeDisplayText
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,9 +58,15 @@ fun AiSettingsScreen(
     val settings = uiState.settings
 
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         topBar = {
             TopAppBar(
-                title = { Text("AI Settings") },
+                title = { 
+                    Text(
+                        "AI Settings",
+                        color = SemanticColors.TextPrimary
+                    ) 
+                },
                 navigationIcon = {
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -79,7 +87,11 @@ fun AiSettingsScreen(
                             Text("Refresh")
                         }
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
             )
         }
     ) { padding ->

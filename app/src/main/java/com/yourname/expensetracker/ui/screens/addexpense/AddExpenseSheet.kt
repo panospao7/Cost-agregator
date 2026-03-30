@@ -39,6 +39,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.time.format.DateTimeFormatter
 import java.time.Instant
 import java.time.ZoneId
@@ -78,14 +79,20 @@ fun AddExpenseSheet(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
+        color = SemanticColors.BaseNavy
     ) {
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
             // Top bar
             TopAppBar(
-                title = { Text(stringResource(com.yourname.expensetracker.R.string.add_expense_title), fontWeight = FontWeight.Bold) },
+                title = { 
+                    Text(
+                        stringResource(com.yourname.expensetracker.R.string.add_expense_title), 
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextPrimary
+                    ) 
+                },
                 navigationIcon = {
                     IconButton(onClick = {
                         viewModel.reset()
@@ -110,7 +117,11 @@ fun AddExpenseSheet(
                             Text(stringResource(com.yourname.expensetracker.R.string.save_button))
                         }
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
             )
 
             Column(

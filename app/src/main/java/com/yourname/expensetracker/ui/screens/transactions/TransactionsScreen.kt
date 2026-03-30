@@ -177,6 +177,7 @@ fun TransactionsScreen(
     }
 
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             Column {
@@ -278,7 +279,11 @@ fun TransactionsScreen(
                                 Icon(Icons.Rounded.Search, contentDescription = null)
                             }
                         }
-                    }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = SemanticColors.BaseNavy,
+                        titleContentColor = SemanticColors.TextPrimary
+                    )
                 )
                 
                 // Tab row with counts - scrollable for proper tab widths

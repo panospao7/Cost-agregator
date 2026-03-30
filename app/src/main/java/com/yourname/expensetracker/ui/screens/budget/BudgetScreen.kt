@@ -51,14 +51,24 @@ fun BudgetScreen(
     val dateFormat = remember { SimpleDateFormat("MMM dd", Locale.getDefault()) }
 
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         topBar = {
             TopAppBar(
-                title = { Text("Budgets") },
+                title = { 
+                    Text(
+                        "Budgets",
+                        color = SemanticColors.TextPrimary
+                    ) 
+                },
                 actions = {
                     IconButton(onClick = { showAddDialog = true }) {
                         Icon(Icons.Default.Add, contentDescription = "Add Budget")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
             )
         }
     ) { padding ->

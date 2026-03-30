@@ -65,9 +65,20 @@ fun AnalyticsScreen(
     val state by viewModel.state.collectAsState()
 
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Financial Insights", fontWeight = FontWeight.Bold) }
+            TopAppBar(
+                title = { 
+                    Text(
+                        "Financial Insights", 
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextPrimary
+                    ) 
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
             )
         }
     ) { padding ->

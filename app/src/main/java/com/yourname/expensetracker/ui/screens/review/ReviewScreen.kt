@@ -116,7 +116,7 @@ fun ReviewScreen(
         containerColor = SemanticColors.BaseNavy,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = { 
                     Text(
                         "REVIEW QUEUE ($pendingCount)", 
@@ -126,7 +126,7 @@ fun ReviewScreen(
                         color = SemanticColors.TextPrimary
                     ) 
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = SemanticColors.BaseNavy,
                     titleContentColor = SemanticColors.TextPrimary
                 ),

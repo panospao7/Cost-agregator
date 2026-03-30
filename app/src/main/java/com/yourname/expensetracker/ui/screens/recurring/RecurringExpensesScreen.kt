@@ -44,6 +44,7 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import com.yourname.expensetracker.ui.theme.SemanticColors
 import timber.log.Timber
 
 @HiltViewModel
@@ -193,14 +194,24 @@ fun RecurringExpensesScreen(
     val tabs = listOf("Recurring", "Planned")
 
     Scaffold(
+        containerColor = SemanticColors.BaseNavy,
         topBar = {
             TopAppBar(
-                title = { Text("Manage Upcoming") },
+                title = { 
+                    Text(
+                        "Manage Upcoming",
+                        color = SemanticColors.TextPrimary
+                    ) 
+                },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
             )
         }
     ) { padding ->
