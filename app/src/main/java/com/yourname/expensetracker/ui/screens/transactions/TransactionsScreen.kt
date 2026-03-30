@@ -929,12 +929,14 @@ private fun TransactionItem(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Payment method icon
-                    val (methodIcon, methodDesc) = when (expense.paymentMethod) {
-                        PaymentMethod.CASH -> Icons.Rounded.Payments to "Cash"
-                        PaymentMethod.BANK_TRANSFER -> Icons.Rounded.AccountBalance to "Bank transfer"
-                        PaymentMethod.CARD -> Icons.Rounded.CreditCard to "Card"
-                        else -> null to null
+                    // Payment method icon - remember to avoid recalculation
+                    val (methodIcon, methodDesc) = remember(expense.paymentMethod) {
+                        when (expense.paymentMethod) {
+                            PaymentMethod.CASH -> Icons.Rounded.Payments to "Cash"
+                            PaymentMethod.BANK_TRANSFER -> Icons.Rounded.AccountBalance to "Bank transfer"
+                            PaymentMethod.CARD -> Icons.Rounded.CreditCard to "Card"
+                            else -> null to null
+                        }
                     }
                     
                     if (methodIcon != null) {
@@ -1042,18 +1044,20 @@ private fun TransactionItem(
                     }
 
                     // Edit ownership/not-mine/shared action
+                    val (ownershipIcon, _) = remember(expense.isNotMine, expense.isSharedExpense, expense.transactionType) {
+                        when {
+                            expense.isNotMine -> Icons.Rounded.Person to "Not mine"
+                            expense.isSharedExpense -> Icons.Rounded.People to "Shared"
+                            expense.transactionType == TransactionType.TRANSFER -> Icons.Rounded.SyncAlt to "Transfer"
+                            else -> Icons.Rounded.Settings to "Settings"
+                        }
+                    }
                     IconButton(
                         onClick = onEditOwnership,
                         modifier = Modifier
                             .size(40.dp)
                             .semantics { contentDescription = "Edit ownership" }
                     ) {
-                        val (ownershipIcon, ownershipDesc) = when {
-                            expense.isNotMine -> Icons.Rounded.Person to "Not mine"
-                            expense.isSharedExpense -> Icons.Rounded.People to "Shared"
-                            expense.transactionType == TransactionType.TRANSFER -> Icons.Rounded.SyncAlt to "Transfer"
-                            else -> Icons.Rounded.Settings to "Settings"
-                        }
                         Icon(
                             imageVector = ownershipIcon,
                             contentDescription = null,
