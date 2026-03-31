@@ -88,7 +88,14 @@ data class Expense(
     // Canonical merchant identity key (v32) — computed by MerchantKeyGenerator.
     // Nullable on legacy rows; backfilled asynchronously by MerchantKeyBackfillWorker.
     @ColumnInfo(name = "merchantKey")
-    val merchantKey: String? = null
+    val merchantKey: String? = null,
+
+    // Business/Personal separation fields (v41)
+    val isBusinessExpense: Boolean = false,
+    val businessPurpose: String? = null, // e.g., "Client meeting", "Conference travel"
+    val businessCategory: String? = null, // e.g., "Travel", "Meals", "Office Supplies", "Software"
+    val businessProject: String? = null,  // For project-based expense tracking
+    val requiresReceipt: Boolean = false  // Flag for tax-deductible expenses needing receipts
 ) {
     /**
      * The amount that should be counted toward the user's own spending.

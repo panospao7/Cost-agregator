@@ -737,6 +737,66 @@ interface ExpenseDao {
         LIMIT 10
     """)
     suspend fun getCategoryBreakdown(startMs: Long, endMs: Long): List<CategoryTotalResult>
+
+    // === Business Expense Queries (v41) ===
+    
+    @Query("""
+        SELECT * FROM expenses 
+        WHERE isBusinessExpense = 1 
+        AND date >= :startDate AND date < :endDate 
+        ORDER BY date DESC
+    """)
+    suspend fun getBusinessExpensesBetween(startDate: Long, endDate: Long): List<Expense>
+    
+    @Query("""
+        SELECT * FROM expenses 
+        WHERE isBusinessExpense = 1 
+        AND date >= :startDate AND date < :endDate 
+        ORDER BY date DESC
+    """)
+    fun getBusinessExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
+    
+    @Query("""
+        SELECT SUM(amount) FROM expenses 
+        WHERE isBusinessExpense = 1 
+        AND transactionType = 'PURCHASE'
+        AND date >= :startDate AND date < :endDate
+    """)
+    suspend fun getTotalBusinessExpensesBetween(startDate: Long, endDate: Long): Double?
+    
+    @Query("""
+        SELECT businessCategory, SUM(amount) as total, COUNT(*) as count 
+        FROM expenses 
+        WHERE isBusinessExpense = 1 
+        AND transactionType = 'PURCHASE'
+        AND date >= :startDate AND date < :endDate
+        AND businessCategory IS NOT NULL
+        GROUP BY businessCategory
+        ORDER BY total DESC
+    """)
+    suspend fun getBusinessExpensesByCategory(startDate: Long, endDate: Long): List<BusinessCategoryTotal>
+    
+    @Query("""
+        SELECT businessProject, SUM(amount) as total, COUNT(*) as count 
+        FROM expenses 
+        WHERE isBusinessExpense = 1 
+        AND transactionType = 'PURCHASE'
+        AND date >= :startDate AND date < :endDate
+        AND businessProject IS NOT NULL
+        GROUP BY businessProject
+        ORDER BY total DESC
+    """)
+    suspend fun getBusinessExpensesByProject(startDate: Long, endDate: Long): List<BusinessProjectTotal>
+    
+    @Query("""
+        SELECT * FROM expenses 
+        WHERE isBusinessExpense = 1 
+        AND requiresReceipt = 1 
+        AND rawNotificationId IS NULL
+        AND date >= :startDate AND date < :endDate
+        ORDER BY date DESC
+    """)
+    suspend fun getBusinessExpensesMissingReceipts(startDate: Long, endDate: Long): List<Expense>
 }
 
 data class MerchantSuggestion(
@@ -830,5 +890,19 @@ data class CategoryTotalResult(
     val color: String?,
     val total: Double,
     val txCount: Int
+)
+
+// === Business Expense Query Results (v41) ===
+
+data class BusinessCategoryTotal(
+    val businessCategory: String,
+    val total: Double,
+    val count: Int
+)
+
+data class BusinessProjectTotal(
+    val businessProject: String,
+    val total: Double,
+    val count: Int
 )
 

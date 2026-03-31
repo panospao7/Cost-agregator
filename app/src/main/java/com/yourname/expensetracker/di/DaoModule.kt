@@ -112,4 +112,9 @@ object DaoModule {
     @Singleton
     fun provideSubscriptionUsageDao(database: AppDatabase): SubscriptionUsageDao = 
         database.subscriptionUsageDao()
+
+    @Provides
+    @Singleton
+    fun provideMileageTrackingDao(database: AppDatabase): MileageTrackingDao = 
+        database.mileageTrackingDao()
 }

@@ -33,9 +33,10 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         Warranty::class,
         ReturnWindow::class,
         SubscriptionPriceHistory::class,
-        SubscriptionUsage::class
+        SubscriptionUsage::class,
+        MileageTracking::class
     ],
-        version = 40,
+        version = 41,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -65,6 +66,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun returnWindowDao(): ReturnWindowDao
     abstract fun subscriptionPriceHistoryDao(): SubscriptionPriceHistoryDao
     abstract fun subscriptionUsageDao(): SubscriptionUsageDao
+    abstract fun mileageTrackingDao(): MileageTrackingDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -1083,6 +1085,87 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_subscription_usage_subscriptionId_usedAt 
                     ON subscription_usage (subscriptionId, usedAt)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 40 -> 41: Business/Personal Separation
+        val MIGRATION_40_41 = object : androidx.room.migration.Migration(40, 41) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // 1. Add business expense columns to expenses table
+                database.execSQL("""
+                    ALTER TABLE expenses 
+                    ADD COLUMN isBusinessExpense INTEGER NOT NULL DEFAULT 0
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE expenses 
+                    ADD COLUMN businessPurpose TEXT DEFAULT NULL
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE expenses 
+                    ADD COLUMN businessCategory TEXT DEFAULT NULL
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE expenses 
+                    ADD COLUMN businessProject TEXT DEFAULT NULL
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE expenses 
+                    ADD COLUMN requiresReceipt INTEGER NOT NULL DEFAULT 0
+                """.trimIndent())
+                
+                // Create index for business expense queries
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_expenses_isBusinessExpense 
+                    ON expenses (isBusinessExpense)
+                """.trimIndent())
+                
+                // 2. Create mileage_tracking table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS mileage_tracking (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        date INTEGER NOT NULL,
+                        startOdometer REAL,
+                        endOdometer REAL,
+                        distanceKm REAL NOT NULL,
+                        startLocation TEXT,
+                        endLocation TEXT,
+                        startLatitude REAL,
+                        startLongitude REAL,
+                        endLatitude REAL,
+                        endLongitude REAL,
+                        isBusinessTrip INTEGER NOT NULL DEFAULT 1,
+                        tripPurpose TEXT NOT NULL,
+                        businessProject TEXT,
+                        clientName TEXT,
+                        deductionRatePerKm REAL NOT NULL DEFAULT 0.30,
+                        calculatedDeduction REAL,
+                        linkedExpenseId INTEGER,
+                        fuelCost REAL,
+                        notes TEXT,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(linkedExpenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+                
+                // Create indices for mileage tracking
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_mileage_tracking_linkedExpenseId 
+                    ON mileage_tracking (linkedExpenseId)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_mileage_tracking_date 
+                    ON mileage_tracking (date)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_mileage_tracking_isBusinessTrip 
+                    ON mileage_tracking (isBusinessTrip)
                 """.trimIndent())
             }
         }
