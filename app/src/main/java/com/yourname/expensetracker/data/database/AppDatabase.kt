@@ -34,9 +34,10 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         ReturnWindow::class,
         SubscriptionPriceHistory::class,
         SubscriptionUsage::class,
-        MileageTracking::class
+        MileageTracking::class,
+        ExchangeRate::class
     ],
-        version = 41,
+        version = 42,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -67,6 +68,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun subscriptionPriceHistoryDao(): SubscriptionPriceHistoryDao
     abstract fun subscriptionUsageDao(): SubscriptionUsageDao
     abstract fun mileageTrackingDao(): MileageTrackingDao
+    abstract fun exchangeRateDao(): ExchangeRateDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -1166,6 +1168,49 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_mileage_tracking_isBusinessTrip 
                     ON mileage_tracking (isBusinessTrip)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 41 -> 42: Multi-Currency Support
+        val MIGRATION_41_42 = object : androidx.room.migration.Migration(41, 42) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create exchange_rates table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS exchange_rates (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        fromCurrency TEXT NOT NULL,
+                        toCurrency TEXT NOT NULL,
+                        rate REAL NOT NULL,
+                        lastUpdated INTEGER NOT NULL,
+                        source TEXT NOT NULL DEFAULT 'manual'
+                    )
+                """.trimIndent())
+                
+                // Create unique index for currency pairs
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_exchange_rates_from_to 
+                    ON exchange_rates (fromCurrency, toCurrency)
+                """.trimIndent())
+                
+                // Create index for lastUpdated (for cleanup queries)
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_exchange_rates_lastUpdated 
+                    ON exchange_rates (lastUpdated)
+                """.trimIndent())
+                
+                // Note: The expenses table already has a 'currency' column
+                // No migration needed for that as it's already there
+                
+                // Insert default EUR rates (base currency)
+                val now = System.currentTimeMillis()
+                database.execSQL("""
+                    INSERT INTO exchange_rates (fromCurrency, toCurrency, rate, lastUpdated, source) VALUES
+                    ('USD', 'EUR', 0.92, $now, 'manual'),
+                    ('GBP', 'EUR', 1.17, $now, 'manual'),
+                    ('EUR', 'USD', 1.09, $now, 'manual'),
+                    ('EUR', 'GBP', 0.85, $now, 'manual'),
+                    ('EUR', 'EUR', 1.0, $now, 'manual')
                 """.trimIndent())
             }
         }

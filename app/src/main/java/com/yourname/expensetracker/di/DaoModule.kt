@@ -117,4 +117,9 @@ object DaoModule {
     @Singleton
     fun provideMileageTrackingDao(database: AppDatabase): MileageTrackingDao = 
         database.mileageTrackingDao()
+
+    @Provides
+    @Singleton
+    fun provideExchangeRateDao(database: AppDatabase): ExchangeRateDao = 
+        database.exchangeRateDao()
 }
