@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.domain.analytics.HistogramBin
 import com.yourname.expensetracker.domain.analytics.TransactionPercentiles
 import com.yourname.expensetracker.ui.components.AmountText
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
@@ -28,10 +30,12 @@ fun PercentileGridCard(
     percentiles: TransactionPercentiles,
     modifier: Modifier = Modifier
 ) {
+    val a11yContentDesc = stringResource(R.string.a11y_percentile_range_format, percentiles.p25, percentiles.p75)
+    
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .semantics { contentDescription = "Transaction size profile. Most transactions fall between €${String.format("%.0f", percentiles.p25)} and €${String.format("%.0f", percentiles.p75)}" },
+            .semantics { contentDescription = a11yContentDesc },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
@@ -42,7 +46,7 @@ fun PercentileGridCard(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "Transaction Size Profile",
+                text = stringResource(R.string.transaction_size_profile),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -52,11 +56,11 @@ fun PercentileGridCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                PercentileColumn("Small", percentiles.p10, isSmall = true)
-                PercentileColumn("Low", percentiles.p25, isSecondary = true)
-                PercentileColumn("Typical", percentiles.p50, isPrimary = true)
-                PercentileColumn("High", percentiles.p75, isSecondary = true)
-                PercentileColumn("Large", percentiles.p90, isLarge = true)
+                PercentileColumn(stringResource(R.string.percentile_small), percentiles.p10, isSmall = true)
+                PercentileColumn(stringResource(R.string.percentile_low), percentiles.p25, isSecondary = true)
+                PercentileColumn(stringResource(R.string.percentile_typical), percentiles.p50, isPrimary = true)
+                PercentileColumn(stringResource(R.string.percentile_high), percentiles.p75, isSecondary = true)
+                PercentileColumn(stringResource(R.string.percentile_large), percentiles.p90, isLarge = true)
             }
             
             Spacer(modifier = Modifier.height(4.dp))
@@ -86,7 +90,7 @@ fun PercentileGridCard(
             }
             
             Text(
-                text = "Most transactions fall between €${String.format("%.0f", percentiles.p25)} - €${String.format("%.0f", percentiles.p75)}",
+                text = stringResource(R.string.percentile_range_format, percentiles.p25, percentiles.p75),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -155,10 +159,12 @@ fun TransactionHistogramChart(
     val maxCount = bins.maxOfOrNull { it.count } ?: 1
     val totalTransactions = bins.sumOf { it.count }
     
+    val a11yContentDesc = stringResource(R.string.a11y_transaction_histogram_format, totalTransactions, bins.size)
+    
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .semantics { contentDescription = "Transaction distribution histogram showing $totalTransactions total transactions across ${bins.size} size ranges" },
+            .semantics { contentDescription = a11yContentDesc },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
@@ -173,12 +179,12 @@ fun TransactionHistogramChart(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Transaction Distribution",
+                    text = stringResource(R.string.analytics_transaction_distribution),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "$totalTransactions total",
+                    text = stringResource(R.string.analytics_transactions_total, totalTransactions),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -242,7 +248,7 @@ fun TransactionHistogramChart(
             val peakBin = bins.maxByOrNull { it.count }
             peakBin?.let {
                 Text(
-                    text = "Peak: ${it.percentage.toInt()}% of transactions are €${String.format("%.0f", it.rangeStart)}-€${String.format("%.0f", it.rangeEnd)}",
+                    text = stringResource(R.string.analytics_peak_format, it.percentage.toInt(), it.rangeStart, it.rangeEnd),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -282,10 +288,20 @@ fun CategoryPercentileBadge(
         }
         
         // Velocity indicator
-        val (velocityText, velocityColor) = when {
-            velocity > 1.2 -> "Accelerating 🚀" to SemanticColors.WarningOrange
-            velocity < 0.8 -> "Slowing 🐢" to MaterialTheme.colorScheme.primary
-            else -> "Steady ➡️" to SemanticColors.SuccessGreen
+        val velocityTextRes = when {
+            velocity > 1.2 -> R.string.analytics_velocity_accelerating
+            velocity < 0.8 -> R.string.analytics_velocity_slowing
+            else -> R.string.analytics_velocity_steady
+        }
+        val velocityColor = when {
+            velocity > 1.2 -> SemanticColors.WarningOrange
+            velocity < 0.8 -> MaterialTheme.colorScheme.primary
+            else -> SemanticColors.SuccessGreen
+        }
+        val velocityEmoji = when {
+            velocity > 1.2 -> "🚀"
+            velocity < 0.8 -> "🐢"
+            else -> "➡️"
         }
         
         Surface(
@@ -293,7 +309,7 @@ fun CategoryPercentileBadge(
             color = velocityColor.copy(alpha = 0.15f)
         ) {
             Text(
-                text = velocityText,
+                text = stringResource(velocityTextRes) + " " + velocityEmoji,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 color = velocityColor,
@@ -362,7 +378,7 @@ fun RichMerchantCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "$transactionCount visits · Avg €${String.format("%.2f", averagePerVisit)}",
+                        text = stringResource(R.string.analytics_merchant_visits_format, transactionCount, averagePerVisit),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -380,7 +396,7 @@ fun RichMerchantCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Loyalty",
+                    text = stringResource(R.string.analytics_loyalty_label),
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.width(60.dp)
                 )
@@ -433,12 +449,12 @@ fun RichMerchantCard(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "$consecutiveMonthsVisited months",
+                            text = stringResource(R.string.analytics_streak_format, consecutiveMonthsVisited),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "streak",
+                            text = stringResource(R.string.analytics_streak_label),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -478,7 +494,7 @@ fun RichMerchantCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "vs last quarter",
+                            text = stringResource(R.string.analytics_vs_last_quarter),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -494,12 +510,12 @@ fun RichMerchantCard(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = if (daysUntil <= 0) "Soon" else "$daysUntil days",
+                            text = if (daysUntil <= 0) stringResource(R.string.home_smart_suggestion) else stringResource(R.string.split_remaining_format, daysUntil),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "predicted",
+                            text = stringResource(R.string.analytics_predicted_label),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -16,8 +16,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
+import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
@@ -28,16 +30,22 @@ fun RecommendationCard(
     onDismiss: () -> Unit
 ) {
     val priorityLabel = when (recommendation.priority) {
-        RecommendationPriority.HIGH -> "High priority"
-        RecommendationPriority.MEDIUM -> "Medium priority"
-        RecommendationPriority.LOW -> "Low priority"
+        RecommendationPriority.HIGH -> stringResource(R.string.recommendation_high_priority)
+        RecommendationPriority.MEDIUM -> stringResource(R.string.recommendation_medium_priority)
+        RecommendationPriority.LOW -> stringResource(R.string.recommendation_low_priority)
     }
+    val cardContentDescription = stringResource(
+        R.string.a11y_recommendation_format,
+        priorityLabel,
+        recommendation.recommendationText
+    )
+    val dismissContentDescription = stringResource(R.string.a11y_dismiss_recommendation)
     
     BentoCard(
         modifier = Modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) {
-                contentDescription = "$priorityLabel recommendation: ${recommendation.recommendationText}. Double tap to view details."
+                contentDescription = cardContentDescription
             },
         onClick = onClick,
         containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
@@ -53,7 +61,7 @@ fun RecommendationCard(
                     PriorityDot(priority = recommendation.priority)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "RECOMMENDATION",
+                        text = stringResource(R.string.recommendation_label),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = SemanticColors.TextSecondary
@@ -64,7 +72,7 @@ fun RecommendationCard(
                     onClick = onDismiss, 
                     modifier = Modifier
                         .size(Dimens.TouchTargetMin)
-                        .semantics { contentDescription = "Dismiss recommendation" }
+                        .semantics { contentDescription = dismissContentDescription }
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Close,

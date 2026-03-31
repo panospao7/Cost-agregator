@@ -50,10 +50,14 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.model.asString
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending as DomainCategorySpending
-import com.yourname.expensetracker.domain.widget.model.StyledWidgets
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.widget.model.WidgetStyle
+import com.yourname.expensetracker.domain.widget.model.StyledWidgets
 import com.yourname.expensetracker.service.NavigationAction
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -123,7 +127,7 @@ fun HomeScreen(
                         PulseDot(isActive = state.isServiceRunning)
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            "DASHBOARD", 
+                            stringResource(R.string.home_dashboard_title), 
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 2.sp,
@@ -132,10 +136,15 @@ fun HomeScreen(
                     }
                 },
                 actions = {
+                    val editModeExitDesc = stringResource(R.string.home_edit_mode_exit)
+                    val editModeEnterDesc = stringResource(R.string.home_edit_mode_enter)
+                    val featuresMenuDesc = stringResource(R.string.a11y_open_features_menu)
+                    val settingsMenuDesc = stringResource(R.string.a11y_open_settings_menu)
+                    
                     IconButton(
                         onClick = { viewModel.toggleEditMode() },
                         modifier = Modifier.semantics { 
-                            contentDescription = if (state.isEditMode) "Exit edit mode" else "Enter edit mode to customize dashboard layout"
+                            contentDescription = if (state.isEditMode) editModeExitDesc else editModeEnterDesc
                         }
                     ) {
                         Icon(
@@ -147,7 +156,7 @@ fun HomeScreen(
                     IconButton(
                         onClick = { showFeaturesMenu = true },
                         modifier = Modifier.semantics { 
-                            contentDescription = "Open features menu"
+                            contentDescription = featuresMenuDesc
                         }
                     ) {
                         Icon(
@@ -159,7 +168,7 @@ fun HomeScreen(
                     IconButton(
                         onClick = { showQuickSettings = true },
                         modifier = Modifier.semantics { 
-                            contentDescription = "Open settings menu"
+                            contentDescription = settingsMenuDesc
                         }
                     ) {
                         Icon(
@@ -178,10 +187,11 @@ fun HomeScreen(
     ) { padding ->
         when {
             state.error != null -> {
+                val errorText = state.error?.asString() ?: ""
                 ErrorState(
                     type = ErrorType.UNKNOWN,
-                    title = "Error Loading Dashboard",
-                    message = state.error,
+                    title = stringResource(R.string.home_error_loading_dashboard),
+                    message = errorText,
                     onRetry = { 
                         viewModel.toggleEditMode()
                         viewModel.toggleEditMode()
@@ -252,7 +262,7 @@ fun HomeScreen(
                             is DashboardWidget.SafeToSpend -> {
                                 HeroBentoCard {
                                     Text(
-                                        text = "SAFE TO SPEND",
+                                        text = stringResource(R.string.widget_safe_to_spend),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.PrimaryLight,
@@ -276,7 +286,7 @@ fun HomeScreen(
                                             trackColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)
                                         )
                                         Text(
-                                            "${widget.daysRemaining} DAYS REMAINING",
+                                            stringResource(R.string.widget_days_remaining_format, widget.daysRemaining),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = SemanticColors.TextSecondary,
                                             letterSpacing = 0.5.sp
@@ -333,7 +343,7 @@ fun HomeScreen(
                             is DashboardWidget.SpendingPaceWidget -> {
                                 BentoCard {
                                     Text(
-                                        "PACE", 
+                                        stringResource(R.string.widget_pace), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
@@ -356,7 +366,7 @@ fun HomeScreen(
                                     onClick = onNavigateToReview
                                 ) {
                                     Text(
-                                        "REVIEW", 
+                                        stringResource(R.string.widget_review), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
@@ -374,7 +384,7 @@ fun HomeScreen(
                                             color = badgeColor
                                         )
                                         Text(
-                                            "PENDING", 
+                                            stringResource(R.string.widget_pending), 
                                             style = MaterialTheme.typography.labelSmall, 
                                             color = badgeColor,
                                             letterSpacing = 1.sp
@@ -456,7 +466,7 @@ fun HomeScreen(
                             is DashboardWidget.PeriodSummary -> {
                                 BentoCard {
                                     Text(
-                                        "PERIOD SUMMARY", 
+                                        stringResource(R.string.widget_period_summary), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
@@ -466,23 +476,23 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        StatLabel("TODAY", "€${String.format("%.2f", widget.todaySpent)}", modifier = Modifier.weight(1f))
-                                        StatLabel("WEEK", "€${String.format("%.2f", widget.weekSpent)}", modifier = Modifier.weight(1f))
-                                        StatLabel("MONTH", "€${String.format("%.2f", widget.monthSpent)}", modifier = Modifier.weight(1f))
+                                        StatLabel(stringResource(R.string.widget_today), "€${String.format("%.2f", widget.todaySpent)}", modifier = Modifier.weight(1f))
+                                        StatLabel(stringResource(R.string.widget_week), "€${String.format("%.2f", widget.weekSpent)}", modifier = Modifier.weight(1f))
+                                        StatLabel(stringResource(R.string.widget_month), "€${String.format("%.2f", widget.monthSpent)}", modifier = Modifier.weight(1f))
                                     }
                                 }
                             }
                             is DashboardWidget.BudgetHealthWidget -> {
                                 BentoCard {
                                     Text(
-                                        "BUDGET HEALTH", 
+                                        stringResource(R.string.widget_budget_health), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        widget.summary ?: "ALL BUDGETS ON TRACK", 
+                                        widget.summary ?: stringResource(R.string.widget_all_budgets_on_track), 
                                         style = MaterialTheme.typography.titleMedium, 
                                         fontWeight = FontWeight.Bold,
                                         color = if (widget.summary?.contains("exceeded", ignoreCase = true) == true) SemanticColors.DangerRed else SemanticColors.SuccessGreen
@@ -518,7 +528,7 @@ fun HomeScreen(
                                 } else {
                                     BentoCard {
                                         Text(
-                                            "TOP CATEGORIES", 
+                                            stringResource(R.string.widget_top_categories), 
                                             style = MaterialTheme.typography.labelSmall, 
                                             fontWeight = FontWeight.Bold,
                                             color = SemanticColors.TextSecondary
@@ -536,7 +546,7 @@ fun HomeScreen(
                                 }
                                 BentoCard {
                                     Text(
-                                        "RECENT ACTIVITY", 
+                                        stringResource(R.string.widget_recent_activity), 
                                         style = MaterialTheme.typography.labelSmall, 
                                         fontWeight = FontWeight.Bold,
                                         color = SemanticColors.TextSecondary
@@ -791,13 +801,13 @@ fun HomeScreen(
             
             if (isRetroStyle) {
                 RetroCategoryBreakdownSheet(
-                    periodLabel = totalsState.selectedPeriod?.periodLabel ?: "Period",
+                    periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
                     categories = totalsState.categoryBreakdown,
                     onDismiss = { showCategoryBreakdown = false }
                 )
             } else {
                 CategoryBreakdownSheet(
-                    periodLabel = totalsState.selectedPeriod?.periodLabel ?: "Period",
+                    periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
                     categories = totalsState.categoryBreakdown,
                     onDismiss = { showCategoryBreakdown = false }
                 )
@@ -832,25 +842,33 @@ fun WidgetWrapper(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val moveUpDesc = stringResource(R.string.a11y_move_widget_up)
+                    val hideWidgetDesc = stringResource(R.string.a11y_hide_widget)
+                    val moveDownDesc = stringResource(R.string.a11y_move_widget_down)
+                    
                     IconButton(
                         onClick = onMoveUp,
-                        modifier = Modifier.semantics { contentDescription = "Move widget up" }
+                        modifier = Modifier.semantics { contentDescription = moveUpDesc }
                     ) {
                         Icon(Icons.Rounded.ArrowUpward, contentDescription = null, tint = Color.White)
                     }
                     IconButton(
                         onClick = onToggleVisibility,
-                        modifier = Modifier.semantics { contentDescription = "Hide widget" }
+                        modifier = Modifier.semantics { contentDescription = hideWidgetDesc }
                     ) {
                         Icon(Icons.Rounded.VisibilityOff, contentDescription = null, tint = Color.White)
                     }
                     
                     // Style toggle button for styled widgets
                     if (onToggleStyle != null) {
+                        val toggleStyleDesc = stringResource(
+                            R.string.a11y_toggle_widget_style_format,
+                            if (widgetStyle == WidgetStyle.MODERN) "retro" else "modern"
+                        )
                         IconButton(
                             onClick = onToggleStyle,
                             modifier = Modifier.semantics { 
-                                contentDescription = "Toggle widget style to ${if (widgetStyle == WidgetStyle.MODERN) "retro" else "modern"}" 
+                                contentDescription = toggleStyleDesc
                             }
                         ) {
                             Icon(
@@ -866,7 +884,7 @@ fun WidgetWrapper(
                     
                     IconButton(
                         onClick = onMoveDown,
-                        modifier = Modifier.semantics { contentDescription = "Move widget down" }
+                        modifier = Modifier.semantics { contentDescription = moveDownDesc }
                     ) {
                         Icon(Icons.Rounded.ArrowDownward, contentDescription = null, tint = Color.White)
                     }
@@ -891,13 +909,17 @@ fun QuickSettingsDialog(
     onNavigateToCategories: () -> Unit,
     onNavigateToDebug: () -> Unit
 ) {
+    val aiSettingsDesc = stringResource(R.string.a11y_navigate_to_ai_settings)
+    val categoriesDesc = stringResource(R.string.a11y_navigate_to_categories)
+    val debugDesc = stringResource(R.string.a11y_navigate_to_debug)
+    
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Quick Settings") },
+        title = { Text(stringResource(R.string.home_quick_settings_title)) },
         text = {
             Column {
                 ListItem(
-                    headlineContent = { Text("AI Settings") },
+                    headlineContent = { Text(stringResource(R.string.home_ai_settings)) },
                     leadingContent = { 
                         Icon(
                             Icons.Rounded.AutoAwesome,
@@ -908,10 +930,10 @@ fun QuickSettingsDialog(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { onNavigateToAiSettings() }
-                        .semantics { contentDescription = "Navigate to AI settings" }
+                        .semantics { contentDescription = aiSettingsDesc }
                 )
                 ListItem(
-                    headlineContent = { Text("Categories") },
+                    headlineContent = { Text(stringResource(R.string.home_categories)) },
                     leadingContent = { 
                         Icon(
                             Icons.Rounded.Label,
@@ -922,10 +944,10 @@ fun QuickSettingsDialog(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { onNavigateToCategories() }
-                        .semantics { contentDescription = "Navigate to categories management" }
+                        .semantics { contentDescription = categoriesDesc }
                 )
                 ListItem(
-                    headlineContent = { Text("Debug Menu") },
+                    headlineContent = { Text(stringResource(R.string.home_debug_menu)) },
                     leadingContent = { 
                         Icon(
                             Icons.Rounded.Build,
@@ -936,24 +958,30 @@ fun QuickSettingsDialog(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { onNavigateToDebug() }
-                        .semantics { contentDescription = "Navigate to debug menu" }
+                        .semantics { contentDescription = debugDesc }
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.a11y_close)) }
         }
     )
 }
 
 @Composable
 fun CategorySpendingRow(item: DomainCategorySpending) {
+    val spendingDesc = stringResource(
+        R.string.a11y_category_spending_format,
+        item.category.name,
+        item.total,
+        item.percentage
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .semantics {
-                contentDescription = "${item.category.name}: €${String.format("%.2f", item.total)}, ${String.format("%.0f", item.percentage)}% of budget"
+                contentDescription = spendingDesc
             },
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -967,10 +995,11 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
                 .background(categoryColor, CircleShape),
             contentAlignment = Alignment.Center
         ) {
+            val iconDesc = stringResource(R.string.a11y_category_icon_format, item.category.name)
             Text(
                 item.category.icon, 
                 fontSize = 18.sp,
-                modifier = Modifier.semantics { contentDescription = "${item.category.name} category icon" }
+                modifier = Modifier.semantics { contentDescription = iconDesc }
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
@@ -1003,12 +1032,20 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
 
 @Composable
 fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
+    val manualEntryLabel = stringResource(R.string.a11y_expense_manual)
+    val expenseDesc = stringResource(
+        R.string.a11y_expense_item_format,
+        expense.merchant,
+        if (expense.isManualEntry) manualEntryLabel else "",
+        expense.amount,
+        DateFormatterUtils.monthDay().format(Date(expense.date))
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .semantics {
-                contentDescription = "${expense.merchant}, ${if (expense.isManualEntry) "manual entry" else ""} €${String.format("%.2f", expense.amount)}, ${DateFormatterUtils.monthDay().format(Date(expense.date))}"
+                contentDescription = expenseDesc
             },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -1031,7 +1068,7 @@ fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
                         Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             imageVector = Icons.Rounded.Edit,
-                            contentDescription = "Manual entry",
+                            contentDescription = stringResource(R.string.a11y_expense_manual),
                             modifier = Modifier.size(12.dp),
                             tint = SemanticColors.TextSecondary
                         )
@@ -1068,7 +1105,7 @@ fun AddPlannedExpenseDialog(
         onDismissRequest = onDismiss,
         title = { 
             Text(
-                "PLAN AN EXPENSE", 
+                stringResource(R.string.dialog_plan_expense_title), 
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Black,
                 color = SemanticColors.PrimaryIndigo
@@ -1079,7 +1116,7 @@ fun AddPlannedExpenseDialog(
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("What are you planning?") },
+                    label = { Text(stringResource(R.string.dialog_plan_expense_description_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = SemanticColors.PrimaryIndigo,
@@ -1090,7 +1127,7 @@ fun AddPlannedExpenseDialog(
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("Amount (€)") },
+                    label = { Text(stringResource(R.string.dialog_plan_expense_amount_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = SemanticColors.PrimaryIndigo,
@@ -1099,8 +1136,11 @@ fun AddPlannedExpenseDialog(
                 )
 
                 Column {
+                    val priorityLabel = stringResource(R.string.dialog_plan_expense_priority)
+                    val selectedLabel = stringResource(R.string.a11y_selected)
+                    val notSelectedLabel = stringResource(R.string.a11y_not_selected)
                     Text(
-                        "PRIORITY", 
+                        priorityLabel, 
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextSecondary,
                         fontWeight = FontWeight.Bold
@@ -1110,12 +1150,14 @@ fun AddPlannedExpenseDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         PlannedExpensePriority.values().forEach { p ->
+                            val isSelected = priority == p
+                            val priorityDesc = stringResource(R.string.a11y_priority_format, p.name, if (isSelected) selectedLabel else notSelectedLabel)
                             FilterChip(
-                                selected = priority == p,
+                                selected = isSelected,
                                 onClick = { priority = p },
                                 label = { Text(p.name) },
                                 modifier = Modifier.semantics { 
-                                    contentDescription = "Priority ${p.name}, ${if (priority == p) "selected" else "not selected"}"
+                                    contentDescription = priorityDesc
                                 }
                             )
                         }
@@ -1130,9 +1172,15 @@ fun AddPlannedExpenseDialog(
 
                 // Category selector
                 if (categories.isNotEmpty()) {
+                    val categoryLabel = stringResource(R.string.dialog_plan_expense_category)
+                    val noneLabel = stringResource(R.string.dialog_plan_expense_none)
+                    val noCategoryDesc = stringResource(R.string.a11y_no_category_selected)
+                    val selectedLabel = stringResource(R.string.a11y_selected)
+                    val notSelectedLabel = stringResource(R.string.a11y_not_selected)
+                    
                     Column {
                         Text(
-                            "CATEGORY",
+                            categoryLabel,
                             style = MaterialTheme.typography.labelSmall,
                             color = SemanticColors.TextSecondary,
                             fontWeight = FontWeight.Bold
@@ -1145,25 +1193,28 @@ fun AddPlannedExpenseDialog(
                                 FilterChip(
                                     selected = selectedCategoryId == null,
                                     onClick = { selectedCategoryId = null },
-                                    label = { Text("None") },
-                                    modifier = Modifier.semantics { contentDescription = "No category selected" }
+                                    label = { Text(noneLabel) },
+                                    modifier = Modifier.semantics { contentDescription = noCategoryDesc }
                                 )
                             }
                             items(categories.size) { idx ->
                                 val cat = categories[idx]
+                                val catSelected = selectedCategoryId == cat.id
+                                val catIconDesc = stringResource(R.string.a11y_category_icon_format, cat.name)
+                                val catDesc = stringResource(R.string.a11y_category_format, cat.name, if (catSelected) selectedLabel else notSelectedLabel)
                                 FilterChip(
-                                    selected = selectedCategoryId == cat.id,
+                                    selected = catSelected,
                                     onClick = { selectedCategoryId = cat.id },
                                     label = { Text(cat.name) },
                                     leadingIcon = {
                                         Text(
                                             text = cat.icon,
                                             fontSize = 16.sp,
-                                            modifier = Modifier.semantics { contentDescription = "${cat.name} icon" }
+                                            modifier = Modifier.semantics { contentDescription = catIconDesc }
                                         )
                                     },
                                     modifier = Modifier.semantics { 
-                                        contentDescription = "${cat.name} category, ${if (selectedCategoryId == cat.id) "selected" else "not selected"}"
+                                        contentDescription = catDesc
                                     }
                                 )
                             }
@@ -1182,12 +1233,12 @@ fun AddPlannedExpenseDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)
             ) {
-                Text("ADD TO FORECAST")
+                Text(stringResource(R.string.action_add_to_forecast))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("CANCEL", color = SemanticColors.TextSecondary)
+                Text(stringResource(R.string.home_cancel), color = SemanticColors.TextSecondary)
             }
         },
         containerColor = SemanticColors.BaseNavy,
@@ -1215,13 +1266,13 @@ fun DateSelector(
     ) {
         Icon(
             Icons.Default.DateRange,
-            contentDescription = "Date",
+            contentDescription = stringResource(R.string.a11y_select_date),
             tint = SemanticColors.PrimaryIndigo
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column {
             Text(
-                "Date",
+                stringResource(R.string.label_date),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Medium,
                 color = SemanticColors.TextSecondary
@@ -1241,22 +1292,17 @@ fun DateSelector(
                 TextButton(
                     onClick = {
                         datePickerState.selectedDateMillis?.let { selectedDate ->
-                            // Preserve time of day (roughly, or just set to noon to avoid timezone issues/start of day)
-                            // Here we just use the selected date (which is usually UTC midnight) + current time offset if needed?
-                            // Material3 DatePicker returns UTC start of day. 
-                            // Let's just use it as is, or add current time component if we cared about exact time.
-                            // For forecast, date is most important.
                             onDateSelected(selectedDate)
                         }
                         showDatePicker = false
                     }
                 ) {
-                    Text("OK", color = SemanticColors.PrimaryIndigo)
+                    Text(stringResource(R.string.action_ok), color = SemanticColors.PrimaryIndigo)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDatePicker = false }) {
-                    Text("Cancel", color = SemanticColors.TextSecondary)
+                    Text(stringResource(R.string.action_cancel), color = SemanticColors.TextSecondary)
                 }
             }
         ) {
@@ -1302,7 +1348,7 @@ private fun FeaturesMenu(
                     .padding(24.dp)
             ) {
                 Text(
-                    text = "Features",
+                    text = stringResource(R.string.home_features),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = SemanticColors.TextPrimary,
@@ -1315,128 +1361,128 @@ private fun FeaturesMenu(
                 ) {
                     FeatureItem(
                         icon = Icons.Rounded.Savings,
-                        title = "Savings Goals",
-                        description = "Track and achieve your savings targets",
+                        title = stringResource(R.string.feature_savings_goals),
+                        description = stringResource(R.string.feature_savings_goals_desc),
                         color = Color(0xFF4CAF50),
                         onClick = onNavigateToSavingsGoals
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.Eco,
-                        title = "Carbon Footprint",
-                        description = "Monitor your environmental impact",
+                        title = stringResource(R.string.feature_carbon_footprint),
+                        description = stringResource(R.string.feature_carbon_footprint_desc),
                         color = Color(0xFF2E7D32),
                         onClick = onNavigateToCarbonFootprint
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.Security,
-                        title = "Warranty Tracker",
-                        description = "Track warranties and return windows",
+                        title = stringResource(R.string.feature_warranty_tracker),
+                        description = stringResource(R.string.feature_warranty_tracker_desc),
                         color = Color(0xFF1976D2),
                         onClick = onNavigateToWarrantyTracker
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.Shield,
-                        title = "Price Protection",
-                        description = "Get refunds when prices drop",
+                        title = stringResource(R.string.feature_price_protection),
+                        description = stringResource(R.string.feature_price_protection_desc),
                         color = Color(0xFF7B1FA2),
                         onClick = onNavigateToPriceProtection
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.LocalOffer,
-                        title = "Bill Negotiation",
-                        description = "Find savings on your subscriptions",
+                        title = stringResource(R.string.feature_bill_negotiation),
+                        description = stringResource(R.string.feature_bill_negotiation_desc),
                         color = Color(0xFFF57C00),
                         onClick = onNavigateToBillNegotiation
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.Search,
-                        title = "Smart Search",
-                        description = "Search expenses with natural language",
+                        title = stringResource(R.string.feature_smart_search),
+                        description = stringResource(R.string.feature_smart_search_desc),
                         color = Color(0xFF00796B),
                         onClick = onNavigateToNaturalLanguageSearch
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.ReceiptLong,
-                        title = "Receipt Matching",
-                        description = "Match receipts to transactions",
+                        title = stringResource(R.string.feature_receipt_matching),
+                        description = stringResource(R.string.feature_receipt_matching_desc),
                         color = Color(0xFF5D4037),
                         onClick = onNavigateToReceiptMatching
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.TrendingUp,
-                        title = "Investment Portfolio",
-                        description = "Track your investments and portfolio performance",
+                        title = stringResource(R.string.feature_investment_portfolio),
+                        description = stringResource(R.string.feature_investment_portfolio_desc),
                         color = Color(0xFF1565C0),
                         onClick = onNavigateToInvestmentPortfolio
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.AccountBalance,
-                        title = "Bank Connections",
-                        description = "Connect and sync with your bank accounts",
+                        title = stringResource(R.string.feature_bank_connections),
+                        description = stringResource(R.string.feature_bank_connections_desc),
                         color = Color(0xFF00695C),
                         onClick = onNavigateToBankConnections
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.Notifications,
-                        title = "Bill Reminders",
-                        description = "Never miss a bill payment with smart reminders",
+                        title = stringResource(R.string.feature_bill_reminders),
+                        description = stringResource(R.string.feature_bill_reminders_desc),
                         color = Color(0xFFD32F2F),
                         onClick = onNavigateToBillReminders
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.LocalFireDepartment,
-                        title = "Spending Challenges",
-                        description = "Take on challenges to reduce spending",
+                        title = stringResource(R.string.feature_spending_challenges),
+                        description = stringResource(R.string.feature_spending_challenges_desc),
                         color = Color(0xFFF57C00),
                         onClick = onNavigateToSpendingChallenges
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.Assessment,
-                        title = "Advanced Analytics",
-                        description = "Deep dive into your financial patterns",
+                        title = stringResource(R.string.feature_advanced_analytics),
+                        description = stringResource(R.string.feature_advanced_analytics_desc),
                         color = Color(0xFF7B1FA2),
                         onClick = onNavigateToAdvancedAnalytics
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.CalendarToday,
-                        title = "Cash Flow Calendar",
-                        description = "Visualize your cash flow and predict future balance",
+                        title = stringResource(R.string.feature_cashflow_calendar),
+                        description = stringResource(R.string.feature_cashflow_calendar_desc),
                         color = Color(0xFF00796B),
                         onClick = onNavigateToCashFlowCalendar
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.TrendingUp,
-                        title = "Lifestyle Inflation",
-                        description = "Monitor and control lifestyle creep",
+                        title = stringResource(R.string.feature_lifestyle_inflation),
+                        description = stringResource(R.string.feature_lifestyle_inflation_desc),
                         color = Color(0xFFC62828),
                         onClick = onNavigateToLifestyleInflation
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.People,
-                        title = "Split Templates",
-                        description = "Manage and create expense split templates",
+                        title = stringResource(R.string.feature_split_templates),
+                        description = stringResource(R.string.feature_split_templates_desc),
                         color = Color(0xFF6D4C41),
                         onClick = onNavigateToSplitTemplates
                     )
                     
                     FeatureItem(
                         icon = Icons.Rounded.CallSplit,
-                        title = "Visual Split Editor",
-                        description = "Interactive visual expense splitting tool",
+                        title = stringResource(R.string.feature_visual_split),
+                        description = stringResource(R.string.feature_visual_split_desc),
                         color = Color(0xFF455A64),
                         onClick = onNavigateToVisualSplitEditor
                     )
@@ -1448,7 +1494,7 @@ private fun FeaturesMenu(
                     onClick = onDismiss,
                     modifier = Modifier.align(Alignment.End)
                 ) {
-                    Text("Close", color = SemanticColors.TextSecondary)
+                    Text(stringResource(R.string.a11y_close), color = SemanticColors.TextSecondary)
                 }
             }
         }

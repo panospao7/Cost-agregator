@@ -5,6 +5,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 @Composable
 fun NotificationPermissionDialog(
@@ -15,8 +17,8 @@ fun NotificationPermissionDialog(
     if (showDialog) {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("Enable Notifications") },
-            text = { Text("Enable notifications to receive budget alerts and expense reminders.") },
+            title = { Text(stringResource(R.string.notification_enable_title)) },
+            text = { Text(stringResource(R.string.notification_enable_message)) },
             confirmButton = {
                 TextButton(onClick = {
                     onDismiss()
@@ -24,12 +26,12 @@ fun NotificationPermissionDialog(
                         onEnable()
                     }
                 }) {
-                    Text("Enable")
+                    Text(stringResource(R.string.notification_enable_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = onDismiss) {
-                    Text("Not now")
+                    Text(stringResource(R.string.notification_not_now_button))
                 }
             }
         )

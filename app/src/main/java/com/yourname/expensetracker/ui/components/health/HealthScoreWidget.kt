@@ -24,7 +24,8 @@ import com.yourname.expensetracker.domain.health.HealthBreakdown
 import com.yourname.expensetracker.domain.health.HealthScoreResult
 import com.yourname.expensetracker.domain.health.HealthStatus
 import com.yourname.expensetracker.domain.health.PeriodHealthScore
-import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 /**
  * Retro 8-bit game style health score widget.
@@ -64,6 +65,7 @@ fun HealthScoreWidget(
                 ) {
                     RetroPixelHeart(
                         healthStatus = compositeStatus,
+                        compositeScore = healthScore.composite,
                         modifier = Modifier.size(36.dp)
                     )
                     
@@ -71,7 +73,7 @@ fun HealthScoreWidget(
                     
                     // Retro title with pixel font styling
                     Text(
-                        text = "FINANCIAL HP",
+                        text = stringResource(R.string.health_financial_hp),
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 2.sp
@@ -97,7 +99,7 @@ fun HealthScoreWidget(
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     RetroHealthContainer(
-                        label = "DAY",
+                        label = stringResource(R.string.health_day),
                         score = healthScore.today.score,
                         maxSegments = 10,
                         color = getRetroHealthColor(getStatusFromScore(healthScore.today.score)),
@@ -107,7 +109,7 @@ fun HealthScoreWidget(
                     Spacer(modifier = Modifier.width(8.dp))
                     
                     RetroHealthContainer(
-                        label = "WEEK", 
+                        label = stringResource(R.string.health_week), 
                         score = healthScore.week.score,
                         maxSegments = 10,
                         color = getRetroHealthColor(getStatusFromScore(healthScore.week.score)),
@@ -117,7 +119,7 @@ fun HealthScoreWidget(
                     Spacer(modifier = Modifier.width(8.dp))
                     
                     RetroHealthContainer(
-                        label = "MONTH",
+                        label = stringResource(R.string.health_month),
                         score = healthScore.month.score,
                         maxSegments = 10,
                         color = getRetroHealthColor(getStatusFromScore(healthScore.month.score)),
@@ -143,7 +145,7 @@ fun HealthScoreWidget(
                 
                 // Retro expand/collapse hint
                 Text(
-                    text = if (isExpanded) "▲ PRESS TO CLOSE ▲" else "▼ PRESS TO OPEN ▼",
+                    text = if (isExpanded) stringResource(R.string.health_collapse_hint) else stringResource(R.string.health_expand_hint),
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         letterSpacing = 1.sp
@@ -274,6 +276,7 @@ private fun RetroCornerDecoration(
 @Composable
 private fun RetroPixelHeart(
     healthStatus: HealthStatus,
+    compositeScore: Int,
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "retro_pulse")
@@ -317,7 +320,7 @@ private fun RetroPixelHeart(
         // Pixel heart icon
         Icon(
             imageVector = Icons.Filled.Favorite,
-            contentDescription = "HP: ${healthStatus.name}",
+            contentDescription = stringResource(R.string.a11y_health_score_format, healthStatus.name, compositeScore),
             tint = animatedColor,
             modifier = Modifier.size(24.dp)
         )
@@ -446,12 +449,13 @@ private fun RetroStatusText(
     status: HealthStatus,
     score: Int
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val statusText = when (status) {
-        HealthStatus.EXCELLENT -> "★ EXCELLENT ★"
-        HealthStatus.GOOD -> "◆ GOOD ◆"
-        HealthStatus.FAIR -> "● FAIR ●"
-        HealthStatus.WARNING -> "▲ WARNING ▲"
-        HealthStatus.CRITICAL -> "▼ CRITICAL ▼"
+        HealthStatus.EXCELLENT -> stringResource(R.string.health_status_excellent)
+        HealthStatus.GOOD -> stringResource(R.string.health_status_good)
+        HealthStatus.FAIR -> stringResource(R.string.health_status_fair)
+        HealthStatus.WARNING -> stringResource(R.string.health_status_warning)
+        HealthStatus.CRITICAL -> stringResource(R.string.health_status_critical)
     }
     
     val color = getRetroHealthColor(status)
@@ -537,7 +541,7 @@ private fun RetroBreakdownDetails(
         modifier = Modifier.fillMaxWidth()
     ) {
         Text(
-            text = "◄ SCORE BREAKDOWN ►",
+            text = stringResource(R.string.health_score_breakdown),
             style = MaterialTheme.typography.labelMedium.copy(
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
@@ -548,21 +552,21 @@ private fun RetroBreakdownDetails(
         )
         
         RetroBreakdownSection(
-            period = "TODAY",
+            period = stringResource(R.string.health_period_today),
             breakdown = healthScore.today.breakdown
         )
         
         Spacer(modifier = Modifier.height(8.dp))
         
         RetroBreakdownSection(
-            period = "WEEK",
+            period = stringResource(R.string.health_period_week),
             breakdown = healthScore.week.breakdown
         )
         
         Spacer(modifier = Modifier.height(8.dp))
         
         RetroBreakdownSection(
-            period = "MONTH",
+            period = stringResource(R.string.health_period_month),
             breakdown = healthScore.month.breakdown
         )
     }
@@ -594,12 +598,12 @@ private fun RetroBreakdownSection(
         
         Spacer(modifier = Modifier.height(4.dp))
         
-        RetroStatRow(label = "BUDGET", value = breakdown.budgetHealth, max = 25)
-        RetroStatRow(label = "CONTROL", value = breakdown.spendingControl, max = 25)
-        RetroStatRow(label = "CLEAN", value = breakdown.cleanliness, max = 10)
+        RetroStatRow(label = stringResource(R.string.health_stat_budget), value = breakdown.budgetHealth, max = 25)
+        RetroStatRow(label = stringResource(R.string.health_stat_control), value = breakdown.spendingControl, max = 25)
+        RetroStatRow(label = stringResource(R.string.health_stat_clean), value = breakdown.cleanliness, max = 10)
         
         if (breakdown.bonusPoints > 0) {
-            RetroStatRow(label = "BONUS", value = breakdown.bonusPoints, max = 15, isBonus = true)
+            RetroStatRow(label = stringResource(R.string.health_stat_bonus), value = breakdown.bonusPoints, max = 15, isBonus = true)
         }
     }
 }

@@ -21,6 +21,8 @@ import com.patrykandpatrick.vico.core.entry.FloatEntry
 import com.patrykandpatrick.vico.core.entry.ChartEntryModel
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -32,7 +34,7 @@ fun ForecastTimeline(
 ) {
     Column(modifier = modifier) {
         Text(
-            text = "FORECAST TRAJECTORY",
+            text = stringResource(R.string.forecast_trajectory_title),
             style = MaterialTheme.typography.labelSmall,
             color = SemanticColors.TextMuted,
             letterSpacing = 0.5.sp
@@ -42,7 +44,7 @@ fun ForecastTimeline(
 
         if (pastPoints.isEmpty() && projectedPoints.isEmpty()) {
             Box(modifier = Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
-                Text("No data available", style = MaterialTheme.typography.labelSmall)
+                Text(stringResource(R.string.forecast_no_data), style = MaterialTheme.typography.labelSmall)
             }
             return
         }
@@ -113,9 +115,9 @@ fun ForecastTimeline(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
-             LegendItem("Actual", SemanticColors.PrimaryIndigo)
+             LegendItem(stringResource(R.string.chart_legend_actual), SemanticColors.PrimaryIndigo)
              Spacer(modifier = Modifier.width(16.dp))
-             LegendItem("Projected", SemanticColors.PrimaryIndigo.copy(alpha = 0.3f))
+             LegendItem(stringResource(R.string.chart_legend_projected), SemanticColors.PrimaryIndigo.copy(alpha = 0.3f))
         }
     }
 }

@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.annotation.StringRes
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -44,44 +45,44 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
  */
 enum class ErrorType(
     val icon: ImageVector,
-    val defaultTitle: String,
-    val defaultMessage: String,
+    @StringRes val titleResId: Int,
+    @StringRes val messageResId: Int,
     val isRetryable: Boolean = true
 ) {
     NETWORK(
         Icons.Default.CloudOff,
-        "Connection Error",
-        "Unable to connect to the server. Please check your internet connection and try again.",
+        R.string.error_title_network,
+        R.string.error_message_network,
         true
     ),
     SERVER(
         Icons.Default.Warning,
-        "Server Error",
-        "Something went wrong on our end. Please try again in a few moments.",
+        R.string.error_title_server,
+        R.string.error_message_server,
         true
     ),
     UNKNOWN(
         Icons.Default.ErrorOutline,
-        "Something Went Wrong",
-        "An unexpected error occurred. Please try again.",
+        R.string.error_title_unknown,
+        R.string.error_message_unknown,
         true
     ),
     TIMEOUT(
         Icons.Default.Warning,
-        "Request Timeout",
-        "The request took too long to complete. Please try again.",
+        R.string.error_title_timeout,
+        R.string.error_message_timeout,
         true
     ),
     NOT_FOUND(
         Icons.Default.ErrorOutline,
-        "Not Found",
-        "The requested item could not be found.",
+        R.string.error_title_not_found,
+        R.string.error_message_not_found,
         false
     ),
     AI_PROCESSING(
         Icons.Default.Warning,
-        "AI Processing Failed",
-        "Unable to process with AI. Please check your settings and try again.",
+        R.string.error_title_ai_processing,
+        R.string.error_message_ai_processing,
         true
     )
 }
@@ -107,8 +108,8 @@ fun ErrorState(
     onDismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val displayTitle = title ?: type.defaultTitle
-    val displayMessage = message ?: type.defaultMessage
+    val displayTitle = title ?: stringResource(type.titleResId)
+    val displayMessage = message ?: stringResource(type.messageResId)
     val errorContentDescription = stringResource(R.string.a11y_error_format, displayTitle, displayMessage)
     
     Column(
@@ -183,15 +184,14 @@ fun ErrorState(
                         )
                     }
                     Text(
-                        text = if (isRetrying) "Retrying..." else "Try Again",
+                        text = if (isRetrying) stringResource(R.string.error_retrying) else stringResource(R.string.error_try_again),
                         style = MaterialTheme.typography.labelLarge,
                         modifier = Modifier.padding(start = Dimens.Space8)
                     )
                 }
             }
             
-            // Dismiss button (if provided)
-            onDismiss?.let {
+                onDismiss?.let {
                 OutlinedButton(
                     onClick = it,
                     modifier = Modifier
@@ -202,7 +202,7 @@ fun ErrorState(
                     )
                 ) {
                     Text(
-                        text = "Dismiss",
+                        text = stringResource(R.string.error_dismiss),
                         style = MaterialTheme.typography.labelLarge,
                         color = SemanticColors.TextSecondary
                     )

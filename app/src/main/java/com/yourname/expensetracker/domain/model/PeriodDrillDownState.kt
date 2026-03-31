@@ -7,5 +7,5 @@ data class PeriodDrillDownState(
     val periodTotals: List<PeriodTotal>,
     val categoryBreakdown: List<CategoryBreakdown>,
     val isLoading: Boolean = false,
-    val error: String? = null
+    val error: UiText? = null
 )

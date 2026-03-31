@@ -318,6 +318,10 @@
     <string name="split_you">You</string>
     
     <!-- Home Screen -->
+    <string name="home_dashboard_title">DASHBOARD</string>
+    <string name="home_edit_mode_exit">Exit edit mode</string>
+    <string name="home_edit_mode_enter">Enter edit mode to customize dashboard layout</string>
+    <string name="home_features">Features</string>
     <string name="home_quick_settings_title">Quick Settings</string>
     <string name="home_ai_settings">AI Settings</string>
     <string name="home_categories">Categories</string>
@@ -334,6 +338,47 @@
     <string name="home_budget_category_label">Category</string>
     <string name="home_budget_period_label">Period</string>
     <string name="home_rollover_label">Rollover unspent amount</string>
+    
+    <!-- Dashboard Widget Titles -->
+    <string name="widget_safe_to_spend">SAFE TO SPEND</string>
+    <string name="widget_pace">PACE</string>
+    <string name="widget_review">REVIEW</string>
+    <string name="widget_pending">PENDING</string>
+    <string name="widget_period_summary">PERIOD SUMMARY</string>
+    <string name="widget_today">TODAY</string>
+    <string name="widget_week">WEEK</string>
+    <string name="widget_month">MONTH</string>
+    <string name="widget_budget_health">BUDGET HEALTH</string>
+    <string name="widget_all_budgets_on_track">ALL BUDGETS ON TRACK</string>
+    <string name="widget_top_categories">TOP CATEGORIES</string>
+    <string name="widget_recent_activity">RECENT ACTIVITY</string>
+    <string name="widget_days_remaining_format">%1$d DAYS REMAINING</string>
+    
+    <!-- Add Planned Expense Dialog -->
+    <string name="dialog_plan_expense_title">PLAN AN EXPENSE</string>
+    <string name="dialog_plan_expense_description_label">What are you planning?</string>
+    <string name="dialog_plan_expense_amount_label">Amount (€)</string>
+    <string name="dialog_plan_expense_priority">PRIORITY</string>
+    <string name="dialog_plan_expense_category">CATEGORY</string>
+    <string name="dialog_plan_expense_none">None</string>
+    <string name="action_add_to_forecast">ADD TO FORECAST</string>
+    
+    <!-- Error Loading Dashboard -->
+    <string name="home_error_loading_dashboard">Error Loading Dashboard</string>
+    
+    <!-- Home ViewModel -->
+    <string name="home_ai_briefing_title">AI Briefing</string>
+    <string name="home_error_generation_failed">Generation failed</string>
+    <string name="home_error_unable_to_load_dashboard">Unable to load dashboard. Pull to refresh.</string>
+    <string name="home_error_unable_to_load_totals">Unable to load totals. Please try again.</string>
+    <string name="home_error_unable_to_load_breakdown">Unable to load breakdown. Please try again.</string>
+    <string name="home_error_unable_to_go_back">Unable to go back. Please try again.</string>
+    
+    <!-- Period Overview Labels -->
+    <string name="period_overview_year">Year Total</string>
+    <string name="period_overview_month">Monthly Overview</string>
+    <string name="period_overview_week">Weekly Overview</string>
+    <string name="period_overview_day">Daily Overview</string>
     
     <!-- Budget Analytics -->
     <string name="budget_block_party_title">BUDGET BLOCK PARTY</string>
@@ -399,4 +444,126 @@
     <string name="a11y_category_spending_format">%1$s: €%2$.2f, %3$.0f%% of budget</string>
     <string name="a11y_expense_manual">manual entry</string>
     <string name="a11y_expense_item_format">%1$s, %2$s €%3$.2f, %4$s</string>
+    <string name="recommendation_label">RECOMMENDATION</string>
+    
+    <!-- G05 Remaining Components -->
+    <string name="transfer_incoming">Incoming</string>
+    <string name="transfer_outgoing">Outgoing</string>
+    <string name="transfer_direction_unknown">Direction unknown</string>
+    <string name="transfer_set_direction">Set Direction</string>
+    <string name="a11y_transfer_incoming">Incoming</string>
+    <string name="a11y_transfer_outgoing">Outgoing</string>
+    <string name="a11y_transfer_unknown">Unknown</string>
+    <string name="notification_enable_title">Enable Notifications</string>
+    <string name="notification_enable_message">Enable notifications to receive budget alerts and expense reminders.</string>
+    <string name="notification_enable_button">Enable</string>
+    <string name="notification_not_now_button">Not now</string>
+    <string name="location_enable_title">Enable Location</string>
+    <string name="location_enable_message">To show your spending on the map and identify nearby merchants, the app needs access to your device location while it is in use. No background location is requested.</string>
+    <string name="location_allow_button">Allow</string>
+    <string name="location_not_now_button">Not now</string>
+    <string name="analytics_transaction_distribution">Transaction Distribution</string>
+    <string name="analytics_transactions_total">%d total</string>
+    <string name="analytics_peak_format">Peak: %1$d%% of transactions are €%2$.0f-€%3$.0f</string>
+    <string name="recommendation_high_priority">High priority</string>
+    <string name="recommendation_medium_priority">Medium priority</string>
+    <string name="recommendation_low_priority">Low priority</string>
+    <string name="a11y_recommendation_format">%1$s recommendation: %2$s. Double tap to view details.</string>
+    <string name="a11y_dismiss_recommendation">Dismiss recommendation</string>
+    <string name="forecast_no_data">No data available</string>
+    <string name="chart_no_data">No data</string>
+    <string name="a11y_transaction_histogram_format">Transaction distribution histogram showing %1$d total transactions across %2$d size ranges</string>
+    <string name="transaction_size_profile">Transaction Size Profile</string>
+    <string name="percentile_small">Small</string>
+    <string name="percentile_low">Low</string>
+    <string name="percentile_typical">Typical</string>
+    <string name="percentile_high">High</string>
+    <string name="percentile_large">Large</string>
+    <string name="a11y_percentile_range_format">Transaction size profile. Most transactions fall between €%1$.0f and €%2$.0f</string>
+    <string name="percentile_range_format">Most transactions fall between €%1$.0f - €%2$.0f</string>
+    <string name="health_day">DAY</string>
+    <string name="health_week">WEEK</string>
+    <string name="health_month">MONTH</string>
+    
+    <!-- Health Score Widget -->
+    <string name="health_financial_hp">FINANCIAL HP</string>
+    <string name="health_score_breakdown">◄ SCORE BREAKDOWN ►</string>
+    <string name="health_period_today">TODAY</string>
+    <string name="health_period_week">WEEK</string>
+    <string name="health_period_month">MONTH</string>
+    <string name="health_stat_budget">BUDGET</string>
+    <string name="health_stat_control">CONTROL</string>
+    <string name="health_stat_clean">CLEAN</string>
+    <string name="health_stat_bonus">BONUS</string>
+    <string name="health_status_excellent">★ EXCELLENT ★</string>
+    <string name="health_status_good">◆ GOOD ◆</string>
+    <string name="health_status_fair">● FAIR ●</string>
+    <string name="health_status_warning">▲ WARNING ▲</string>
+    <string name="health_status_critical">▼ CRITICAL ▼</string>
+    <string name="health_expand_hint">▼ PRESS TO OPEN ▼</string>
+    <string name="health_collapse_hint">▲ PRESS TO CLOSE ▲</string>
+    <string name="a11y_health_score_format">Health Score: %1$s, %2$d percent</string>
+    
+    <!-- Error State Types -->
+    <string name="error_title_network">Connection Error</string>
+    <string name="error_message_network">Unable to connect to the server. Please check your internet connection and try again.</string>
+    <string name="error_title_server">Server Error</string>
+    <string name="error_message_server">Something went wrong on our end. Please try again in a few moments.</string>
+    <string name="error_title_unknown">Something Went Wrong</string>
+    <string name="error_message_unknown">An unexpected error occurred. Please try again.</string>
+    <string name="error_title_timeout">Request Timeout</string>
+    <string name="error_message_timeout">The request took too long to complete. Please try again.</string>
+    <string name="error_title_not_found">Not Found</string>
+    <string name="error_message_not_found">The requested item could not be found.</string>
+    <string name="error_title_ai_processing">AI Processing Failed</string>
+    <string name="error_message_ai_processing">Unable to process with AI. Please check your settings and try again.</string>
+    <string name="error_retrying">Retrying…</string>
+    <string name="error_try_again">Try Again</string>
+    <string name="error_dismiss">Dismiss</string>
+    
+    <!-- Empty State Types -->
+    <string name="empty_title_transactions">No Transactions</string>
+    <string name="empty_message_transactions">You haven\'t recorded any expenses yet. Start tracking your spending!</string>
+    <string name="empty_title_receipts">No Receipts</string>
+    <string name="empty_message_receipts">No receipts have been scanned yet. Scan your first receipt to get started.</string>
+    <string name="empty_title_analytics">No Data Yet</string>
+    <string name="empty_message_analytics">Add some transactions to see your spending analytics and insights.</string>
+    <string name="empty_title_categories">No Categories</string>
+    <string name="empty_message_categories">No category data available. Transactions will be categorized automatically.</string>
+    <string name="empty_title_generic">Nothing Here</string>
+    <string name="empty_message_generic">There\'s nothing to display at the moment.</string>
+    
+    <!-- Monte Carlo Forecast -->
+    <string name="forecast_month_end_title">MONTH-END FORECAST</string>
+    <string name="forecast_likely_total">Likely total</string>
+    <string name="forecast_range_format">Range: €%1$.0f – €%2$.0f</string>
+    <string name="forecast_under_budget">Under budget</string>
+    <string name="forecast_no_budget_set">No budget set</string>
+    <string name="forecast_spent">Spent</string>
+    <string name="forecast_upcoming">Upcoming</string>
+    <string name="forecast_budget_label">Budget</string>
+    <string name="forecast_percentile_p10">P10</string>
+    <string name="forecast_percentile_p50">P50</string>
+    <string name="forecast_percentile_p90">P90</string>
+    
+    <!-- Forecast Timeline -->
+    <string name="forecast_trajectory_title">FORECAST TRAJECTORY</string>
+    
+    <!-- Spending Trend Chart -->
+    <string name="chart_trend_title">TREND</string>
+    <string name="chart_legend_actual">Actual</string>
+    <string name="chart_legend_projected">Projected</string>
+    
+    <!-- Statistical Visualizations -->
+    <string name="analytics_merchant_visits_format">%1$d visits · Avg €%2$.2f</string>
+    <string name="analytics_loyalty_label">Loyalty</string>
+    <string name="analytics_streak_format">%d months</string>
+    <string name="analytics_streak_label">streak</string>
+    <string name="analytics_predicted_label">predicted</string>
+    <string name="analytics_vs_last_quarter">vs last quarter</string>
+    <string name="analytics_velocity_accelerating">Accelerating</string>
+    <string name="analytics_velocity_slowing">Slowing</string>
+    <string name="analytics_velocity_steady">Steady</string>
+    <string name="analytics_percentile_p25_format">P25: €%1$.0f</string>
+    <string name="analytics_percentile_p75_format">P75: €%1$.0f</string>
 </resources>

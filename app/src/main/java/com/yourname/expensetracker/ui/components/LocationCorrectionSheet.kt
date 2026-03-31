@@ -4,8 +4,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.location.GeocodingService
 
 /**
@@ -96,7 +98,7 @@ fun LocationCorrectionSheet(
                     onClick = onDismiss,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
                 Button(
                     onClick = {
@@ -107,7 +109,7 @@ fun LocationCorrectionSheet(
                     enabled = hasSelection,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Save")
+                    Text(stringResource(R.string.action_save))
                 }
             }
         }

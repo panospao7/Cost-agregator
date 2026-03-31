@@ -14,11 +14,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
@@ -73,7 +75,7 @@ private fun IncomingBadge(
     ) {
         Icon(
             imageVector = Icons.Default.ArrowDownward,
-            contentDescription = "Incoming",
+            contentDescription = stringResource(R.string.a11y_transfer_incoming),
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )
@@ -83,7 +85,7 @@ private fun IncomingBadge(
             
             Text(
                 text = buildString {
-                    append("Incoming")
+                    append(stringResource(R.string.transfer_incoming))
                     accountName?.let { 
                         append(" ")
                         append(it)
@@ -121,7 +123,7 @@ private fun OutgoingBadge(
     ) {
         Icon(
             imageVector = Icons.Default.ArrowUpward,
-            contentDescription = "Outgoing",
+            contentDescription = stringResource(R.string.a11y_transfer_outgoing),
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )
@@ -131,7 +133,7 @@ private fun OutgoingBadge(
             
             Text(
                 text = buildString {
-                    append("Outgoing")
+                    append(stringResource(R.string.transfer_outgoing))
                     accountName?.let { 
                         append(" ")
                         append(it)
@@ -167,7 +169,7 @@ private fun UnknownBadge(
     ) {
         Icon(
             imageVector = Icons.Default.HelpOutline,
-            contentDescription = "Direction unknown",
+            contentDescription = stringResource(R.string.a11y_transfer_unknown),
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )
@@ -175,7 +177,7 @@ private fun UnknownBadge(
         Spacer(modifier = Modifier.width(6.dp))
         
         Text(
-            text = "Set Direction",
+            text = stringResource(R.string.transfer_set_direction),
             color = contentColor,
             style = if (compact) {
                 MaterialTheme.typography.labelSmall
@@ -206,7 +208,7 @@ fun TransferDirectionIcon(
             ) {
                 Icon(
                     imageVector = Icons.Default.ArrowDownward,
-                    contentDescription = "Incoming",
+                    contentDescription = stringResource(R.string.a11y_transfer_incoming),
                     tint = SemanticColors.SuccessGreen,
                     modifier = Modifier.size((size * 0.6).dp)
                 )
@@ -222,7 +224,7 @@ fun TransferDirectionIcon(
             ) {
                 Icon(
                     imageVector = Icons.Default.ArrowUpward,
-                    contentDescription = "Outgoing",
+                    contentDescription = stringResource(R.string.a11y_transfer_outgoing),
                     tint = SemanticColors.PrimaryIndigo,
                     modifier = Modifier.size((size * 0.6).dp)
                 )
@@ -238,7 +240,7 @@ fun TransferDirectionIcon(
             ) {
                 Icon(
                     imageVector = Icons.Default.HelpOutline,
-                    contentDescription = "Unknown",
+                    contentDescription = stringResource(R.string.a11y_transfer_unknown),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size((size * 0.6).dp)
                 )

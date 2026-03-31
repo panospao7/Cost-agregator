@@ -22,6 +22,8 @@ import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.model.PeriodDrillDownState
 import com.yourname.expensetracker.domain.model.PeriodTotal
 import com.yourname.expensetracker.domain.model.PeriodType
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
@@ -59,7 +61,7 @@ import javax.inject.Inject
  * with display hints (icon, isAi flag) without coupling the domain to UI concerns.
  */
 data class DashboardBriefingUi(
-    val title: String,
+    val title: UiText,
     val text: String,
     val icon: String,
     /** True when this text came from an AI artifact rather than deterministic logic. */
@@ -79,7 +81,7 @@ data class DashboardState(
     val isServiceRunning: Boolean = true,
     val isEditMode: Boolean = false,
     val isLoading: Boolean = true,
-    val error: String? = null,
+    val error: UiText? = null,
     val aiBriefing: AiLoadState<DashboardBriefingUi> = AiLoadState.Disabled,
     val widgetStyles: WidgetStyleConfig = WidgetStyleConfig(),
     val categoryTrends: Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo> = emptyMap()
@@ -204,7 +206,7 @@ class HomeViewModel @Inject constructor(
                                 entity.status == AiArtifactStatus.READY && entity.summaryText != null -> {
                                     AiLoadState.Ready(
                                         DashboardBriefingUi(
-                                            title = "AI Briefing",
+                                            title = UiText.StringResource(R.string.home_ai_briefing_title),
                                             text  = entity.summaryText,
                                             icon  = "✨",
                                             isAi  = true,
@@ -265,7 +267,7 @@ class HomeViewModel @Inject constructor(
         )
     }.catch { e ->
         Timber.e(e, "Error loading dashboard data")
-        emit(DashboardState(isLoading = false, error = "Unable to load dashboard. Pull to refresh."))
+        emit(DashboardState(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_load_dashboard)))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardState())
 
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
@@ -423,7 +425,7 @@ class HomeViewModel @Inject constructor(
                 Timber.d("Totals loaded successfully")
             } catch (e: Exception) {
                 Timber.e(e, "Error loading totals for year $year")
-                _totalsDrillDownState.update { it.copy(isLoading = false, error = "Unable to load totals. Please try again.") }
+                _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_load_totals)) }
             }
         }
     }
@@ -480,7 +482,7 @@ class HomeViewModel @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
-                _totalsDrillDownState.update { it.copy(isLoading = false, error = "Unable to load breakdown. Please try again.") }
+                _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_load_breakdown)) }
             }
         }
     }
@@ -561,7 +563,7 @@ class HomeViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Error drilling up from ${state.currentLevel} to $newLevel")
-                _totalsDrillDownState.update { it.copy(isLoading = false, error = "Unable to go back. Please try again.") }
+                _totalsDrillDownState.update { it.copy(isLoading = false, error = UiText.StringResource(R.string.home_error_unable_to_go_back)) }
             }
         }
     }

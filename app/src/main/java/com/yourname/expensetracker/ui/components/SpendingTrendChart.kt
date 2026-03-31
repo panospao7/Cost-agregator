@@ -20,6 +20,8 @@ import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.core.entry.entryOf
 import com.yourname.expensetracker.domain.usecase.dashboard.SpendingTrendSeries
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
@@ -51,7 +53,7 @@ fun SpendingTrendChart(
         ) {
             Column {
                 Text(
-                    "TREND",
+                    stringResource(R.string.chart_trend_title),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = SemanticColors.TextSecondary,
@@ -100,7 +102,7 @@ fun SpendingTrendChart(
                 Modifier.fillMaxWidth().height(120.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("No data", style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextMuted)
+                Text(stringResource(R.string.chart_no_data), style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextMuted)
             }
         } else {
             val historicalCount = historicalSeries.size

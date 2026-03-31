@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.annotation.StringRes
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -45,33 +46,33 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
  */
 enum class EmptyStateType(
     val icon: ImageVector,
-    val defaultTitle: String,
-    val defaultMessage: String
+    @StringRes val titleResId: Int,
+    @StringRes val messageResId: Int
 ) {
     TRANSACTIONS(
         Icons.Default.ReceiptLong,
-        "No Transactions",
-        "You haven't recorded any expenses yet. Start tracking your spending!"
+        R.string.empty_title_transactions,
+        R.string.empty_message_transactions
     ),
     RECEIPTS(
         Icons.Default.ShoppingCart,
-        "No Receipts",
-        "No receipts have been scanned yet. Scan your first receipt to get started."
+        R.string.empty_title_receipts,
+        R.string.empty_message_receipts
     ),
     ANALYTICS(
         Icons.Default.TrendingUp,
-        "No Data Yet",
-        "Add some transactions to see your spending analytics and insights."
+        R.string.empty_title_analytics,
+        R.string.empty_message_analytics
     ),
     CATEGORIES(
         Icons.Default.PieChart,
-        "No Categories",
-        "No category data available. Transactions will be categorized automatically."
+        R.string.empty_title_categories,
+        R.string.empty_message_categories
     ),
     GENERIC(
         Icons.Default.Inbox,
-        "Nothing Here",
-        "There's nothing to display at the moment."
+        R.string.empty_title_generic,
+        R.string.empty_message_generic
     )
 }
 
@@ -100,8 +101,8 @@ fun EmptyState(
     onSecondaryClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val displayTitle = title ?: type.defaultTitle
-    val displayMessage = message ?: type.defaultMessage
+    val displayTitle = title ?: stringResource(type.titleResId)
+    val displayMessage = message ?: stringResource(type.messageResId)
     val emptyContentDescription = stringResource(R.string.a11y_empty_state_format, displayTitle, displayMessage)
     
     Column(

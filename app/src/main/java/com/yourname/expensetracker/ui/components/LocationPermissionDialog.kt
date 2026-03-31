@@ -4,6 +4,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 /**
  * Shown before requesting ACCESS_FINE_LOCATION / ACCESS_COARSE_LOCATION.
@@ -18,25 +20,21 @@ fun LocationPermissionDialog(
     if (showDialog) {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("Enable Location") },
+            title = { Text(stringResource(R.string.location_enable_title)) },
             text = {
-                Text(
-                    "To show your spending on the map and identify nearby merchants, " +
-                    "the app needs access to your device location while it is in use. " +
-                    "No background location is requested."
-                )
+                Text(stringResource(R.string.location_enable_message))
             },
             confirmButton = {
                 TextButton(onClick = {
                     onDismiss()
                     onGrant()
                 }) {
-                    Text("Allow")
+                    Text(stringResource(R.string.location_allow_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = onDismiss) {
-                    Text("Not now")
+                    Text(stringResource(R.string.location_not_now_button))
                 }
             }
         )
