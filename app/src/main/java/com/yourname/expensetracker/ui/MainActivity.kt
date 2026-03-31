@@ -32,6 +32,7 @@ import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
+import com.yourname.expensetracker.ui.screens.budget.BudgetForecastingScreen
 import com.yourname.expensetracker.ui.screens.home.HomeScreen
 import com.yourname.expensetracker.ui.screens.map.SpendingMapScreen
 import com.yourname.expensetracker.ui.screens.review.ReviewScreen
@@ -156,6 +157,10 @@ fun MainScreen(mainViewModel: MainViewModel) {
     var showRecurringExpenses by rememberSaveable { mutableStateOf(false) }
     var showAssistant by rememberSaveable { mutableStateOf(false) }
     var isFabExpanded by rememberSaveable { mutableStateOf(false) }
+    
+    // Feature Screens Navigation State
+    var showBudgetForecasting by rememberSaveable { mutableStateOf(false) }
+    var selectedBudgetForForecast by rememberSaveable { mutableStateOf<com.yourname.expensetracker.data.database.entity.Budget?>(null) }
 
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
@@ -235,7 +240,12 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         initialFilter = activeTransactionFilter
                     )
                     2 -> ReviewScreen()
-                    3 -> BudgetScreen()
+                    3 -> BudgetScreen(
+                        onNavigateToForecast = { budget ->
+                            selectedBudgetForForecast = budget
+                            showBudgetForecasting = true
+                        }
+                    )
                     4 -> com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen(
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
@@ -285,6 +295,17 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         activeTransactionFilter = filter
                         selectedTab = 1
                         showAssistant = false
+                    }
+                )
+            }
+            
+            // Feature Screens
+            if (showBudgetForecasting && selectedBudgetForForecast != null) {
+                BudgetForecastingScreen(
+                    budget = selectedBudgetForForecast!!,
+                    onNavigateBack = { 
+                        showBudgetForecasting = false
+                        selectedBudgetForForecast = null
                     }
                 )
             }

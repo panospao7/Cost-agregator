@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.rounded.Analytics
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -41,6 +42,7 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BudgetScreen(
+    onNavigateToForecast: ((Budget) -> Unit)? = null,
     viewModel: BudgetViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -115,7 +117,10 @@ fun BudgetScreen(
                             dateFormat = dateFormat,
                             onEdit = { editingBudget = budgetStatus },
                             onToggle = { isActive -> viewModel.toggleBudget(budgetStatus.budget.id, isActive) },
-                            onDelete = { viewModel.deleteBudget(it) }
+                            onDelete = { viewModel.deleteBudget(it) },
+                            onViewForecast = onNavigateToForecast?.let { navigate ->
+                                { navigate(budgetStatus.budget) }
+                            }
                         )
                     }
                 }
@@ -187,7 +192,8 @@ fun BudgetCard(
     dateFormat: SimpleDateFormat,
     onEdit: () -> Unit,
     onToggle: (Boolean) -> Unit,
-    onDelete: (Budget) -> Unit
+    onDelete: (Budget) -> Unit,
+    onViewForecast: (() -> Unit)? = null
 ) {
     // Remember expensive calculations
     val progressColor = remember(status.healthStatus) {
@@ -300,6 +306,31 @@ fun BudgetCard(
                     color = MaterialTheme.colorScheme.secondary,
                     modifier = Modifier.padding(top = 4.dp)
                 )
+            }
+            
+            // AI Forecast Button
+            if (onViewForecast != null) {
+                Spacer(Modifier.height(12.dp))
+                
+                OutlinedButton(
+                    onClick = onViewForecast,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = SemanticColors.PrimaryIndigo
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Analytics,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "View AI Forecast",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
     }
