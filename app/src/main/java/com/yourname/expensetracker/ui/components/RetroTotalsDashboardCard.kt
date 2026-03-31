@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodTotal
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.PeriodType
 
 /**
@@ -173,7 +175,7 @@ private fun RetroTotalsHeader(currentLevel: PeriodLevel, yearLabel: String) {
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "★",
+                text = stringResource(R.string.retro_star_icon),
                 color = RetroColorsTotals.NeonYellow.copy(alpha = iconGlow),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
@@ -194,7 +196,7 @@ private fun RetroTotalsHeader(currentLevel: PeriodLevel, yearLabel: String) {
         )
         
         Text(
-            text = "SCORE ATTACK",
+            text = stringResource(R.string.retro_score_attack_title),
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = 2.sp
@@ -214,7 +216,7 @@ private fun RetroTotalsHeader(currentLevel: PeriodLevel, yearLabel: String) {
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
             Text(
-                text = "[$yearLabel]",
+                text = stringResource(R.string.retro_year_label_format, yearLabel),
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     fontWeight = FontWeight.Bold
@@ -246,7 +248,7 @@ private fun RetroLevelNavigationBar(
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = "← RETURN",
+                    text = stringResource(R.string.retro_return_button),
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                     ),
@@ -513,7 +515,7 @@ private fun RetroSelectedStageIndicator(
         ) {
             Column {
                 Text(
-                    text = "► STAGE: ${period.periodLabel.uppercase()}",
+                    text = stringResource(R.string.retro_stage_label_format, period.periodLabel.uppercase()),
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         fontWeight = FontWeight.Bold
@@ -523,7 +525,7 @@ private fun RetroSelectedStageIndicator(
                     letterSpacing = 1.sp
                 )
                 Text(
-                    text = "SCORE: €${String.format("%.2f", period.totalAmount)}",
+                    text = stringResource(R.string.retro_score_label_format, period.totalAmount),
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         fontWeight = FontWeight.Bold
@@ -662,7 +664,7 @@ private fun RetroStageDialog(
                 ) {
                     Column {
                         Text(
-                            text = "◄ ${period.periodLabel.uppercase()} STAGE ►",
+                            text = stringResource(R.string.retro_stage_label_format, period.periodLabel.uppercase()),
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold
@@ -673,7 +675,7 @@ private fun RetroStageDialog(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "SCORE: €${String.format("%.2f", period.totalAmount)}",
+                            text = stringResource(R.string.retro_score_label_format, period.totalAmount),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -703,7 +705,7 @@ private fun RetroStageDialog(
             ) {
                 Column {
                     Text(
-                        text = "◄ STAGE COMPLETION ►",
+                        text = stringResource(R.string.retro_stage_completion),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
@@ -744,7 +746,7 @@ private fun RetroStageDialog(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "${String.format("%.0f", percentageOfAvg)}% OF AVG",
+                            text = stringResource(R.string.retro_percentage_format, percentageOfAvg),
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                             ),
@@ -792,7 +794,7 @@ private fun RetroStageDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "▶ ENTER STAGE",
+                        text = stringResource(R.string.retro_enter_stage_button),
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 2.sp,
@@ -814,7 +816,7 @@ private fun RetroStageDialog(
                 contentPadding = PaddingValues(vertical = 10.dp)
             ) {
                 Text(
-                    text = "[VIEW ANALYSIS]",
+                    text = stringResource(R.string.retro_view_analysis_button),
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp,
@@ -835,7 +837,7 @@ private fun RetroStageDialog(
                 contentPadding = PaddingValues(vertical = 10.dp)
             ) {
                 Text(
-                    "[CLOSE]",
+                    text = stringResource(R.string.retro_close_button),
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     letterSpacing = 1.sp,
                     fontSize = 12.sp
@@ -868,7 +870,7 @@ private fun RetroLoadingIndicator() {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "LOADING STAGES...",
+                text = stringResource(R.string.retro_loading_stages),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                 ),
@@ -878,7 +880,7 @@ private fun RetroLoadingIndicator() {
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "INSERT COIN",
+                text = stringResource(R.string.retro_insert_coin),
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                 ),
@@ -897,7 +899,7 @@ private fun RetroStatRowTotals(label: String, value: String, color: Color) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "$label:",
+            text = stringResource(R.string.retro_stat_label_format, label),
             style = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
             ),

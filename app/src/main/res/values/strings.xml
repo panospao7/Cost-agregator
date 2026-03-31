@@ -397,6 +397,36 @@
     <string name="category_breakdown_title">CATEGORY BREAKDOWN</string>
     <string name="category_breakdown_show_all_format">SHOW ALL (%1$d)</string>
     
+    <!-- Retro Components -->
+    <string name="retro_star_icon">★</string>
+    <string name="retro_score_attack_title">SCORE ATTACK</string>
+    <string name="retro_year_label_format">[%1$s]</string>
+    <string name="retro_return_button">← RETURN</string>
+    <string name="retro_stage_label_format">► STAGE: %1$s</string>
+    <string name="retro_score_label_format">SCORE: €%1$.2f</string>
+    <string name="retro_stage_completion">◄ STAGE COMPLETION ►</string>
+    <string name="retro_percentage_format">%1$.0f%% OF AVG</string>
+    <string name="retro_enter_stage_button">▶ ENTER STAGE</string>
+    <string name="retro_view_analysis_button">[VIEW ANALYSIS]</string>
+    <string name="retro_loading_stages">LOADING STAGES...</string>
+    <string name="retro_insert_coin">INSERT COIN</string>
+    <string name="retro_stat_label_format">%1$s:</string>
+    
+    <!-- Retro Category Breakdown -->
+    <string name="retro_stage_analysis_title">STAGE ANALYSIS</string>
+    <string name="retro_period_label_format">[%1$s]</string>
+    <string name="retro_category_scores">◄ CATEGORY SCORES ►</string>
+    <string name="retro_view_all_categories_format">[VIEW ALL %1$d CATEGORIES]</string>
+    <string name="retro_category_name_format">[%1$s]</string>
+    <string name="retro_show_top_5">[SHOW TOP 5]</string>
+    <string name="retro_close_button">[CLOSE]</string>
+    
+    <!-- ComputeDashboardWidgetsUseCase -->
+    <string name="widget_budget_exceeded_format">%1$d budgets exceeded!</string>
+    <string name="widget_insight_spent_less_format">Spent %1$.0f less than last month so far.</string>
+    <string name="widget_insight_spent_higher_format">Spending is %1$.0f higher than last month.</string>
+    <string name="widget_insight_today_spent_format">Spent %1$.2f today across %2$d transactions.</string>
+    
     <!-- Budget Analytics -->
     <string name="budget_block_party_title">BUDGET BLOCK PARTY</string>
     <string name="budget_target_breakdown">TARGET BREAKDOWN</string>

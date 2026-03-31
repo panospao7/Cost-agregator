@@ -21,6 +21,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
 
 /**
@@ -98,7 +100,7 @@ fun RetroCategoryBreakdownSheet(
                     )
                     
                     Text(
-                        text = "★",
+                        text = stringResource(R.string.retro_star_icon),
                         color = RetroColorsBreakdown.NeonYellow.copy(alpha = iconGlow),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
@@ -117,7 +119,7 @@ fun RetroCategoryBreakdownSheet(
                     )
                     
                     Text(
-                        text = "STAGE ANALYSIS",
+                        text = stringResource(R.string.retro_stage_analysis_title),
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 2.sp
@@ -136,7 +138,7 @@ fun RetroCategoryBreakdownSheet(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "[$periodLabel]",
+                        text = stringResource(R.string.retro_period_label_format, periodLabel),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
@@ -157,7 +159,7 @@ fun RetroCategoryBreakdownSheet(
             
             // Category scores header
             Text(
-                text = "◄ CATEGORY SCORES ►",
+                text = stringResource(R.string.retro_category_scores),
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
@@ -216,7 +218,7 @@ fun RetroCategoryBreakdownSheet(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "[VIEW ALL ${categories.size} CATEGORIES]",
+                                text = stringResource(R.string.retro_view_all_categories_format, categories.size),
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
@@ -236,7 +238,7 @@ fun RetroCategoryBreakdownSheet(
                         contentPadding = PaddingValues(vertical = 10.dp)
                     ) {
                         Text(
-                            text = "[SHOW TOP 5]",
+                            text = stringResource(R.string.retro_show_top_5),
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -260,7 +262,7 @@ fun RetroCategoryBreakdownSheet(
                 contentPadding = PaddingValues(vertical = 10.dp)
             ) {
                 Text(
-                    "[CLOSE]",
+                    text = stringResource(R.string.retro_close_button),
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     letterSpacing = 1.sp,
                     fontSize = 12.sp
@@ -359,7 +361,7 @@ private fun RetroCategoryBreakdownRow(
                     
                     // Category name with brackets
                     Text(
-                        text = "[${breakdown.category.name.uppercase()}]",
+                        text = stringResource(R.string.retro_category_name_format, breakdown.category.name.uppercase()),
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.Bold

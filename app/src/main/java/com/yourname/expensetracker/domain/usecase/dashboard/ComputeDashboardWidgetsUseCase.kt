@@ -19,6 +19,8 @@ import com.yourname.expensetracker.domain.model.CategoryInfo
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.ui.components.BlockStatus
@@ -60,7 +62,7 @@ sealed class DashboardWidget {
 
     data class BudgetHealthWidget(
         val statuses: List<BudgetStatus>,
-        val summary: String?
+        val summary: UiText?
     ) : DashboardWidget()
 
     data class RecentTransactions(
@@ -68,7 +70,7 @@ sealed class DashboardWidget {
     ) : DashboardWidget()
 
     data class NaturalLanguageInsight(
-        val text: String,
+        val text: UiText,
         val icon: String
     ) : DashboardWidget()
 
@@ -419,7 +421,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         val exceeded = budgetStatuses.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
         val budgetSummary = if (budgetStatuses.isNotEmpty()) {
-            if (exceeded > 0) "$exceeded budgets exceeded!" else "All budgets on track"
+            if (exceeded > 0) UiText.from(R.string.widget_budget_exceeded_format, exceeded) 
+            else UiText.from(R.string.widget_all_budgets_on_track)
         } else null
 
         // ── Calculate No-Spend Streak Data ────────────────────────────────────
@@ -487,16 +490,16 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         previousMonthTotal: Double,
         todaySpent: Double,
         txCount: Int
-    ): Pair<String, String>? {
+    ): Pair<UiText, String>? {
         if (previousMonthTotal > 0) {
             val diff = monthSpent - previousMonthTotal
             return when {
                 diff < 0 -> Pair(
-                    "You've spent €${String.format("%.0f", -diff)} less than last month so far.",
+                    UiText.from(R.string.widget_insight_spent_less_format, -diff.toInt()),
                     "📉"
                 )
                 diff > previousMonthTotal * 0.2 -> Pair(
-                    "Spending is €${String.format("%.0f", diff)} higher than last month.",
+                    UiText.from(R.string.widget_insight_spent_higher_format, diff.toInt()),
                     "📈"
                 )
                 else -> null
@@ -504,7 +507,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
         if (txCount > 0 && todaySpent > 0) {
             return Pair(
-                "You've spent €${String.format("%.2f", todaySpent)} today across $txCount transactions.",
+                UiText.from(R.string.widget_insight_today_spent_format, todaySpent, txCount),
                 "💡"
             )
         }

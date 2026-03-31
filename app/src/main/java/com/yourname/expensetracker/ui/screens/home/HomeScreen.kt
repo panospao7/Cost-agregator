@@ -412,9 +412,9 @@ fun HomeScreen(
                                 // Otherwise fall back to the deterministic insight text/icon.
                                 val aiBriefing = state.aiBriefing
                                 val displayText = if (aiBriefing is AiLoadState.Ready) {
-                                    aiBriefing.value.text
+                                    aiBriefing.value.text.asString()
                                 } else {
-                                    widget.text
+                                    widget.text.asString()
                                 }
                                 val displayIcon = if (aiBriefing is AiLoadState.Ready) {
                                     aiBriefing.value.icon
@@ -491,11 +491,13 @@ fun HomeScreen(
                                         color = SemanticColors.TextSecondary
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
+                                    val summaryText = widget.summary?.asString() ?: stringResource(R.string.widget_all_budgets_on_track)
+                                    val hasExceededBudgets = widget.summary != null
                                     Text(
-                                        widget.summary ?: stringResource(R.string.widget_all_budgets_on_track), 
+                                        summaryText, 
                                         style = MaterialTheme.typography.titleMedium, 
                                         fontWeight = FontWeight.Bold,
-                                        color = if (widget.summary?.contains("exceeded", ignoreCase = true) == true) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                                        color = if (hasExceededBudgets) SemanticColors.DangerRed else SemanticColors.SuccessGreen
                                     )
                                 }
                             }

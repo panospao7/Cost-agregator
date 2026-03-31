@@ -62,7 +62,7 @@ import javax.inject.Inject
  */
 data class DashboardBriefingUi(
     val title: UiText,
-    val text: String,
+    val text: UiText,
     val icon: String,
     /** True when this text came from an AI artifact rather than deterministic logic. */
     val isAi: Boolean,
@@ -207,7 +207,7 @@ class HomeViewModel @Inject constructor(
                                     AiLoadState.Ready(
                                         DashboardBriefingUi(
                                             title = UiText.StringResource(R.string.home_ai_briefing_title),
-                                            text  = entity.summaryText,
+                                            text  = UiText.from(entity.summaryText),
                                             icon  = "✨",
                                             isAi  = true,
                                             runtimeStatusMessage = runtimeStatus,
