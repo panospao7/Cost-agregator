@@ -15,6 +15,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.*
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,6 +102,7 @@ fun HomeScreen(
     var showDebug by remember { mutableStateOf(false) }
     var showAddPlannedExpenseDialog by remember { mutableStateOf(false) }
     var showCategoryBreakdown by remember { mutableStateOf(false) }
+    var showFeaturesMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
@@ -129,6 +132,18 @@ fun HomeScreen(
                             if (state.isEditMode) Icons.Rounded.Check else Icons.Rounded.EditAttributes, 
                             contentDescription = null,
                             tint = if (state.isEditMode) SemanticColors.SuccessGreen else SemanticColors.TextSecondary
+                        )
+                    }
+                    IconButton(
+                        onClick = { showFeaturesMenu = true },
+                        modifier = Modifier.semantics { 
+                            contentDescription = "Open features menu"
+                        }
+                    ) {
+                        Icon(
+                            Icons.Rounded.Apps, 
+                            contentDescription = null,
+                            tint = SemanticColors.TextSecondary
                         )
                     }
                     IconButton(
@@ -638,6 +653,40 @@ fun HomeScreen(
             }
         }
     }
+
+        if (showFeaturesMenu) {
+            FeaturesMenu(
+                onDismiss = { showFeaturesMenu = false },
+                onNavigateToSavingsGoals = {
+                    showFeaturesMenu = false
+                    onNavigateToSavingsGoals()
+                },
+                onNavigateToCarbonFootprint = {
+                    showFeaturesMenu = false
+                    onNavigateToCarbonFootprint()
+                },
+                onNavigateToWarrantyTracker = {
+                    showFeaturesMenu = false
+                    onNavigateToWarrantyTracker()
+                },
+                onNavigateToPriceProtection = {
+                    showFeaturesMenu = false
+                    onNavigateToPriceProtection()
+                },
+                onNavigateToBillNegotiation = {
+                    showFeaturesMenu = false
+                    onNavigateToBillNegotiation()
+                },
+                onNavigateToNaturalLanguageSearch = {
+                    showFeaturesMenu = false
+                    onNavigateToNaturalLanguageSearch()
+                },
+                onNavigateToReceiptMatching = {
+                    showFeaturesMenu = false
+                    onNavigateToReceiptMatching()
+                }
+            )
+        }
 
         if (showQuickSettings) {
             QuickSettingsDialog(
@@ -1166,6 +1215,177 @@ fun DateSelector(
             }
         ) {
             DatePicker(state = datePickerState)
+        }
+    }
+}
+
+@Composable
+private fun FeaturesMenu(
+    onDismiss: () -> Unit,
+    onNavigateToSavingsGoals: () -> Unit,
+    onNavigateToCarbonFootprint: () -> Unit,
+    onNavigateToWarrantyTracker: () -> Unit,
+    onNavigateToPriceProtection: () -> Unit,
+    onNavigateToBillNegotiation: () -> Unit,
+    onNavigateToNaturalLanguageSearch: () -> Unit,
+    onNavigateToReceiptMatching: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(24.dp),
+            color = SemanticColors.BaseNavy
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp)
+            ) {
+                Text(
+                    text = "Features",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextPrimary,
+                    modifier = Modifier.padding(bottom = 20.dp)
+                )
+                
+                // Feature Items Grid
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    FeatureItem(
+                        icon = Icons.Rounded.Savings,
+                        title = "Savings Goals",
+                        description = "Track and achieve your savings targets",
+                        color = Color(0xFF4CAF50),
+                        onClick = onNavigateToSavingsGoals
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.Eco,
+                        title = "Carbon Footprint",
+                        description = "Monitor your environmental impact",
+                        color = Color(0xFF2E7D32),
+                        onClick = onNavigateToCarbonFootprint
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.Security,
+                        title = "Warranty Tracker",
+                        description = "Track warranties and return windows",
+                        color = Color(0xFF1976D2),
+                        onClick = onNavigateToWarrantyTracker
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.Shield,
+                        title = "Price Protection",
+                        description = "Get refunds when prices drop",
+                        color = Color(0xFF7B1FA2),
+                        onClick = onNavigateToPriceProtection
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.LocalOffer,
+                        title = "Bill Negotiation",
+                        description = "Find savings on your subscriptions",
+                        color = Color(0xFFF57C00),
+                        onClick = onNavigateToBillNegotiation
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.Search,
+                        title = "Smart Search",
+                        description = "Search expenses with natural language",
+                        color = Color(0xFF00796B),
+                        onClick = onNavigateToNaturalLanguageSearch
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.ReceiptLong,
+                        title = "Receipt Matching",
+                        description = "Match receipts to transactions",
+                        color = Color(0xFF5D4037),
+                        onClick = onNavigateToReceiptMatching
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Close", color = SemanticColors.TextSecondary)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeatureItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    color: Color,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = SemanticColors.SurfaceLight.copy(alpha = 0.5f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(color.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = color,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+            
+            Spacer(modifier = Modifier.width(16.dp))
+            
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SemanticColors.TextPrimary
+                )
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+            
+            Icon(
+                imageVector = Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = SemanticColors.TextSecondary
+            )
         }
     }
 }
