@@ -1,0 +1,273 @@
+package com.yourname.expensetracker.ui.screens.cashflow
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Today
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
+import java.text.SimpleDateFormat
+import java.util.*
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CashFlowCalendarScreen(
+    onNavigateBack: () -> Unit,
+    viewModel: CashFlowCalendarViewModel = hiltViewModel()
+) {
+    val state by viewModel.state.collectAsState()
+    val dateFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
+    val dayFormat = remember { SimpleDateFormat("d", Locale.getDefault()) }
+    
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Cash Flow Calendar") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.loadCurrentMonth() }) {
+                        Icon(Icons.Default.Today, contentDescription = "Today")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+        ) {
+            // Month Navigation
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { viewModel.navigateToPreviousMonth() }) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Previous")
+                }
+                
+                Text(
+                    text = dateFormat.format(state.currentMonth),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                IconButton(onClick = { viewModel.navigateToNextMonth() }) {
+                    Icon(Icons.Default.ArrowForward, contentDescription = "Next")
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Upcoming Bills Alert
+            if (state.upcomingBillsCount > 0) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = "⚠️ ${state.upcomingBillsCount} bills due this month",
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+            
+            // Starting Balance Input
+            OutlinedTextField(
+                value = state.startingBalance.toString(),
+                onValueChange = { 
+                    it.toDoubleOrNull()?.let { balance ->
+                        viewModel.setStartingBalance(balance)
+                    }
+                },
+                label = { Text("Starting Balance (€)") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Weekday Headers
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").forEach { day ->
+                    Text(
+                        text = day,
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Calendar Grid
+            if (state.isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                val calendar = Calendar.getInstance()
+                calendar.time = state.currentMonth
+                calendar.set(Calendar.DAY_OF_MONTH, 1)
+                
+                // Get first day of week
+                val firstDayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
+                val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+                
+                // Create list with empty cells for alignment
+                val days = mutableListOf<DayCell?>()
+                
+                // Add empty cells for days before start of month
+                repeat(firstDayOfWeek - 1) { days.add(null) }
+                
+                // Add actual days
+                repeat(daysInMonth) { day ->
+                    calendar.set(Calendar.DAY_OF_MONTH, day + 1)
+                    val date = calendar.time
+                    val cashFlow = state.dailyCashFlows.find { 
+                        val cashFlowCal = Calendar.getInstance().apply { time = it.date }
+                        cashFlowCal.get(Calendar.DAY_OF_MONTH) == day + 1
+                    }
+                    days.add(DayCell(day + 1, date, cashFlow))
+                }
+                
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(7),
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(days) { dayCell ->
+                        if (dayCell != null) {
+                            DayCellView(
+                                dayCell = dayCell,
+                                isSelected = state.selectedDate?.let { selected ->
+                                    val selCal = Calendar.getInstance().apply { time = selected }
+                                    selCal.get(Calendar.DAY_OF_MONTH) == dayCell.day
+                                } ?: false,
+                                onClick = { viewModel.selectDate(dayCell.date) }
+                            )
+                        } else {
+                            Box(modifier = Modifier.aspectRatio(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+data class DayCell(
+    val day: Int,
+    val date: Date,
+    val cashFlow: com.yourname.expensetracker.domain.cashflow.DailyCashFlow?
+)
+
+@Composable
+private fun DayCellView(
+    dayCell: DayCell,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val backgroundColor = when {
+        isSelected -> MaterialTheme.colorScheme.primaryContainer
+        dayCell.cashFlow == null -> MaterialTheme.colorScheme.surface
+        else -> getRiskColor(dayCell.cashFlow.riskLevel)
+    }
+    
+    Box(
+        modifier = Modifier
+            .aspectRatio(1f)
+            .background(backgroundColor, MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(4.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = dayCell.day.toString(),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            )
+            
+            if (dayCell.cashFlow != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "€${String.format("%.0f", dayCell.cashFlow.endingBalance)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    textAlign = TextAlign.Center
+                )
+                
+                // Mini indicators
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    if (dayCell.cashFlow.income.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .size(4.dp)
+                                .background(Color.Green, MaterialTheme.shapes.extraSmall)
+                        )
+                    }
+                    if (dayCell.cashFlow.expenses.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .size(4.dp)
+                                .background(Color.Red, MaterialTheme.shapes.extraSmall)
+                        )
+                    }
+                    if (dayCell.cashFlow.predictedRecurring.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .size(4.dp)
+                                .background(Color.Yellow, MaterialTheme.shapes.extraSmall)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun getRiskColor(riskLevel: CashFlowRiskLevel): Color {
+    return when (riskLevel) {
+        CashFlowRiskLevel.NONE -> Color(0xFFE8F5E9) // Light green
+        CashFlowRiskLevel.LOW -> Color(0xFFFFF9C4) // Light yellow
+        CashFlowRiskLevel.MEDIUM -> Color(0xFFFFE0B2) // Light orange
+        CashFlowRiskLevel.HIGH -> Color(0xFFFFCDD2) // Light red
+    }
+}
