@@ -33,7 +33,7 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         Warranty::class,
         ReturnWindow::class
     ],
-        version = 38,
+        version = 39,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -976,6 +976,33 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
                 database.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_return_windows_status ON return_windows (status)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 38 -> 39: Add receipt matching fields
+        val MIGRATION_38_39 = object : androidx.room.migration.Migration(38, 39) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Add match status columns to scanned_receipts
+                database.execSQL("""
+                    ALTER TABLE scanned_receipts 
+                    ADD COLUMN matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED'
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE scanned_receipts 
+                    ADD COLUMN matchConfidence REAL
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE scanned_receipts 
+                    ADD COLUMN suggestedExpenseId INTEGER
+                """.trimIndent())
+                
+                // Create index for match status queries
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus 
+                    ON scanned_receipts (matchStatus)
                 """.trimIndent())
             }
         }

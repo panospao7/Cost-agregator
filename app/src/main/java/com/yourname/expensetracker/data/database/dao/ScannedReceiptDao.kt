@@ -42,4 +42,13 @@ interface ScannedReceiptDao {
 
     @Query("UPDATE scanned_receipts SET itemCategorizationStatus = :status WHERE id = :receiptId")
     suspend fun updateCategorizationStatus(receiptId: Long, status: String)
+
+    @Query("SELECT * FROM scanned_receipts WHERE matchStatus = 'UNMATCHED' ORDER BY createdAt DESC")
+    suspend fun getUnmatchedReceipts(): List<ScannedReceipt>
+
+    @Query("SELECT * FROM scanned_receipts WHERE matchStatus = 'SUGGESTED' ORDER BY createdAt DESC")
+    suspend fun getReceiptsWithSuggestions(): List<ScannedReceipt>
+
+    @Query("SELECT * FROM scanned_receipts WHERE matchStatus = 'AUTO_MATCHED' OR matchStatus = 'MANUALLY_MATCHED' ORDER BY createdAt DESC")
+    suspend fun getMatchedReceipts(): List<ScannedReceipt>
 }

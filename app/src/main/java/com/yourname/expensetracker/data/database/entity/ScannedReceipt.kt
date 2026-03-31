@@ -13,6 +13,14 @@ enum class CategorizationStatus {
     SKIPPED       // User opted out
 }
 
+enum class MatchStatus {
+    UNMATCHED,      // Not yet matched
+    AUTO_MATCHED,   // Automatically matched with high confidence
+    SUGGESTED,      // Suggestion for manual review
+    MANUALLY_MATCHED, // User confirmed match
+    REJECTED        // User rejected all suggestions
+}
+
 @Entity(
     tableName = "scanned_receipts",
     foreignKeys = [
@@ -40,6 +48,9 @@ data class ScannedReceipt(
     val currency: String = "EUR",
     val confidence: Float,
     val expenseId: Long? = null,
+    val matchStatus: MatchStatus = MatchStatus.UNMATCHED,
+    val matchConfidence: Float? = null,
+    val suggestedExpenseId: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val itemCategorizationStatus: CategorizationStatus = CategorizationStatus.PENDING
 )

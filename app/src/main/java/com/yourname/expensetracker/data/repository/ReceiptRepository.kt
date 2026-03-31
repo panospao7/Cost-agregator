@@ -560,4 +560,69 @@ class ReceiptRepository @Inject constructor(
             ═════════════════════════════════════════
         """.trimIndent()
     }
+
+    // Receipt Matching Methods
+    suspend fun getUnmatchedReceipts(): List<com.yourname.expensetracker.data.database.entity.ScannedReceipt> {
+        return scannedReceiptDao.getUnmatchedReceipts()
+    }
+
+    suspend fun linkReceiptToExpense(
+        receiptId: Long,
+        expenseId: Long,
+        confidence: Double
+    ) {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return
+        val updated = receipt.copy(
+            expenseId = expenseId,
+            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.AUTO_MATCHED,
+            matchConfidence = confidence.toFloat()
+        )
+        scannedReceiptDao.update(updated)
+        timber.log.Timber.d("Linked receipt $receiptId to expense $expenseId with confidence $confidence")
+    }
+
+    suspend fun saveMatchSuggestion(
+        receiptId: Long,
+        suggestedExpenseId: Long,
+        confidence: Double
+    ) {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return
+        val updated = receipt.copy(
+            suggestedExpenseId = suggestedExpenseId,
+            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.SUGGESTED,
+            matchConfidence = confidence.toFloat()
+        )
+        scannedReceiptDao.update(updated)
+        timber.log.Timber.d("Saved match suggestion for receipt $receiptId: expense $suggestedExpenseId with confidence $confidence")
+    }
+
+    suspend fun approveMatchSuggestion(receiptId: Long) {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return
+        val suggestedId = receipt.suggestedExpenseId ?: return
+        
+        val updated = receipt.copy(
+            expenseId = suggestedId,
+            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.MANUALLY_MATCHED
+        )
+        scannedReceiptDao.update(updated)
+        timber.log.Timber.d("Manually approved match for receipt $receiptId to expense $suggestedId")
+    }
+
+    suspend fun rejectAllSuggestions(receiptId: Long) {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return
+        val updated = receipt.copy(
+            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.REJECTED,
+            suggestedExpenseId = null
+        )
+        scannedReceiptDao.update(updated)
+        timber.log.Timber.d("Rejected all match suggestions for receipt $receiptId")
+    }
+
+    suspend fun getReceiptsWithSuggestions(): List<com.yourname.expensetracker.data.database.entity.ScannedReceipt> {
+        return scannedReceiptDao.getReceiptsWithSuggestions()
+    }
+
+    suspend fun getExpenseById(id: Long): com.yourname.expensetracker.data.database.entity.Expense? {
+        return expenseDao.getById(id)
+    }
 }
