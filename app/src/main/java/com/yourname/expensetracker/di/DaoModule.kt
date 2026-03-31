@@ -102,4 +102,14 @@ object DaoModule {
     @Provides
     @Singleton
     fun provideReturnWindowDao(database: AppDatabase): ReturnWindowDao = database.returnWindowDao()
+
+    @Provides
+    @Singleton
+    fun provideSubscriptionPriceHistoryDao(database: AppDatabase): SubscriptionPriceHistoryDao = 
+        database.subscriptionPriceHistoryDao()
+
+    @Provides
+    @Singleton
+    fun provideSubscriptionUsageDao(database: AppDatabase): SubscriptionUsageDao = 
+        database.subscriptionUsageDao()
 }

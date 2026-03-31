@@ -31,9 +31,11 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         RecommendationEntity::class,
         ReceiptItemCategorization::class,
         Warranty::class,
-        ReturnWindow::class
+        ReturnWindow::class,
+        SubscriptionPriceHistory::class,
+        SubscriptionUsage::class
     ],
-        version = 39,
+        version = 40,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -61,6 +63,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun receiptItemCategorizationDao(): ReceiptItemCategorizationDao
     abstract fun warrantyDao(): WarrantyDao
     abstract fun returnWindowDao(): ReturnWindowDao
+    abstract fun subscriptionPriceHistoryDao(): SubscriptionPriceHistoryDao
+    abstract fun subscriptionUsageDao(): SubscriptionUsageDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -1003,6 +1007,82 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus 
                     ON scanned_receipts (matchStatus)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 39 -> 40: Advanced Subscription Management
+        val MIGRATION_39_40 = object : androidx.room.migration.Migration(39, 40) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // 1. Add subscription-specific columns to manual_recurring_expenses
+                database.execSQL("""
+                    ALTER TABLE manual_recurring_expenses 
+                    ADD COLUMN isSubscription INTEGER NOT NULL DEFAULT 1
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE manual_recurring_expenses 
+                    ADD COLUMN subscriptionCategory TEXT DEFAULT NULL
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE manual_recurring_expenses 
+                    ADD COLUMN usageTargetPerMonth INTEGER DEFAULT NULL
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE manual_recurring_expenses 
+                    ADD COLUMN cancellationUrl TEXT DEFAULT NULL
+                """.trimIndent())
+                
+                database.execSQL("""
+                    ALTER TABLE manual_recurring_expenses 
+                    ADD COLUMN isActive INTEGER NOT NULL DEFAULT 1
+                """.trimIndent())
+                
+                // 2. Create subscription_price_history table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS subscription_price_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        subscriptionId INTEGER NOT NULL,
+                        amount REAL NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        recordedAt INTEGER NOT NULL,
+                        changeReason TEXT,
+                        FOREIGN KEY(subscriptionId) REFERENCES manual_recurring_expenses(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_subscription_price_history_subscriptionId 
+                    ON subscription_price_history (subscriptionId)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_subscription_price_history_subscriptionId_recordedAt 
+                    ON subscription_price_history (subscriptionId, recordedAt)
+                """.trimIndent())
+                
+                // 3. Create subscription_usage table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS subscription_usage (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        subscriptionId INTEGER NOT NULL,
+                        usedAt INTEGER NOT NULL,
+                        usageDurationMinutes INTEGER,
+                        usageType TEXT,
+                        FOREIGN KEY(subscriptionId) REFERENCES manual_recurring_expenses(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_subscription_usage_subscriptionId 
+                    ON subscription_usage (subscriptionId)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_subscription_usage_subscriptionId_usedAt 
+                    ON subscription_usage (subscriptionId, usedAt)
                 """.trimIndent())
             }
         }
