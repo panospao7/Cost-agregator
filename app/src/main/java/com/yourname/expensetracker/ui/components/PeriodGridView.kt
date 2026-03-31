@@ -7,6 +7,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.domain.model.PeriodTotal
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -56,12 +58,12 @@ fun PeriodGridView(
                         style = MaterialTheme.typography.headlineMedium
                     )
                     Text(
-                        text = "No spending data yet",
+                        text = stringResource(R.string.totals_empty_title),
                         style = MaterialTheme.typography.bodyMedium,
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        text = "Add some expenses to see your totals",
+                        text = stringResource(R.string.totals_empty_subtitle),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextMuted
                     )

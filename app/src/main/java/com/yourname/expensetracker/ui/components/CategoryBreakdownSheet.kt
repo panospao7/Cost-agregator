@@ -54,7 +54,7 @@ fun CategoryBreakdownSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "CATEGORY BREAKDOWN",
+                    text = stringResource(R.string.category_breakdown_title),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     color = SemanticColors.TextSecondary
@@ -100,7 +100,7 @@ fun CategoryBreakdownSheet(
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = "SHOW ALL (${categories.size})",
+                        text = stringResource(R.string.category_breakdown_show_all_format, categories.size),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Medium
                     )

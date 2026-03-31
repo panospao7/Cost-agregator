@@ -8,6 +8,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -24,7 +26,7 @@ fun PeriodNavigationBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "SPENDING TOTALS",
+                text = stringResource(R.string.totals_nav_title),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = SemanticColors.TextSecondary
@@ -36,7 +38,7 @@ fun PeriodNavigationBar(
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "← Back",
+                        text = stringResource(R.string.totals_nav_back),
                         style = MaterialTheme.typography.labelMedium,
                         color = SemanticColors.PrimaryIndigo
                     )

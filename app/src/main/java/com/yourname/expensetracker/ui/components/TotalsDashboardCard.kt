@@ -51,7 +51,7 @@ fun TotalsDashboardCard(
     ) {
         // Title
         Text(
-            text = "SPENDING TOTALS",
+            text = stringResource(R.string.totals_spending_totals),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             color = SemanticColors.TextSecondary,
@@ -115,11 +115,19 @@ private fun CurrentPeriodSummary(
     total: Double,
     status: PeriodStatus
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val statusColor = when (status) {
         PeriodStatus.UNDER_AVERAGE -> SemanticColors.SuccessGreen
         PeriodStatus.OVER_AVERAGE -> SemanticColors.DangerRed
         PeriodStatus.CURRENT -> SemanticColors.PrimaryIndigo
         PeriodStatus.NO_DATA -> SemanticColors.TextSecondary
+    }
+    
+    val statusText = when (status) {
+        PeriodStatus.UNDER_AVERAGE -> stringResource(R.string.totals_status_under_average)
+        PeriodStatus.OVER_AVERAGE -> stringResource(R.string.totals_status_over_average)
+        PeriodStatus.CURRENT -> stringResource(R.string.totals_status_current)
+        PeriodStatus.NO_DATA -> stringResource(R.string.totals_status_no_data)
     }
 
     Surface(
@@ -148,12 +156,7 @@ private fun CurrentPeriodSummary(
                 )
             }
             Text(
-                text = when (status) {
-                    PeriodStatus.UNDER_AVERAGE -> "Under Average"
-                    PeriodStatus.OVER_AVERAGE -> "Over Average"
-                    PeriodStatus.CURRENT -> "Current"
-                    PeriodStatus.NO_DATA -> "No Data"
-                },
+                text = statusText,
                 style = MaterialTheme.typography.labelMedium,
                 color = statusColor
             )
@@ -167,10 +170,10 @@ private fun PeriodLegend() {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly
     ) {
-        LegendItem(color = SemanticColors.SuccessGreen, label = "Under")
-        LegendItem(color = SemanticColors.DangerRed, label = "Over")
-        LegendItem(color = SemanticColors.PrimaryIndigo, label = "Current")
-        LegendItem(color = SemanticColors.GlassBorder.copy(alpha = 0.5f), label = "No Data")
+        LegendItem(color = SemanticColors.SuccessGreen, label = stringResource(R.string.totals_legend_under))
+        LegendItem(color = SemanticColors.DangerRed, label = stringResource(R.string.totals_legend_over))
+        LegendItem(color = SemanticColors.PrimaryIndigo, label = stringResource(R.string.totals_legend_current))
+        LegendItem(color = SemanticColors.GlassBorder.copy(alpha = 0.5f), label = stringResource(R.string.totals_legend_no_data))
     }
 }
 

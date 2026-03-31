@@ -380,6 +380,23 @@
     <string name="period_overview_week">Weekly Overview</string>
     <string name="period_overview_day">Daily Overview</string>
     
+    <!-- Totals Dashboard -->
+    <string name="totals_spending_totals">SPENDING TOTALS</string>
+    <string name="totals_status_under_average">Under Average</string>
+    <string name="totals_status_over_average">Over Average</string>
+    <string name="totals_status_current">Current</string>
+    <string name="totals_status_no_data">No Data</string>
+    <string name="totals_legend_under">Under</string>
+    <string name="totals_legend_over">Over</string>
+    <string name="totals_legend_current">Current</string>
+    <string name="totals_legend_no_data">No Data</string>
+    <string name="totals_nav_title">SPENDING TOTALS</string>
+    <string name="totals_nav_back">← Back</string>
+    <string name="totals_empty_title">No spending data yet</string>
+    <string name="totals_empty_subtitle">Add some expenses to see your totals</string>
+    <string name="category_breakdown_title">CATEGORY BREAKDOWN</string>
+    <string name="category_breakdown_show_all_format">SHOW ALL (%1$d)</string>
+    
     <!-- Budget Analytics -->
     <string name="budget_block_party_title">BUDGET BLOCK PARTY</string>
     <string name="budget_target_breakdown">TARGET BREAKDOWN</string>
