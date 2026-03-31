@@ -69,4 +69,10 @@ object ServiceModule {
     fun provideWidgetStyleRepository(
         impl: WidgetStyleRepositoryImpl
     ): WidgetStyleRepository = impl
+
+    @Provides
+    @Singleton
+    fun provideStringDistanceUtils(): com.yourname.expensetracker.domain.util.StringDistanceUtils {
+        return com.yourname.expensetracker.domain.util.StringDistanceUtils
+    }
 }
