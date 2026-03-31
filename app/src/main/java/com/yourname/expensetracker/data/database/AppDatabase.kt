@@ -38,9 +38,10 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         ExchangeRate::class,
         ExpenseGroup::class,
         GroupMember::class,
-        GroupExpense::class
+        GroupExpense::class,
+        BudgetForecast::class
     ],
-        version = 43,
+        version = 44,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -75,6 +76,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun expenseGroupDao(): ExpenseGroupDao
     abstract fun groupMemberDao(): GroupMemberDao
     abstract fun groupExpenseDao(): GroupExpenseDao
+    abstract fun budgetForecastDao(): BudgetForecastDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -1307,6 +1309,48 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_group_expenses_groupId_date 
                     ON group_expenses (groupId, date)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 43 -> 44: Budget Forecasting with AI
+        val MIGRATION_43_44 = object : androidx.room.migration.Migration(43, 44) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create budget_forecasts table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS budget_forecasts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        budgetId INTEGER NOT NULL,
+                        forecastDate INTEGER NOT NULL,
+                        targetPeriodStart INTEGER NOT NULL,
+                        targetPeriodEnd INTEGER NOT NULL,
+                        predictedSpending REAL NOT NULL,
+                        predictedRemaining REAL NOT NULL,
+                        confidenceScore REAL NOT NULL,
+                        riskLevel TEXT NOT NULL,
+                        overspendProbability REAL NOT NULL,
+                        recommendationsJson TEXT,
+                        actualSpending REAL,
+                        forecastAccuracy REAL,
+                        isActive INTEGER NOT NULL DEFAULT 1,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_budget_forecasts_budgetId 
+                    ON budget_forecasts (budgetId)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_budget_forecasts_forecastDate 
+                    ON budget_forecasts (forecastDate)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_budget_forecasts_isActive 
+                    ON budget_forecasts (isActive)
                 """.trimIndent())
             }
         }

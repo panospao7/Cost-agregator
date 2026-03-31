@@ -60,7 +60,8 @@ object DatabaseModule {
             AppDatabase.MIGRATION_39_40,
             AppDatabase.MIGRATION_40_41,
             AppDatabase.MIGRATION_41_42,
-            AppDatabase.MIGRATION_42_43
+            AppDatabase.MIGRATION_42_43,
+            AppDatabase.MIGRATION_43_44
         )
             .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5)
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)

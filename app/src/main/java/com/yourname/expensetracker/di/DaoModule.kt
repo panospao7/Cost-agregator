@@ -137,4 +137,9 @@ object DaoModule {
     @Singleton
     fun provideGroupExpenseDao(database: AppDatabase): GroupExpenseDao = 
         database.groupExpenseDao()
+
+    @Provides
+    @Singleton
+    fun provideBudgetForecastDao(database: AppDatabase): BudgetForecastDao = 
+        database.budgetForecastDao()
 }
