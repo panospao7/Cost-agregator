@@ -1,0 +1,88 @@
+package com.yourname.expensetracker.ui.screens.warranty
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.Warranty
+import com.yourname.expensetracker.data.database.entity.WarrantyStatus
+import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+data class WarrantyTrackerState(
+    val warranties: List<Warranty> = emptyList(),
+    val isLoading: Boolean = false,
+    val activeCount: Int = 0,
+    val expiringSoonCount: Int = 0,
+    val totalProtectedValue: Double = 0.0,
+    val selectedFilter: WarrantyStatus? = null
+)
+
+@HiltViewModel
+class WarrantyTrackerViewModel @Inject constructor(
+    private val warrantyRepository: WarrantyTrackerRepository
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(WarrantyTrackerState())
+    val state: StateFlow<WarrantyTrackerState> = _state.asStateFlow()
+
+    init {
+        loadWarranties()
+        loadStats()
+    }
+
+    private fun loadWarranties() {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true) }
+            
+            warrantyRepository.getAllWarranties()
+                .collect { warranties ->
+                    _state.update { 
+                        it.copy(
+                            warranties = warranties,
+                            isLoading = false
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadStats() {
+        viewModelScope.launch {
+            val activeCount = warrantyRepository.getActiveWarrantyCount()
+            val expiringSoon = warrantyRepository.getWarrantiesExpiringSoon(30).size
+            val protectedValue = warrantyRepository.getTotalProtectedValue()
+            
+            _state.update {
+                it.copy(
+                    activeCount = activeCount,
+                    expiringSoonCount = expiringSoon,
+                    totalProtectedValue = protectedValue
+                )
+            }
+        }
+    }
+
+    fun filterByStatus(status: WarrantyStatus?) {
+        _state.update { it.copy(selectedFilter = status) }
+    }
+
+    fun markAsClaimed(warrantyId: Long) {
+        viewModelScope.launch {
+            warrantyRepository.markWarrantyAsClaimed(warrantyId)
+            loadStats()
+        }
+    }
+
+    fun deleteWarranty(warranty: Warranty) {
+        viewModelScope.launch {
+            warrantyRepository.deleteWarranty(warranty)
+            loadStats()
+        }
+    }
+
+    fun refresh() {
+        loadStats()
+    }
+}

@@ -196,5 +196,11 @@ abstract class AiModule {
         @Singleton
         fun provideCloudReceiptItemCategorizationService(): 
             CloudReceiptItemCategorizationService = CloudReceiptItemCategorizationService()
+
+        @Provides
+        @Singleton
+        fun provideCloudWarrantyExtractionService(): 
+            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService = 
+            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService()
     }
 }

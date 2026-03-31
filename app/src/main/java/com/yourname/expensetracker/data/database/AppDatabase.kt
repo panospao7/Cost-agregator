@@ -29,9 +29,11 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         AiChatSessionEntity::class,
         AiChatMessageEntity::class,
         RecommendationEntity::class,
-        ReceiptItemCategorization::class
+        ReceiptItemCategorization::class,
+        Warranty::class,
+        ReturnWindow::class
     ],
-        version = 37,
+        version = 38,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -57,6 +59,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiChatMessageDao(): AiChatMessageDao
     abstract fun recommendationDao(): RecommendationDao
     abstract fun receiptItemCategorizationDao(): ReceiptItemCategorizationDao
+    abstract fun warrantyDao(): WarrantyDao
+    abstract fun returnWindowDao(): ReturnWindowDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -891,6 +895,87 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("""
                     ALTER TABLE scanned_receipts 
                     ADD COLUMN itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING'
+                """.trimIndent())
+            }
+        }
+
+        // Migration 37 -> 38: Add warranty and return window tables
+        val MIGRATION_37_38 = object : androidx.room.migration.Migration(37, 38) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create warranties table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS warranties (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        receiptId INTEGER NOT NULL,
+                        expenseId INTEGER,
+                        productName TEXT NOT NULL,
+                        merchantName TEXT NOT NULL,
+                        purchaseDate INTEGER NOT NULL,
+                        warrantyDurationMonths INTEGER NOT NULL,
+                        warrantyEndDate INTEGER NOT NULL,
+                        warrantyType TEXT NOT NULL DEFAULT 'MANUFACTURER',
+                        supportPhone TEXT,
+                        supportEmail TEXT,
+                        warrantyDocumentUrl TEXT,
+                        notes TEXT,
+                        status TEXT NOT NULL DEFAULT 'ACTIVE',
+                        claimedAt INTEGER,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+                        FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+
+                // Create indices for warranties
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_warranties_receiptId ON warranties (receiptId)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_warranties_expenseId ON warranties (expenseId)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_warranties_warrantyEndDate ON warranties (warrantyEndDate)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_warranties_status ON warranties (status)
+                """.trimIndent())
+
+                // Create return_windows table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS return_windows (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        receiptId INTEGER NOT NULL,
+                        expenseId INTEGER,
+                        productName TEXT NOT NULL,
+                        merchantName TEXT NOT NULL,
+                        purchaseDate INTEGER NOT NULL,
+                        returnDays INTEGER NOT NULL,
+                        returnDeadline INTEGER NOT NULL,
+                        returnPolicyUrl TEXT,
+                        returnConditions TEXT,
+                        status TEXT NOT NULL DEFAULT 'RETURNABLE',
+                        returnedAt INTEGER,
+                        refundAmount REAL,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+                        FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+
+                // Create indices for return_windows
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_return_windows_receiptId ON return_windows (receiptId)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_return_windows_expenseId ON return_windows (expenseId)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_return_windows_returnDeadline ON return_windows (returnDeadline)
+                """.trimIndent())
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_return_windows_status ON return_windows (status)
                 """.trimIndent())
             }
         }

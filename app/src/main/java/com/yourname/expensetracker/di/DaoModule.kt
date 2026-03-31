@@ -94,4 +94,12 @@ object DaoModule {
     @Singleton
     fun provideReceiptItemCategorizationDao(database: AppDatabase): ReceiptItemCategorizationDao = 
         database.receiptItemCategorizationDao()
+
+    @Provides
+    @Singleton
+    fun provideWarrantyDao(database: AppDatabase): WarrantyDao = database.warrantyDao()
+
+    @Provides
+    @Singleton
+    fun provideReturnWindowDao(database: AppDatabase): ReturnWindowDao = database.returnWindowDao()
 }
