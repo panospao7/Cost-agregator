@@ -6,6 +6,8 @@ import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
 import com.yourname.expensetracker.domain.intelligence.DuplicateCheckResult
+import com.yourname.expensetracker.domain.ai.service.SemanticDuplicateDetector
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -24,7 +26,8 @@ class DuplicateLogicConsistencyIntegrationTest {
 
     @Before
     fun setup() {
-        deduplication = CrossSourceDeduplication()
+        val semanticDetector = mockk<SemanticDuplicateDetector>(relaxed = true)
+        deduplication = CrossSourceDeduplication(semanticDetector)
     }
 
     @Test

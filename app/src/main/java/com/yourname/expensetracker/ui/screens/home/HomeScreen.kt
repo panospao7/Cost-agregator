@@ -50,6 +50,8 @@ import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending as DomainCategorySpending
+import com.yourname.expensetracker.domain.widget.model.StyledWidgets
+import com.yourname.expensetracker.domain.widget.model.WidgetStyle
 import com.yourname.expensetracker.service.NavigationAction
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -197,12 +199,21 @@ fun HomeScreen(
                     },
                     contentType = { it.javaClass.simpleName }
                 ) { widget ->
+                    val widgetId = HomeViewModel.getWidgetId(widget)
+                    val widgetStyle = if (widgetId in StyledWidgets.all) {
+                        state.widgetStyles.getStyle(widgetId)
+                    } else null
+                    
                     WidgetWrapper(
                         widget = widget,
                         isEditMode = state.isEditMode,
-                        onMoveUp = { viewModel.moveWidget(HomeViewModel.getWidgetId(widget), true) },
-                        onMoveDown = { viewModel.moveWidget(HomeViewModel.getWidgetId(widget), false) },
-                        onToggleVisibility = { viewModel.toggleWidgetVisibility(HomeViewModel.getWidgetId(widget)) }
+                        widgetStyle = widgetStyle,
+                        onMoveUp = { viewModel.moveWidget(widgetId, true) },
+                        onMoveDown = { viewModel.moveWidget(widgetId, false) },
+                        onToggleVisibility = { viewModel.toggleWidgetVisibility(widgetId) },
+                        onToggleStyle = if (widgetId in StyledWidgets.all) {
+                            { viewModel.toggleWidgetStyle(widgetId) }
+                        } else null
                     ) {
                         when (widget) {
                             is DashboardWidget.SafeToSpend -> {
@@ -241,26 +252,50 @@ fun HomeScreen(
                                 }
                             }
                             is DashboardWidget.BudgetBlockParty -> {
-                                BudgetBlockPartyCard(
-                                    days = widget.days,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    onNavigateToDay = { dateMs ->
-                                        // Create a date range covering the full day
-                                        val cal = Calendar.getInstance().apply {
-                                            timeInMillis = dateMs
-                                            set(Calendar.HOUR_OF_DAY, 0)
-                                            set(Calendar.MINUTE, 0)
-                                            set(Calendar.SECOND, 0)
-                                            set(Calendar.MILLISECOND, 0)
+                                val widgetId = HomeViewModel.getWidgetId(widget)
+                                val widgetStyle = state.widgetStyles.getStyle(widgetId)
+                                
+                                if (widgetStyle == WidgetStyle.RETRO) {
+                                    RetroBudgetBlockPartyCard(
+                                        days = widget.days,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onNavigateToDay = { dateMs ->
+                                            val cal = Calendar.getInstance().apply {
+                                                timeInMillis = dateMs
+                                                set(Calendar.HOUR_OF_DAY, 0)
+                                                set(Calendar.MINUTE, 0)
+                                                set(Calendar.SECOND, 0)
+                                                set(Calendar.MILLISECOND, 0)
+                                            }
+                                            val startOfDay = cal.timeInMillis
+                                            cal.add(Calendar.DAY_OF_MONTH, 1)
+                                            val endOfDay = cal.timeInMillis - 1
+                                            onNavigateToTransactions(
+                                                TransactionFilter(dateRange = startOfDay to endOfDay)
+                                            )
                                         }
-                                        val startOfDay = cal.timeInMillis
-                                        cal.add(Calendar.DAY_OF_MONTH, 1)
-                                        val endOfDay = cal.timeInMillis - 1
-                                        onNavigateToTransactions(
-                                            TransactionFilter(dateRange = startOfDay to endOfDay)
-                                        )
-                                    }
-                                )
+                                    )
+                                } else {
+                                    BudgetBlockPartyCard(
+                                        days = widget.days,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onNavigateToDay = { dateMs ->
+                                            val cal = Calendar.getInstance().apply {
+                                                timeInMillis = dateMs
+                                                set(Calendar.HOUR_OF_DAY, 0)
+                                                set(Calendar.MINUTE, 0)
+                                                set(Calendar.SECOND, 0)
+                                                set(Calendar.MILLISECOND, 0)
+                                            }
+                                            val startOfDay = cal.timeInMillis
+                                            cal.add(Calendar.DAY_OF_MONTH, 1)
+                                            val endOfDay = cal.timeInMillis - 1
+                                            onNavigateToTransactions(
+                                                TransactionFilter(dateRange = startOfDay to endOfDay)
+                                            )
+                                        }
+                                    )
+                                }
                             }
                             is DashboardWidget.SpendingPaceWidget -> {
                                 BentoCard {
@@ -422,15 +457,42 @@ fun HomeScreen(
                                 }
                             }
                             is DashboardWidget.TopCategories -> {
-                                BentoCard {
-                                    Text(
-                                        "TOP CATEGORIES", 
-                                        style = MaterialTheme.typography.labelSmall, 
-                                        fontWeight = FontWeight.Bold,
-                                        color = SemanticColors.TextSecondary
+                                val widgetId = HomeViewModel.getWidgetId(widget)
+                                val widgetStyle = state.widgetStyles.getStyle(widgetId)
+                                
+                                if (widgetStyle == WidgetStyle.RETRO) {
+                                    // Get recent transactions for this month to show in category dialog
+                                    val monthRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis())
+                                    val recentExpenses = remember { state.widgets.filterIsInstance<DashboardWidget.RecentTransactions>().firstOrNull()?.expenses ?: emptyList() }
+                                    
+                                    RetroTopCategoriesCard(
+                                        categories = widget.categories,
+                                        categoryTrends = state.categoryTrends,
+                                        transactions = recentExpenses,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onViewAllTransactions = { 
+                                            // Navigate to transactions filtered by top category
+                                            if (widget.categories.isNotEmpty()) {
+                                                onNavigateToTransactions(
+                                                    TransactionFilter(
+                                                        dateRange = monthRange,
+                                                        categoryId = widget.categories.first().category.id
+                                                    )
+                                                )
+                                            }
+                                        }
                                     )
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    widget.categories.forEach { CategorySpendingRow(it) }
+                                } else {
+                                    BentoCard {
+                                        Text(
+                                            "TOP CATEGORIES", 
+                                            style = MaterialTheme.typography.labelSmall, 
+                                            fontWeight = FontWeight.Bold,
+                                            color = SemanticColors.TextSecondary
+                                        )
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        widget.categories.forEach { CategorySpendingRow(it) }
+                                    }
                                 }
                             }
                             is DashboardWidget.RecentTransactions -> {
@@ -474,20 +536,47 @@ fun HomeScreen(
                                 )
                             }
                             is DashboardWidget.TotalsDashboard -> {
+                                val widgetId = HomeViewModel.getWidgetId(widget)
+                                val widgetStyle = state.widgetStyles.getStyle(widgetId)
                                 val totalsState by viewModel.totalsDrillDownState.collectAsState()
-                                TotalsDashboardCard(
-                                    periods = totalsState.periodTotals,
-                                    currentLevel = totalsState.currentLevel.toPeriodLevel(),
-                                    selectedPeriod = totalsState.selectedPeriod,
-                                    isLoading = totalsState.isLoading,
-                                    onPeriodSelected = { viewModel.drillDownToPeriod(it) },
-                                    onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
-                                    onShowCategoryBreakdown = { 
-                                        viewModel.loadCategoryBreakdownForCurrentPeriod()
-                                        showCategoryBreakdown = true 
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                
+                                if (widgetStyle == WidgetStyle.RETRO) {
+                                    RetroTotalsDashboardCard(
+                                        periods = totalsState.periodTotals,
+                                        currentLevel = totalsState.currentLevel.toPeriodLevel(),
+                                        selectedPeriod = totalsState.selectedPeriod,
+                                        isLoading = totalsState.isLoading,
+                                        averageAmount = if (totalsState.periodTotals.isNotEmpty()) {
+                                            totalsState.periodTotals.map { it.totalAmount }.average()
+                                        } else 0.0,
+                                        onPeriodSelected = { viewModel.drillDownToPeriod(it) },
+                                        onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
+                                        onEnterStage = { period ->
+                                            // Drill down into the selected period
+                                            viewModel.drillDownToPeriod(period)
+                                        },
+                                        onViewAnalysis = { period ->
+                                            // Load breakdown for this specific period
+                                            viewModel.loadCategoryBreakdownForPeriod(period)
+                                            showCategoryBreakdown = true 
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                } else {
+                                    TotalsDashboardCard(
+                                        periods = totalsState.periodTotals,
+                                        currentLevel = totalsState.currentLevel.toPeriodLevel(),
+                                        selectedPeriod = totalsState.selectedPeriod,
+                                        isLoading = totalsState.isLoading,
+                                        onPeriodSelected = { viewModel.drillDownToPeriod(it) },
+                                        onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
+                                        onShowCategoryBreakdown = { 
+                                            viewModel.loadCategoryBreakdownForCurrentPeriod()
+                                            showCategoryBreakdown = true 
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
                             }
                             is DashboardWidget.FinancialRunway -> {
                                 FinancialRunwayCard(
@@ -591,11 +680,25 @@ fun HomeScreen(
 
         if (showCategoryBreakdown) {
             val totalsState by viewModel.totalsDrillDownState.collectAsState()
-            CategoryBreakdownSheet(
-                periodLabel = totalsState.selectedPeriod?.periodLabel ?: "Period",
-                categories = totalsState.categoryBreakdown,
-                onDismiss = { showCategoryBreakdown = false }
-            )
+            // Check if any retro widget is active to determine breakdown style
+            val totalsDashboardWidget = state.widgets.filterIsInstance<DashboardWidget.TotalsDashboard>().firstOrNull()
+            val isRetroStyle = totalsDashboardWidget?.let { 
+                state.widgetStyles.getStyle(HomeViewModel.getWidgetId(it)) == WidgetStyle.RETRO 
+            } ?: false
+            
+            if (isRetroStyle) {
+                RetroCategoryBreakdownSheet(
+                    periodLabel = totalsState.selectedPeriod?.periodLabel ?: "Period",
+                    categories = totalsState.categoryBreakdown,
+                    onDismiss = { showCategoryBreakdown = false }
+                )
+            } else {
+                CategoryBreakdownSheet(
+                    periodLabel = totalsState.selectedPeriod?.periodLabel ?: "Period",
+                    categories = totalsState.categoryBreakdown,
+                    onDismiss = { showCategoryBreakdown = false }
+                )
+            }
         }
     }
 }
@@ -604,9 +707,11 @@ fun HomeScreen(
 fun WidgetWrapper(
     widget: DashboardWidget,
     isEditMode: Boolean,
+    widgetStyle: WidgetStyle?,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onToggleVisibility: () -> Unit,
+    onToggleStyle: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -636,6 +741,26 @@ fun WidgetWrapper(
                     ) {
                         Icon(Icons.Rounded.VisibilityOff, contentDescription = null, tint = Color.White)
                     }
+                    
+                    // Style toggle button for styled widgets
+                    if (onToggleStyle != null) {
+                        IconButton(
+                            onClick = onToggleStyle,
+                            modifier = Modifier.semantics { 
+                                contentDescription = "Toggle widget style to ${if (widgetStyle == WidgetStyle.MODERN) "retro" else "modern"}" 
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (widgetStyle == WidgetStyle.MODERN) 
+                                    Icons.Rounded.VideogameAsset 
+                                else 
+                                    Icons.Rounded.CropSquare,
+                                contentDescription = null, 
+                                tint = if (widgetStyle == WidgetStyle.RETRO) Color(0xFF39FF14) else Color.White
+                            )
+                        }
+                    }
+                    
                     IconButton(
                         onClick = onMoveDown,
                         modifier = Modifier.semantics { contentDescription = "Move widget down" }

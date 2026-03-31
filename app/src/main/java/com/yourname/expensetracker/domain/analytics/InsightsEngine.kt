@@ -49,22 +49,35 @@ class InsightsEngine @Inject constructor(
 
         val categoryMap = categories.associateBy { it.id }
 
-        // Start all independent queries in parallel
-        val monthlyComparisonDeferred = async { buildMonthlyComparison(currentMonth, previousMonth) }
-        val categoryInsightsDeferred = async { buildCategoryInsights(currentMonth, previousMonth, categoryMap, allExpenses) }
-        val topMerchantsDeferred = async { buildMerchantInsights(allExpenses) }
-        val spendingPaceDeferred = async { buildSpendingPace(currentMonth, previousMonth, allExpenses) }
-        val anomaliesDeferred = async { findAnomalies(currentMonth, categoryMap, allExpenses) }
-        // Use RecurringExpenseEngine directly
-        val recurringExpensesDeferred = async { findRecurringExpenses(allExpenses) }
+        // Start all independent queries in parallel with error handling
+        val monthlyComparisonDeferred = async { 
+            try { buildMonthlyComparison(currentMonth, previousMonth) } catch (e: Exception) { null }
+        }
+        val categoryInsightsDeferred = async { 
+            try { buildCategoryInsights(currentMonth, previousMonth, categoryMap, allExpenses) } catch (e: Exception) { null }
+        }
+        val topMerchantsDeferred = async { 
+            try { buildMerchantInsights(allExpenses) } catch (e: Exception) { null }
+        }
+        val spendingPaceDeferred = async { 
+            try { buildSpendingPace(currentMonth, previousMonth, allExpenses) } catch (e: Exception) { null }
+        }
+        val anomaliesDeferred = async { 
+            try { findAnomalies(currentMonth, categoryMap, allExpenses) } catch (e: Exception) { null }
+        }
+        val recurringExpensesDeferred = async { 
+            try { findRecurringExpenses(allExpenses) } catch (e: Exception) { emptyList() }
+        }
         
         val threeMonthsAgo = getMonthPeriod(now, -2)
-        val dayOfWeekPatternDeferred = async { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs) }
+        val dayOfWeekPatternDeferred = async { 
+            try { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs) } catch (e: Exception) { null }
+        }
         val largestTransactionDeferred = async { 
-            expenseRepository.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) 
+            try { expenseRepository.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) } catch (e: Exception) { null }
         }
 
-        // Await all results
+        // Await all results with error resilience
         val monthlyComparison = monthlyComparisonDeferred.await()
         val categoryInsights = categoryInsightsDeferred.await()
         val topMerchants = topMerchantsDeferred.await()
@@ -90,13 +103,31 @@ class InsightsEngine @Inject constructor(
 
         InsightsSnapshot(
             currentMonth = currentMonth,
-            monthlyComparison = monthlyComparison,
-            categoryInsights = categoryInsights,
-            topMerchants = topMerchants,
-            spendingPace = spendingPace,
-            anomalies = anomalies,
+            monthlyComparison = monthlyComparison ?: MonthlyComparison(
+                currentMonth = currentMonth,
+                previousMonth = null,
+                currentTotal = 0.0,
+                previousTotal = null,
+                changeAmount = null,
+                changePercentage = null,
+                currentCount = 0,
+                previousCount = null
+            ),
+            categoryInsights = categoryInsights ?: emptyList(),
+            topMerchants = topMerchants ?: emptyList(),
+            spendingPace = spendingPace ?: SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = 0,
+                daysInMonth = 30,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0f,
+                paceStatus = PaceStatus.NO_BASELINE
+            ),
+            anomalies = anomalies ?: emptyList(),
             recurringExpenses = recurringExpenses,
-            dayOfWeekPattern = dayOfWeekPattern,
+            dayOfWeekPattern = dayOfWeekPattern ?: emptyList(),
             largestTransaction = largestTransaction,
             averageTransactionSize = avgTxSize,
             medianTransactionSize = medianTxSize,

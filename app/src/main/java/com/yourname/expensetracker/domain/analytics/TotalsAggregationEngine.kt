@@ -125,6 +125,34 @@ class TotalsAggregationEngine @Inject constructor(
         }
     }
 
+    /**
+     * Get daily totals for a specific date range.
+     * Used for drill-down to prevent duplicate days from week boundary mismatches.
+     */
+    suspend fun getDailyTotalsForRange(startMs: Long, endMs: Long): List<PeriodTotal> = withContext(Dispatchers.IO) {
+        try {
+            val dailyTotals = expenseRepository.getDailyTotalsWithDatesForPeriod(startMs, endMs)
+            val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
+
+            dailyTotals.map { daily ->
+                val date = Date(daily.startDate)
+                PeriodTotal(
+                    periodLabel = DAY_FORMAT.format(date),
+                    periodKey = daily.dayEpoch.toString(),
+                    totalAmount = daily.total,
+                    transactionCount = daily.txCount,
+                    periodType = PeriodType.DAY,
+                    startDateMs = daily.startDate,
+                    endDateMs = daily.endDate,
+                    status = getPeriodStatus(daily.total, average)
+                )
+            }
+        } catch (e: Exception) {
+            Timber.tag("TotalsAggregationEngine").e(e, "Error getting daily totals for range $startMs to $endMs")
+            emptyList()
+        }
+    }
+
     suspend fun getYearlyTotals(): List<PeriodTotal> = withContext(Dispatchers.IO) {
         try {
             val now = timeProvider.now()

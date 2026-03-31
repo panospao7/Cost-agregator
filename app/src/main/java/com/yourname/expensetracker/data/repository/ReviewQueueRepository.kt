@@ -111,19 +111,19 @@ class ReviewQueueRepository @Inject constructor(
             resolvedAddress = finalAddress
         )
 
-        // Wrap all DB mutations in a real Room transaction
+        // Wrap all DB mutations in a single Room transaction for atomicity
         val expenseId = database.withTransaction {
-            expenseDao.insertAtomic(expense)
-        }
-
-        if (expenseId > 0) {
-            database.withTransaction {
+            // Insert expense
+            val id = expenseDao.insertAtomic(expense)
+            
+            if (id > 0) {
+                // All related updates must succeed together
                 review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
                 sourceStatsDao.incrementAccepted(review.packageName)
                 sourceStatsDao.decrementPending(review.packageName)
 
                 review.scannedReceiptId?.let { receiptId ->
-                    scannedReceiptDao.linkToExpense(receiptId, expenseId)
+                    scannedReceiptDao.linkToExpense(receiptId, id)
                 }
 
                 pendingReviewDao.updateStatus(reviewId, "APPROVED")
@@ -149,7 +149,11 @@ class ReviewQueueRepository @Inject constructor(
                 )
                 userCorrectionDao.insert(correction)
             }
+            
+            id // Return expenseId from transaction
+        }
 
+        if (expenseId > 0) {
             // External operations outside DB transaction
             budgetMonitor.checkBudgets()
 

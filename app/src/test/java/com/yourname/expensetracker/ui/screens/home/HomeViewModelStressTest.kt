@@ -134,21 +134,28 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         coEvery { categoryRepository.ensureDefaultCategories() } just Runs
         coEvery { plannedExpenseRepository.addPlannedExpense(any()) } returns 1L
 
+        val expenseRepository = mockk<com.yourname.expensetracker.data.repository.ExpenseRepository>(relaxed = true)
+        val widgetStyleRepository = mockk<com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository>(relaxed = true)
+        val advancedAnalyticsEngine = mockk<com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine>(relaxed = true)
+
         viewModel = HomeViewModel(
             dashboardDataProvider,
             dashboardRepository,
             categoryRepository,
             plannedExpenseRepository,
             analyticsRepository,
+            expenseRepository,
             computeDashboardWidgetsUseCase,
             aiSettingsRepository,
             aiArtifactRepository,
             aiEnvironmentMonitor,
+            widgetStyleRepository,
             timeProvider,
             recommendationStateManager,
             navigationTargetResolver,
             recommendationDismissalHandler,
-            totalsAggregationEngine
+            totalsAggregationEngine,
+            advancedAnalyticsEngine
         )
     }
 
@@ -221,21 +228,28 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             )
         )
 
+        val expenseRepository = mockk<com.yourname.expensetracker.data.repository.ExpenseRepository>(relaxed = true)
+        val widgetStyleRepository = mockk<com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository>(relaxed = true)
+        val advancedAnalyticsEngine = mockk<com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine>(relaxed = true)
+
         viewModel = HomeViewModel(
             dashboardDataProvider,
             dashboardRepository,
             categoryRepository,
             plannedExpenseRepository,
             analyticsRepository,
+            expenseRepository,
             computeDashboardWidgetsUseCase,
             aiSettingsRepository,
             aiArtifactRepository,
             aiEnvironmentMonitor,
+            widgetStyleRepository,
             timeProvider,
             recommendationStateManager,
             navigationTargetResolver,
             recommendationDismissalHandler,
-            totalsAggregationEngine
+            totalsAggregationEngine,
+            advancedAnalyticsEngine
         )
 
         viewModel.dashboard.test {
@@ -447,21 +461,27 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
     @Test
     fun `stress - ensureDefaultCategories throws - viewModel continues`() = runTest(testDispatcher) {
         coEvery { categoryRepository.ensureDefaultCategories() } throws RuntimeException("DB error")
+        val expenseRepository = mockk<com.yourname.expensetracker.data.repository.ExpenseRepository>(relaxed = true)
+        val widgetStyleRepository = mockk<com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository>(relaxed = true)
+        val advancedAnalyticsEngine = mockk<com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine>(relaxed = true)
         val vm = HomeViewModel(
             dashboardDataProvider,
             dashboardRepository,
             categoryRepository,
             plannedExpenseRepository,
             analyticsRepository,
+            expenseRepository,
             computeDashboardWidgetsUseCase,
             aiSettingsRepository,
             aiArtifactRepository,
             aiEnvironmentMonitor,
+            widgetStyleRepository,
             timeProvider,
             recommendationStateManager,
             navigationTargetResolver,
             recommendationDismissalHandler,
-            totalsAggregationEngine
+            totalsAggregationEngine,
+            advancedAnalyticsEngine
         )
         advanceUntilIdle()
         assertNotNull(vm.dashboard)

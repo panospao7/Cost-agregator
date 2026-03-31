@@ -14,6 +14,8 @@ import com.yourname.expensetracker.domain.location.NearbyPoiService
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.NavigationTargetResolverImpl
+import com.yourname.expensetracker.data.repository.WidgetStyleRepositoryImpl
+import com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -61,4 +63,10 @@ object ServiceModule {
     fun provideNavigationTargetResolver(
         impl: NavigationTargetResolverImpl
     ): NavigationTargetResolver = impl
+    
+    @Provides
+    @Singleton
+    fun provideWidgetStyleRepository(
+        impl: WidgetStyleRepositoryImpl
+    ): WidgetStyleRepository = impl
 }

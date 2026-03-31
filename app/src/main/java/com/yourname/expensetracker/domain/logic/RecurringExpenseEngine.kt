@@ -87,7 +87,7 @@ class RecurringExpenseEngine @Inject constructor(
                 // Staleness check: drop patterns whose last occurrence is >6 months ago.
                 // This prevents cancelled/dormant subscriptions from appearing as active recurring items.
                 val sixMonthsAgo = timeProvider.now() - (180L * 24 * 60 * 60 * 1000)
-                if (dates.last() < sixMonthsAgo) continue
+                if (dates.isEmpty() || dates.last() < sixMonthsAgo) continue
 
                 // Predict next date
                 // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)

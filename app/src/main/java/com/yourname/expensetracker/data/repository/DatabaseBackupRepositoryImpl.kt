@@ -118,7 +118,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     Exception("Invalid backup file: ${sourceValidation.exceptionOrNull()?.message}")
                 )
             }
-            val sourceSummary = sourceValidation.getOrNull()!!
+            val sourceSummary = sourceValidation.getOrNull()
+                ?: return@withContext Result.failure(Exception("Failed to read backup summary"))
             
             // Block empty imports - source must have at least 1 transaction or 1 category
             if (sourceSummary.transactionCount == 0 && sourceSummary.categoryCount == 0) {

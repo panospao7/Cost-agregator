@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
+import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.model.PeriodDrillDownState
 import com.yourname.expensetracker.domain.model.PeriodTotal
 import com.yourname.expensetracker.domain.model.PeriodType
@@ -32,6 +33,10 @@ import com.yourname.expensetracker.service.NavigationAction
 import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.RecommendationDismissalHandler
 import com.yourname.expensetracker.service.RecommendationStateManager
+import com.yourname.expensetracker.domain.widget.model.StyledWidgets
+import com.yourname.expensetracker.domain.widget.model.WidgetStyle
+import com.yourname.expensetracker.domain.widget.model.WidgetStyleConfig
+import com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -75,12 +80,9 @@ data class DashboardState(
     val isEditMode: Boolean = false,
     val isLoading: Boolean = true,
     val error: String? = null,
-    /**
-     * AI briefing surface state.
-     * [AiLoadState.Disabled] when AI is off — the screen shows deterministic fallback.
-     * [AiLoadState.Ready] when a READY artifact exists — overrides the deterministic widget.
-     */
-    val aiBriefing: AiLoadState<DashboardBriefingUi> = AiLoadState.Disabled
+    val aiBriefing: AiLoadState<DashboardBriefingUi> = AiLoadState.Disabled,
+    val widgetStyles: WidgetStyleConfig = WidgetStyleConfig(),
+    val categoryTrends: Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo> = emptyMap()
 )
 
 // ---------------------------------------------------------------------------
@@ -95,15 +97,18 @@ class HomeViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val plannedExpenseRepository: PlannedExpenseRepository,
     private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository,
+    private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val computeDashboardWidgetsUseCase: ComputeDashboardWidgetsUseCase,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiEnvironmentMonitor: AiEnvironmentMonitor,
+    private val widgetStyleRepository: WidgetStyleRepository,
     private val timeProvider: TimeProvider,
     private val recommendationStateManager: RecommendationStateManager,
     private val navigationTargetResolver: NavigationTargetResolver,
     private val recommendationDismissalHandler: RecommendationDismissalHandler,
-    private val totalsAggregationEngine: TotalsAggregationEngine
+    private val totalsAggregationEngine: TotalsAggregationEngine,
+    private val advancedAnalyticsEngine: com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 ) : ViewModel() {
 
     private val _totalsDrillDownState = MutableStateFlow(PeriodDrillDownState(
@@ -119,6 +124,7 @@ class HomeViewModel @Inject constructor(
         _totalsDrillDownState.asStateFlow()
 
     private val isEditMode = MutableStateFlow(false)
+    private val _categoryTrends = MutableStateFlow<Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>>(emptyMap())
     private val dateKeyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     // TODO: Replace with actual UserSessionProvider
     private val defaultRecommendationUserId = "default_user"
@@ -143,6 +149,9 @@ class HomeViewModel @Inject constructor(
         }
 
         recommendationStateManager.refreshForUser(defaultRecommendationUserId)
+        
+        // Load category trends for retro widgets
+        loadCategoryTrends()
     }
 
     private val processedDataFlow: Flow<CompiledDashboardData> =
@@ -225,8 +234,18 @@ class HomeViewModel @Inject constructor(
         processedDataFlow,
         isEditMode,
         dashboardRepository.configFlow,
-        aiBriefingFlow
-    ) { compiledData, editMode, configList, aiBriefing ->
+        aiBriefingFlow,
+        widgetStyleRepository.config(),
+        _categoryTrends
+    ) { params: Array<Any?> ->
+        @Suppress("UNCHECKED_CAST")
+        val compiledData = params[0] as CompiledDashboardData
+        val editMode = params[1] as Boolean
+        val configList = params[2] as List<com.yourname.expensetracker.data.database.model.DashboardWidgetConfig>
+        val aiBriefing = params[3] as AiLoadState<DashboardBriefingUi>
+        val widgetStyles = params[4] as WidgetStyleConfig
+        val categoryTrends = params[5] as Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>
+        
         val sortedWidgets = configList
             .filter { it.isVisible || editMode }
             .mapNotNull { conf ->
@@ -240,7 +259,9 @@ class HomeViewModel @Inject constructor(
             isEditMode       = editMode,
             isLoading        = false,
             error            = null,
-            aiBriefing       = aiBriefing
+            aiBriefing       = aiBriefing,
+            widgetStyles     = widgetStyles,
+            categoryTrends   = categoryTrends
         )
     }.catch { e ->
         Timber.e(e, "Error loading dashboard data")
@@ -274,6 +295,70 @@ class HomeViewModel @Inject constructor(
             if (it.id == widgetId) it.copy(isVisible = !it.isVisible) else it
         }
         dashboardRepository.saveDashboardConfigSync(currentConfig)
+    }
+
+    /**
+     * Toggle the visual style (MODERN/RETRO) for a specific widget.
+     * Only works for widgets defined in [StyledWidgets].
+     */
+    fun toggleWidgetStyle(widgetId: String) {
+        if (widgetId !in StyledWidgets.all) return
+        
+        viewModelScope.launch {
+            widgetStyleRepository.toggleWidgetStyle(widgetId)
+        }
+    }
+
+    /**
+     * Get the current style for a specific widget.
+     */
+    fun getWidgetStyle(widgetId: String): WidgetStyle {
+        return dashboard.value.widgetStyles.getStyle(widgetId)
+    }
+
+    /**
+     * Load and cache category analytics with trend data for the current month.
+     * This is used by the RetroTopCategoriesCard to show spending trends.
+     */
+    fun loadCategoryTrends() {
+        viewModelScope.launch {
+            try {
+                val period = advancedAnalyticsEngine.getPeriodRange(
+                    com.yourname.expensetracker.domain.analytics.AnalyticsPeriod.MONTH
+                )
+                val analytics = advancedAnalyticsEngine.getCategoryAnalytics(period)
+                
+                val trends = analytics.associate { analytic ->
+                    analytic.category.id to com.yourname.expensetracker.ui.components.CategoryTrendInfo(
+                        previousTotal = analytic.previousPeriodTotal,
+                        changePercent = analytic.changePercent,
+                        direction = analytic.trendDirection,
+                        averageOverMonths = null, // Could be loaded from insights engine if needed
+                        monthsOfData = 1
+                    )
+                }
+                
+                _categoryTrends.value = trends
+                
+                Timber.d("Loaded ${trends.size} category trends")
+            } catch (e: Exception) {
+                Timber.e(e, "Error loading category trends")
+            }
+        }
+    }
+
+    /**
+     * Navigate to transaction list filtered by category.
+     */
+    fun navigateToCategoryTransactions(categoryId: Long) {
+        viewModelScope.launch {
+            val action = NavigationAction.ToTransactionList(
+                filter = com.yourname.expensetracker.ui.screens.transactions.TransactionFilter(
+                    categoryId = categoryId
+                )
+            )
+            _navigationActions.emit(action)
+        }
     }
 
     fun addPlannedExpense(
@@ -347,32 +432,37 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             _totalsDrillDownState.update { it.copy(isLoading = true) }
             try {
-                val (newLevel, newTotals, categories) = when (period.periodType) {
+                @Suppress("UNCHECKED_CAST")
+                val whenResult = when (period.periodType) {
                     PeriodType.YEAR -> {
-                        Triple(PeriodType.MONTH, 
-                               totalsAggregationEngine.getMonthlyTotals(parseYear(period.periodKey)),
-                               emptyList())
+                        val totals = totalsAggregationEngine.getMonthlyTotals(parseYear(period.periodKey))
+                        arrayOf(PeriodType.MONTH, totals, emptyList<CategoryBreakdown>())
                     }
                     PeriodType.MONTH -> {
                         val (year, month) = parseYearMonth(period.periodKey)
-                        Triple(PeriodType.WEEK,
-                               totalsAggregationEngine.getWeeklyTotals(year, month),
-                               emptyList())
+                        val totals = totalsAggregationEngine.getWeeklyTotals(year, month)
+                        arrayOf(PeriodType.WEEK, totals, emptyList<CategoryBreakdown>())
                     }
                     PeriodType.WEEK -> {
-                        val (year, week) = parseYearWeek(period.periodKey)
-                        Triple(PeriodType.DAY,
-                               totalsAggregationEngine.getDailyTotals(year, week),
-                               emptyList())
+                        // Use actual stored date range instead of recalculating from weekKey
+                        // This prevents duplicate days from mismatched week boundaries
+                        Timber.d("Drilling down from WEEK to DAY using stored range: ${period.startDateMs} to ${period.endDateMs}")
+                        val dailyTotals = totalsAggregationEngine.getDailyTotalsForRange(
+                            period.startDateMs, 
+                            period.endDateMs
+                        )
+                        Timber.d("Got ${dailyTotals.size} daily totals for range")
+                        arrayOf(PeriodType.DAY, dailyTotals, emptyList<CategoryBreakdown>())
                     }
                     PeriodType.DAY -> {
-                        Triple(PeriodType.DAY,
-                               listOf(period),
-                               totalsAggregationEngine.getCategoryBreakdown(
-                                   period.startDateMs, period.endDateMs, period.periodLabel
-                               ))
+                        // Days are leaf nodes - don't drill further, just show this day
+                        arrayOf(PeriodType.DAY, listOf(period), emptyList<CategoryBreakdown>())
                     }
                 }
+                
+                val newLevel = whenResult[0] as PeriodType
+                val newTotals = whenResult[1] as List<PeriodTotal>
+                val categories = whenResult[2] as List<CategoryBreakdown>
                 
                 val average = totalsAggregationEngine.getAverageForPeriodType(newLevel, excludeCurrent = false)
                 val updatedTotals = newTotals.map { p ->
@@ -484,14 +574,46 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun parseYearWeek(key: String): Pair<Int, Int> {
-        val parts = key.split("-W")
-        return Pair(parts[0].toInt(), parts[1].toInt())
+        // Handle both formats: "2024-W3" and "2024-03" (from SQL strftime)
+        val parts = if (key.contains("-W")) {
+            key.split("-W")
+        } else {
+            key.split("-")
+        }
+        return if (parts.size >= 2) {
+            Pair(parts[0].toInt(), parts[1].toInt())
+        } else {
+            // Fallback: return current year/week if parsing fails
+            val cal = Calendar.getInstance()
+            Pair(cal.get(Calendar.YEAR), cal.get(Calendar.WEEK_OF_YEAR))
+        }
+    }
+
+    /**
+     * Load category breakdown for a specific period.
+     */
+    fun loadCategoryBreakdownForPeriod(period: PeriodTotal) {
+        viewModelScope.launch {
+            try {
+                val categories = totalsAggregationEngine.getCategoryBreakdown(
+                    period.startDateMs, 
+                    period.endDateMs, 
+                    period.periodLabel
+                )
+                
+                _totalsDrillDownState.update { 
+                    it.copy(categoryBreakdown = categories)
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Error loading category breakdown for period ${period.periodLabel}")
+            }
+        }
     }
 
     /**
      * Load category breakdown for the current period.
      * If a period is selected, load breakdown for that period.
-     * Otherwise, load breakdown for the current month.
+     * Otherwise, load breakdown for the current view level (all periods combined).
      */
     fun loadCategoryBreakdownForCurrentPeriod() {
         viewModelScope.launch {
@@ -504,21 +626,34 @@ class HomeViewModel @Inject constructor(
                         state.selectedPeriod.periodLabel
                     )
                 } else {
-                    // Default to current month
-                    val now = timeProvider.now()
-                    val cal = Calendar.getInstance().apply { timeInMillis = now }
-                    cal.set(Calendar.DAY_OF_MONTH, 1)
-                    cal.set(Calendar.HOUR_OF_DAY, 0)
-                    cal.set(Calendar.MINUTE, 0)
-                    cal.set(Calendar.SECOND, 0)
-                    cal.set(Calendar.MILLISECOND, 0)
-                    val startOfMonth = cal.timeInMillis
-                    
-                    cal.add(Calendar.MONTH, 1)
-                    val endOfMonth = cal.timeInMillis
-                    
-                    val monthLabel = java.text.SimpleDateFormat("MMM yyyy", java.util.Locale.getDefault()).format(Date(now))
-                    Triple(startOfMonth, endOfMonth, monthLabel)
+                    // Calculate range for all visible periods combined
+                    if (state.periodTotals.isNotEmpty()) {
+                        val start = state.periodTotals.minOf { it.startDateMs }
+                        val end = state.periodTotals.maxOf { it.endDateMs }
+                        val label = when (state.currentLevel) {
+                            PeriodType.YEAR -> "Year Total"
+                            PeriodType.MONTH -> "Monthly Overview"
+                            PeriodType.WEEK -> "Weekly Overview"
+                            PeriodType.DAY -> "Daily Overview"
+                        }
+                        Triple(start, end, label)
+                    } else {
+                        // Fallback to current month
+                        val now = timeProvider.now()
+                        val cal = Calendar.getInstance().apply { timeInMillis = now }
+                        cal.set(Calendar.DAY_OF_MONTH, 1)
+                        cal.set(Calendar.HOUR_OF_DAY, 0)
+                        cal.set(Calendar.MINUTE, 0)
+                        cal.set(Calendar.SECOND, 0)
+                        cal.set(Calendar.MILLISECOND, 0)
+                        val startOfMonth = cal.timeInMillis
+                        
+                        cal.add(Calendar.MONTH, 1)
+                        val endOfMonth = cal.timeInMillis
+                        
+                        val monthLabel = java.text.SimpleDateFormat("MMM yyyy", java.util.Locale.getDefault()).format(Date(now))
+                        Triple(startOfMonth, endOfMonth, monthLabel)
+                    }
                 }
                 
                 val categories = totalsAggregationEngine.getCategoryBreakdown(startMs, endMs, label)

@@ -122,6 +122,8 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             lastRefreshedAt = now
         )
 
+        val databaseBackupRepository = mockk<com.yourname.expensetracker.domain.backup.DatabaseBackupRepository>(relaxed = true)
+
         viewModel = DebugViewModel(
             repository = repository,
             reviewQueueRepository = reviewQueueRepository,
@@ -134,7 +136,8 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             getAiRuntimeStatusUseCase = getAiRuntimeStatusUseCase,
             aiSettingsRepository = aiSettingsRepository,
             aiEngagementRepository = aiEngagementRepository,
-            aiRuntimeDiagnostics = aiRuntimeDiagnostics
+            aiRuntimeDiagnostics = aiRuntimeDiagnostics,
+            databaseBackupRepository = databaseBackupRepository
         )
     }
 

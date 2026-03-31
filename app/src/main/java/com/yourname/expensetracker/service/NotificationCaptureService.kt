@@ -80,7 +80,11 @@ class NotificationCaptureService : NotificationListenerService() {
         isRunning = true
         diagnostics.recordServiceStart()
         createNotificationChannel()
-        scheduleRestartAlarm()
+        try {
+            scheduleRestartAlarm()
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to schedule restart alarm, continuing without")
+        }
     }
 
     private fun scheduleRestartAlarm() {

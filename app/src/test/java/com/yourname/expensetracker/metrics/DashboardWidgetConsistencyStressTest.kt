@@ -48,12 +48,14 @@ class DashboardWidgetConsistencyStressTest {
         )
         val monteCarloSimulator = mockk<com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator>(relaxed = true)
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        val healthCalculator = mockk<com.yourname.expensetracker.domain.health.FinancialHealthCalculator>(relaxed = true)
 
         computeUseCase = ComputeDashboardWidgetsUseCase(
             insightsEngine = insightsEngine,
             synthesisEngine = com.yourname.expensetracker.domain.logic.SynthesisEngine(timeProvider),
             monteCarloSimulator = monteCarloSimulator,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            healthCalculator = healthCalculator
         )
     }
 

@@ -13,6 +13,7 @@ import java.util.regex.Pattern
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -238,7 +239,9 @@ class GenericTransactionParser @Inject constructor(
                 cal.set(java.util.Calendar.MILLISECOND, 0)
                 val ts = cal.timeInMillis
                 if (ts in 1..(System.currentTimeMillis() + 86_400_000)) return ts
-            } catch (_: Exception) { }
+            } catch (e: Exception) { 
+                Timber.w(e, "Failed to parse date from pattern")
+            }
         }
         return null
     }

@@ -271,7 +271,12 @@ class DebugViewModel @Inject constructor(
             _databaseExportResult.value = com.yourname.expensetracker.domain.backup.DatabaseExportResult.Loading
             val result = databaseBackupRepository.exportDatabase()
             _databaseExportResult.value = if (result.isSuccess) {
-                com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success(result.getOrNull()!!.absolutePath)
+                val file = result.getOrNull()
+                if (file != null) {
+                    com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success(file.absolutePath)
+                } else {
+                    com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error("Export succeeded but file not found")
+                }
             } else {
                 com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error(result.exceptionOrNull()?.message ?: "Unknown error")
             }
@@ -350,10 +355,10 @@ class DebugViewModel @Inject constructor(
             _databaseImportResult.value = if (result.isSuccess) {
                 val summary = result.getOrNull()
                 val needsRestart = summary?.transactionCount == -1
-                if (needsRestart) {
-                    com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart
-                } else {
-                    com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success(summary!!)
+                when {
+                    needsRestart -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart
+                    summary != null -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success(summary)
+                    else -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error("Import succeeded but summary unavailable")
                 }
             } else {
                 val errorMsg = result.exceptionOrNull()?.message ?: "Unknown error"

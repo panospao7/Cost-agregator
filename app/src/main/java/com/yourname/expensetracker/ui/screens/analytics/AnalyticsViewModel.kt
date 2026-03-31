@@ -237,12 +237,13 @@ class AnalyticsViewModel @Inject constructor(
         val budgetVsActual = try {
             val budgetStatuses = budgetRepository.getBudgetStatuses().first()
             budgetStatuses
-                .filter { it.category != null } // Only per-category budgets
-                .map { bs ->
+                .mapNotNull { bs ->
+                    // Use safe navigation to handle null categories gracefully
+                    val category = bs.category ?: return@mapNotNull null
                     BudgetVsActualItem(
-                        categoryName = bs.category!!.name,
-                        categoryIcon = bs.category!!.icon,
-                        categoryColor = bs.category!!.color,
+                        categoryName = category.name,
+                        categoryIcon = category.icon,
+                        categoryColor = category.color,
                         budgetAmount = bs.budget.amount,
                         actualSpent = bs.spentAmount,
                         percentUsed = bs.percentUsed
@@ -556,9 +557,7 @@ class AnalyticsViewModel @Inject constructor(
                 y * 100 + m
             }
             .mapValues { (_, exps) -> exps.maxByOrNull { it.amount } }
-            .filterValues { it != null }
-            .mapValues { (_, v) -> v!! }
-            .values
+            .mapNotNull { (_, v) -> v }  // Safe extraction without force unwrap
             .sortedBy { it.date }
 
         if (salaryEvents.size < 2) return null // Need at least 2 cycles for a pattern

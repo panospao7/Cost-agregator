@@ -21,7 +21,6 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import javax.inject.Inject
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Fixed TransactionsViewModel with:
@@ -88,10 +87,7 @@ class TransactionsViewModel @Inject constructor(
     private val _currentPage = MutableStateFlow(0)
     private val _pagedExpenses = MutableStateFlow<List<ExpenseWithCategory>>(emptyList())
     
-    // Thread-safe loading flag to prevent race conditions
-    private val isLoadingMore = AtomicBoolean(false)
-    
-    // Loading states
+    // Loading states - using StateFlow for thread-safe observable loading state
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
     
@@ -299,14 +295,14 @@ class TransactionsViewModel @Inject constructor(
     }
 
     fun loadMore() {
-        // Guard conditions
+        // Guard conditions - prevent loading if not on ALL tab or already loading
         if (_selectedTab.value != TransactionTab.ALL) return
         if (_isLoadingMoreState.value) return
         
-        // Atomic check-and-set to prevent race conditions
-        if (!isLoadingMore.compareAndSet(false, true)) return
-        
         viewModelScope.launch {
+            // Double-check inside coroutine to prevent race conditions
+            if (_isLoadingMoreState.value) return@launch
+            
             _isLoadingMoreState.value = true
             try {
                 val nextPage = _currentPage.value + 1
@@ -341,7 +337,6 @@ class TransactionsViewModel @Inject constructor(
                 _error.emit("Failed to load more transactions: ${e.message}")
             } finally {
                 _isLoadingMoreState.value = false
-                isLoadingMore.set(false)
             }
         }
     }
