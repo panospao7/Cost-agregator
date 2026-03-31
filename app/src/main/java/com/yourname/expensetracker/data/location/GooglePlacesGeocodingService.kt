@@ -1,7 +1,8 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGooglePlacesKey
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
@@ -19,7 +20,7 @@ import javax.inject.Singleton
 /**
  * Google Places (New) Text Search geocoding service.
  * Free tier: $200/month credit → ~6,250 requests/month at $32/1000.
- * Requires [BuildConfig.GOOGLE_PLACES_API_KEY]. Returns empty list gracefully
+ * Requires SecureKeyStorage.getGooglePlacesKey(). Returns empty list gracefully
  * if the key is missing/blank.
  *
  * Note: Cached results respect the existing 30-day [AppConfig.Location.CACHE_TTL_MS],
@@ -27,15 +28,18 @@ import javax.inject.Singleton
  *
  * Used as the third tier in the [CompositeGeocodingService] cascade.
  */
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 @Singleton
-class GooglePlacesGeocodingService @Inject constructor() : GeocodingService {
+class GooglePlacesGeocodingService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage
+) : GeocodingService {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    private val apiKey get() = BuildConfig.GOOGLE_PLACES_API_KEY
+    private val apiKey get() = secureKeyStorage.getGooglePlacesKey() ?: ""
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 

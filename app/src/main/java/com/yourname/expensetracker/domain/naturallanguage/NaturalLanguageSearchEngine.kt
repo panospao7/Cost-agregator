@@ -1,0 +1,458 @@
+package com.yourname.expensetracker.domain.naturallanguage
+
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.entity.Expense
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import java.util.Locale
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class NaturalLanguageSearchEngine @Inject constructor(
+    private val expenseDao: ExpenseDao
+) {
+    
+    private val amountPattern = Regex("""
+        (?:€|\$|£|¥|EUR|USD|GBP)?\s*
+        (\d+(?:\.\d{2})?)
+        \s*(?:€|\$|£|¥|EUR|USD|GBP)?
+    """.trimIndent(), RegexOption.IGNORE_CASE)
+    
+    private val datePatterns = listOf(
+        // "last week", "this month", "yesterday", etc.
+        PatternWithExtractor(
+            pattern = Regex("last (week|month|year)", RegexOption.IGNORE_CASE),
+            extractor = { match ->
+                val unit = match.groupValues[1]
+                val end = LocalDate.now()
+                val start = when (unit.lowercase()) {
+                    "week" -> end.minusWeeks(1)
+                    "month" -> end.minusMonths(1)
+                    "year" -> end.minusYears(1)
+                    else -> end.minusMonths(1)
+                }
+                DateRange(start, end)
+            }
+        ),
+        PatternWithExtractor(
+            pattern = Regex("this (week|month|year)", RegexOption.IGNORE_CASE),
+            extractor = { match ->
+                val unit = match.groupValues[1]
+                val today = LocalDate.now()
+                val start = when (unit.lowercase()) {
+                    "week" -> today.minusDays(today.dayOfWeek.value.toLong() - 1)
+                    "month" -> today.withDayOfMonth(1)
+                    "year" -> today.withDayOfYear(1)
+                    else -> today.withDayOfMonth(1)
+                }
+                DateRange(start, today)
+            }
+        ),
+        PatternWithExtractor(
+            pattern = Regex("(yesterday|today)", RegexOption.IGNORE_CASE),
+            extractor = { match ->
+                val day = match.groupValues[1].lowercase()
+                val date = when (day) {
+                    "yesterday" -> LocalDate.now().minusDays(1)
+                    "today" -> LocalDate.now()
+                    else -> LocalDate.now()
+                }
+                DateRange(date, date)
+            }
+        ),
+        PatternWithExtractor(
+            pattern = Regex("(january|february|march|april|may|june|july|august|september|october|november|december)", RegexOption.IGNORE_CASE),
+            extractor = { match ->
+                val month = match.groupValues[1]
+                val monthNum = java.time.Month.valueOf(month.uppercase()).value
+                val year = LocalDate.now().year
+                val start = LocalDate.of(year, monthNum, 1)
+                val end = start.withDayOfMonth(start.lengthOfMonth())
+                DateRange(start, end)
+            }
+        ),
+        PatternWithExtractor(
+            pattern = Regex("(\\d{1,2})/(\\d{1,2})/(\\d{2,4})", RegexOption.IGNORE_CASE),
+            extractor = { match ->
+                val day = match.groupValues[1].toInt()
+                val month = match.groupValues[2].toInt()
+                val yearStr = match.groupValues[3]
+                val year = if (yearStr.length == 2) 2000 + yearStr.toInt() else yearStr.toInt()
+                val date = LocalDate.of(year, month, day)
+                DateRange(date, date)
+            }
+        ),
+        PatternWithExtractor(
+            pattern = Regex("between (\\S+) and (\\S+)", RegexOption.IGNORE_CASE),
+            extractor = { match ->
+                // Simple date parsing - would need more sophisticated parsing in production
+                val start = parseRelativeDate(match.groupValues[1])
+                val end = parseRelativeDate(match.groupValues[2])
+                DateRange(start, end)
+            }
+        ),
+        PatternWithExtractor(
+            pattern = Regex("over \\$(\\d+)"),
+            extractor = { match ->
+                null // This is for amount filtering, not dates
+            }
+        )
+    )
+    
+    private val locationKeywords = listOf(
+        "in", "at", "near", "around", "close to"
+    )
+    
+    private val categoryKeywords = mapOf(
+        "food" to listOf("restaurant", "grocery", "food", "dining", "eat"),
+        "transport" to listOf("gas", "fuel", "uber", "taxi", "transport", "train", "bus"),
+        "shopping" to listOf("clothing", "fashion", "electronics", "store", "shop", "amazon"),
+        "entertainment" to listOf("netflix", "spotify", "movie", "cinema", "game", "entertainment"),
+        "utilities" to listOf("electric", "water", "internet", "phone", "bill")
+    )
+    
+    suspend fun interpretQuery(query: String): QueryInterpretation {
+        val normalized = query.lowercase()
+        
+        // Extract entities
+        val amounts = extractAmounts(normalized)
+        val dateRange = extractDateRange(normalized)
+        val locations = extractLocations(normalized)
+        val categories = extractCategories(normalized)
+        val merchants = extractMerchants(normalized)
+        
+        // Determine query type
+        val queryType = determineQueryType(normalized)
+        
+        // Build search filter
+        val filter = buildSearchFilter(amounts, dateRange, locations, categories, merchants)
+        
+        return QueryInterpretation(
+            originalQuery = query,
+            queryType = queryType,
+            extractedAmounts = amounts,
+            dateRange = dateRange,
+            locations = locations,
+            categories = categories,
+            merchants = merchants,
+            searchFilter = filter,
+            confidence = calculateConfidence(query, amounts, dateRange, categories, merchants)
+        )
+    }
+    
+    suspend fun executeSearch(interpretation: QueryInterpretation): List<Expense> {
+        return when (interpretation.queryType) {
+            QueryType.TOTAL_AMOUNT -> {
+                // Calculate total for the period
+                val startMs = interpretation.dateRange?.start?.let {
+                    it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                } ?: 0
+                val endMs = interpretation.dateRange?.end?.let {
+                    it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                } ?: System.currentTimeMillis()
+                
+                expenseDao.getExpensesBetweenFlow(startMs, endMs).let { flow ->
+                    var result: List<Expense> = emptyList()
+                    flow.collect { result = it }
+                    result
+                }
+            }
+            QueryType.FIND_TRANSACTIONS -> {
+                // Search for specific transactions
+                val startMs = interpretation.dateRange?.start?.let {
+                    it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                } ?: 0
+                val endMs = interpretation.dateRange?.end?.let {
+                    it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                } ?: System.currentTimeMillis()
+                
+                expenseDao.getExpensesBetweenFlow(startMs, endMs).let { flow ->
+                    var result: List<Expense> = emptyList()
+                    flow.collect { result = it }
+                    result.filter { expense ->
+                        interpretation.merchants?.let { merchants ->
+                            merchants.any { expense.merchant.contains(it, ignoreCase = true) }
+                        } ?: true
+                    }.filter { expense ->
+                        interpretation.extractedAmounts?.let { amounts ->
+                            amounts.any { amount ->
+                                when (amount.comparison) {
+                                    AmountComparison.EXACTLY -> expense.amount == amount.value
+                                    AmountComparison.OVER -> expense.amount > amount.value
+                                    AmountComparison.UNDER -> expense.amount < amount.value
+                                    AmountComparison.BETWEEN -> {
+                                        val other = amounts.find { it != amount }
+                                        other?.let { expense.amount in amount.value..it.value } ?: true
+                                    }
+                                    else -> true
+                                }
+                            }
+                        } ?: true
+                    }
+                }
+            }
+            QueryType.SPENDING_BY_CATEGORY -> {
+                // Get spending breakdown
+                val startMs = interpretation.dateRange?.start?.let {
+                    it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                } ?: 0
+                val endMs = interpretation.dateRange?.end?.let {
+                    it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                } ?: System.currentTimeMillis()
+                
+                expenseDao.getExpensesBetweenFlow(startMs, endMs).let { flow ->
+                    var result: List<Expense> = emptyList()
+                    flow.collect { result = it }
+                    result
+                }
+            }
+            else -> emptyList()
+        }
+    }
+    
+    private fun extractAmounts(query: String): List<ExtractedAmount>? {
+        val amounts = mutableListOf<ExtractedAmount>()
+        
+        // Extract explicit amounts
+        amountPattern.findAll(query).forEach { match ->
+            val value = match.groupValues[1].toDoubleOrNull()
+            if (value != null) {
+                amounts.add(ExtractedAmount(value, AmountComparison.EXACTLY))
+            }
+        }
+        
+        // Check for comparison operators
+        val overPattern = Regex("over|above|more than|greater than|>")
+        val underPattern = Regex("under|below|less than|<")
+        val betweenPattern = Regex("between")
+        
+        when {
+            overPattern.containsMatchIn(query) -> {
+                amounts.lastOrNull()?.let { it.comparison = AmountComparison.OVER }
+            }
+            underPattern.containsMatchIn(query) -> {
+                amounts.lastOrNull()?.let { it.comparison = AmountComparison.UNDER }
+            }
+            betweenPattern.containsMatchIn(query) && amounts.size >= 2 -> {
+                amounts[0].comparison = AmountComparison.BETWEEN
+                amounts[1].comparison = AmountComparison.BETWEEN
+            }
+        }
+        
+        return if (amounts.isNotEmpty()) amounts else null
+    }
+    
+    private fun extractDateRange(query: String): DateRange? {
+        for (patternExtractor in datePatterns) {
+            val match = patternExtractor.pattern.find(query)
+            if (match != null) {
+                val range = patternExtractor.extractor(match)
+                if (range != null) return range
+            }
+        }
+        return null
+    }
+    
+    private fun extractLocations(query: String): List<String>? {
+        val locations = mutableListOf<String>()
+        
+        for (keyword in locationKeywords) {
+            val pattern = Regex("$keyword\\s+(\\S+)", RegexOption.IGNORE_CASE)
+            pattern.findAll(query).forEach { match ->
+                locations.add(match.groupValues[1])
+            }
+        }
+        
+        return if (locations.isNotEmpty()) locations else null
+    }
+    
+    private fun extractCategories(query: String): List<String>? {
+        val foundCategories = mutableListOf<String>()
+        
+        categoryKeywords.forEach { (category, keywords) ->
+            if (keywords.any { query.contains(it, ignoreCase = true) }) {
+                foundCategories.add(category)
+            }
+        }
+        
+        return if (foundCategories.isNotEmpty()) foundCategories else null
+    }
+    
+    private fun extractMerchants(query: String): List<String>? {
+        // In production, this would use a database of known merchants
+        // For now, we'll extract capitalized words that might be merchant names
+        val merchantPattern = Regex("""(?:at|from)\s+([A-Z][a-zA-Z]+)""")
+        val merchants = merchantPattern.findAll(query).map { it.groupValues[1] }.toList()
+        
+        return if (merchants.isNotEmpty()) merchants else null
+    }
+    
+    private fun determineQueryType(query: String): QueryType {
+        return when {
+            query.containsAny("total", "sum", "spent", "how much") -> QueryType.TOTAL_AMOUNT
+            query.containsAny("spending", "breakdown", "by category") -> QueryType.SPENDING_BY_CATEGORY
+            query.containsAny("average", "typical", "usual") -> QueryType.AVERAGE_SPENDING
+            query.containsAny("find", "show", "list", "what did i buy") -> QueryType.FIND_TRANSACTIONS
+            query.containsAny("trend", "increasing", "decreasing") -> QueryType.TREND_ANALYSIS
+            else -> QueryType.FIND_TRANSACTIONS
+        }
+    }
+    
+    private fun String.containsAny(vararg keywords: String): Boolean {
+        return keywords.any { this.contains(it, ignoreCase = true) }
+    }
+    
+    private fun buildSearchFilter(
+        amounts: List<ExtractedAmount>?,
+        dateRange: DateRange?,
+        locations: List<String>?,
+        categories: List<String>?,
+        merchants: List<String>?
+    ): SearchFilter {
+        return SearchFilter(
+            minAmount = amounts?.find { it.comparison == AmountComparison.OVER }?.value,
+            maxAmount = amounts?.find { it.comparison == AmountComparison.UNDER }?.value,
+            exactAmount = amounts?.find { it.comparison == AmountComparison.EXACTLY }?.value,
+            startDate = dateRange?.start?.let {
+                it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            },
+            endDate = dateRange?.end?.let {
+                it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            },
+            locations = locations,
+            categories = categories,
+            merchants = merchants
+        )
+    }
+    
+    private fun calculateConfidence(
+        query: String,
+        amounts: List<ExtractedAmount>?,
+        dateRange: DateRange?,
+        categories: List<String>?,
+        merchants: List<String>?
+    ): Double {
+        var score = 50.0 // Base confidence
+        
+        // Boost for each extracted entity
+        if (amounts != null) score += 15
+        if (dateRange != null) score += 20
+        if (categories != null) score += 10
+        if (merchants != null) score += 10
+        
+        // Penalty for very short or vague queries
+        if (query.length < 10) score -= 20
+        if (!query.containsAny("at", "in", "on", "from", "to", "between")) score -= 10
+        
+        return score.coerceIn(0.0, 100.0)
+    }
+    
+    private fun parseRelativeDate(dateStr: String): LocalDate {
+        // Simplified date parsing - production would be more sophisticated
+        val today = LocalDate.now()
+        return when (dateStr.lowercase()) {
+            "yesterday" -> today.minusDays(1)
+            "today" -> today
+            "last week" -> today.minusWeeks(1)
+            "last month" -> today.minusMonths(1)
+            else -> today
+        }
+    }
+    
+    // Voice Input Support
+    fun createSpeechRecognizer(context: Context, onResult: (String) -> Unit): SpeechRecognizer? {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) return null
+        
+        val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+        
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) {}
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+            
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                matches?.firstOrNull()?.let { onResult(it) }
+            }
+        })
+        
+        return recognizer
+    }
+    
+    fun startVoiceInput(recognizer: SpeechRecognizer) {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        }
+        recognizer.startListening(intent)
+    }
+    
+    // Data Classes
+    data class QueryInterpretation(
+        val originalQuery: String,
+        val queryType: QueryType,
+        val extractedAmounts: List<ExtractedAmount>?,
+        val dateRange: DateRange?,
+        val locations: List<String>?,
+        val categories: List<String>?,
+        val merchants: List<String>?,
+        val searchFilter: SearchFilter,
+        val confidence: Double
+    )
+    
+    enum class QueryType {
+        TOTAL_AMOUNT,
+        FIND_TRANSACTIONS,
+        SPENDING_BY_CATEGORY,
+        AVERAGE_SPENDING,
+        TREND_ANALYSIS,
+        UNKNOWN
+    }
+    
+    data class ExtractedAmount(
+        val value: Double,
+        var comparison: AmountComparison = AmountComparison.EXACTLY
+    )
+    
+    enum class AmountComparison {
+        EXACTLY, OVER, UNDER, BETWEEN
+    }
+    
+    data class DateRange(
+        val start: LocalDate,
+        val end: LocalDate
+    )
+    
+    data class SearchFilter(
+        val minAmount: Double?,
+        val maxAmount: Double?,
+        val exactAmount: Double?,
+        val startDate: Long?,
+        val endDate: Long?,
+        val locations: List<String>?,
+        val categories: List<String>?,
+        val merchants: List<String>?
+    )
+    
+    data class PatternWithExtractor(
+        val pattern: Regex,
+        val extractor: (MatchResult) -> DateRange?
+    )
+}

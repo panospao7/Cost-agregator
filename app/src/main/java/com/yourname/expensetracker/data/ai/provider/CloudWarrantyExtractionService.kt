@@ -1,9 +1,10 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyType
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.config.AppConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,11 +20,17 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig.
+ * API key is retrieved from encrypted storage at runtime, not compiled into APK.
+ */
 @Singleton
-class CloudWarrantyExtractionService @Inject constructor() {
+class CloudWarrantyExtractionService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage
+) {
     private var apiKeyOverride: String? = null
     
-    internal constructor(apiKeyOverride: String) : this() {
+    internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -32,8 +39,12 @@ class CloudWarrantyExtractionService @Inject constructor() {
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * CRITICAL: API key is now retrieved from secure storage at runtime.
+     * No longer compiled into BuildConfig, preventing APK extraction.
+     */
     private val apiKey: String
-        get() = apiKeyOverride ?: BuildConfig.GEMINI_API_KEY
+        get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     suspend fun extractWarranty(receipt: ScannedReceipt): Warranty? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {

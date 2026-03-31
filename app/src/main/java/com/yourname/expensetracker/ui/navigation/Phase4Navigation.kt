@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.ui.navigation
 
 import androidx.compose.animation.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.Composable
 import com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen
 import com.yourname.expensetracker.ui.screens.bank.BankConnectionsScreen
@@ -87,27 +89,27 @@ object MenuIntegration {
      */
     val homeScreenMenuItems = listOf(
         MenuItem(
-            icon = androidx.compose.material.icons.Icons.Default.TrendingUp,
+            icon = Icons.Filled.TrendingUp,
             label = "Investment Portfolio",
             route = NavigationDestinations.INVESTMENT_PORTFOLIO
         ),
         MenuItem(
-            icon = androidx.compose.material.icons.Icons.Default.LocalFireDepartment,
+            icon = Icons.Filled.LocalFireDepartment,
             label = "Spending Challenges",
             route = NavigationDestinations.SPENDING_CHALLENGES
         ),
         MenuItem(
-            icon = androidx.compose.material.icons.Icons.Default.Notifications,
+            icon = Icons.Filled.Notifications,
             label = "Bill Reminders",
             route = NavigationDestinations.BILL_REMINDERS
         ),
         MenuItem(
-            icon = androidx.compose.material.icons.Icons.Default.AccountBalance,
+            icon = Icons.Filled.AccountBalance,
             label = "Bank Connections",
             route = NavigationDestinations.BANK_CONNECTIONS
         ),
         MenuItem(
-            icon = androidx.compose.material.icons.Icons.Default.Analytics,
+            icon = Icons.Filled.Assessment,
             label = "Advanced Analytics",
             route = NavigationDestinations.ADVANCED_ANALYTICS
         )
@@ -118,7 +120,7 @@ object MenuIntegration {
      */
     val analyticsScreenMenuItems = listOf(
         MenuItem(
-            icon = androidx.compose.material.icons.Icons.Default.Analytics,
+            icon = Icons.Filled.Assessment,
             label = "Advanced Dashboard",
             route = NavigationDestinations.ADVANCED_ANALYTICS
         )
@@ -129,12 +131,12 @@ object MenuIntegration {
      */
     val budgetScreenMenuItems = listOf(
         MenuItem(
-            icon = androidx.compose.material.icons.Icons.Default.Notifications,
+            icon = Icons.Filled.Notifications,
             label = "Bill Reminders",
             route = NavigationDestinations.BILL_REMINDERS
         ),
         MenuItem(
-            icon = androidx.compose.material.icons.Icons.Default.LocalFireDepartment,
+            icon = Icons.Filled.LocalFireDepartment,
             label = "Spending Challenges",
             route = NavigationDestinations.SPENDING_CHALLENGES
         )

@@ -5,11 +5,17 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
 
+/**
+ * HIGH FIX (HIGH-4): Uses NotificationIdGenerator to prevent integer overflow.
+ * 
+ * Replaces direct toInt() conversion which could overflow for large warranty IDs.
+ */
 @HiltWorker
 class WarrantyExpirationWorker @AssistedInject constructor(
     @Assisted context: Context,
@@ -25,8 +31,9 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             // Check warranties expiring in 7 days
             val expiringIn7Days = warrantyRepository.getWarrantiesExpiringSoon(7)
             expiringIn7Days.forEach { warranty ->
+                // HIGH FIX: Use NotificationIdGenerator instead of toInt()
                 notificationService.sendBudgetAlert(
-                    notificationId = warranty.id.toInt(),
+                    notificationId = NotificationIdGenerator.forWarranty(warranty.id, 7),
                     title = "⚠️ Warranty Expiring Soon",
                     message = "${warranty.productName} warranty expires in 7 days (${warranty.merchantName})"
                 )
@@ -36,8 +43,9 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             val expiringIn30Days = warrantyRepository.getWarrantiesExpiringSoon(30)
                 .filter { it !in expiringIn7Days } // Don't notify twice
             expiringIn30Days.forEach { warranty ->
+                // HIGH FIX: Use NotificationIdGenerator with different offset for 30-day alerts
                 notificationService.sendBudgetAlert(
-                    notificationId = warranty.id.toInt() + 10000,
+                    notificationId = NotificationIdGenerator.forWarranty(warranty.id, 30),
                     title = "📅 Warranty Expiration Reminder",
                     message = "${warranty.productName} warranty expires in 30 days"
                 )

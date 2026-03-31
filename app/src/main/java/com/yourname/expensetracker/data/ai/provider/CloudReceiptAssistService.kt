@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
@@ -23,16 +24,20 @@ import kotlinx.coroutines.flow.first
 import timber.log.Timber
 
 @Singleton
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudReceiptAssistService @Inject constructor(
-    private val aiSettingsRepository: AiSettingsRepository
+    private val aiSettingsRepository: AiSettingsRepository,
+    private val secureKeyStorage: SecureKeyStorage
 ) : ReceiptAssistService {
 
     private var apiKeyOverride: String? = null
 
-    internal constructor(
+    // Secondary constructor for testing
+    constructor(
         aiSettingsRepository: AiSettingsRepository,
+        secureKeyStorage: SecureKeyStorage,
         apiKeyOverride: String
-    ) : this(aiSettingsRepository) {
+    ) : this(aiSettingsRepository, secureKeyStorage) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -42,7 +47,7 @@ class CloudReceiptAssistService @Inject constructor(
         .build()
 
     private val apiKey: String
-        get() = apiKeyOverride ?: BuildConfig.GEMINI_API_KEY
+        get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     override fun usedImageInput(input: ReceiptAssistInput): Boolean =
         input.imagePath != null && input.imageMimeType != null

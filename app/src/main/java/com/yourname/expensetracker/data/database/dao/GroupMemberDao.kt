@@ -41,4 +41,7 @@ interface GroupMemberDao {
     
     @Query("SELECT COUNT(*) FROM group_members WHERE groupId = :groupId")
     suspend fun getMemberCount(groupId: Long): Int
+
+    @Query("SELECT * FROM group_members")
+    fun getAllMembers(): Flow<List<GroupMember>>
 }

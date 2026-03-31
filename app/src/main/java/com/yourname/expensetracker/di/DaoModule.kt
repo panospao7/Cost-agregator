@@ -80,6 +80,11 @@ object DaoModule {
 
     @Provides
     @Singleton
+    fun provideManualRecurringExpenseDao(database: AppDatabase): ManualRecurringExpenseDao = 
+        database.manualRecurringExpenseDao()
+
+    @Provides
+    @Singleton
     fun provideMerchantNormalizationDao(database: AppDatabase): MerchantNormalizationDao = database.merchantNormalizationDao()
 
     @Provides
@@ -157,4 +162,14 @@ object DaoModule {
     @Singleton
     fun provideBankConnectionDao(database: AppDatabase): BankConnectionDao = 
         database.bankConnectionDao()
+
+    @Provides
+    @Singleton
+    fun provideSplitTemplateDao(database: AppDatabase): SplitTemplateDao = 
+        database.splitTemplateDao()
+
+    @Provides
+    @Singleton
+    fun provideSplitItemAssignmentDao(database: AppDatabase): SplitItemAssignmentDao = 
+        database.splitItemAssignmentDao()
 }

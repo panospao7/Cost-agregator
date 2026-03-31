@@ -1,7 +1,8 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeoapifyKey
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
@@ -16,20 +17,23 @@ import javax.inject.Singleton
 
 /**
  * Geoapify geocoding service — free tier 3000 req/day, augmented OSM data.
- * Requires [BuildConfig.GEOAPIFY_API_KEY]. Returns empty list gracefully if
+ * Requires SecureKeyStorage.getGeoapifyKey(). Returns empty list gracefully if
  * the key is missing/blank.
  *
  * Used as the second tier in the [CompositeGeocodingService] cascade.
  */
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 @Singleton
-class GeoapifyGeocodingService @Inject constructor() : GeocodingService {
+class GeoapifyGeocodingService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage
+) : GeocodingService {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    private val apiKey get() = BuildConfig.GEOAPIFY_API_KEY
+    private val apiKey get() = secureKeyStorage.getGeoapifyKey() ?: ""
 
     override suspend fun search(
         merchantName: String,

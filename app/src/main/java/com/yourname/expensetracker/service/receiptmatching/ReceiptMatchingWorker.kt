@@ -47,8 +47,9 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                         autoMatched++
                         
                         // Notify user of auto-match
+                        // HIGH FIX: Use NotificationIdGenerator instead of toInt()
                         notificationService.sendBudgetAlert(
-                            notificationId = receipt.id.toInt() + 20000,
+                            notificationId = com.yourname.expensetracker.domain.util.NotificationIdGenerator.forReceipt(receipt.id),
                             title = "✅ Receipt Auto-Matched",
                             message = "Receipt from ${receipt.parsedMerchant ?: "Unknown"} matched to transaction automatically"
                         )

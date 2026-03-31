@@ -1286,3 +1286,270 @@ PRIORITY_WEIGHTS: HIGH=3, MEDIUM=2, LOW=1
 - **ARCHITECTURE_ADDENDUM.md**: Extended architecture patterns
 - **PHASE_4B_PHASE1.md**: Phase 1 infrastructure specification
 - **CODEBASE_SEGMENTS.md → Segment 18**: File-level mapping
+- **CODEBASE_SEGMENTS.md → Segment 27**: Phase 5 features and issues
+- **REMEDIATION.md**: Complete code review with 83 issues and fixes
+
+---
+
+## 9. Comprehensive Code Review Findings (Phase 5)
+
+### Overview
+A complete architectural review of all 28 features was conducted in March 2026.
+
+**Total Issues Found:** 83  
+**Critical:** 4 | **High:** 10 | **Medium:** 15 | **Low:** 8  
+**Full Report:** See `REMEDIATION.md`
+
+### Critical Issues (Immediate Action Required)
+
+#### 1. Security: API Key Exposure
+**Location:** `build.gradle.kts`  
+**Issue:** Keys stored in BuildConfig can be extracted from APK  
+**Fix:** Move to Android Keystore + EncryptedSharedPreferences  
+**Risk:** All external API keys exposed
+
+#### 2. Data Consistency: Race Conditions
+**Location:** `WarrantyTrackerRepository`, `SharedExpenseManager`  
+**Issue:** Non-atomic transactions across multiple suspend calls  
+**Fix:** Add `@Transaction` annotation, use database transactions
+
+#### 3. Memory Leak: Bitmap Processing
+**Location:** `ReceiptOcrService`  
+**Issue:** Concurrent bitmap access without synchronization  
+**Fix:** Add `Mutex` for bitmap serialization
+
+#### 4. Security: SQL Injection Risk
+**Location:** `AccountingExporters`  
+**Issue:** String interpolation in CSV generation  
+**Fix:** Use Apache Commons CSV library
+
+### High Priority Issues
+
+#### 5. Architecture Violation
+**Issue:** ViewModels directly call Repositories, bypassing UseCases  
+**Fix:** Refactor to proper Clean Architecture: VM → UseCase → Repository
+
+#### 6. Performance: Blocking Operations
+**Issue:** Database queries may block UI thread  
+**Fix:** Ensure all database calls are properly suspended or use Flow
+
+#### 7. Logic Error: Floating Point Precision
+**Issue:** `Double` for monetary calculations causes rounding errors  
+**Fix:** Use `BigDecimal` for all financial math
+
+#### 8. Resource Leak: SpeechRecognizer
+**Issue:** SpeechRecognizer never destroyed in NLP Search  
+**Fix:** Implement proper lifecycle cleanup in ViewModel.onCleared()
+
+#### 9. Performance: Inefficient Queries
+**Issue:** Multiple sequential queries in loops  
+**Fix:** Batch with `IN` clause, add missing indices
+
+#### 10-14. Additional High Issues
+- Null safety in OAuth flow
+- Integer overflow in notification IDs
+- Manual collection creation (no caching)
+- Hardcoded tax rates
+
+### Architecture Recommendations
+
+#### Proper Clean Architecture
+```
+✅ Correct Flow:
+UI Layer
+  ↓ calls
+ViewModel (State Management)
+  ↓ calls
+UseCase (Business Logic)
+  ↓ calls
+Repository (Data Access)
+  ↓ calls
+DAO (Database Queries)
+
+❌ Anti-Patterns:
+- VM → Repository (skipping UseCase)
+- Repository → Other Repository
+- UI → Repository (direct access)
+```
+
+#### Financial Calculation Standards
+```kotlin
+// ❌ DON'T: Double arithmetic
+val total = price * 0.15  // Rounding errors!
+
+// ✅ DO: BigDecimal
+val total = BigDecimal(price.toString())
+    .multiply(BigDecimal("0.15"))
+    .setScale(2, RoundingMode.HALF_UP)
+```
+
+#### Database Transaction Boundaries
+```kotlin
+// ❌ DON'T: Sequential calls
+suspend fun transfer() {
+    fromAccount.deduct(amount)  // Can fail independently
+    toAccount.add(amount)       // Data inconsistency!
+}
+
+// ✅ DO: Atomic transaction
+@Transaction
+suspend fun transferAtomic() {
+    fromAccount.deduct(amount)
+    toAccount.add(amount)
+}
+```
+
+#### Coroutine Best Practices
+```kotlin
+// ❌ DON'T: Blocking operations
+fun loadData() = runBlocking {  // Blocks thread!
+    repository.getData()
+}
+
+// ✅ DO: Proper suspension
+suspend fun loadData() {  // Caller decides dispatcher
+    repository.getData()
+}
+
+// ✅ DO: Flow for reactive
+fun loadData(): Flow<Data> = flow {
+    emit(repository.getData())
+}.flowOn(Dispatchers.IO)
+```
+
+### Performance Optimization Guidelines
+
+#### Database Optimization
+1. **Add Indices:** For frequently queried columns
+2. **Batch Queries:** Use `IN` clause instead of N queries
+3. **Pagination:** Use `LIMIT`/`OFFSET` for large datasets
+4. **Lazy Loading:** Defer loading until needed
+5. **Caching:** Cache frequently accessed data in memory
+
+#### Memory Management
+1. **Bitmap Lifecycle:** Always recycle, use reference counting
+2. **Flow Collection:** Cancel properly in onCleared()
+3. **Resource Cleanup:** Use `use` blocks or Closeable pattern
+4. **Avoid Memory Leaks:** Don't hold references in static fields
+
+#### UI Optimization
+1. **Compose:** Use `remember`, `derivedStateOf`, `key`
+2. **Recomposition:** Avoid unnecessary recompositions
+3. **Lazy Lists:** Use LazyColumn/LazyRow for large lists
+4. **Image Loading:** Cache and resize images appropriately
+
+### Security Best Practices
+
+1. **Never commit API keys** to version control
+2. **Use Android Keystore** for sensitive data
+3. **Encrypt SharedPreferences** for stored tokens
+4. **Validate all inputs** to prevent injection
+5. **Use HTTPS** for all network calls
+6. **Implement certificate pinning** for critical APIs
+7. **Regular security audits** with tools like MobSF
+
+### Testing Strategy
+
+#### Unit Tests
+- Every UseCase must have tests
+- Every Engine needs logic tests
+- Repository tests with in-memory database
+
+#### Integration Tests
+- Database migrations
+- API integrations (mocked)
+- Feature workflows end-to-end
+
+#### Security Tests
+- APK decompilation check
+- SQL injection testing
+- Certificate validation
+
+#### Performance Tests
+- Memory profiling with LeakCanary
+- Query performance benchmarks
+- UI rendering performance
+
+### Documentation Requirements
+
+Every feature must have:
+- [ ] Architecture diagram
+- [ ] Data flow documentation
+- [ ] API documentation (if applicable)
+- [ ] Known issues and limitations
+- [ ] Testing guidelines
+
+### Code Quality Checklist
+
+Before merging any feature:
+- [ ] No security vulnerabilities
+- [ ] All tests passing
+- [ ] Architecture patterns followed
+- [ ] Proper error handling
+- [ ] Resource cleanup implemented
+- [ ] Documentation updated
+- [ ] Performance benchmarks met
+- [ ] Code review approved
+
+---
+
+## 10. Remediation Roadmap
+
+### Sprint 1: Security & Critical (Weeks 1-2)
+- [ ] Fix API key storage (Keystore)
+- [ ] Fix race conditions (@Transaction)
+- [ ] Fix bitmap memory leaks
+- [ ] Fix SQL injection (Apache CSV)
+
+### Sprint 2: Architecture (Weeks 3-4)
+- [ ] Refactor to UseCase pattern
+- [ ] Add transaction boundaries
+- [ ] Implement BigDecimal for money
+- [ ] Fix resource cleanup
+
+### Sprint 3: Performance (Weeks 5-6)
+- [ ] Optimize database queries
+- [ ] Add missing indices
+- [ ] Implement caching layer
+- [ ] Fix coroutine cancellation
+
+### Sprint 4: Quality (Weeks 7-8)
+- [ ] Centralize duplicate code
+- [ ] Standardize error handling
+- [ ] Move config to database
+- [ ] Add comprehensive docs
+
+**Full Details:** See `REMEDIATION.md`
+
+---
+
+## 11. Quick Reference: Common Issues & Fixes
+
+### Issue: Null Pointer Exception
+**Likely Cause:** Missing null check on query result  
+**Fix:** Use Elvis operator, check `isActive` in coroutines
+
+### Issue: UI Not Updating
+**Likely Cause:** Not using Flow/StateFlow properly  
+**Fix:** Use `collectAsState()`, ensure Flow emissions
+
+### Issue: Database Locked
+**Likely Cause:** Long-running transaction or query  
+**Fix:** Add `@Transaction`, optimize query, use WAL mode
+
+### Issue: Memory Leak
+**Likely Cause:** Resource not cleaned up  
+**Fix:** Use `onCleared()`, `use` blocks, proper lifecycle
+
+### Issue: Slow Queries
+**Likely Cause:** Missing index or N+1 problem  
+**Fix:** Add index, use JOIN, batch with IN clause
+
+### Issue: Race Condition
+**Likely Cause:** Non-atomic multi-table operation  
+**Fix:** Add `@Transaction`, use Mutex, synchronize
+
+---
+
+**Last Updated:** March 31, 2026  
+**Total Features:** 28 | **Total Issues:** 83 | **Next Review:** Q2 2026

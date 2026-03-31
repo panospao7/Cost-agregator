@@ -4,6 +4,16 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import java.text.SimpleDateFormat
 import java.util.*
 
+/**
+ * CRITICAL FIX (CRITICAL-4): Safe CSV/IIF exporters with proper escaping.
+ * 
+ * Replaces manual string concatenation with proper field escaping to prevent
+ * injection attacks and format corruption from special characters in data.
+ * 
+ * Security: All fields are escaped to prevent delimiter injection
+ * Correctness: Handles commas, quotes, tabs, and newlines in data
+ */
+
 class QuickBooksIIFExporter {
     private val dateFormat = SimpleDateFormat("MM/dd/yyyy", Locale.US)
 
@@ -19,14 +29,27 @@ class QuickBooksIIFExporter {
                 val date = dateFormat.format(Date(expense.date))
                 val account = categories[expense.categoryId] ?: "Uncategorized"
                 val amount = expense.amount
-                val memo = expense.notes ?: ""
-                val name = expense.merchant
+                // CRITICAL FIX: Escape fields that might contain tabs or newlines
+                val memo = escapeIifField(expense.notes ?: "")
+                val name = escapeIifField(expense.merchant)
 
-                append("TRNS\t$date\t$account\t$amount\t$memo\t$name\t\n")
-                append("SPL\t$date\t$account\t-$amount\t$memo\t$name\t\n")
+                append("TRNS\t${escapeIifField(date)}\t${escapeIifField(account)}\t$amount\t$memo\t$name\t\n")
+                append("SPL\t${escapeIifField(date)}\t${escapeIifField(account)}\t-$amount\t$memo\t$name\t\n")
                 append("ENDTRNS\n")
             }
         }
+    }
+    
+    /**
+     * CRITICAL: Escape IIF field to prevent delimiter injection.
+     * IIF uses tabs as delimiters, so we must escape/remove them.
+     */
+    private fun escapeIifField(field: String): String {
+        return field
+            .replace("\t", " ")  // Replace tabs with space (tab is delimiter)
+            .replace("\n", " ")  // Replace newlines with space
+            .replace("\r", "")   // Remove carriage returns
+            .trim()
     }
 }
 
@@ -41,13 +64,32 @@ class XeroCSVExporter {
             // Transactions
             expenses.forEach { expense ->
                 val date = dateFormat.format(Date(expense.date))
-                val description = expense.merchant.replace(",", " ") // Escape commas
+                // CRITICAL FIX: Proper CSV escaping according to RFC 4180
+                val description = escapeCsvField(expense.merchant)
                 val amount = expense.amount
-                val account = categories[expense.categoryId] ?: "Uncategorized"
+                val account = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
                 val reference = expense.id.toString()
 
-                append("$date,$description,$amount,$account,$reference\n")
+                append("${escapeCsvField(date)},$description,$amount,$account,$reference\n")
             }
+        }
+    }
+    
+    /**
+     * CRITICAL: Proper CSV field escaping (RFC 4180 compliant).
+     * - If field contains comma, quote, or newline: wrap in quotes
+     * - If field contains quotes: double them (escape)
+     */
+    private fun escapeCsvField(field: String): String {
+        val needsQuoting = field.contains(",") || 
+                          field.contains("\"") || 
+                          field.contains("\n") ||
+                          field.contains("\r")
+        
+        return if (needsQuoting) {
+            "\"" + field.replace("\"", "\"\"") + "\""
+        } else {
+            field
         }
     }
 }
@@ -63,13 +105,31 @@ class FreshBooksExporter {
             // Transactions
             expenses.forEach { expense ->
                 val date = dateFormat.format(Date(expense.date))
-                val description = expense.merchant.replace(",", " ")
+                // CRITICAL FIX: Proper CSV escaping
+                val description = escapeCsvField(expense.merchant)
                 val amount = expense.amount
-                val category = categories[expense.categoryId] ?: "Uncategorized"
-                val vendor = expense.merchant.replace(",", " ")
+                val category = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
+                val vendor = escapeCsvField(expense.merchant)
 
-                append("$date,$description,$amount,$category,$vendor\n")
+                append("${escapeCsvField(date)},$description,$amount,$category,$vendor\n")
             }
+        }
+    }
+    
+    /**
+     * CRITICAL: Proper CSV field escaping (RFC 4180 compliant).
+     * Shared implementation with XeroCSVExporter.
+     */
+    private fun escapeCsvField(field: String): String {
+        val needsQuoting = field.contains(",") || 
+                          field.contains("\"") || 
+                          field.contains("\n") ||
+                          field.contains("\r")
+        
+        return if (needsQuoting) {
+            "\"" + field.replace("\"", "\"\"") + "\""
+        } else {
+            field
         }
     }
 }

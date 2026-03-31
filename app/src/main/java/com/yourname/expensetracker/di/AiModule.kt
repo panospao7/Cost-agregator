@@ -28,6 +28,7 @@ import com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
 import com.yourname.expensetracker.data.repository.AiEngagementRepositoryImpl
 import com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
 import com.yourname.expensetracker.data.repository.AiSettingsRepositoryImpl
+import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiChatRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
@@ -199,8 +200,9 @@ abstract class AiModule {
 
         @Provides
         @Singleton
-        fun provideCloudWarrantyExtractionService(): 
-            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService = 
-            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService()
+        fun provideCloudWarrantyExtractionService(
+            secureKeyStorage: SecureKeyStorage
+        ): com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService = 
+            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage)
     }
 }

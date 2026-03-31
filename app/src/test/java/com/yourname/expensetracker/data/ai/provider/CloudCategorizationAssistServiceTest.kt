@@ -1,9 +1,11 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -13,7 +15,11 @@ class CloudCategorizationAssistServiceTest {
 
     @Test
     fun `suggest returns a safe result shape and never crashes`() {
-        val service = CloudCategorizationAssistService()
+        // Mock SecureKeyStorage
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "fake-api-key"
+        
+        val service = CloudCategorizationAssistService(mockKeyStorage)
 
         val result = kotlinx.coroutines.runBlocking {
             service.suggest(
@@ -37,13 +43,11 @@ class CloudCategorizationAssistServiceTest {
             )
         }
 
-        if (BuildConfig.GEMINI_API_KEY.isBlank()) {
-            assertNull(result)
-        } else {
-            assertNotNull(result)
-            result!!
-            assertTrue(result.categoryId > 0)
-            assertTrue(result.categoryName.isNotBlank())
-        }
+        // Since we're using a mock key, the service should return a result
+        // In real scenarios with empty/invalid keys, it would return null
+        assertNotNull(result)
+        result!!
+        assertTrue(result.categoryId > 0)
+        assertTrue(result.categoryName.isNotBlank())
     }
 }

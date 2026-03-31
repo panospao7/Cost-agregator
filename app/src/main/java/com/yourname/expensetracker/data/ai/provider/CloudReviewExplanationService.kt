@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanation
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
 import com.yourname.expensetracker.domain.config.AppConfig
@@ -18,11 +19,15 @@ import javax.inject.Singleton
 import timber.log.Timber
 
 @Singleton
-class CloudReviewExplanationService @Inject constructor() : ReviewExplanationService {
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+class CloudReviewExplanationService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage
+) : ReviewExplanationService {
 
     private var apiKeyOverride: String? = null
 
-    internal constructor(apiKeyOverride: String) : this() {
+    // Secondary constructor for testing
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -32,7 +37,7 @@ class CloudReviewExplanationService @Inject constructor() : ReviewExplanationSer
         .build()
 
     private val apiKey: String
-        get() = apiKeyOverride ?: BuildConfig.GEMINI_API_KEY
+        get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     override suspend fun generate(input: ReviewExplanationInput): ReviewExplanation? {
         if (apiKey.isBlank()) {

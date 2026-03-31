@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
@@ -18,11 +19,15 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class CloudDashboardBriefingService @Inject constructor() : DashboardBriefingService {
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+class CloudDashboardBriefingService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage
+) : DashboardBriefingService {
 
     private var apiKeyOverride: String? = null
 
-    internal constructor(apiKeyOverride: String) : this() {
+    // Secondary constructor for testing
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -34,7 +39,7 @@ class CloudDashboardBriefingService @Inject constructor() : DashboardBriefingSer
     private val promptHelper = OnDeviceDashboardBriefingService()
 
     private val apiKey: String
-        get() = apiKeyOverride ?: BuildConfig.GEMINI_API_KEY
+        get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     override suspend fun generate(input: DashboardBriefingInput): DashboardBriefing? {
         Timber.d("CloudDashboardBriefingService: Starting generation for: ${input.weatherSummary}")

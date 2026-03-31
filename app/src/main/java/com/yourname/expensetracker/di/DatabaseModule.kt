@@ -3,6 +3,10 @@ package com.yourname.expensetracker.di
 import android.content.Context
 import androidx.room.Room
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -63,10 +67,26 @@ object DatabaseModule {
             AppDatabase.MIGRATION_42_43,
             AppDatabase.MIGRATION_43_44,
             AppDatabase.MIGRATION_44_45,
-            AppDatabase.MIGRATION_45_46
+            AppDatabase.MIGRATION_45_46,
+            AppDatabase.MIGRATION_46_47
         )
             .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5)
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()
+    }
+    
+    /**
+     * CRITICAL FIX (CRITICAL-2): Provides atomic transaction coordinator.
+     * Ensures multi-DAO operations are ACID compliant.
+     */
+    @Provides
+    @Singleton
+    fun provideGroupTransactionCoordinator(
+        database: AppDatabase,
+        groupDao: ExpenseGroupDao,
+        memberDao: GroupMemberDao,
+        groupExpenseDao: GroupExpenseDao
+    ): GroupTransactionCoordinator {
+        return GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao)
     }
 }

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.groups
 
+import com.yourname.expensetracker.data.database.GroupTransactionCoordinator
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
@@ -15,17 +16,22 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Manages shared expense groups - creating groups, adding members, tracking expenses.
+ * CRITICAL FIX (CRITICAL-2): Now uses GroupTransactionCoordinator for atomic operations.
+ * All multi-table operations are wrapped in transactions to prevent data inconsistency.
  */
 @Singleton
 class SharedExpenseManager @Inject constructor(
     private val groupDao: ExpenseGroupDao,
     private val memberDao: GroupMemberDao,
-    private val groupExpenseDao: GroupExpenseDao
+    private val groupExpenseDao: GroupExpenseDao,
+    private val transactionCoordinator: GroupTransactionCoordinator
 ) {
     
     /**
      * Create a new expense group with initial members.
+     * 
+     * CRITICAL: Now uses atomic transaction - if member insert fails, 
+     * group insert is rolled back automatically.
      */
     suspend fun createGroup(
         name: String,
@@ -34,25 +40,24 @@ class SharedExpenseManager @Inject constructor(
         defaultCurrency: String = "EUR",
         currentUserName: String = "Me"
     ): Long = withContext(Dispatchers.IO) {
-        // Create group
+        // Create group entity
         val group = ExpenseGroup(
             name = name,
             description = description,
             defaultCurrency = defaultCurrency
         )
-        val groupId = groupDao.insert(group)
         
-        // Create members
+        // Create members (groupId will be set by transaction coordinator)
         val members = memberNames.map { name ->
             GroupMember(
-                groupId = groupId,
+                groupId = 0, // Will be replaced by actual groupId in transaction
                 name = name,
                 isCurrentUser = (name == currentUserName)
             )
         }
-        memberDao.insertAll(members)
         
-        groupId
+        // ATOMIC TRANSACTION: Both group and members succeed or both fail
+        transactionCoordinator.createGroupWithMembersAtomic(group, members)
     }
     
     /**

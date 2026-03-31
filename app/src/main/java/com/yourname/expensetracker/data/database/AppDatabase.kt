@@ -42,9 +42,11 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         BudgetForecast::class,
         Investment::class,
         InvestmentValue::class,
-        BankConnection::class
+        BankConnection::class,
+        SplitTemplate::class,
+        SplitItemAssignment::class
     ],
-        version = 46,
+        version = 47,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -61,6 +63,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun budgetDao(): BudgetDao
     abstract fun scannedReceiptDao(): ScannedReceiptDao
     abstract fun recurringExpenseDao(): RecurringExpenseDao
+    abstract fun manualRecurringExpenseDao(): ManualRecurringExpenseDao
     abstract fun plannedExpenseDao(): PlannedExpenseDao
     abstract fun savingsGoalDao(): SavingsGoalDao
     abstract fun merchantNormalizationDao(): MerchantNormalizationDao
@@ -83,6 +86,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun investmentDao(): InvestmentDao
     abstract fun investmentValueDao(): InvestmentValueDao
     abstract fun bankConnectionDao(): BankConnectionDao
+    abstract fun splitTemplateDao(): SplitTemplateDao
+    abstract fun splitItemAssignmentDao(): SplitItemAssignmentDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -1470,6 +1475,62 @@ abstract class AppDatabase : RoomDatabase() {
                     CREATE INDEX IF NOT EXISTS index_bank_connections_lastSync 
                     ON bank_connections (lastSync)
                 """.trimIndent())
+            }
+        }
+
+        // Migration 46 -> 47: Enhanced Split Transactions
+        val MIGRATION_46_47 = object : androidx.room.migration.Migration(46, 47) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create split_templates table for saved split patterns
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS split_templates (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        totalSplits INTEGER NOT NULL DEFAULT 2,
+                        splitType TEXT NOT NULL DEFAULT 'PERCENTAGE',
+                        shares TEXT NOT NULL,
+                        description TEXT,
+                        isDefault INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        useCount INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_split_templates_isDefault 
+                    ON split_templates (isDefault)
+                """.trimIndent())
+                
+                // Create split_item_assignments for receipt item splitting
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS split_item_assignments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        expenseId INTEGER NOT NULL,
+                        receiptItemId INTEGER,
+                        participantName TEXT NOT NULL,
+                        participantIndex INTEGER NOT NULL DEFAULT 0,
+                        assignedAmount REAL NOT NULL,
+                        isPaid INTEGER NOT NULL DEFAULT 0,
+                        paidAt INTEGER,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_split_item_assignments_expenseId 
+                    ON split_item_assignments (expenseId)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_split_item_assignments_receiptItemId 
+                    ON split_item_assignments (receiptItemId)
+                """.trimIndent())
+                
+                // Add columns to expenses table for enhanced split tracking
+                database.execSQL("ALTER TABLE expenses ADD COLUMN splitTemplateId INTEGER DEFAULT NULL")
+                database.execSQL("ALTER TABLE expenses ADD COLUMN splitVisualization TEXT DEFAULT NULL")
             }
         }
     }

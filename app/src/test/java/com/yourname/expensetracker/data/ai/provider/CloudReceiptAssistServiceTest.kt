@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
@@ -13,11 +14,17 @@ import kotlinx.coroutines.flow.flowOf
 
 class CloudReceiptAssistServiceTest {
 
+    private fun createMockKeyStorage(): SecureKeyStorage {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns ""
+        return mockKeyStorage
+    }
+
     @Test
     fun `suggest returns null safely when api key is absent or request unsupported`() {
         val settingsRepository = mockk<AiSettingsRepository>()
         every { settingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, receiptAssistEnabled = true))
-        val service = CloudReceiptAssistService(settingsRepository, "")
+        val service = CloudReceiptAssistService(settingsRepository, createMockKeyStorage())
 
         val result = kotlinx.coroutines.runBlocking {
             service.suggest(
@@ -44,7 +51,7 @@ class CloudReceiptAssistServiceTest {
     fun `usedImageInput only reports true when image metadata exists`() {
         val settingsRepository = mockk<AiSettingsRepository>()
         every { settingsRepository.settings() } returns flowOf(AiSettings())
-        val service = CloudReceiptAssistService(settingsRepository, "")
+        val service = CloudReceiptAssistService(settingsRepository, createMockKeyStorage())
 
         assertFalse(
             service.usedImageInput(
@@ -69,7 +76,7 @@ class CloudReceiptAssistServiceTest {
     fun `buildRequestBodyForTest includes inline image data when allowed`() {
         val settingsRepository = mockk<AiSettingsRepository>()
         every { settingsRepository.settings() } returns flowOf(AiSettings())
-        val service = CloudReceiptAssistService(settingsRepository, "")
+        val service = CloudReceiptAssistService(settingsRepository, createMockKeyStorage())
         val imageFile = kotlin.io.path.createTempFile(suffix = ".jpg").toFile().apply {
             writeBytes(byteArrayOf(1, 2, 3, 4))
         }

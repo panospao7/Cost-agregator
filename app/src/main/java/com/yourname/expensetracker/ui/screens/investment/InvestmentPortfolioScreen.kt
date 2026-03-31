@@ -209,7 +209,11 @@ private fun InvestmentCard(performance: InvestmentPerformance) {
             Spacer(modifier = Modifier.height(8.dp))
             
             LinearProgressIndicator(
-                progress = { (performance.gainLossPercent + 100f).coerceIn(0f, 200f) / 200f },
+                progress = { 
+                    val result = (performance.gainLossPercent.toDouble() + 100.0)
+                        .coerceIn(0.0, 200.0) / 200.0
+                    result.toFloat()
+                },
                 modifier = Modifier.fillMaxWidth(),
                 color = if (performance.gainLoss >= 0) 
                     MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error

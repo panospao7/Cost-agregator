@@ -19,8 +19,9 @@ This document describes all **22 features** implemented in the ExpenseTracker An
 | Phase 2 | Savings Goals, Subscriptions, Business Expenses | ✅ Complete |
 | Phase 3 | Multi-Currency, Expense Groups, AI Forecasting, OCR | ✅ Complete |
 | Phase 4 | Investment, Bank API, Analytics, Budgets, Income, Tax, Reminders, Challenges | ✅ Complete |
+| Phase 5 | Enhanced Split, Lifestyle Inflation, Bill Negotiation, Price Protection, NLP Search, Carbon Footprint | ✅ Complete |
 
-**Total: 22 Features**
+**Total: 28 Features**
 
 ---
 
@@ -810,6 +811,222 @@ composable("advanced_analytics") {
 
 ---
 
+## Phase 5 Features (Newly Added - 6 Features)
+
+### Feature #22: Enhanced Split Transactions
+**Status:** ✅ Complete | **Migration:** 46→47
+
+#### Description
+Advanced visual split editor with percentage splits, templates, and receipt item-level splitting.
+
+#### Key Components
+- **EnhancedSplitManager** - Core split calculation logic
+- **SplitTemplate** entity - Saved split patterns
+- **SplitItemAssignment** entity - Item-level participant assignments
+- **VisualSplitEditorScreen** - Drag-to-adjust visual editor
+- **SplitTemplatesScreen** - Template management UI
+
+#### Features
+- ✅ Visual split editor with stacked bar chart
+- ✅ 4 split types: Equal, Percentage, Custom Amount, Unequal
+- ✅ Split templates with default template support
+- ✅ Drag-to-adjust split amounts
+- ✅ Receipt item-level splitting (assign items to participants)
+- ✅ Split by item assignments with payment tracking
+
+#### Usage
+```kotlin
+// Open visual split editor
+VisualSplitEditorScreen(
+    totalAmount = 150.0,
+    onSplitComplete = { shares, type ->
+        // Apply the split to the expense
+    }
+)
+
+// Manage templates
+SplitTemplatesScreen(
+    onCreateTemplate = { /* create new */ },
+    onEditTemplate = { template -> /* edit */ }
+)
+```
+
+---
+
+### Feature #13: Lifestyle Inflation Detector
+**Status:** ✅ Complete
+
+#### Description
+Analyzes income-spending correlation to detect lifestyle creep and hedonic adaptation.
+
+#### Key Components
+- **LifestyleInflationDetector** - Analytics engine for income-spending correlation
+- **LifestyleInflationScreen** - Visualization of lifestyle metrics
+- **LifestyleInflationViewModel** - State management
+
+#### Features
+- ✅ Income-spending correlation analysis
+- ✅ Income elasticity calculation (spending growth vs income growth)
+- ✅ Lifestyle creep detection with severity alerts
+- ✅ Hedonic adaptation score (0-100)
+- ✅ Monthly spending breakdown by category
+- ✅ Personalized recommendations to reduce lifestyle inflation
+
+#### Usage
+```kotlin
+// Analyze lifestyle inflation
+val report = lifestyleInflationDetector.analyzeLifestyleInflation(months = 12)
+
+// View in UI
+LifestyleInflationScreen(onNavigateBack = { /* navigation */ })
+```
+
+---
+
+### Feature #12: Smart Bill Negotiation
+**Status:** ✅ Complete
+
+#### Description
+AI-powered bill negotiation assistant with market rate comparisons and script generation.
+
+#### Key Components
+- **SmartBillNegotiationEngine** - Rate comparison and script generation
+- **BillNegotiationScreen** - Opportunity viewer
+- **BillNegotiationViewModel** - State management
+
+#### Features
+- ✅ Market rate database for utilities, telecom, insurance
+- ✅ Negotiation opportunity detection
+- ✅ AI-generated negotiation scripts
+- ✅ Retention offer suggestions
+- ✅ Success probability scoring
+- ✅ Alternative provider recommendations
+- ✅ Competitor pricing for leverage
+
+#### Usage
+```kotlin
+// Analyze negotiation opportunities
+val opportunities = negotiationEngine.analyzeNegotiationOpportunities()
+
+// View in UI
+BillNegotiationScreen(onNavigateBack = { /* navigation */ })
+```
+
+---
+
+### Feature #11: Price Protection & Deal Hunting
+**Status:** ✅ Complete
+
+#### Description
+Monitors price drops on purchases and finds better deals, coupons, and credit card benefits.
+
+#### Key Components
+- **PriceProtectionTracker** - Price monitoring and deal finding
+- **PriceProtectionScreen** - Price drop alerts and deals UI
+- **PriceProtectionViewModel** - State management
+
+#### Features
+- ✅ Automatic price drop detection on eligible items (electronics, appliances)
+- ✅ Price protection claim links for major retailers
+- ✅ Better deal alternatives from competitors
+- ✅ Coupon matching for recent purchases
+- ✅ Credit card benefit detection (cashback, protection)
+- ✅ Return window tracking
+- ✅ Credit card offset cost calculator
+
+#### Usage
+```kotlin
+// Monitor price drops
+val alerts = priceTracker.monitorPriceDrops()
+
+// View in UI
+PriceProtectionScreen(onNavigateBack = { /* navigation */ })
+```
+
+---
+
+### Feature #6: Natural Language Search
+**Status:** ✅ Complete
+
+#### Description
+Advanced NLP search with entity extraction and voice input support.
+
+#### Key Components
+- **NaturalLanguageSearchEngine** - Query interpretation and entity extraction
+- **NaturalLanguageSearchScreen** - Search UI with voice input
+- **NaturalLanguageSearchViewModel** - State management
+
+#### Features
+- ✅ Natural language query interpretation
+- ✅ Entity extraction: amounts, dates, merchants, locations
+- ✅ Complex filters: "restaurants over €50 last month"
+- ✅ Voice input with speech recognition
+- ✅ Confidence scoring for interpretations
+- ✅ Example queries for guidance
+- ✅ Visual breakdown of extracted entities
+
+#### Usage
+```kotlin
+// Interpret query
+val interpretation = searchEngine.interpretQuery("How much did I spend at restaurants last month?")
+
+// Execute search
+val results = searchEngine.executeSearch(interpretation)
+
+// View in UI
+NaturalLanguageSearchScreen(onNavigateBack = { /* navigation */ })
+```
+
+---
+
+### Feature #10: Carbon Footprint Tracking
+**Status:** ✅ Complete
+
+#### Description
+Calculates CO2 emissions from spending patterns with sustainability recommendations.
+
+#### Key Components
+- **CarbonFootprintCalculator** - Emission factor database and calculations
+- **CarbonFootprintScreen** - Sustainability dashboard
+- **CarbonFootprintViewModel** - State management
+
+#### Features
+- ✅ CO2 emission calculations by spending category
+- ✅ Merchant-specific emission factors
+- ✅ Daily/weekly/monthly emission tracking
+- ✅ Comparison to national and global averages
+- ✅ Paris Agreement target gap analysis
+- ✅ Sustainability score (0-100)
+- ✅ Offset cost calculator
+- ✅ Category breakdown with visual charts
+- ✅ Personalized sustainability recommendations
+- ✅ Sustainable alternative suggestions
+- ✅ Monthly emission trends
+
+#### Usage
+```kotlin
+// Calculate footprint
+val report = calculator.calculateCarbonFootprint(startDate, endDate)
+
+// View in UI
+CarbonFootprintScreen(onNavigateBack = { /* navigation */ })
+```
+
+---
+
+## Database Schema Update
+
+### Migration 46→47: Enhanced Split Transactions
+**New Tables:**
+- `split_templates` - Saved split patterns
+- `split_item_assignments` - Item-level participant assignments
+
+**New Columns:**
+- `expenses.splitTemplateId` - Reference to split template
+- `expenses.splitVisualization` - Visual split data (JSON)
+
+---
+
 ## Contributors
 
 - **AI Assistant (OpenCode)** - Feature implementation, documentation
@@ -824,5 +1041,5 @@ composable("advanced_analytics") {
 ---
 
 *Last updated: March 31, 2026*  
-*Version: 46*  
-*Total Features: 22*
+*Version: 47*  
+*Total Features: 28*

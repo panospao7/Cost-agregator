@@ -95,7 +95,11 @@ data class Expense(
     val businessPurpose: String? = null, // e.g., "Client meeting", "Conference travel"
     val businessCategory: String? = null, // e.g., "Travel", "Meals", "Office Supplies", "Software"
     val businessProject: String? = null,  // For project-based expense tracking
-    val requiresReceipt: Boolean = false  // Flag for tax-deductible expenses needing receipts
+    val requiresReceipt: Boolean = false,  // Flag for tax-deductible expenses needing receipts
+
+    // Enhanced Split Transaction fields (v47)
+    val splitTemplateId: Long? = null,  // Reference to SplitTemplate used
+    val splitVisualization: String? = null  // JSON with visual split data (pie chart segments, colors, etc.)
 ) {
     /**
      * The amount that should be counted toward the user's own spending.

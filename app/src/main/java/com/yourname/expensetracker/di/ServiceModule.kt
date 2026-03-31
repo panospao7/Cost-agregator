@@ -22,9 +22,20 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+
 @Module
 @InstallIn(SingletonComponent::class)
 object ServiceModule {
+
+    @Provides
+    @Singleton
+    fun provideGson(): Gson {
+        return GsonBuilder()
+            .setLenient()
+            .create()
+    }
 
     @Provides
     @Singleton

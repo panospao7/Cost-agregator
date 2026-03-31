@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-03-31
+
+### 🎉 Phase 5 Release - 6 New Features
+
+**Database Version:** 47  
+**Total Features:** 28 (6 new)  
+
+### ✨ Added - Phase 5 Features
+
+#### Enhanced Split Transactions (#22)
+- SplitTemplate and SplitItemAssignment entities (Migration 46→47)
+- Visual split editor with stacked bar chart visualization
+- 4 split types: Equal, Percentage, Custom Amount, Unequal
+- Split templates with default template support
+- Drag-to-adjust split amounts with real-time preview
+- Receipt item-level splitting (assign items to participants)
+- Payment tracking for split items
+- Color-coded participants for visual clarity
+- **UI:** VisualSplitEditorScreen with interactive split controls
+- **UI:** SplitTemplatesScreen for managing saved templates
+
+#### Lifestyle Inflation Detector (#13)
+- Income-spending correlation analysis engine
+- Income elasticity calculation (spending growth vs income growth)
+- Lifestyle creep detection with severity alerts (LOW, MEDIUM, HIGH)
+- Hedonic adaptation score (0-100) based on spending volatility
+- Monthly spending breakdown: essential vs discretionary
+- Savings rate tracking over time
+- Personalized recommendations to reduce lifestyle inflation
+- Trend visualization with color-coded risk levels
+- **UI:** LifestyleInflationScreen with metrics and alerts
+
+#### Smart Bill Negotiation (#12)
+- Market rate database for utilities, telecom, and insurance
+- Negotiation opportunity detection based on current vs market rates
+- AI-generated negotiation scripts with opening, talking points, and closing
+- Negotiation power scoring (STRONG, MODERATE, WEAK, POOR)
+- Retention offer suggestions (price match, loyalty discounts, bundle deals)
+- Success probability calculation (0-100%)
+- Alternative provider recommendations with competitor pricing
+- Service type detection (Internet, Mobile, Streaming, Insurance, Energy)
+- **UI:** BillNegotiationScreen with opportunity cards and scripts
+
+#### Price Protection & Deal Hunting (#11)
+- Automatic price drop detection on eligible purchases
+- Support for electronics, appliances, and high-value items
+- Price protection window tracking (14-30 days)
+- Direct claim links for major retailers (Amazon, Best Buy, Target)
+- Better deal alternatives from competitor stores
+- Coupon matching for recent purchases
+- Credit card benefit detection:
+  - Cashback opportunities (dining, groceries, gas)
+  - Purchase protection alerts
+  - Extended warranty notifications
+- Carbon offset cost calculator
+- Return window tracking by merchant
+- **UI:** PriceProtectionScreen with tabs for Price Drops, Protected Items, and Deals
+
+#### Natural Language Search (#6)
+- Advanced NLP query interpretation engine
+- Entity extraction: amounts, dates, merchants, locations, categories
+- Complex query support: "restaurants over €50 in Athens last month"
+- Amount comparison operators: over, under, between, exactly
+- Date range parsing: natural language (last week, this month) and specific dates
+- Voice input with speech recognition integration
+- Confidence scoring for query interpretations (0-100%)
+- Visual breakdown of extracted entities
+- Example query suggestions
+- Real-time search with debouncing
+- **UI:** NaturalLanguageSearchScreen with voice input and entity visualization
+
+#### Carbon Footprint Tracking (#10)
+- CO2 emission factor database (25+ categories)
+- Merchant-specific emission patterns for common retailers
+- Category-based calculations: Food, Transport, Shopping, Utilities
+- Daily/weekly/monthly emission tracking and trends
+- National and global average comparisons
+- Paris Agreement 2030 target gap analysis
+- Sustainability score (0-100) with color-coded ratings
+- Carbon offset cost calculator (€/tonne CO2)
+- Detailed category breakdown with percentages
+- Personalized sustainability recommendations
+- Sustainable alternative suggestions with CO2 and cost savings
+- Monthly emission trend visualization
+- **UI:** CarbonFootprintScreen with sustainability dashboard and recommendations
+
+### 🔧 Technical Improvements
+
+#### Database
+- Migration 46→47 for Enhanced Split Transactions
+- New entities: SplitTemplate, SplitItemAssignment
+- New columns: expenses.splitTemplateId, expenses.splitVisualization
+
+---
+
 ## [1.0.0] - 2026-03-31
 
 ### 🎉 Major Release - All 22 Features Complete
@@ -385,6 +480,19 @@ Plus associated ViewModels for all screens.
 
 ## Release Checklist
 
+### v1.1.0 - Phase 5 Features - ✅ COMPLETE
+
+- [x] Enhanced Split Transactions with visual editor
+- [x] Lifestyle Inflation Detector
+- [x] Smart Bill Negotiation
+- [x] Price Protection & Deal Hunting
+- [x] Natural Language Search with voice input
+- [x] Carbon Footprint Tracking
+- [x] Database migration 46→47
+- [x] All UI screens created
+- [x] Domain logic implemented
+- [x] Documentation updated
+
 ### v1.0.0 - ✅ COMPLETE
 
 - [x] All 22 features implemented
@@ -407,4 +515,4 @@ Plus associated ViewModels for all screens.
 
 ---
 
-*Last updated: March 31, 2026*
+*Last updated: March 31, 2026 - Phase 5 Complete (28 features)*

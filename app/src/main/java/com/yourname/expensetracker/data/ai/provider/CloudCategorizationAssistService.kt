@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
@@ -18,7 +19,10 @@ import javax.inject.Singleton
 import timber.log.Timber
 
 @Singleton
-class CloudCategorizationAssistService @Inject constructor() : CategorizationAssistService {
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+class CloudCategorizationAssistService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage
+) : CategorizationAssistService {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(AppConfig.Ai.CATEGORIZATION_ASSIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -26,7 +30,7 @@ class CloudCategorizationAssistService @Inject constructor() : CategorizationAss
         .build()
 
     private val apiKey: String
-        get() = BuildConfig.GEMINI_API_KEY
+        get() = secureKeyStorage.getGeminiKey() ?: ""
 
     override suspend fun suggest(input: CategorizationAssistInput): CategoryAssistSuggestion? {
         if (apiKey.isBlank()) {

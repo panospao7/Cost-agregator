@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -8,7 +11,11 @@ class CloudDashboardBriefingServiceTest {
 
     @Test
     fun `generate returns null safely when api key is absent`() {
-        val service = CloudDashboardBriefingService("")
+        // Mock SecureKeyStorage to return empty key (simulating missing API key)
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns ""
+        
+        val service = CloudDashboardBriefingService(mockKeyStorage)
 
         val result = kotlinx.coroutines.runBlocking {
             service.generate(

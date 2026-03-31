@@ -1,9 +1,11 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DedupeCandidateSummary
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -13,7 +15,11 @@ class CloudDedupeJudgeServiceTest {
 
     @Test
     fun `judge returns a safe result shape and never crashes`() {
-        val service = CloudDedupeJudgeService()
+        // Mock SecureKeyStorage
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "fake-api-key"
+        
+        val service = CloudDedupeJudgeService(mockKeyStorage)
 
         val result = kotlinx.coroutines.runBlocking {
             service.judge(
@@ -44,12 +50,10 @@ class CloudDedupeJudgeServiceTest {
             )
         }
 
-        if (BuildConfig.GEMINI_API_KEY.isBlank()) {
-            assertNull(result)
-        } else {
-            assertNotNull(result)
-            result!!
-            assertTrue(result.verdict.name.isNotBlank())
-        }
+        // Since we're using a mock key, the service should return a result
+        // In real scenarios with empty/invalid keys, it would return null
+        assertNotNull(result)
+        result!!
+        assertTrue(result.verdict.name.isNotBlank())
     }
 }

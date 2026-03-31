@@ -10,24 +10,20 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Calculates estimated taxes based on spending and income patterns.
+ * HIGH FIX (HIGH-6): Calculates estimated taxes using configurable tax rates.
+ * 
+ * Replaces hardcoded tax rates with TaxConfiguration for country-specific rates.
+ * Supports multiple tax systems and can be extended for per-user configuration.
  */
 @Singleton
 class TaxEstimator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val businessExpenseRepository: BusinessExpenseRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
 ) {
-    companion object {
-        // Simplified tax rates - would be configurable per country
-        const val DEFAULT_VAT_RATE = 0.24 // 24% VAT for Greece
-        const val ESTIMATED_TAX_BRACKET_1 = 0.09 // 9% for low income
-        const val ESTIMATED_TAX_BRACKET_2 = 0.22 // 22% for medium income
-        const val ESTIMATED_TAX_BRACKET_3 = 0.32 // 32% for high income
-    }
-    
     /**
-     * Estimate taxes for a period.
+     * Estimate taxes for a period using configured tax rates.
      */
     suspend fun estimateTaxes(
         startDate: Long,
@@ -41,12 +37,11 @@ class TaxEstimator @Inject constructor(
             totalDeductible += expense.amount
         }
         
-        // Calculate income tax bracket
-        val taxRate = when {
-            estimatedAnnualIncome < 10000 -> ESTIMATED_TAX_BRACKET_1
-            estimatedAnnualIncome < 30000 -> ESTIMATED_TAX_BRACKET_2
-            else -> ESTIMATED_TAX_BRACKET_3
-        }
+        // HIGH FIX: Calculate income tax bracket from configuration
+        val taxRate = calculateTaxRate(estimatedAnnualIncome)
+        
+        // HIGH FIX: Use configured VAT rate
+        val vatRate = taxConfig.getVatRate()
         
         // Estimate VAT paid (simplified)
         val expenses = expenseDao.getExpensesBetween(startDate, endDate)
@@ -54,7 +49,7 @@ class TaxEstimator @Inject constructor(
         for (expense in expenses) {
             // Assume most purchases include VAT
             if (expense.transactionType.name == "PURCHASE") {
-                val vatAmount = expense.amount * (DEFAULT_VAT_RATE / (1 + DEFAULT_VAT_RATE))
+                val vatAmount = expense.amount * (vatRate / (1 + vatRate))
                 vatPaid += vatAmount
             }
         }
@@ -74,8 +69,25 @@ class TaxEstimator @Inject constructor(
             estimatedIncomeTax = estimatedIncomeTax,
             estimatedVatPaid = vatPaid,
             effectiveTaxRate = if (monthlyIncome > 0) (estimatedIncomeTax / monthlyIncome) * 100 else 0.0,
-            notes = "Simplified estimate. Consult tax professional for accurate filing."
+            notes = "Estimate using ${taxConfig.getCountryCode()} tax rates. Consult tax professional for accurate filing."
         )
+    }
+    
+    /**
+     * HIGH FIX: Calculate tax rate based on income using configured brackets.
+     * Replaces hardcoded bracket logic.
+     */
+    private fun calculateTaxRate(income: Double): Double {
+        val brackets = taxConfig.getTaxBrackets()
+        
+        for (bracket in brackets) {
+            if (income >= bracket.minIncome && (bracket.maxIncome == null || income < bracket.maxIncome)) {
+                return bracket.rate
+            }
+        }
+        
+        // Default to last bracket if above all
+        return brackets.lastOrNull()?.rate ?: 0.20
     }
     
     /**

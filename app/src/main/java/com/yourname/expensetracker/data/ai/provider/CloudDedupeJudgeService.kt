@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
@@ -19,16 +20,26 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
 
+/**
+ * CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig.
+ * API key is retrieved from encrypted storage at runtime, not compiled into APK.
+ */
 @Singleton
-class CloudDedupeJudgeService @Inject constructor() : DedupeJudgeService {
+class CloudDedupeJudgeService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage
+) : DedupeJudgeService {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(AppConfig.Ai.DEDUPE_JUDGE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .readTimeout(AppConfig.Ai.DEDUPE_JUDGE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * CRITICAL: API key is now retrieved from secure storage at runtime.
+     * No longer compiled into BuildConfig, preventing APK extraction.
+     */
     private val apiKey: String
-        get() = BuildConfig.GEMINI_API_KEY
+        get() = secureKeyStorage.getGeminiKey() ?: ""
 
     override suspend fun judge(input: DedupeJudgeInput): DedupeJudgeSuggestion? {
         if (apiKey.isBlank()) {

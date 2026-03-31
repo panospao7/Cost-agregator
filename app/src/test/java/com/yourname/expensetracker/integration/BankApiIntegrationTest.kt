@@ -5,11 +5,13 @@ import com.yourname.expensetracker.data.database.entity.SyncFrequency
 import com.yourname.expensetracker.data.database.entity.SyncStatus
 import com.yourname.expensetracker.domain.bank.BankApiIntegration
 import com.yourname.expensetracker.domain.bank.BankTransaction
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mock
+import org.mockito.Mockito
 import org.mockito.MockitoAnnotations
 
 /**
@@ -22,13 +24,14 @@ class BankApiIntegrationTest {
 
     @Before
     fun setup() {
-        MockitoAnnotations.openMocks(this)
+        MockitoAnnotations.initMocks(this)
     }
 
     @Test
     fun `test supported banks list`() {
-        // Given: Bank API Integration
-        val integration = BankApiIntegration(mock())
+        // Given: Bank API Integration with mocked TimeProvider
+        val mockTimeProvider = Mockito.mock(TimeProvider::class.java)
+        val integration = BankApiIntegration(mockTimeProvider)
         
         // When: Get supported banks
         val banks = integration.getSupportedBanks()
@@ -42,8 +45,9 @@ class BankApiIntegrationTest {
 
     @Test
     fun `test bank support check`() {
-        // Given: Bank API Integration
-        val integration = BankApiIntegration(mock())
+        // Given: Bank API Integration with mocked TimeProvider
+        val mockTimeProvider = Mockito.mock(TimeProvider::class.java)
+        val integration = BankApiIntegration(mockTimeProvider)
         
         // When/Then: Check bank support
         assertTrue(integration.isBankSupported("nbg"))

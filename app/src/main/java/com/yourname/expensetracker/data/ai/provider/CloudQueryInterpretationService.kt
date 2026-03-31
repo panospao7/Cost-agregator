@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
@@ -19,11 +20,15 @@ import javax.inject.Singleton
 import kotlinx.coroutines.delay
 
 @Singleton
-class CloudQueryInterpretationService @Inject constructor() : QueryInterpretationService {
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+class CloudQueryInterpretationService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage
+) : QueryInterpretationService {
 
     private var apiKeyOverride: String? = null
 
-    internal constructor(apiKeyOverride: String) : this() {
+    // Secondary constructor for testing
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -35,7 +40,7 @@ class CloudQueryInterpretationService @Inject constructor() : QueryInterpretatio
     private val promptHelper = OnDeviceQueryInterpretationService()
 
     private val apiKey: String
-        get() = apiKeyOverride ?: BuildConfig.GEMINI_API_KEY
+        get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     override suspend fun interpret(
         input: FinancialQueryInterpretationInput

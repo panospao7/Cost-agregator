@@ -6,30 +6,37 @@
 
 ---
 
-## FILES COVERED: 185+ Total Kotlin Files
+## FILES COVERED: 280+ Total Kotlin Files
 
-| Segment | Files | Description |
-|---------|-------|-------------|
-| 1 | ~20 | Financial Forecast/Weather (+ Monte Carlo) |
-| 2 | ~8 | Budget Management |
-| 3 | ~20 | Notification Parsing |
-| 4 | ~12 | Receipt Scanning (OCR) - **NEW: AI Item Categorization** |
-| 5 | ~15 | Merchant Categorization |
-| 6 | ~5 | Recurring Expenses |
-| 7 | ~15 | Analytics & Insights |
-| 8 | ~20 | Core Expense Management |
-| 9 | ~20 | Dashboard & Widgets (NEW: Totals Dashboard) |
-| 10 | ~3 | Notifications |
-| 11 | ~8 | Debug & Diagnostics |
-| 12 | ~6 | Dependency Injection (Updated) |
-| 13 | ~25 | Utilities (Updated) |
-| 14 | ~3 | Use Cases (NEW) |
-| 15 | ~1 | Performance (NEW) |
-| 16 | ~1 | Configuration (NEW) |
-| 17 | ~15 | Location Enrichment (NEW Mar 2026) |
-| 18 | ~8 | AI Follow-Through (Phase 4B - NEW Mar 2026) |
-| 19 | ~10 | Totals Dashboard (NEW Mar 2026) |
-| 20 | ~12 | AI Receipt Item Categorization (NEW Mar 2026) |
+| Segment | Files | Description | Status |
+|---------|-------|-------------|--------|
+| 1 | ~20 | Financial Forecast/Weather (+ Monte Carlo) | ✅ Stable |
+| 2 | ~8 | Budget Management | ✅ Stable |
+| 3 | ~20 | Notification Parsing | ✅ Stable |
+| 4 | ~12 | Receipt Scanning (OCR) - **NEW: AI Item Categorization** | ⚠️ Memory leak |
+| 5 | ~15 | Merchant Categorization | ✅ Stable |
+| 6 | ~5 | Recurring Expenses | ✅ Stable |
+| 7 | ~15 | Analytics & Insights | ⚠️ Query optimization |
+| 8 | ~20 | Core Expense Management | ✅ Stable |
+| 9 | ~20 | Dashboard & Widgets (NEW: Totals Dashboard) | ✅ Stable |
+| 10 | ~3 | Notifications | ✅ Stable |
+| 11 | ~8 | Debug & Diagnostics | ✅ Stable |
+| 12 | ~6 | Dependency Injection (Updated) | ⚠️ Missing modules |
+| 13 | ~25 | Utilities (Updated) | ✅ Stable |
+| 14 | ~10 | Use Cases (NEW) | ⚠️ Need expansion |
+| 15 | ~2 | Performance (NEW) | ⚠️ Needs caching |
+| 16 | ~3 | Configuration (NEW) | ⚠️ Hardcoded values |
+| 17 | ~15 | Location Enrichment (NEW Mar 2026) | ✅ Stable |
+| 18 | ~8 | AI Follow-Through (Phase 4B - NEW Mar 2026) | ✅ Stable |
+| 19 | ~10 | Totals Dashboard (NEW Mar 2026) | ✅ Stable |
+| 20 | ~12 | AI Receipt Item Categorization (NEW Mar 2026) | ✅ Stable |
+| **21** | **~8** | **Enhanced Split Transactions (Phase 5)** | **⚠️ Precision issues** |
+| **22** | **~5** | **Lifestyle Inflation Detector (Phase 5)** | **⚠️ Date logic dup** |
+| **23** | **~5** | **Smart Bill Negotiation (Phase 5)** | **✅ Stable** |
+| **24** | **~5** | **Price Protection (Phase 5)** | **⚠️ Concurrency** |
+| **25** | **~5** | **Natural Language Search (Phase 5)** | **⚠️ Memory leak** |
+| **26** | **~5** | **Carbon Footprint (Phase 5)** | **✅ Stable** |
+| **27** | **N/A** | **Architecture & Code Quality** | **83 issues found** |
 
 ---
 
@@ -1276,6 +1283,312 @@ data class AiSettings(
 - See also: Segment 4 (Receipt Scanning), Segment 18 (AI Follow-Through)
 
 ---
+
+## SEGMENT 21: ENHANCED SPLIT TRANSACTIONS (NEW - Phase 5)
+
+**Description:** Visual split editor with drag-to-adjust interface, split templates, and receipt item-level splitting.
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| `ui/screens/split/VisualSplitEditorScreen.kt` | **MAIN** - Drag-to-adjust split editor with stacked bar chart |
+| `ui/screens/split/VisualSplitViewModel.kt` | State management for split editor |
+| `ui/screens/split/SplitTemplatesScreen.kt` | Template management UI |
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/split/EnhancedSplitManager.kt` | **MAIN ENGINE** - Split calculations, visual data generation |
+
+### Data Layer
+| File | Purpose |
+|------|---------|
+| `data/database/entity/SplitTemplate.kt` | Saved split patterns |
+| `data/database/entity/SplitItemAssignment.kt` | Item-level participant assignments |
+| `data/database/dao/SplitTemplateDao.kt` | Template CRUD operations |
+| `data/database/dao/SplitItemAssignmentDao.kt` | Assignment queries |
+
+### Database Schema (v47)
+```sql
+split_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  totalSplits INTEGER NOT NULL DEFAULT 2,
+  splitType TEXT NOT NULL DEFAULT 'PERCENTAGE',
+  shares TEXT NOT NULL,  -- JSON array
+  description TEXT,
+  isDefault INTEGER NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  useCount INTEGER NOT NULL DEFAULT 0
+)
+
+split_item_assignments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  expenseId INTEGER NOT NULL,
+  receiptItemId INTEGER,
+  participantName TEXT NOT NULL,
+  participantIndex INTEGER NOT NULL DEFAULT 0,
+  assignedAmount REAL NOT NULL,
+  isPaid INTEGER NOT NULL DEFAULT 0,
+  paidAt INTEGER,
+  createdAt INTEGER NOT NULL,
+  
+  FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE CASCADE
+)
+```
+
+### Known Issues
+- **#7 (HIGH):** Floating point precision in split calculations - use BigDecimal
+- **#8 (HIGH):** Missing @Transaction on multi-table operations
+
+---
+
+## SEGMENT 22: LIFESTYLE INFLATION DETECTOR (NEW - Phase 5)
+
+**Description:** Analyzes income-spending correlation to detect lifestyle creep and hedonic adaptation patterns.
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| `ui/screens/lifestyle/LifestyleInflationScreen.kt` | Metrics visualization and alerts |
+| `ui/screens/lifestyle/LifestyleInflationViewModel.kt` | State management |
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/lifestyle/LifestyleInflationDetector.kt` | **MAIN ENGINE** - Income elasticity, creep detection |
+
+### Key Capabilities
+- Income-spending correlation calculation (Pearson)
+- Income elasticity of spending (% change/% change)
+- Lifestyle creep severity alerts (LOW/MEDIUM/HIGH)
+- Hedonic adaptation score (0-100) based on spending volatility
+- Monthly essential vs discretionary breakdown
+
+### Known Issues
+- **#11 (MEDIUM):** Duplicate date calculation logic - centralize in DateUtils
+- **Performance:** Large datasets may need pagination
+
+---
+
+## SEGMENT 23: SMART BILL NEGOTIATION (NEW - Phase 5)
+
+**Description:** AI-powered bill negotiation assistant with market rate comparisons and script generation.
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| `ui/screens/negotiation/BillNegotiationScreen.kt` | Opportunity cards and scripts |
+| `ui/screens/negotiation/BillNegotiationViewModel.kt` | State management |
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/negotiation/SmartBillNegotiationEngine.kt` | **MAIN ENGINE** - Rate comparison, script generation |
+
+### Key Capabilities
+- Mock market rate database (utilities, telecom, insurance)
+- Negotiation power scoring (STRONG/MODERATE/WEAK/POOR)
+- AI-generated negotiation scripts with talking points
+- Retention offer suggestions (price match, discounts, bundles)
+- Success probability calculation (0-100%)
+
+### Known Issues
+- **Performance:** Market rate lookups could be optimized with indexing
+- Mock data only - needs real API integration for production
+
+---
+
+## SEGMENT 24: PRICE PROTECTION & DEAL HUNTING (NEW - Phase 5)
+
+**Description:** Monitors price drops, finds better deals, matches coupons, and tracks credit card benefits.
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| `ui/screens/price/PriceProtectionScreen.kt` | Price drops, protected items, deals tabs |
+| `ui/screens/price/PriceProtectionViewModel.kt` | State management |
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/price/PriceProtectionTracker.kt` | **MAIN ENGINE** - Price monitoring, deal finding |
+
+### Key Capabilities
+- 30-day price protection window tracking
+- Credit card benefit detection (cashback, protection)
+- Coupon matching for recent purchases
+- Deal alternatives from competitors
+- Offset cost calculator
+
+### Known Issues
+- **#19 (MEDIUM):** Concurrency issue in batch processing - needs Semaphore
+- Mock price data - needs real price API integration
+
+---
+
+## SEGMENT 25: NATURAL LANGUAGE SEARCH (NEW - Phase 5)
+
+**Description:** Advanced NLP search with entity extraction and voice input support.
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| `ui/screens/naturallanguage/NaturalLanguageSearchScreen.kt` | Search with voice input |
+| `ui/screens/naturallanguage/NaturalLanguageSearchViewModel.kt` | State management |
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/naturallanguage/NaturalLanguageSearchEngine.kt` | **MAIN ENGINE** - Query interpretation, entity extraction |
+
+### Key Capabilities
+- Entity extraction: amounts, dates, merchants, locations, categories
+- Complex query parsing: "restaurants over €50 in Athens last month"
+- Voice input with SpeechRecognizer
+- Confidence scoring (0-100%)
+- Visual breakdown of extracted entities
+
+### Known Issues
+- **#9 (HIGH):** SpeechRecognizer not properly released - memory leak
+- **#6 (HIGH):** Blocking operations risk - verify all callers properly suspend
+
+---
+
+## SEGMENT 26: CARBON FOOTPRINT TRACKING (NEW - Phase 5)
+
+**Description:** CO2 emission calculations from spending patterns with sustainability recommendations.
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| `ui/screens/carbon/CarbonFootprintScreen.kt` | Sustainability dashboard |
+| `ui/screens/carbon/CarbonFootprintViewModel.kt` | State management |
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| `domain/carbon/CarbonFootprintCalculator.kt` | **MAIN ENGINE** - Emission factor database, calculations |
+
+### Key Capabilities
+- CO2 emission factors for 25+ categories
+- Merchant-specific emission patterns
+- Sustainability score (0-100)
+- Paris Agreement 2030 target gap analysis
+- Carbon offset cost calculator (€/tonne)
+- Monthly emission trends
+
+### Known Issues
+- **#15 (MEDIUM):** Hardcoded emission factors - should be configurable
+- **Performance:** Large transaction history may need pagination
+
+---
+
+## SEGMENT 27: ARCHITECTURE & CODE QUALITY
+
+**Description:** Cross-cutting concerns, dependency injection, and known architectural issues.
+
+### Known Critical Issues
+See **REMEDIATION.md** for complete list of 83 issues.
+
+### Top Priority Fixes
+| Issue | Severity | Location | Fix |
+|-------|----------|----------|-----|
+| API Key Exposure | CRITICAL | `build.gradle.kts` | Move to Keystore |
+| Race Conditions | CRITICAL | `WarrantyTrackerRepository` | Add @Transaction |
+| Bitmap Memory Leak | CRITICAL | `ReceiptOcrService` | Add Mutex |
+| SQL Injection | CRITICAL | `AccountingExporters` | Use Apache CSV |
+| Floating Point Math | HIGH | All monetary calc | Use BigDecimal |
+| Architecture Violation | HIGH | Multiple ViewModels | Use UseCases |
+
+### Architecture Best Practices
+```
+✅ Correct: UI → ViewModel → UseCase → Repository → DAO
+❌ Wrong: UI → ViewModel → Repository (bypassing UseCase)
+
+✅ Correct: suspend functions with proper coroutine scopes
+❌ Wrong: runBlocking or blocking main thread
+
+✅ Correct: BigDecimal for all money calculations
+❌ Wrong: Double arithmetic for financial calculations
+
+✅ Correct: @Transaction for multi-table operations
+❌ Wrong: Sequential DAO calls without atomicity
+```
+
+### Dependency Injection Structure
+```
+di/
+├── DatabaseModule.kt          # Database, DAOs, Migrations
+├── RepositoryModule.kt        # Repository bindings
+├── UseCaseModule.kt           # UseCase bindings (NEEDED)
+├── ViewModelModule.kt         # ViewModel bindings
+├── AiModule.kt               # AI service bindings
+├── NetworkModule.kt          # API clients (NEEDED)
+└── SecurityModule.kt         # Keystore, encryption (NEEDED)
+```
+
+### Database Migration History
+| Migration | Description |
+|-----------|-------------|
+| 37→38 | Warranty & Return Windows |
+| 38→39 | Receipt Matching |
+| 39→40 | Subscription Management |
+| 40→41 | Business/Personal |
+| 41→42 | Multi-Currency |
+| 42→43 | Shared Expense Groups |
+| 43→44 | Budget Forecasting |
+| 44→45 | Investment Tracking |
+| 45→46 | Bank API Integration |
+| **46→47** | **Enhanced Split Transactions (Phase 5)** |
+
+---
+
+### Phase 5+ Future Enhancements
+
+- Real-time price APIs (Amazon, Best Buy)
+- Carbon offset marketplace integration
+- Voice search improvements (on-device NLP)
+- Smart contract bill negotiation
+- Multi-user split synchronization
+- Machine learning for emission factor personalization
+
+---
+
+## COMPLETE SEGMENT MAP
+
+| Segment | Features | Files | Status |
+|---------|----------|-------|--------|
+| 1 | Financial Forecast | ~20 | ✅ Stable |
+| 2 | Budget Management | ~8 | ✅ Stable |
+| 3 | Notification Parsing | ~20 | ✅ Stable |
+| 4 | Receipt Scanning (OCR) | ~12 | ⚠️ Memory leak |
+| 5 | Merchant Categorization | ~15 | ✅ Stable |
+| 6 | Recurring Expenses | ~5 | ✅ Stable |
+| 7 | Analytics & Insights | ~15 | ⚠️ Query optimization |
+| 8 | Core Expense Management | ~20 | ✅ Stable |
+| 9 | Dashboard & Widgets | ~20 | ✅ Stable |
+| 10 | Notifications | ~3 | ✅ Stable |
+| 11 | Debug & Diagnostics | ~8 | ✅ Stable |
+| 12 | Dependency Injection | ~6 | ⚠️ Missing modules |
+| 13 | Utilities | ~25 | ✅ Stable |
+| 14 | Use Cases | ~10 | ⚠️ Need expansion |
+| 15 | Performance | ~2 | ⚠️ Needs caching |
+| 16 | Configuration | ~3 | ⚠️ Hardcoded values |
+| 17 | Location Enrichment | ~15 | ✅ Stable |
+| 18 | AI Follow-Through | ~8 | ✅ Stable |
+| 19 | Totals Dashboard | ~10 | ✅ Stable |
+| 20 | AI Receipt Item Categorization | ~12 | ✅ Stable |
+| **21** | **Enhanced Split Transactions** | **~8** | **⚠️ Precision issues** |
+| **22** | **Lifestyle Inflation Detector** | **~5** | **⚠️ Date logic dup** |
+| **23** | **Smart Bill Negotiation** | **~5** | **✅ Stable** |
+| **24** | **Price Protection** | **~5** | **⚠️ Concurrency** |
+| **25** | **Natural Language Search** | **~5** | **⚠️ Memory leak** |
+| **26** | **Carbon Footprint** | **~5** | **✅ Stable** |
+| **27** | **Architecture & Quality** | **N/A** | **83 issues found** |
+
+**Total Files:** 280+ Kotlin files across 27 segments
 
 ### Phase 3+ Future Enhancements
 

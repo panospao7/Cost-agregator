@@ -21,7 +21,7 @@ class InvestmentTrackingIntegrationTest {
 
     @Before
     fun setup() {
-        MockitoAnnotations.openMocks(this)
+        MockitoAnnotations.initMocks(this)
     }
 
     @Test
@@ -110,9 +110,9 @@ class InvestmentTrackingIntegrationTest {
         }
         
         // Then: Verify percentages sum to 100%
-        assertEquals(50.0, allocation[InvestmentType.STOCK], 0.01)
-        assertEquals(30.0, allocation[InvestmentType.CRYPTO], 0.01)
-        assertEquals(20.0, allocation[InvestmentType.BOND], 0.01)
+        assertEquals(50.0, allocation[InvestmentType.STOCK] ?: 0.0, 0.01)
+        assertEquals(30.0, allocation[InvestmentType.CRYPTO] ?: 0.0, 0.01)
+        assertEquals(20.0, allocation[InvestmentType.BOND] ?: 0.0, 0.01)
         assertEquals(100.0, allocation.values.sum(), 0.01)
     }
 

@@ -145,6 +145,9 @@ dependencies {
     // Logging
     implementation("com.jakewharton.timber:timber:5.0.1")
     
+    // Gson - JSON serialization for split templates
+    implementation("com.google.code.gson:gson:2.10.1")
+    
     // Activity Extensions for viewModels()
     implementation("androidx.activity:activity-ktx:1.9.3")
     

@@ -223,6 +223,16 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
+    /**
+     * Overload to update category by expense ID directly.
+     */
+    suspend fun updateExpenseCategory(expenseId: Long, categoryId: Long?) {
+        if (categoryId == null) return
+        categoryUpdateMutex.withLock {
+            expenseDao.updateCategory(expenseId, categoryId)
+        }
+    }
+
     suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) {
         categoryUpdateMutex.withLock {
             val merchantKey = MerchantKeyGenerator.generate(merchant)

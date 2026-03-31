@@ -16,6 +16,8 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
 import timber.log.Timber
 import java.io.File
@@ -41,6 +43,13 @@ data class TextBlock(
     val bottom: Int = 0
 )
 
+/**
+ * CRITICAL FIX (CRITICAL-3): Added Mutex for thread-safe bitmap processing.
+ * 
+ * Prevents concurrent access issues and use-after-free during batch processing.
+ * As a Singleton, this service could be called from multiple coroutines simultaneously.
+ * The mutex ensures bitmap lifecycle operations are serialized per critical section.
+ */
 @Singleton
 class ReceiptOcrService @Inject constructor(
     @ApplicationContext private val context: Context
@@ -49,6 +58,12 @@ class ReceiptOcrService @Inject constructor(
         // Initialize PDFBox for Android
         PDFBoxResourceLoader.init(context)
     }
+    
+    /**
+     * CRITICAL: Mutex to prevent concurrent bitmap operations.
+     * Ensures thread-safe access during multi-receipt batch processing.
+     */
+    private val bitmapMutex = Mutex()
     
     // Reverting to DEFAULT_OPTIONS as Builder might not be available in current dependency version
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -99,8 +114,11 @@ class ReceiptOcrService @Inject constructor(
     /**
      * Process an image URI and return OCR results.
      * Also saves a compressed copy of the image for future reference.
+     * 
+     * CRITICAL FIX (CRITICAL-3): Wrapped in mutex for thread-safe bitmap processing.
+     * Prevents concurrent access and use-after-free during batch operations.
      */
-    suspend fun processImage(imageUri: Uri): OcrResult {
+    suspend fun processImage(imageUri: Uri): OcrResult = bitmapMutex.withLock {
         // 1. Load and prepare the image (throws if fail)
         val bitmap = loadAndCorrectBitmap(imageUri) ?: throw IllegalStateException("Failed to load and correct image: $imageUri")
 
