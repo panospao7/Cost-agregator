@@ -126,7 +126,7 @@ class SharedExpenseManager @Inject constructor(
     /**
      * Get a specific group.
      */
-    fun getGroup(groupId: Long): Flow<ExpenseGroup?> = groupDao.getGroupByIdFlow(groupId)
+    fun getGroup(groupId: Long): Flow<ExpenseGroup?> = groupDao.getByIdFlow(groupId)
     
     /**
      * Get members of a group.

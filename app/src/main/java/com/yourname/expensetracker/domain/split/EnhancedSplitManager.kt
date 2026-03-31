@@ -148,6 +148,13 @@ class EnhancedSplitManager @Inject constructor(
         return splitTemplateDao.insertTemplate(template)
     }
     
+    /**
+     * Get a specific template by ID.
+     */
+    suspend fun getTemplateById(templateId: Long): SplitTemplate? {
+        return splitTemplateDao.getTemplateById(templateId)
+    }
+    
     suspend fun updateTemplate(template: SplitTemplate) {
         splitTemplateDao.updateTemplate(template.copy(updatedAt = System.currentTimeMillis()))
     }

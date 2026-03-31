@@ -20,6 +20,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.activity.viewModels
@@ -27,6 +28,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.components.AppNavigationBar
 import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
@@ -54,7 +56,18 @@ import com.yourname.expensetracker.ui.screens.split.SplitTemplatesScreen
 import com.yourname.expensetracker.ui.screens.split.VisualSplitEditorScreen
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
 import com.yourname.expensetracker.ui.screens.warranty.WarrantyTrackerScreen
+import com.yourname.expensetracker.ui.screens.currency.CurrencyManagementScreen
+import com.yourname.expensetracker.ui.screens.export.ExportOptionsScreen
+import com.yourname.expensetracker.ui.screens.groups.SharedExpenseGroupsScreen
+import com.yourname.expensetracker.ui.screens.recurringmanual.ManualRecurringExpenseScreen
+import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagementScreen
+import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.ui.navigation.NavigationDestination
+import com.yourname.expensetracker.ui.navigation.NavigationController
+import com.yourname.expensetracker.ui.navigation.ProvideNavigationController
+import com.yourname.expensetracker.ui.navigation.LocalNavigationController
 import com.yourname.expensetracker.ui.util.ClipboardAmountParser
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
@@ -78,11 +91,15 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
         setContent {
             ExpenseTrackerTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                ProvideNavigationController(
+                    initialDestination = NavigationDestination.Home
                 ) {
-                    MainScreen(mainViewModel)
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        MainScreen(mainViewModel)
+                    }
                 }
             }
         }
@@ -175,29 +192,13 @@ fun MainScreen(mainViewModel: MainViewModel) {
     var showAssistant by rememberSaveable { mutableStateOf(false) }
     var isFabExpanded by rememberSaveable { mutableStateOf(false) }
     
-    // Feature Screens Navigation State
+    // Budget Forecasting State (requires data parameter)
     var showBudgetForecasting by rememberSaveable { mutableStateOf(false) }
     var selectedBudgetForForecast by rememberSaveable { mutableStateOf<com.yourname.expensetracker.data.database.entity.Budget?>(null) }
-    
-    // Phase 4-5 Feature Screens
-    var showSavingsGoals by rememberSaveable { mutableStateOf(false) }
-    var showCarbonFootprint by rememberSaveable { mutableStateOf(false) }
-    var showWarrantyTracker by rememberSaveable { mutableStateOf(false) }
-    var showPriceProtection by rememberSaveable { mutableStateOf(false) }
-    var showBillNegotiation by rememberSaveable { mutableStateOf(false) }
-    var showNaturalLanguageSearch by rememberSaveable { mutableStateOf(false) }
-    var showReceiptMatching by rememberSaveable { mutableStateOf(false) }
-    
-    // Additional Phase 4-5 Screens (previously orphaned)
-    var showInvestmentPortfolio by rememberSaveable { mutableStateOf(false) }
-    var showBankConnections by rememberSaveable { mutableStateOf(false) }
-    var showBillReminders by rememberSaveable { mutableStateOf(false) }
-    var showSpendingChallenges by rememberSaveable { mutableStateOf(false) }
-    var showAdvancedAnalytics by rememberSaveable { mutableStateOf(false) }
-    var showCashFlowCalendar by rememberSaveable { mutableStateOf(false) }
-    var showLifestyleInflation by rememberSaveable { mutableStateOf(false) }
-    var showSplitTemplates by rememberSaveable { mutableStateOf(false) }
-    var showVisualSplitEditor by rememberSaveable { mutableStateOf(false) }
+
+    // Navigation Controller - Single source of truth for feature screens
+    val navigation = LocalNavigationController.current
+    val currentDestination = navigation.destination
 
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
@@ -230,7 +231,7 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                     modifier = Modifier.padding(bottom = 12.dp)
                 ) {
-                    Icon(Icons.Rounded.AutoAwesome, contentDescription = "Open assistant")
+                    Icon(Icons.Rounded.AutoAwesome, contentDescription = stringResource(R.string.a11y_open_assistant))
                 }
 
                 SmartFAB(
@@ -270,25 +271,8 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         },
                         onNavigateToAnalytics = { selectedTab = 4 },
                         onNavigateToMap = { selectedTab = 5 },
-                        onNavigateToBudgetDetail = { selectedTab = 3 },
-                        // Phase 4-5 Features
-                        onNavigateToSavingsGoals = { showSavingsGoals = true },
-                        onNavigateToCarbonFootprint = { showCarbonFootprint = true },
-                        onNavigateToWarrantyTracker = { showWarrantyTracker = true },
-                        onNavigateToPriceProtection = { showPriceProtection = true },
-                        onNavigateToBillNegotiation = { showBillNegotiation = true },
-                        onNavigateToNaturalLanguageSearch = { showNaturalLanguageSearch = true },
-                        onNavigateToReceiptMatching = { showReceiptMatching = true },
-                        // Additional Phase 4-5 Screens
-                        onNavigateToInvestmentPortfolio = { showInvestmentPortfolio = true },
-                        onNavigateToBankConnections = { showBankConnections = true },
-                        onNavigateToBillReminders = { showBillReminders = true },
-                        onNavigateToSpendingChallenges = { showSpendingChallenges = true },
-                        onNavigateToAdvancedAnalytics = { showAdvancedAnalytics = true },
-                        onNavigateToCashFlowCalendar = { showCashFlowCalendar = true },
-                        onNavigateToLifestyleInflation = { showLifestyleInflation = true },
-                        onNavigateToSplitTemplates = { showSplitTemplates = true },
-                        onNavigateToVisualSplitEditor = { showVisualSplitEditor = true }
+                        onNavigateToBudgetDetail = { selectedTab = 3 }
+                        // Feature navigation now handled via NavigationController in FeaturesMenu
                     )
                     1 -> TransactionsScreen(
                         onNavigateToAnalytics = { selectedTab = 4 },
@@ -365,137 +349,157 @@ fun MainScreen(mainViewModel: MainViewModel) {
                 )
             }
             
-            if (showSavingsGoals) {
-                SavingsGoalsScreen(
-                    onNavigateBack = { showSavingsGoals = false }
-                )
-            }
-            
-            if (showCarbonFootprint) {
-                CarbonFootprintScreen(
-                    onNavigateBack = { showCarbonFootprint = false }
-                )
-            }
-            
-            if (showWarrantyTracker) {
-                WarrantyTrackerScreen(
-                    onNavigateBack = { showWarrantyTracker = false }
-                )
-            }
-            
-            if (showPriceProtection) {
-                PriceProtectionScreen(
-                    onNavigateBack = { showPriceProtection = false }
-                )
-            }
-            
-            if (showBillNegotiation) {
-                BillNegotiationScreen(
-                    onNavigateBack = { showBillNegotiation = false }
-                )
-            }
-            
-            if (showNaturalLanguageSearch) {
-                NaturalLanguageSearchScreen(
-                    onNavigateBack = { showNaturalLanguageSearch = false },
-                    onViewTransaction = { transactionId ->
-                        // Navigate to transaction details
-                        showNaturalLanguageSearch = false
-                    }
-                )
-            }
-            
-            if (showReceiptMatching) {
-                ReceiptMatchingScreen(
-                    onNavigateBack = { showReceiptMatching = false }
-                )
-            }
-            
-            // Additional Phase 4-5 Screens
-            if (showInvestmentPortfolio) {
-                InvestmentPortfolioScreen(
-                    onNavigateBack = { showInvestmentPortfolio = false },
-                    onAddInvestment = { 
-                        // Handle add investment
-                        showInvestmentPortfolio = false 
-                    }
-                )
-            }
-            
-            if (showBankConnections) {
-                BankConnectionsScreen(
-                    onNavigateBack = { showBankConnections = false },
-                    onAddConnection = { 
-                        // Handle add bank connection
-                        showBankConnections = false 
-                    }
-                )
-            }
-            
-            if (showBillReminders) {
-                BillRemindersScreen(
-                    onNavigateBack = { showBillReminders = false }
-                )
-            }
-            
-            if (showSpendingChallenges) {
-                SpendingChallengesScreen(
-                    onNavigateBack = { showSpendingChallenges = false },
-                    onCreateChallenge = { 
-                        // Handle create challenge
-                        showSpendingChallenges = false 
-                    }
-                )
-            }
-            
-            if (showAdvancedAnalytics) {
-                AdvancedAnalyticsScreen(
-                    onNavigateBack = { showAdvancedAnalytics = false }
-                )
-            }
-            
-            if (showCashFlowCalendar) {
-                CashFlowCalendarScreen(
-                    onNavigateBack = { showCashFlowCalendar = false }
-                )
-            }
-            
-            if (showLifestyleInflation) {
-                LifestyleInflationScreen(
-                    onNavigateBack = { showLifestyleInflation = false }
-                )
-            }
-            
-            if (showSplitTemplates) {
-                SplitTemplatesScreen(
-                    onNavigateBack = { showSplitTemplates = false },
-                    onCreateTemplate = {
-                        // Navigate to split editor to create template
-                        showSplitTemplates = false
-                        showVisualSplitEditor = true
-                    },
-                    onEditTemplate = { template ->
-                        // Handle edit template
-                        showSplitTemplates = false
-                        showVisualSplitEditor = true
-                    }
-                )
-            }
-            
-            if (showVisualSplitEditor) {
-                VisualSplitEditorScreen(
-                    totalAmount = 100.0, // Would come from expense creation
-                    currencyCode = "EUR",
-                    onSplitComplete = { shares, splitType ->
-                        // Handle split completion
-                        showVisualSplitEditor = false
-                    },
-                    onSaveAsTemplate = { name, shares, splitType ->
-                        // Handle save as template
-                        showVisualSplitEditor = false
-                    },
-                    onNavigateBack = { showVisualSplitEditor = false }
-                )
+            // Feature Screens - Render based on NavigationDestination
+            when (currentDestination) {
+                is NavigationDestination.SavingsGoals -> {
+                    SavingsGoalsScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.CarbonFootprint -> {
+                    CarbonFootprintScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.WarrantyTracker -> {
+                    WarrantyTrackerScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.PriceProtection -> {
+                    PriceProtectionScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.BillNegotiation -> {
+                    BillNegotiationScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.SmartSearch -> {
+                    NaturalLanguageSearchScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onViewTransaction = { transactionId ->
+                            // Navigate to transaction details
+                            navigation.navigateBack()
+                        }
+                    )
+                }
+                is NavigationDestination.ReceiptMatching -> {
+                    ReceiptMatchingScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.InvestmentPortfolio -> {
+                    InvestmentPortfolioScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onAddInvestment = { 
+                            // Handle add investment
+                            navigation.navigateBack() 
+                        }
+                    )
+                }
+                is NavigationDestination.BankConnections -> {
+                    BankConnectionsScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onAddConnection = { 
+                            // Handle add bank connection
+                            navigation.navigateBack() 
+                        }
+                    )
+                }
+                is NavigationDestination.BillReminders -> {
+                    BillRemindersScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.SpendingChallenges -> {
+                    SpendingChallengesScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onCreateChallenge = { 
+                            // Handle create challenge
+                            navigation.navigateBack() 
+                        }
+                    )
+                }
+                is NavigationDestination.AdvancedAnalytics -> {
+                    AdvancedAnalyticsScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.CashFlowCalendar -> {
+                    CashFlowCalendarScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.LifestyleInflation -> {
+                    LifestyleInflationScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.SplitTemplates -> {
+                    SplitTemplatesScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onCreateTemplate = {
+                            // Navigate to split editor to create template
+                            navigation.navigateTo(NavigationDestination.VisualSplitEditor())
+                        },
+                        onEditTemplate = { template ->
+                            // Navigate to editor with template ID for editing
+                            navigation.navigateTo(NavigationDestination.VisualSplitEditor(templateId = template.id))
+                        }
+                    )
+                }
+                is NavigationDestination.VisualSplitEditor -> {
+                    VisualSplitEditorScreen(
+                        totalAmount = currentDestination.expense?.amount ?: 0.0,
+                        currencyCode = currentDestination.expense?.currency ?: "EUR",
+                        expenseId = currentDestination.expense?.id,
+                        templateId = currentDestination.templateId,
+                        onSplitComplete = { shares, splitType ->
+                            // Handle split completion
+                            navigation.navigateBack()
+                        },
+                        onSaveAsTemplate = { name, shares, splitType ->
+                            // Handle save as template
+                            navigation.navigateBack()
+                        },
+                        onNavigateBack = { 
+                            navigation.navigateBack()
+                        }
+                    )
+                }
+                is NavigationDestination.CurrencyManagement -> {
+                    CurrencyManagementScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.SubscriptionManagement -> {
+                    SubscriptionManagementScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.TaxConfiguration -> {
+                    TaxConfigurationScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.ExportOptions -> {
+                    ExportOptionsScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.ManualRecurringExpense -> {
+                    ManualRecurringExpenseScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.SharedExpenseGroups -> {
+                    SharedExpenseGroupsScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                else -> { /* Main tabs handled by AnimatedContent */ }
             }
         }
     }
@@ -583,7 +587,7 @@ fun SmartFAB(
                     ) {
                         Icon(Icons.Rounded.ReceiptLong, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Scan Receipt")
+                        Text(stringResource(R.string.add_expense_scan_receipt))
                     }
                 }
                 
@@ -601,7 +605,7 @@ fun SmartFAB(
                     ) {
                         Icon(Icons.Rounded.Edit, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Add Manual")
+                        Text(stringResource(R.string.add_expense_manual))
                     }
                 }
             }

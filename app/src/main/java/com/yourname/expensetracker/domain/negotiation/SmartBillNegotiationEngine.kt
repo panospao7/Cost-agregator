@@ -121,7 +121,7 @@ class SmartBillNegotiationEngine @Inject constructor(
     )
     
     suspend fun analyzeNegotiationOpportunities(): List<NegotiationOpportunity> {
-        val subscriptions = recurringExpenseDao.getAllManualRecurringExpenses()
+        val subscriptions = recurringExpenseDao.getAll()
         val opportunities = mutableListOf<NegotiationOpportunity>()
         
         subscriptions.forEach { subscription ->

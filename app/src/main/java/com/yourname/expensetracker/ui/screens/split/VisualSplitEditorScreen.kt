@@ -38,6 +38,7 @@ fun VisualSplitEditorScreen(
     totalAmount: Double,
     currencyCode: String = "EUR",
     expenseId: Long? = null,
+    templateId: Long? = null,
     onSplitComplete: (List<SplitShare>, SplitTemplate.SplitType) -> Unit,
     onSaveAsTemplate: ((String, List<SplitShare>, SplitTemplate.SplitType) -> Unit)? = null,
     onNavigateBack: () -> Unit,
@@ -60,6 +61,21 @@ fun VisualSplitEditorScreen(
         Currency.getInstance(currencyCode)
     }
     val numberFormat = remember { NumberFormat.getCurrencyInstance(Locale.getDefault()) }
+    
+    // Load template if templateId is provided
+    LaunchedEffect(templateId) {
+        templateId?.let { id ->
+            viewModel.loadTemplate(id)?.let { template ->
+                selectedTemplate = template
+                splitType = template.splitType
+                // Parse template shares into participants
+                val shares = viewModel.parseTemplateShares(template)
+                if (shares.isNotEmpty()) {
+                    participants = shares
+                }
+            }
+        }
+    }
     
     LaunchedEffect(totalAmount, participants, splitType) {
         viewModel.calculateSplit(totalAmount, participants, splitType)

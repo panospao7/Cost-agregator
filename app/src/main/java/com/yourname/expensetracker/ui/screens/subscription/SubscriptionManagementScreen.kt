@@ -1,0 +1,655 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
+package com.yourname.expensetracker.ui.screens.subscription
+
+import androidx.compose.animation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.ui.theme.SemanticColors
+import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SubscriptionManagementScreen(
+    onNavigateBack: () -> Unit,
+    viewModel: SubscriptionManagementViewModel = hiltViewModel()
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    var showAddDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf<SubscriptionInfo?>(null) }
+    
+    Scaffold(
+        containerColor = SemanticColors.BaseNavy,
+        topBar = {
+            TopAppBar(
+                title = { 
+                    Text(
+                        "Subscription Management",
+                        color = SemanticColors.TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    ) 
+                },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(
+                            Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = SemanticColors.TextPrimary
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.refresh() }) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "Refresh",
+                            tint = SemanticColors.TextPrimary
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SemanticColors.BaseNavy,
+                    titleContentColor = SemanticColors.TextPrimary
+                )
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAddDialog = true },
+                containerColor = SemanticColors.PrimaryIndigo
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add Subscription")
+            }
+        }
+    ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            when {
+                uiState.isLoading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
+                    }
+                }
+                uiState.error != null -> {
+                    ErrorState(
+                        message = uiState.error!!,
+                        onRetry = { viewModel.refresh() }
+                    )
+                }
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Summary Cards
+                        item {
+                            SummaryCards(uiState)
+                        }
+                        
+                        // Total Cost Card
+                        item {
+                            TotalCostCard(
+                                monthlyTotal = uiState.totalMonthlyCost,
+                                annualTotal = uiState.totalAnnualCost
+                            )
+                        }
+                        
+                        // Active Subscriptions Header
+                        if (uiState.subscriptions.any { it.subscription.isActive }) {
+                            item {
+                                Text(
+                                    text = "Active Subscriptions (${uiState.activeCount})",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = SemanticColors.TextPrimary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        
+                        // Active Subscriptions List
+                        items(
+                            uiState.subscriptions.filter { it.subscription.isActive },
+                            key = { it.subscription.id }
+                        ) { subscription ->
+                            SubscriptionCard(
+                                subscription = subscription,
+                                onToggleStatus = { viewModel.toggleSubscriptionStatus(it) },
+                                onDelete = { showDeleteConfirm = it },
+                                onRecordUsage = { viewModel.recordUsage(it) }
+                            )
+                        }
+                        
+                        // Inactive Subscriptions Header
+                        if (uiState.subscriptions.any { !it.subscription.isActive }) {
+                            item {
+                                Text(
+                                    text = "Inactive Subscriptions (${uiState.inactiveCount})",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = SemanticColors.TextSecondary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(top = 16.dp)
+                                )
+                            }
+                        }
+                        
+                        // Inactive Subscriptions List
+                        items(
+                            uiState.subscriptions.filter { !it.subscription.isActive },
+                            key = { it.subscription.id }
+                        ) { subscription ->
+                            SubscriptionCard(
+                                subscription = subscription,
+                                onToggleStatus = { viewModel.toggleSubscriptionStatus(it) },
+                                onDelete = { showDeleteConfirm = it },
+                                onRecordUsage = null
+                            )
+                        }
+                        
+                        // Bottom spacing
+                        item { Spacer(modifier = Modifier.height(80.dp)) }
+                    }
+                }
+            }
+        }
+        
+        // Add Subscription Dialog
+        if (showAddDialog) {
+            AddSubscriptionDialog(
+                onDismiss = { showAddDialog = false },
+                onAdd = { merchant, amount, frequency, category, nextDate ->
+                    viewModel.addSubscription(merchant, amount, frequency, category, nextDate)
+                    showAddDialog = false
+                }
+            )
+        }
+        
+        // Delete Confirmation Dialog
+        showDeleteConfirm?.let { subscription ->
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirm = null },
+                title = { Text("Delete Subscription?") },
+                text = { Text("Are you sure you want to delete ${subscription.subscription.merchant}?") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.deleteSubscription(subscription.subscription.id)
+                            showDeleteConfirm = null
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteConfirm = null }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SummaryCards(uiState: SubscriptionManagementUiState) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SummaryCard(
+            title = "Active",
+            value = uiState.activeCount.toString(),
+            icon = Icons.Rounded.CheckCircle,
+            color = Color(0xFF4CAF50),
+            modifier = Modifier.weight(1f)
+        )
+        
+        SummaryCard(
+            title = "Inactive",
+            value = uiState.inactiveCount.toString(),
+            icon = Icons.Rounded.Cancel,
+            color = Color(0xFFFF9800),
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun SummaryCard(
+    title: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = color.copy(alpha = 0.15f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(32.dp)
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = value,
+                style = MaterialTheme.typography.headlineMedium,
+                color = SemanticColors.TextPrimary,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = SemanticColors.TextSecondary
+            )
+        }
+    }
+}
+
+@Composable
+private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double) {
+    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.15f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Total Subscription Cost",
+                style = MaterialTheme.typography.titleMedium,
+                color = SemanticColors.TextPrimary,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = currencyFormat.format(monthlyTotal),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = SemanticColors.TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "per month",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.TextSecondary
+                    )
+                }
+                
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = currencyFormat.format(annualTotal),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = SemanticColors.PrimaryIndigo,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "per year",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.TextSecondary
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionCard(
+    subscription: SubscriptionInfo,
+    onToggleStatus: (Long) -> Unit,
+    onDelete: (SubscriptionInfo) -> Unit,
+    onRecordUsage: ((Long) -> Unit)?
+) {
+    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (subscription.subscription.isActive) {
+                SemanticColors.SurfaceLight.copy(alpha = 0.5f)
+            } else {
+                SemanticColors.SurfaceLight.copy(alpha = 0.3f)
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = subscription.subscription.merchant,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (subscription.subscription.isActive) {
+                            SemanticColors.TextPrimary
+                        } else {
+                            SemanticColors.TextSecondary
+                        },
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    
+                    subscription.subscription.subscriptionCategory?.let { category ->
+                        Text(
+                            text = category,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SemanticColors.TextSecondary
+                        )
+                    }
+                }
+                
+                Switch(
+                    checked = subscription.subscription.isActive,
+                    onCheckedChange = { onToggleStatus(subscription.subscription.id) }
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Price and frequency
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${currencyFormat.format(subscription.subscription.amount)} ${subscription.subscription.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = SemanticColors.TextPrimary
+                )
+                
+                subscription.priceChange?.let { change ->
+                    val changeText = "${if (change.isIncrease) "+" else ""}${String.format("%.1f", change.changePercentage)}%"
+                    val changeColor = if (change.isIncrease) Color(0xFFF44336) else Color(0xFF4CAF50)
+                    
+                    Text(
+                        text = changeText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = changeColor,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Usage stats
+            if (subscription.subscription.isActive && onRecordUsage != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${subscription.monthlyUsage} uses this month",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.TextSecondary
+                    )
+                    
+                    Text(
+                        text = "${currencyFormat.format(subscription.costPerUse)}/use",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.PrimaryIndigo,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Usage button
+                OutlinedButton(
+                    onClick = { onRecordUsage(subscription.subscription.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = SemanticColors.PrimaryIndigo
+                    )
+                ) {
+                    Icon(Icons.Rounded.Add, null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Record Usage", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            
+            // Delete button for inactive
+            if (!subscription.subscription.isActive) {
+                TextButton(
+                    onClick = { onDelete(subscription) },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Icon(Icons.Rounded.Delete, null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Delete")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddSubscriptionDialog(
+    onDismiss: () -> Unit,
+    onAdd: (String, Double, RecurrenceFrequency, String?, Long) -> Unit
+) {
+    var merchant by remember { mutableStateOf("") }
+    var amount by remember { mutableStateOf("") }
+    var frequency by remember { mutableStateOf(RecurrenceFrequency.MONTHLY) }
+    var category by remember { mutableStateOf("") }
+    
+    val categories = listOf("Streaming", "Software", "Fitness", "News", "Cloud Storage", "Other")
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Subscription") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                OutlinedTextField(
+                    value = merchant,
+                    onValueChange = { merchant = it },
+                    label = { Text("Merchant/Service") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it },
+                    label = { Text("Amount") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                // Frequency dropdown
+                var frequencyExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = frequencyExpanded,
+                    onExpandedChange = { frequencyExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = frequency.name.lowercase().replaceFirstChar { it.uppercase() },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Frequency") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = frequencyExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                    )
+                    
+                    ExposedDropdownMenu(
+                        expanded = frequencyExpanded,
+                        onDismissRequest = { frequencyExpanded = false }
+                    ) {
+                        RecurrenceFrequency.values().forEach { freq ->
+                            DropdownMenuItem(
+                                text = { Text(freq.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                                onClick = {
+                                    frequency = freq
+                                    frequencyExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                
+                // Category dropdown
+                var categoryExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = categoryExpanded,
+                    onExpandedChange = { categoryExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = category,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Category (Optional)") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                    )
+                    
+                    ExposedDropdownMenu(
+                        expanded = categoryExpanded,
+                        onDismissRequest = { categoryExpanded = false }
+                    ) {
+                        categories.forEach { cat ->
+                            DropdownMenuItem(
+                                text = { Text(cat) },
+                                onClick = {
+                                    category = cat
+                                    categoryExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    amount.toDoubleOrNull()?.let { amt ->
+                        onAdd(merchant, amt, frequency, category.takeIf { it.isNotEmpty() }, System.currentTimeMillis())
+                    }
+                },
+                enabled = merchant.isNotBlank() && amount.toDoubleOrNull() != null
+            ) {
+                Text("Add")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ErrorState(message: String, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Error,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(64.dp)
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyLarge,
+            color = SemanticColors.TextSecondary,
+            textAlign = TextAlign.Center
+        )
+        
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        Button(
+            onClick = onRetry,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = SemanticColors.PrimaryIndigo
+            )
+        ) {
+            Text("Try Again")
+        }
+    }
+}

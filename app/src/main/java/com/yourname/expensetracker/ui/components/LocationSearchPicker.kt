@@ -27,6 +27,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
 import kotlinx.coroutines.CancellationException
@@ -164,7 +166,7 @@ fun LocationSearchPicker(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Clear,
-                        contentDescription = "Clear location",
+                        contentDescription = stringResource(R.string.a11y_clear_location),
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -178,7 +180,7 @@ fun LocationSearchPicker(
                 searchQuery = query
                 launchSearch(query, useGoogle)
             },
-            label = { Text("Search location") },
+            label = { Text(stringResource(R.string.location_search_label)) },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             trailingIcon = if (isSearching) {
                 { CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp) }
@@ -188,7 +190,7 @@ fun LocationSearchPicker(
                         searchQuery = ""
                         results = emptyList()
                     }) {
-                        Icon(Icons.Filled.Clear, contentDescription = "Clear search")
+                        Icon(Icons.Filled.Clear, contentDescription = stringResource(R.string.a11y_clear_search))
                     }
                 }
             } else null,
@@ -215,7 +217,7 @@ fun LocationSearchPicker(
                         launchSearch(searchQuery, newValue)
                     }
                 },
-                label = { Text("Google") },
+                label = { Text(stringResource(R.string.location_google_label)) },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Filled.Search,
@@ -439,7 +441,7 @@ fun LocationSearchPicker(
                                 pinnedLon = null
                             },
                             modifier = Modifier.weight(1f)
-                        ) { Text("Cancel") }
+                        ) { Text(stringResource(R.string.action_cancel)) }
                         Button(
                             onClick = {
                                 onResult(pin.latitude, pin.longitude, pin.displayAddress, pin.osmId)
@@ -450,7 +452,7 @@ fun LocationSearchPicker(
                                 pinnedLon = null
                             },
                             modifier = Modifier.weight(1f)
-                        ) { Text("Use this location") }
+                        ) { Text(stringResource(R.string.location_use_this_location)) }
                     }
                 }
             }
@@ -482,7 +484,7 @@ fun LocationSearchPicker(
                 OutlinedTextField(
                     value = manualLat,
                     onValueChange = { manualLat = it; latError = false },
-                    label = { Text("Latitude") },
+                    label = { Text(stringResource(R.string.location_latitude_label)) },
                     isError = latError,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
@@ -491,7 +493,7 @@ fun LocationSearchPicker(
                 OutlinedTextField(
                     value = manualLon,
                     onValueChange = { manualLon = it; lonError = false },
-                    label = { Text("Longitude") },
+                    label = { Text(stringResource(R.string.location_longitude_label)) },
                     isError = lonError,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
@@ -512,7 +514,7 @@ fun LocationSearchPicker(
                     .fillMaxWidth()
                     .padding(top = 8.dp)
             ) {
-                Text("Set coordinates")
+                Text(stringResource(R.string.location_set_coordinates))
             }
         }
     }

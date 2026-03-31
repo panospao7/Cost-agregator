@@ -19,16 +19,18 @@ import javax.inject.Singleton
 class TaxEstimator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val businessExpenseRepository: BusinessExpenseRepository,
-    private val timeProvider: TimeProvider,
-    private val taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
+    private val timeProvider: TimeProvider
 ) {
     /**
      * Estimate taxes for a period using configured tax rates.
+     * 
+     * @param taxConfig The tax configuration to use (defaults to Greece if not specified)
      */
     suspend fun estimateTaxes(
         startDate: Long,
         endDate: Long,
-        estimatedAnnualIncome: Double
+        estimatedAnnualIncome: Double,
+        taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
     ): TaxEstimate = withContext(Dispatchers.IO) {
         // Get business expenses (deductible)
         val businessExpenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
@@ -38,7 +40,7 @@ class TaxEstimator @Inject constructor(
         }
         
         // HIGH FIX: Calculate income tax bracket from configuration
-        val taxRate = calculateTaxRate(estimatedAnnualIncome)
+        val taxRate = calculateTaxRate(estimatedAnnualIncome, taxConfig)
         
         // HIGH FIX: Use configured VAT rate
         val vatRate = taxConfig.getVatRate()
@@ -77,7 +79,7 @@ class TaxEstimator @Inject constructor(
      * HIGH FIX: Calculate tax rate based on income using configured brackets.
      * Replaces hardcoded bracket logic.
      */
-    private fun calculateTaxRate(income: Double): Double {
+    private fun calculateTaxRate(income: Double, taxConfig: TaxConfiguration): Double {
         val brackets = taxConfig.getTaxBrackets()
         
         for (bracket in brackets) {
@@ -92,15 +94,20 @@ class TaxEstimator @Inject constructor(
     
     /**
      * Get tax year summary for annual filing.
+     * 
+     * @param taxConfig The tax configuration to use (defaults to current configuration)
      */
-    suspend fun getTaxYearSummary(year: Int): TaxYearSummary = withContext(Dispatchers.IO) {
+    suspend fun getTaxYearSummary(
+        year: Int,
+        taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
+    ): TaxYearSummary = withContext(Dispatchers.IO) {
         val calendar = java.util.Calendar.getInstance()
         calendar.set(year, 0, 1, 0, 0, 0)
         val yearStart = calendar.timeInMillis
         calendar.set(year, 11, 31, 23, 59, 59)
         val yearEnd = calendar.timeInMillis
         
-        val estimate = estimateTaxes(yearStart, yearEnd, 30000.0) // Would get actual income
+        val estimate = estimateTaxes(yearStart, yearEnd, 30000.0, taxConfig) // Would get actual income
         
         val businessExpenses = businessExpenseRepository.getBusinessExpenses(yearStart, yearEnd)
         val categorizedDeductions = mutableMapOf<String, Double>()

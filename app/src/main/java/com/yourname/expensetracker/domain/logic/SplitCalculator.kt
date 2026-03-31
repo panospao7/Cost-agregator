@@ -1,0 +1,223 @@
+package com.yourname.expensetracker.domain.logic
+
+import com.yourname.expensetracker.data.database.entity.GroupExpense
+import com.yourname.expensetracker.data.database.entity.GroupMember
+import com.yourname.expensetracker.data.database.entity.SplitType
+import java.math.BigDecimal
+import java.math.RoundingMode
+
+/**
+ * Utility class for calculating expense splits and member balances.
+ * Handles various split types: EQUAL, PERCENTAGE, AMOUNT, and SHARES.
+ */
+object SplitCalculator {
+    
+    /**
+     * Calculate split amounts for each member based on split type.
+     * 
+     * @param expense The group expense with split type information
+     * @param members List of group members
+     * @return Map of memberId -> amount they owe for this expense
+     */
+    fun calculateSplitAmounts(
+        expense: GroupExpense,
+        members: List<GroupMember>
+    ): Map<Long, Double> {
+        return when (expense.splitType) {
+            SplitType.EQUAL -> calculateEqualSplit(expense.totalAmount, members)
+            SplitType.CUSTOM_PERCENT -> calculatePercentageSplit(expense, members)
+            SplitType.CUSTOM_AMOUNT -> calculateAmountSplit(expense, members)
+            SplitType.UNEQUAL -> calculateUnequalSplit(expense, members)
+        }
+    }
+    
+    /**
+     * Calculate equal split among all members.
+     * The payer is included in the split (they pay, then get reimbursed by others).
+     */
+    private fun calculateEqualSplit(
+        totalAmount: Double,
+        members: List<GroupMember>
+    ): Map<Long, Double> {
+        if (members.isEmpty()) return emptyMap()
+        
+        val memberCount = members.size
+        val baseAmount = BigDecimal(totalAmount)
+            .divide(BigDecimal(memberCount), 2, RoundingMode.HALF_UP)
+            .toDouble()
+        
+        // Calculate remainder to handle rounding
+        val totalDistributed = baseAmount * memberCount
+        val remainder = BigDecimal(totalAmount)
+            .subtract(BigDecimal(totalDistributed))
+            .toDouble()
+        
+        return members.mapIndexed { index, member ->
+            // Add remainder to first member to ensure total sums correctly
+            val amount = if (index == 0) baseAmount + remainder else baseAmount
+            member.id to amount
+        }.toMap()
+    }
+    
+    /**
+     * Calculate split based on custom percentages.
+     * Note: This requires split details to be stored with the expense.
+     */
+    private fun calculatePercentageSplit(
+        expense: GroupExpense,
+        members: List<GroupMember>
+    ): Map<Long, Double> {
+        // For now, fall back to equal split
+        // TODO: Implement when percentage data is available in GroupExpense entity
+        return calculateEqualSplit(expense.totalAmount, members)
+    }
+    
+    /**
+     * Calculate split based on fixed amounts.
+     * Note: This requires split details to be stored with the expense.
+     */
+    private fun calculateAmountSplit(
+        expense: GroupExpense,
+        members: List<GroupMember>
+    ): Map<Long, Double> {
+        // For now, fall back to equal split
+        // TODO: Implement when amount data is available in GroupExpense entity
+        return calculateEqualSplit(expense.totalAmount, members)
+    }
+    
+    /**
+     * Calculate unequal split (one person pays more/less).
+     * Note: This requires split details to be stored with the expense.
+     */
+    private fun calculateUnequalSplit(
+        expense: GroupExpense,
+        members: List<GroupMember>
+    ): Map<Long, Double> {
+        // For now, fall back to equal split
+        // TODO: Implement when unequal split data is available in GroupExpense entity
+        return calculateEqualSplit(expense.totalAmount, members)
+    }
+    
+    /**
+     * Calculate net balance for each member across all expenses.
+     * Positive balance = member is owed money (gets back)
+     * Negative balance = member owes money
+     * 
+     * @param expenses List of all group expenses
+     * @param members List of all group members
+     * @return Map of memberId -> net balance
+     */
+    fun calculateBalances(
+        expenses: List<GroupExpense>,
+        members: List<GroupMember>
+    ): Map<Long, Double> {
+        // Initialize all balances to 0
+        val balances = members.associate { it.id to 0.0 }.toMutableMap()
+        
+        expenses.forEach { expense ->
+            val splitAmounts = calculateSplitAmounts(expense, members)
+            val paidById = expense.paidById
+            
+            // For each member, update their balance:
+            // - If they paid: they get credit for the full amount
+            // - Everyone owes their split portion
+            splitAmounts.forEach { (memberId, owedAmount) ->
+                val currentBalance = balances[memberId] ?: 0.0
+                
+                if (memberId == paidById) {
+                    // Payer gets credit for what others owe them
+                    // Their balance increases by: total - their own share
+                    val credit = expense.totalAmount - owedAmount
+                    balances[memberId] = currentBalance + credit
+                } else {
+                    // Non-payers owe their share
+                    balances[memberId] = currentBalance - owedAmount
+                }
+            }
+        }
+        
+        return balances
+    }
+    
+    /**
+     * Simplify balances by minimizing the number of transactions needed.
+     * Returns a list of suggested payments to settle all debts.
+     * 
+     * @param balances Map of memberId -> current balance
+     * @return List of (fromMemberId, toMemberId, amount) transactions
+     */
+    fun simplifyBalances(
+        balances: Map<Long, Double>
+    ): List<Triple<Long, Long, Double>> {
+        val transactions = mutableListOf<Triple<Long, Long, Double>>()
+        
+        // Separate debtors (owe money) and creditors (owed money)
+        val debtors = balances.filter { it.value < -0.01 }
+            .map { it.key to -it.value } // Convert to positive amounts they need to pay
+            .sortedByDescending { it.second } // Sort by amount descending
+            .toMutableList()
+        
+        val creditors = balances.filter { it.value > 0.01 }
+            .map { it.key to it.value }
+            .sortedByDescending { it.second }
+            .toMutableList()
+        
+        // Match debtors with creditors
+        while (debtors.isNotEmpty() && creditors.isNotEmpty()) {
+            val (debtorId, debtorAmount) = debtors.first()
+            val (creditorId, creditorAmount) = creditors.first()
+            
+            val paymentAmount = minOf(debtorAmount, creditorAmount)
+            
+            if (paymentAmount > 0.01) {
+                transactions.add(Triple(debtorId, creditorId, paymentAmount))
+            }
+            
+            // Update remaining amounts
+            val remainingDebtor = debtorAmount - paymentAmount
+            val remainingCreditor = creditorAmount - paymentAmount
+            
+            // Remove settled accounts
+            if (remainingDebtor < 0.01) {
+                debtors.removeAt(0)
+            } else {
+                debtors[0] = debtorId to remainingDebtor
+            }
+            
+            if (remainingCreditor < 0.01) {
+                creditors.removeAt(0)
+            } else {
+                creditors[0] = creditorId to remainingCreditor
+            }
+        }
+        
+        return transactions
+    }
+    
+    /**
+     * Validate that splits sum correctly to total amount.
+     * 
+     * @param splits Map of memberId -> split amount
+     * @param totalAmount Expected total
+     * @return True if splits sum to total (within rounding tolerance)
+     */
+    fun validateSplits(splits: Map<Long, Double>, totalAmount: Double): Boolean {
+        val sum = splits.values.sum()
+        val tolerance = 0.01 // Allow 1 cent rounding difference
+        return kotlin.math.abs(sum - totalAmount) <= tolerance
+    }
+    
+    /**
+     * Format balance for display.
+     * Positive = "gets back $X"
+     * Negative = "owes $X"
+     * Zero = "settled up"
+     */
+    fun formatBalance(balance: Double): String {
+        return when {
+            balance > 0.01 -> "gets back $${String.format("%.2f", balance)}"
+            balance < -0.01 -> "owes $${String.format("%.2f", -balance)}"
+            else -> "settled up"
+        }
+    }
+}

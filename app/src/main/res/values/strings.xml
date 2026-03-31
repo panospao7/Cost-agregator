@@ -1,14 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ExpenseTracker</string>
     
-    <!-- Add Expense -->
-    <string name="add_expense_title">Add Expense</string>
-    <string name="close_content_description">Close</string>
-    <string name="save_button">Save</string>
-    <string name="merchant_label">Merchant / Place</string>
-    <string name="merchant_placeholder">e.g. Sklavenitis, Starbucks...</string>
+    <!-- Common Actions -->
+    <string name="action_save">Save</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_close">Close</string>
+    <string name="action_back">Back</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_add">Add</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_create">Create</string>
+    <string name="action_update">Update</string>
+    <string name="action_retry">Try Again</string>
+    <string name="action_ok">OK</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_dismiss">Dismiss</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_share">Share</string>
+    <string name="action_export">Export</string>
+    <string name="action_import">Import</string>
+    <string name="action_search">Search</string>
+    <string name="action_filter">Filter</string>
+    <string name="action_sort">Sort</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_done">Done</string>
+    <string name="action_continue">Continue</string>
+    <string name="action_skip">Skip</string>
+    <string name="action_next">Next</string>
+    <string name="action_previous">Previous</string>
+    
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_activity">Activity</string>
+    <string name="nav_review">Review</string>
+    <string name="nav_plan">Plan</string>
+    <string name="nav_analytics">Analytics</string>
+    <string name="nav_map">Map</string>
+    <string name="nav_features">Features</string>
+    <string name="nav_assistant">Assistant</string>
+    
+    <!-- Common Labels -->
+    <string name="label_total">Total</string>
+    <string name="label_amount">Amount</string>
+    <string name="label_date">Date</string>
+    <string name="label_merchant">Merchant</string>
+    <string name="label_category">Category</string>
+    <string name="label_description">Description</string>
+    <string name="label_notes">Notes</string>
+    <string name="label_currency">Currency</string>
+    <string name="label_frequency">Frequency</string>
+    <string name="label_period">Period</string>
+    <string name="label_status">Status</string>
+    <string name="label_type">Type</string>
+    <string name="label_name">Name</string>
+    <string name="label_email">Email</string>
+    <string name="label_optional">(Optional)</string>
+    <string name="label_required">Required</string>
+    <string name="label_from">From</string>
+    <string name="label_to">To</string>
+    <string name="label_start_date">Start Date</string>
+    <string name="label_end_date">End Date</string>
+    <string name="label_default">Default</string>
+    <string name="label_active">Active</string>
+    <string name="label_inactive">Inactive</string>
+    <string name="label_loading">Loading…</string>
+    <string name="label_error">Error</string>
+    <string name="label_success">Success</string>
+    <string name="label_warning">Warning</string>
+    <string name="label_info">Info</string>
+    <string name="label_new">New</string>
+    <string name="label_beta">Beta</string>
+    <string name="label_percent">%</string>
+    <string name="label_none">None</string>
+    <string name="label_retro">retro</string>
+    <string name="label_modern">modern</string>
+    
+    <!-- Legacy Names for Backward Compatibility -->
     <string name="amount_label">Amount (€)</string>
     <string name="amount_placeholder">0.00</string>
+    <string name="merchant_label">Merchant / Place</string>
+    <string name="merchant_placeholder">e.g. Sklavenitis, Starbucks...</string>
     <string name="payment_method_label">Payment Method</string>
     <string name="payment_method_card">💳 Card</string>
     <string name="payment_method_cash">💵 Cash</string>
@@ -16,27 +89,82 @@
     <string name="category_label">Category</string>
     <string name="date_label">Date</string>
     <string name="transaction_type_prefix">Transaction Type: %1$s</string>
-    <string name="toggle_content_description">Toggle</string>
     <string name="notes_label">Notes</string>
     <string name="notes_placeholder">Optional notes</string>
     <string name="repeat_transaction_label">Repeat Transaction?</string>
     <string name="frequency_label">Frequency</string>
-    <string name="error_duplicate_transaction">⚠️ A similar transaction already exists</string>
-    <string name="avg_amount_format">~€%.2f</string>
     <string name="visits_suffix_format">%d visits</string>
+    <string name="avg_amount_format">~€%.2f</string>
     <string name="ok_button">OK</string>
     <string name="cancel_button">Cancel</string>
-    
-    <!-- Error Messages -->
+    <string name="save_button">Save</string>
+    <string name="close_content_description">Close</string>
+    <string name="toggle_content_description">Toggle</string>
     <string name="error_merchant_required">Merchant name is required</string>
-    <string name="error_invalid_amount">Enter a valid amount</string>
-    <string name="error_amount_too_large">Amount is too large</string>
     <string name="error_unknown">Unknown error</string>
     <string name="recurring_note_default">Created from manual entry</string>
+    
+    <!-- Common Placeholders -->
+    <string name="placeholder_amount">0.00</string>
+    <string name="placeholder_merchant">e.g. Store name</string>
+    <string name="placeholder_description">Enter description</string>
+    <string name="placeholder_notes">Optional notes</string>
+    <string name="placeholder_search">Search…</string>
+    <string name="placeholder_name">Enter name</string>
+    <string name="placeholder_email">email@example.com</string>
+    
+    <!-- Common Confirmations -->
+    <string name="confirm_delete_title">Delete?</string>
+    <string name="confirm_delete_message">Are you sure you want to delete %1$s?</string>
+    <string name="confirm_discard_title">Discard changes?</string>
+    <string name="confirm_discard_message">You have unsaved changes. Discard them?</string>
+    
+    <!-- Common Errors -->
+    <string name="error_generic">An error occurred</string>
+    <string name="error_network">Network error. Please check your connection.</string>
+    <string name="error_invalid_input">Invalid input</string>
+    <string name="error_required_field">This field is required</string>
+    <string name="error_invalid_amount">Enter a valid amount</string>
+    <string name="error_amount_too_large">Amount exceeds limit</string>
+    <string name="error_invalid_date">Invalid date</string>
+    <string name="error_duplicate">Duplicate entry detected</string>
+    <string name="error_not_found">Not found</string>
+    <string name="error_unauthorized">Unauthorized access</string>
+    <string name="error_offline">You are offline</string>
+    <string name="error_load_failed">Failed to load data</string>
+    <string name="error_save_failed">Failed to save</string>
+    <string name="error_delete_failed">Failed to delete</string>
+    <string name="error_update_failed">Failed to update</string>
+    
+    <!-- Add Expense -->
+    <string name="add_expense_title">Add Expense</string>
+    <string name="add_expense_scan_receipt">Scan Receipt</string>
+    <string name="add_expense_manual">Add Manual</string>
+    <string name="merchant_label_full">Merchant / Place</string>
+    <string name="merchant_placeholder_full">e.g. Sklavenitis, Starbucks…</string>
+    <string name="amount_label_full">Amount (€)</string>
+    <string name="amount_placeholder_full">0.00</string>
+    <string name="payment_method_label_full">Payment Method</string>
+    <string name="payment_method_card_icon">💳 Card</string>
+    <string name="payment_method_cash_icon">💵 Cash</string>
+    <string name="payment_method_transfer_icon">🏦 Transfer</string>
+    <string name="category_label_full">Category</string>
+    <string name="date_label_full">Date</string>
+    <string name="transaction_type_prefix_full">Transaction Type: %1$s</string>
+    <string name="notes_label_full">Notes</string>
+    <string name="notes_placeholder_full">Optional notes</string>
+    <string name="repeat_transaction_label_full">Repeat Transaction?</string>
+    <string name="frequency_label_full">Frequency</string>
+    <string name="error_duplicate_transaction">⚠️ A similar transaction already exists</string>
+    <string name="avg_amount_format_full">~€%.2f</string>
+    <string name="visits_suffix_format_full">%d visits</string>
+    <string name="ok_button_full">OK</string>
+    <string name="cancel_button_full">Cancel</string>
 
     <!-- Transactions Screen -->
     <string name="select_frequency_title">Select Frequency</string>
     <string name="transactions_title">Transactions</string>
+    <string name="transactions_title_full">Transactions</string>
     <string name="no_transactions_title">No transactions found</string>
     <string name="no_transactions_subtitle">Parsed expenses in this period will appear here</string>
     <string name="delete_transaction_title">Delete Transaction</string>
@@ -45,4 +173,230 @@
     <string name="select_category_title">Select Category</string>
     <string name="uncategorized_label">Uncategorized</string>
     <string name="mark_recurring_content_description">Mark as Recurring</string>
+    
+    <!-- Features Menu -->
+    <string name="feature_savings_goals">Savings Goals</string>
+    <string name="feature_savings_goals_desc">Set and track savings goals</string>
+    <string name="feature_carbon_footprint">Carbon Footprint</string>
+    <string name="feature_carbon_footprint_desc">Track environmental impact</string>
+    <string name="feature_warranty_tracker">Warranty Tracker</string>
+    <string name="feature_warranty_tracker_desc">Manage product warranties</string>
+    <string name="feature_price_protection">Price Protection</string>
+    <string name="feature_price_protection_desc">Monitor price drops</string>
+    <string name="feature_bill_negotiation">Bill Negotiation</string>
+    <string name="feature_bill_negotiation_desc">Get better rates on bills</string>
+    <string name="feature_smart_search">Smart Search</string>
+    <string name="feature_smart_search_desc">Natural language search</string>
+    <string name="feature_receipt_matching">Receipt Matching</string>
+    <string name="feature_receipt_matching_desc">Match receipts to expenses</string>
+    <string name="feature_investment_portfolio">Investment Portfolio</string>
+    <string name="feature_investment_portfolio_desc">Track investments</string>
+    <string name="feature_bank_connections">Bank Connections</string>
+    <string name="feature_bank_connections_desc">Connect bank accounts</string>
+    <string name="feature_bill_reminders">Bill Reminders</string>
+    <string name="feature_bill_reminders_desc">Never miss a payment</string>
+    <string name="feature_spending_challenges">Spending Challenges</string>
+    <string name="feature_spending_challenges_desc">Gamify your savings</string>
+    <string name="feature_advanced_analytics">Advanced Analytics</string>
+    <string name="feature_advanced_analytics_desc">Deep spending insights</string>
+    <string name="feature_cashflow_calendar">Cash Flow Calendar</string>
+    <string name="feature_cashflow_calendar_desc">Visual cash flow view</string>
+    <string name="feature_lifestyle_inflation">Lifestyle Inflation</string>
+    <string name="feature_lifestyle_inflation_desc">Track spending increases</string>
+    <string name="feature_split_templates">Split Templates</string>
+    <string name="feature_split_templates_desc">Save split configurations</string>
+    <string name="feature_visual_split">Visual Split Editor</string>
+    <string name="feature_visual_split_desc">Drag &amp; drop expense splitting</string>
+    <string name="feature_currency_management">Currency Management</string>
+    <string name="feature_currency_management_desc">Manage exchange rates</string>
+    <string name="feature_subscription_management">Subscription Management</string>
+    <string name="feature_subscription_management_desc">Track all subscriptions</string>
+    <string name="feature_tax_configuration">Tax Configuration</string>
+    <string name="feature_tax_configuration_desc">Tax settings &amp; calculator</string>
+    <string name="feature_export_options">Export Options</string>
+    <string name="feature_export_options_desc">Export to CSV, Xero, QB</string>
+    <string name="feature_manual_recurring">Manual Recurring Expenses</string>
+    <string name="feature_manual_recurring_desc">Manage recurring bills</string>
+    <string name="feature_shared_groups">Shared Expense Groups</string>
+    <string name="feature_shared_groups_desc">Split expenses with others</string>
+    
+    <!-- Groups -->
+    <string name="groups_title">Shared Expense Groups</string>
+    <string name="groups_create_title">Create New Group</string>
+    <string name="groups_create_button">Create</string>
+    <string name="groups_add_member_title">Add Member</string>
+    <string name="groups_add_member_button">Add</string>
+    <string name="groups_add_expense_title">Add Group Expense</string>
+    <string name="groups_add_expense_button">Add</string>
+    <string name="groups_delete_title">Delete Group</string>
+    <string name="groups_name_label">Group Name</string>
+    <string name="groups_name_placeholder">e.g., Weekend Trip</string>
+    <string name="groups_description_label">Description (Optional)</string>
+    <string name="groups_description_placeholder">e.g., Paris trip with friends</string>
+    <string name="groups_member_name_label">Name</string>
+    <string name="groups_member_email_label">Email (Optional)</string>
+    <string name="groups_expense_description_label">Description</string>
+    <string name="groups_expense_amount_label">Amount</string>
+    <string name="groups_paid_by_label">Paid By</string>
+    <string name="groups_split_type_label">Split Type</string>
+    <string name="groups_error_load">Failed to load groups: %1$s</string>
+    <string name="groups_error_create">Failed to create group: %1$s</string>
+    <string name="groups_error_add_member">Failed to add member: %1$s</string>
+    <string name="groups_error_add_expense">Failed to add expense: %1$s</string>
+    <string name="groups_error_delete">Failed to delete group: %1$s</string>
+    
+    <!-- Currency -->
+    <string name="currency_title">Currency Management</string>
+    <string name="currency_home_currency_label">Home Currency</string>
+    <string name="currency_quick_conversion">Quick Conversion</string>
+    <string name="currency_from_label">From</string>
+    <string name="currency_to_label">To</string>
+    <string name="currency_convert_button">Convert</string>
+    <string name="currency_error_load">Failed to load currency data: %1$s</string>
+    <string name="currency_error_conversion">Conversion failed: %1$s</string>
+    <string name="currency_error_no_rate">No exchange rate available for %1$s to %2$s</string>
+    <string name="currency_offline_warning">You are offline. Rates may be outdated.</string>
+    <string name="currency_stale_warning">Exchange rates are stale. Last updated: %1$s</string>
+    
+    <!-- Subscriptions -->
+    <string name="subscriptions_title">Subscription Management</string>
+    <string name="subscriptions_add_title">Add Subscription</string>
+    <string name="subscriptions_merchant_label">Merchant/Service</string>
+    <string name="subscriptions_amount_label">Amount</string>
+    <string name="subscriptions_category_label">Category (Optional)</string>
+    <string name="subscriptions_record_usage">Record Usage</string>
+    <string name="subscriptions_delete_confirm_title">Delete Subscription?</string>
+    <string name="subscriptions_delete_confirm_message">Are you sure you want to delete %1$s?</string>
+    <string name="subscriptions_error_load">Failed to load subscriptions: %1$s</string>
+    <string name="subscriptions_error_record_usage">Failed to record usage: %1$s</string>
+    <string name="subscriptions_error_update">Failed to update subscription: %1$s</string>
+    <string name="subscriptions_error_delete">Failed to delete subscription: %1$s</string>
+    <string name="subscriptions_error_add">Failed to add subscription: %1$s</string>
+    
+    <!-- Recurring Expenses -->
+    <string name="recurring_title">Recurring Expenses</string>
+    <string name="recurring_add_title">Add Recurring Expense</string>
+    <string name="recurring_merchant_label">Merchant/Description</string>
+    <string name="recurring_amount_label">Amount</string>
+    <string name="recurring_next_date_label">Next Due Date</string>
+    <string name="recurring_note_label">Note (Optional)</string>
+    <string name="recurring_mark_paid">Mark as Paid</string>
+    <string name="recurring_delete_confirm_title">Delete Recurring Expense?</string>
+    <string name="recurring_delete_confirm_message">Are you sure you want to delete %1$s?</string>
+    <string name="recurring_error_load">Failed to load recurring expenses: %1$s</string>
+    <string name="recurring_error_add">Failed to add expense: %1$s</string>
+    <string name="recurring_error_update">Failed to update status: %1$s</string>
+    <string name="recurring_error_delete">Failed to delete: %1$s</string>
+    
+    <!-- Tax -->
+    <string name="tax_title">Tax Configuration</string>
+    <string name="tax_select_country">Select Country</string>
+    <string name="tax_annual_income_label">Annual Income (%1$s)</string>
+    <string name="tax_estimate_notes_format">Estimate using %1$s tax rates. Consult tax professional for accurate filing.</string>
+    <string name="tax_error_load">Failed to load tax configuration: %1$s</string>
+    <string name="tax_error_calculate">Failed to calculate estimate: %1$s</string>
+    
+    <!-- Export -->
+    <string name="export_title">Export Options</string>
+    <string name="export_generate_button">Generate Export</string>
+    <string name="export_success_title">Export Generated</string>
+    <string name="export_copy_button">Copy to Clipboard</string>
+    <string name="export_how_to_title">How to Use</string>
+    <string name="export_tip_format">Tip: Paste the data into a text editor and save with the appropriate extension (%1$s)</string>
+    <string name="export_error_generate">Failed to generate export: %1$s</string>
+    
+    <!-- Split Editor -->
+    <string name="split_editor_title">Split Expense</string>
+    <string name="split_templates_button">Templates</string>
+    <string name="split_remaining_format">Remaining: %1$s</string>
+    <string name="split_equal">Equal</string>
+    <string name="split_percentage">Percentage</string>
+    <string name="split_custom">Custom</string>
+    <string name="split_save_template_title">Save as Template</string>
+    <string name="split_template_name_label">Template Name</string>
+    <string name="split_participant_label">Participant</string>
+    <string name="split_you">You</string>
+    
+    <!-- Home Screen -->
+    <string name="home_quick_settings_title">Quick Settings</string>
+    <string name="home_ai_settings">AI Settings</string>
+    <string name="home_categories">Categories</string>
+    <string name="home_debug_menu">Debug Menu</string>
+    <string name="home_add_to_forecast">ADD TO FORECAST</string>
+    <string name="home_cancel">CANCEL</string>
+    <string name="home_forecast_title">What are you planning?</string>
+    <string name="home_forecast_amount_label">Amount (€)</string>
+    <string name="home_no_budgets_title">No budgets set yet</string>
+    <string name="home_set_first_budget">Set Your First Budget</string>
+    <string name="home_budget_amount_label">Budget Amount (€)</string>
+    <string name="home_smart_suggestion">Smart Suggestion</string>
+    <string name="home_create_budget_button">Create Budget</string>
+    <string name="home_budget_category_label">Category</string>
+    <string name="home_budget_period_label">Period</string>
+    <string name="home_rollover_label">Rollover unspent amount</string>
+    
+    <!-- Budget Analytics -->
+    <string name="budget_block_party_title">BUDGET BLOCK PARTY</string>
+    <string name="budget_target_breakdown">TARGET BREAKDOWN</string>
+    <string name="budget_base_allowance">Base Allowance</string>
+    <string name="budget_recurring_format">Recurring (%1$s)</string>
+    <string name="budget_planned_format">Planned (%1$s)</string>
+    <string name="budget_total_target">Total Target</string>
+    <string name="budget_what_happened">WHAT HAPPENED</string>
+    <string name="budget_total_spent">Total Spent</string>
+    <string name="budget_no_transactions_found">No specific transactions found.</string>
+    <string name="budget_no_spending_recorded">No spending recorded.</string>
+    <string name="budget_view_transactions">View Transactions</string>
+    <string name="analytics_view_category_breakdown">View Category Breakdown</string>
+    
+    <!-- Location -->
+    <string name="location_search_label">Search location</string>
+    <string name="location_google_label">Google</string>
+    <string name="location_latitude_label">Latitude</string>
+    <string name="location_longitude_label">Longitude</string>
+    <string name="location_set_coordinates">Set coordinates</string>
+    <string name="location_use_this_location">Use this location</string>
+    
+    <!-- Accessibility -->
+    <string name="a11y_open_assistant">Open assistant</string>
+    <string name="a11y_open_features_menu">Open features menu</string>
+    <string name="a11y_open_settings_menu">Open settings menu</string>
+    <string name="a11y_move_widget_up">Move widget up</string>
+    <string name="a11y_move_widget_down">Move widget down</string>
+    <string name="a11y_hide_widget">Hide widget</string>
+    <string name="a11y_toggle_widget_style_format">Toggle widget style to %1$s</string>
+    <string name="a11y_navigate_to_ai_settings">Navigate to AI settings</string>
+    <string name="a11y_navigate_to_categories">Navigate to categories management</string>
+    <string name="a11y_navigate_to_debug">Navigate to debug menu</string>
+    <string name="a11y_budget_status_format">%1$s budgets %2$s</string>
+    <string name="a11y_category_icon">%1$s category icon</string>
+    <string name="a11y_transaction_details_format">%1$s, %2$s %3$s, %4$s</string>
+    <string name="a11y_manual_entry">Manual entry</string>
+    <string name="a11y_add_expense">Add expense</string>
+    <string name="a11y_create_group">Create group</string>
+    <string name="a11y_add_member">Add member</string>
+    <string name="a11y_add_expense_to_group">Add expense to group</string>
+    <string name="a11y_refresh">Refresh</string>
+    <string name="a11y_default_template">Default template</string>
+    <string name="a11y_close">Close</string>
+    <string name="a11y_clear">Clear</string>
+    <string name="a11y_selected">Selected</string>
+    <string name="a11y_not_selected">Not selected</string>
+    <string name="a11y_expand">Expand</string>
+    <string name="a11y_collapse">Collapse</string>
+    <string name="a11y_more_options">More options</string>
+    <string name="a11y_recurring_expenses">Recurring Expenses</string>
+    <string name="a11y_select_date">Select date</string>
+    <string name="a11y_clear_location">Clear location</string>
+    <string name="a11y_clear_search">Clear search</string>
+    <string name="a11y_error_format">Error: %1$s - %2$s</string>
+    <string name="a11y_empty_state_format">Empty state: %1$s - %2$s</string>
+    <string name="a11y_loading_content">Loading content</string>
+    <string name="a11y_priority_format">Priority %1$s, %2$s</string>
+    <string name="a11y_no_category_selected">No category selected</string>
+    <string name="a11y_category_icon_format">%1$s icon</string>
+    <string name="a11y_category_format">%1$s category, %2$s</string>
+    <string name="a11y_category_spending_format">%1$s: €%2$.2f, %3$.0f%% of budget</string>
+    <string name="a11y_expense_manual">manual entry</string>
+    <string name="a11y_expense_item_format">%1$s, %2$s €%3$.2f, %4$s</string>
 </resources>

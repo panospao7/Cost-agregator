@@ -29,10 +29,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -99,13 +102,13 @@ fun EmptyState(
 ) {
     val displayTitle = title ?: type.defaultTitle
     val displayMessage = message ?: type.defaultMessage
-    val contentDescription = "Empty state: $displayTitle - $displayMessage"
+    val emptyContentDescription = stringResource(R.string.a11y_empty_state_format, displayTitle, displayMessage)
     
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(Dimens.Space24)
-            .semantics { this.contentDescription = contentDescription },
+            .semantics { this.contentDescription = emptyContentDescription },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {

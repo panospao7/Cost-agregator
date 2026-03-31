@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.yourname.expensetracker.ui.screens.currency
 
 import androidx.compose.animation.*
@@ -110,6 +112,60 @@ fun CurrencyManagementScreen(
                                     viewModel.setHomeCurrency(code)
                                 }
                             )
+                        }
+                        
+                        // Offline/Stale Warning
+                        if (uiState.isOffline || uiState.isRatesStale) {
+                            item {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (uiState.isOffline) 
+                                            MaterialTheme.colorScheme.errorContainer 
+                                        else 
+                                            MaterialTheme.colorScheme.tertiaryContainer
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = if (uiState.isOffline) 
+                                                Icons.Rounded.CloudOff 
+                                            else 
+                                                Icons.Rounded.Warning,
+                                            contentDescription = null,
+                                            tint = if (uiState.isOffline) 
+                                                MaterialTheme.colorScheme.error 
+                                            else 
+                                                MaterialTheme.colorScheme.tertiary
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column {
+                                            Text(
+                                                text = if (uiState.isOffline) 
+                                                    "Offline Mode" 
+                                                else 
+                                                    "Rates May Be Outdated",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = if (uiState.isOffline) 
+                                                    "Using last known rates. Connect to internet for latest rates." 
+                                                else 
+                                                    "Exchange rates are older than 24 hours. Tap refresh to update.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                         
                         // Quick Conversion Button

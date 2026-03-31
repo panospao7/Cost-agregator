@@ -4,9 +4,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodTotal
 import com.yourname.expensetracker.domain.model.PeriodType
@@ -101,7 +103,7 @@ fun TotalsDashboardCard(
                 ),
                 border = androidx.compose.foundation.BorderStroke(1.dp, SemanticColors.GlassBorder)
             ) {
-                Text("View Category Breakdown")
+                Text(stringResource(R.string.analytics_view_category_breakdown))
             }
         }
     }

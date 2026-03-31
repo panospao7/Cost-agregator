@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.dao.ExchangeRateDao
 import com.yourname.expensetracker.data.database.entity.ExchangeRate
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +25,8 @@ data class CurrencyManagementUiState(
     val supportedCurrencies: List<CurrencyInfo> = emptyList(),
     val exchangeRates: List<ExchangeRateInfo> = emptyList(),
     val lastUpdated: Long? = null,
+    val isRatesStale: Boolean = false,
+    val isOffline: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
     val conversionResult: ConversionResult? = null
@@ -46,7 +49,8 @@ data class ExchangeRateInfo(
 @HiltViewModel
 class CurrencyManagementViewModel @Inject constructor(
     private val exchangeRateDao: ExchangeRateDao,
-    private val currencyConverter: CurrencyConverter
+    private val currencyConverter: CurrencyConverter,
+    private val settingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(CurrencyManagementUiState())
@@ -59,7 +63,13 @@ class CurrencyManagementViewModel @Inject constructor(
     )
     
     init {
-        loadCurrencyData()
+        viewModelScope.launch {
+            // Load home currency from preferences
+            settingsRepository.homeCurrency().collect { homeCurrency ->
+                _uiState.value = _uiState.value.copy(homeCurrency = homeCurrency)
+                loadCurrencyData()
+            }
+        }
     }
     
     private fun loadCurrencyData() {
@@ -94,19 +104,30 @@ class CurrencyManagementViewModel @Inject constructor(
                         )
                     }
                 
+                // Get the most recent update time
                 val lastUpdated = rates.maxByOrNull { it.lastUpdated }?.lastUpdated
+                    ?: settingsRepository.lastRateUpdate().first()
+                
+                // Check if rates are stale (older than 24 hours)
+                val isRatesStale = settingsRepository.areRatesStale()
+                
+                // Check if we're offline (no rates available and stale)
+                val isOffline = rates.isEmpty() || (isRatesStale && rates.isNotEmpty())
                 
                 _uiState.value = _uiState.value.copy(
                     supportedCurrencies = currencies,
                     exchangeRates = rates,
                     lastUpdated = lastUpdated,
+                    isRatesStale = isRatesStale,
+                    isOffline = isOffline,
                     isLoading = false,
                     error = null
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Failed to load currency data: ${e.message}"
+                    error = "Failed to load currency data: ${e.message}",
+                    isOffline = true
                 )
             }
         }
@@ -117,13 +138,13 @@ class CurrencyManagementViewModel @Inject constructor(
      */
     fun setHomeCurrency(currencyCode: String) {
         viewModelScope.launch {
+            // Persist to settings
+            settingsRepository.setHomeCurrency(currencyCode)
+            
+            // State will be updated by the flow collector in init
             _uiState.value = _uiState.value.copy(
-                homeCurrency = currencyCode,
                 isLoading = true
             )
-            
-            // Reload exchange rates for new home currency
-            loadCurrencyData()
         }
     }
     
@@ -165,12 +186,14 @@ class CurrencyManagementViewModel @Inject constructor(
             
             try {
                 // In a real implementation, this would fetch from an API
-                // For now, just reload from database
+                // For now, just reload from database and update timestamp
+                settingsRepository.setLastRateUpdate(System.currentTimeMillis())
                 loadCurrencyData()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Failed to refresh rates: ${e.message}"
+                    error = "Failed to refresh rates: ${e.message}",
+                    isOffline = true
                 )
             }
         }

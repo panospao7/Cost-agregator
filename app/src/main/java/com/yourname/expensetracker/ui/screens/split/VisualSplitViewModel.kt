@@ -37,6 +37,14 @@ class VisualSplitViewModel @Inject constructor(
         }
     }
     
+    /**
+     * Load a specific template by ID.
+     * Returns the template if found, null otherwise.
+     */
+    suspend fun loadTemplate(templateId: Long): SplitTemplate? {
+        return splitManager.getTemplateById(templateId)
+    }
+    
     fun calculateSplit(
         totalAmount: Double,
         participants: List<SplitShare>,

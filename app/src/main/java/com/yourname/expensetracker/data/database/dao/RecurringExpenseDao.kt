@@ -4,6 +4,16 @@ import androidx.room.*
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * @deprecated Use ManualRecurringExpenseDao instead.
+ * This DAO is kept for backward compatibility during migration.
+ * All methods delegate to ManualRecurringExpenseDao functionality.
+ */
+@Deprecated(
+    message = "Use ManualRecurringExpenseDao instead",
+    replaceWith = ReplaceWith("ManualRecurringExpenseDao"),
+    level = DeprecationLevel.WARNING
+)
 @Dao
 interface RecurringExpenseDao {
     @Query("SELECT * FROM manual_recurring_expenses ORDER BY nextDate ASC")

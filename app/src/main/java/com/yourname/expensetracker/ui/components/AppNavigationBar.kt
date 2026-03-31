@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.components
 
+import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
@@ -7,21 +8,30 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 
 data class NavItem(
-    val label: String,
+    @StringRes val labelRes: Int,
     val icon: ImageVector,
     val selectedIcon: ImageVector = icon
-)
+) {
+    /**
+     * Get the resolved label string.
+     * Use this in Composables.
+     */
+    @Composable
+    fun label(): String = stringResource(labelRes)
+}
 
 val navItems = listOf(
-    NavItem("Home", Icons.Rounded.Home, Icons.Filled.Home),
-    NavItem("Activity", Icons.Rounded.Receipt, Icons.Filled.Receipt),
-    NavItem("Review", Icons.Rounded.FactCheck, Icons.Filled.FactCheck),
-    NavItem("Plan", Icons.Rounded.CalendarMonth, Icons.Filled.CalendarMonth),
-    NavItem("Analytics", Icons.Rounded.Insights, Icons.Filled.Insights),
-    NavItem("Map", Icons.Rounded.Map, Icons.Filled.Map)
+    NavItem(R.string.nav_home, Icons.Rounded.Home, Icons.Filled.Home),
+    NavItem(R.string.nav_activity, Icons.Rounded.Receipt, Icons.Filled.Receipt),
+    NavItem(R.string.nav_review, Icons.Rounded.FactCheck, Icons.Filled.FactCheck),
+    NavItem(R.string.nav_plan, Icons.Rounded.CalendarMonth, Icons.Filled.CalendarMonth),
+    NavItem(R.string.nav_analytics, Icons.Rounded.Insights, Icons.Filled.Insights),
+    NavItem(R.string.nav_map, Icons.Rounded.Map, Icons.Filled.Map)
 )
 
 @Composable
@@ -46,11 +56,11 @@ fun AppNavigationBar(
                     ) {
                         Icon(
                             imageVector = if (selectedTab == index) item.selectedIcon else item.icon,
-                            contentDescription = item.label
+                            contentDescription = item.label()
                         )
                     }
                 },
-                label = { Text(item.label) }
+                label = { Text(item.label()) }
             )
         }
     }

@@ -28,11 +28,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -107,13 +109,13 @@ fun ErrorState(
 ) {
     val displayTitle = title ?: type.defaultTitle
     val displayMessage = message ?: type.defaultMessage
-    val contentDescription = "Error: $displayTitle - $displayMessage"
+    val errorContentDescription = stringResource(R.string.a11y_error_format, displayTitle, displayMessage)
     
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(Dimens.Space24)
-            .semantics { this.contentDescription = contentDescription },
+            .semantics { this.contentDescription = errorContentDescription },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -240,7 +242,7 @@ fun InlineErrorBanner(
         ) {
             Icon(
                 imageVector = Icons.Default.ErrorOutline,
-                contentDescription = "Error",
+                contentDescription = stringResource(R.string.label_error),
                 tint = SemanticColors.DangerRed,
                 modifier = Modifier.size(Dimens.IconMedium)
             )
@@ -269,7 +271,7 @@ fun InlineErrorBanner(
                         ),
                         modifier = Modifier.height(Dimens.ButtonHeightSmall)
                     ) {
-                        Text("Retry", style = MaterialTheme.typography.labelMedium)
+                        Text(stringResource(R.string.action_retry), style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }

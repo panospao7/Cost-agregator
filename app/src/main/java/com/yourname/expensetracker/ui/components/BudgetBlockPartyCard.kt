@@ -12,9 +12,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Date
@@ -71,7 +73,7 @@ fun BudgetBlockPartyCard(
         contentPadding = PaddingValues(16.dp)
     ) {
         Text(
-            "BUDGET BLOCK PARTY",
+            stringResource(R.string.budget_block_party_title),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             color = SemanticColors.TextSecondary
@@ -279,7 +281,7 @@ fun DayAtAGlanceDialog(
             Spacer(modifier = Modifier.height(24.dp))
             
             // 🎯 Target Breakdown
-            Text("TARGET BREAKDOWN", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
+            Text(stringResource(R.string.budget_target_breakdown), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
             Spacer(modifier = Modifier.height(8.dp))
             Card(
                 colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface),
@@ -287,26 +289,26 @@ fun DayAtAGlanceDialog(
             ) {
                 Column(Modifier.padding(12.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Base Allowance", color = SemanticColors.TextPrimary)
+                        Text(stringResource(R.string.budget_base_allowance), color = SemanticColors.TextPrimary)
                         Text("€${String.format("%.2f", day.baseTarget)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                     }
                     if (day.recurringImpact > 0) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Recurring (${day.recurringItems.joinToString(", ")})", color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Text(stringResource(R.string.budget_recurring_format, day.recurringItems.joinToString(", ")), color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
                             Text("+€${String.format("%.2f", day.recurringImpact)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                         }
                     }
                     if (day.plannedImpact > 0) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Planned (${day.plannedItems.joinToString(", ")})", color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Text(stringResource(R.string.budget_planned_format, day.plannedItems.joinToString(", ")), color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
                             Text("+€${String.format("%.2f", day.plannedImpact)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                         }
                     }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp), color = SemanticColors.GlassBorder)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Total Target", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        Text(stringResource(R.string.budget_total_target), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                         Text("€${String.format("%.2f", day.targetBudget)}", fontWeight = FontWeight.Bold, color = SemanticColors.PrimaryIndigo)
                     }
                 }
@@ -315,7 +317,7 @@ fun DayAtAGlanceDialog(
             Spacer(modifier = Modifier.height(24.dp))
             
             // 💸 Actual Spending
-            Text("WHAT HAPPENED", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
+            Text(stringResource(R.string.budget_what_happened), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
             Spacer(modifier = Modifier.height(8.dp))
             Card(
                 colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface),
@@ -323,7 +325,7 @@ fun DayAtAGlanceDialog(
             ) {
                 Column(Modifier.padding(12.dp)) {
                      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Total Spent", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        Text(stringResource(R.string.budget_total_spent), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                         Text("€${String.format("%.2f", day.actualSpent)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -338,9 +340,9 @@ fun DayAtAGlanceDialog(
                             }
                         }
                     } else if (day.actualSpent > 0) {
-                        Text("No specific transactions found.", style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextSecondary)
+                        Text(stringResource(R.string.budget_no_transactions_found), style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextSecondary)
                     } else {
-                        Text("No spending recorded.", style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextSecondary)
+                        Text(stringResource(R.string.budget_no_spending_recorded), style = MaterialTheme.typography.bodySmall, color = SemanticColors.TextSecondary)
                     }
                 }
             }
@@ -356,7 +358,7 @@ fun DayAtAGlanceDialog(
                         contentColor = Color.White
                     )
                 ) {
-                    Text("View Transactions")
+                    Text(stringResource(R.string.budget_view_transactions))
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -367,7 +369,7 @@ fun DayAtAGlanceDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.GlassSurface, contentColor = SemanticColors.TextPrimary),
                 border = androidx.compose.foundation.BorderStroke(1.dp, SemanticColors.GlassBorder)
             ) {
-                Text("Close")
+                Text(stringResource(R.string.action_close))
             }
         }
     }

@@ -31,10 +31,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -72,11 +74,13 @@ fun SkeletonBox(
         end = Offset(x = shimmerAnimation * 1000f + 200f, y = 0f)
     )
     
+    val loadingContentDescription = stringResource(R.string.a11y_loading_content)
+    
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(Dimens.SkeletonCornerRadius))
             .background(brush)
-            .semantics { contentDescription = "Loading content" }
+            .semantics { contentDescription = loadingContentDescription }
     )
 }
 

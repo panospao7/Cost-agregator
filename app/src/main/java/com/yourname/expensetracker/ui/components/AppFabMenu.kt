@@ -8,7 +8,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 
 @Composable
 fun AppFabMenu(
@@ -42,7 +44,7 @@ fun AppFabMenu(
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Text(
-                            text = "Scan Receipt",
+                            text = stringResource(R.string.add_expense_scan_receipt),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelMedium
                         )
@@ -51,7 +53,7 @@ fun AppFabMenu(
                         onClick = onScanReceipt,
                         containerColor = MaterialTheme.colorScheme.secondaryContainer
                     ) {
-                        Icon(Icons.Default.Receipt, contentDescription = "Scan Receipt")
+                        Icon(Icons.Default.Receipt, contentDescription = stringResource(R.string.add_expense_scan_receipt))
                     }
                 }
 
@@ -64,7 +66,7 @@ fun AppFabMenu(
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Text(
-                            text = "Recurring",
+                            text = stringResource(R.string.recurring_title),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelMedium
                         )
@@ -73,7 +75,7 @@ fun AppFabMenu(
                         onClick = onRecurringExpenses,
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer
                     ) {
-                        Icon(Icons.Default.Repeat, contentDescription = "Recurring Expenses")
+                        Icon(Icons.Default.Repeat, contentDescription = stringResource(R.string.a11y_recurring_expenses))
                     }
                 }
 
@@ -86,7 +88,7 @@ fun AppFabMenu(
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Text(
-                            text = "Add Expense",
+                            text = stringResource(R.string.add_expense_title),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelMedium
                         )
@@ -95,7 +97,7 @@ fun AppFabMenu(
                         onClick = onAddExpense,
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Expense")
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.a11y_add_expense))
                     }
                 }
             }
@@ -107,7 +109,7 @@ fun AppFabMenu(
         ) {
             Icon(
                 imageVector = if (expanded) Icons.Default.Close else Icons.Default.Add,
-                contentDescription = if (expanded) "Close" else "Add"
+                contentDescription = if (expanded) stringResource(R.string.a11y_close) else stringResource(R.string.action_add)
             )
         }
     }

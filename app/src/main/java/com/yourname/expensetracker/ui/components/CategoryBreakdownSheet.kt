@@ -10,9 +10,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
@@ -115,7 +117,7 @@ fun CategoryBreakdownSheet(
                 ),
                 border = androidx.compose.foundation.BorderStroke(1.dp, SemanticColors.GlassBorder)
             ) {
-                Text("Close")
+                Text(stringResource(R.string.action_close))
             }
         }
     }
