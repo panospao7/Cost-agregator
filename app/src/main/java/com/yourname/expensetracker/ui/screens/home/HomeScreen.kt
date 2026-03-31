@@ -63,6 +63,14 @@ fun HomeScreen(
     onNavigateToAnalytics: () -> Unit = {},
     onNavigateToMap: () -> Unit = {},
     onNavigateToBudgetDetail: (String) -> Unit = {},
+    // Phase 4-5 Feature Navigation
+    onNavigateToSavingsGoals: () -> Unit = {},
+    onNavigateToCarbonFootprint: () -> Unit = {},
+    onNavigateToWarrantyTracker: () -> Unit = {},
+    onNavigateToPriceProtection: () -> Unit = {},
+    onNavigateToBillNegotiation: () -> Unit = {},
+    onNavigateToNaturalLanguageSearch: () -> Unit = {},
+    onNavigateToReceiptMatching: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()

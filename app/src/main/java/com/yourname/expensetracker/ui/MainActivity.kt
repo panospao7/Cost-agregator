@@ -33,10 +33,17 @@ import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetForecastingScreen
+import com.yourname.expensetracker.ui.screens.carbon.CarbonFootprintScreen
 import com.yourname.expensetracker.ui.screens.home.HomeScreen
 import com.yourname.expensetracker.ui.screens.map.SpendingMapScreen
+import com.yourname.expensetracker.ui.screens.negotiation.BillNegotiationScreen
+import com.yourname.expensetracker.ui.screens.naturallanguage.NaturalLanguageSearchScreen
+import com.yourname.expensetracker.ui.screens.price.PriceProtectionScreen
+import com.yourname.expensetracker.ui.screens.receiptmatching.ReceiptMatchingScreen
 import com.yourname.expensetracker.ui.screens.review.ReviewScreen
+import com.yourname.expensetracker.ui.screens.savings.SavingsGoalsScreen
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
+import com.yourname.expensetracker.ui.screens.warranty.WarrantyTrackerScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.util.ClipboardAmountParser
 import com.yourname.expensetracker.ui.util.HapticType
@@ -161,6 +168,15 @@ fun MainScreen(mainViewModel: MainViewModel) {
     // Feature Screens Navigation State
     var showBudgetForecasting by rememberSaveable { mutableStateOf(false) }
     var selectedBudgetForForecast by rememberSaveable { mutableStateOf<com.yourname.expensetracker.data.database.entity.Budget?>(null) }
+    
+    // Phase 4-5 Feature Screens
+    var showSavingsGoals by rememberSaveable { mutableStateOf(false) }
+    var showCarbonFootprint by rememberSaveable { mutableStateOf(false) }
+    var showWarrantyTracker by rememberSaveable { mutableStateOf(false) }
+    var showPriceProtection by rememberSaveable { mutableStateOf(false) }
+    var showBillNegotiation by rememberSaveable { mutableStateOf(false) }
+    var showNaturalLanguageSearch by rememberSaveable { mutableStateOf(false) }
+    var showReceiptMatching by rememberSaveable { mutableStateOf(false) }
 
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
@@ -233,7 +249,15 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         },
                         onNavigateToAnalytics = { selectedTab = 4 },
                         onNavigateToMap = { selectedTab = 5 },
-                        onNavigateToBudgetDetail = { selectedTab = 3 }
+                        onNavigateToBudgetDetail = { selectedTab = 3 },
+                        // Phase 4-5 Features
+                        onNavigateToSavingsGoals = { showSavingsGoals = true },
+                        onNavigateToCarbonFootprint = { showCarbonFootprint = true },
+                        onNavigateToWarrantyTracker = { showWarrantyTracker = true },
+                        onNavigateToPriceProtection = { showPriceProtection = true },
+                        onNavigateToBillNegotiation = { showBillNegotiation = true },
+                        onNavigateToNaturalLanguageSearch = { showNaturalLanguageSearch = true },
+                        onNavigateToReceiptMatching = { showReceiptMatching = true }
                     )
                     1 -> TransactionsScreen(
                         onNavigateToAnalytics = { selectedTab = 4 },
@@ -307,6 +331,52 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         showBudgetForecasting = false
                         selectedBudgetForForecast = null
                     }
+                )
+            }
+            
+            if (showSavingsGoals) {
+                SavingsGoalsScreen(
+                    onNavigateBack = { showSavingsGoals = false }
+                )
+            }
+            
+            if (showCarbonFootprint) {
+                CarbonFootprintScreen(
+                    onNavigateBack = { showCarbonFootprint = false }
+                )
+            }
+            
+            if (showWarrantyTracker) {
+                WarrantyTrackerScreen(
+                    onNavigateBack = { showWarrantyTracker = false }
+                )
+            }
+            
+            if (showPriceProtection) {
+                PriceProtectionScreen(
+                    onNavigateBack = { showPriceProtection = false }
+                )
+            }
+            
+            if (showBillNegotiation) {
+                BillNegotiationScreen(
+                    onNavigateBack = { showBillNegotiation = false }
+                )
+            }
+            
+            if (showNaturalLanguageSearch) {
+                NaturalLanguageSearchScreen(
+                    onNavigateBack = { showNaturalLanguageSearch = false },
+                    onViewTransaction = { transactionId ->
+                        // Navigate to transaction details
+                        showNaturalLanguageSearch = false
+                    }
+                )
+            }
+            
+            if (showReceiptMatching) {
+                ReceiptMatchingScreen(
+                    onNavigateBack = { showReceiptMatching = false }
                 )
             }
         }
