@@ -35,9 +35,12 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         SubscriptionPriceHistory::class,
         SubscriptionUsage::class,
         MileageTracking::class,
-        ExchangeRate::class
+        ExchangeRate::class,
+        ExpenseGroup::class,
+        GroupMember::class,
+        GroupExpense::class
     ],
-        version = 42,
+        version = 43,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -69,6 +72,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun subscriptionUsageDao(): SubscriptionUsageDao
     abstract fun mileageTrackingDao(): MileageTrackingDao
     abstract fun exchangeRateDao(): ExchangeRateDao
+    abstract fun expenseGroupDao(): ExpenseGroupDao
+    abstract fun groupMemberDao(): GroupMemberDao
+    abstract fun groupExpenseDao(): GroupExpenseDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -1211,6 +1217,96 @@ abstract class AppDatabase : RoomDatabase() {
                     ('EUR', 'USD', 1.09, $now, 'manual'),
                     ('EUR', 'GBP', 0.85, $now, 'manual'),
                     ('EUR', 'EUR', 1.0, $now, 'manual')
+                """.trimIndent())
+            }
+        }
+
+        // Migration 42 -> 43: Shared Expense Groups
+        val MIGRATION_42_43 = object : androidx.room.migration.Migration(42, 43) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create expense_groups table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS expense_groups (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        description TEXT,
+                        defaultCurrency TEXT NOT NULL DEFAULT 'EUR',
+                        isActive INTEGER NOT NULL DEFAULT 1,
+                        createdAt INTEGER NOT NULL,
+                        createdBy TEXT NOT NULL DEFAULT 'me'
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_expense_groups_isActive 
+                    ON expense_groups (isActive)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_expense_groups_createdAt 
+                    ON expense_groups (createdAt)
+                """.trimIndent())
+                
+                // Create group_members table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_members (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        email TEXT,
+                        isCurrentUser INTEGER NOT NULL DEFAULT 0,
+                        joinedAt INTEGER NOT NULL,
+                        FOREIGN KEY(groupId) REFERENCES expense_groups(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_group_members_groupId 
+                    ON group_members (groupId)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_name 
+                    ON group_members (groupId, name)
+                """.trimIndent())
+                
+                // Create group_expenses table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_expenses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId INTEGER NOT NULL,
+                        expenseId INTEGER NOT NULL,
+                        paidById INTEGER,
+                        date INTEGER NOT NULL,
+                        description TEXT NOT NULL,
+                        totalAmount REAL NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        splitType TEXT NOT NULL DEFAULT 'EQUAL',
+                        customSplitsJson TEXT,
+                        FOREIGN KEY(groupId) REFERENCES expense_groups(id) ON DELETE CASCADE,
+                        FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE CASCADE,
+                        FOREIGN KEY(paidById) REFERENCES group_members(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_group_expenses_groupId 
+                    ON group_expenses (groupId)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_group_expenses_expenseId 
+                    ON group_expenses (expenseId)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_group_expenses_paidById 
+                    ON group_expenses (paidById)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_group_expenses_groupId_date 
+                    ON group_expenses (groupId, date)
                 """.trimIndent())
             }
         }

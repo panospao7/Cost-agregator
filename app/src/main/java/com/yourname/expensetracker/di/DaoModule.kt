@@ -122,4 +122,19 @@ object DaoModule {
     @Singleton
     fun provideExchangeRateDao(database: AppDatabase): ExchangeRateDao = 
         database.exchangeRateDao()
+
+    @Provides
+    @Singleton
+    fun provideExpenseGroupDao(database: AppDatabase): ExpenseGroupDao = 
+        database.expenseGroupDao()
+
+    @Provides
+    @Singleton
+    fun provideGroupMemberDao(database: AppDatabase): GroupMemberDao = 
+        database.groupMemberDao()
+
+    @Provides
+    @Singleton
+    fun provideGroupExpenseDao(database: AppDatabase): GroupExpenseDao = 
+        database.groupExpenseDao()
 }

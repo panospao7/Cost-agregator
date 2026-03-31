@@ -1,0 +1,53 @@
+package com.yourname.expensetracker.data.database.dao
+
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
+import com.yourname.expensetracker.data.database.entity.GroupExpense
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface GroupExpenseDao {
+    
+    @Insert
+    suspend fun insert(groupExpense: GroupExpense): Long
+    
+    @Update
+    suspend fun update(groupExpense: GroupExpense)
+    
+    @Delete
+    suspend fun delete(groupExpense: GroupExpense)
+    
+    @Query("SELECT * FROM group_expenses WHERE groupId = :groupId ORDER BY date DESC")
+    fun getExpensesForGroup(groupId: Long): Flow<List<GroupExpense>>
+    
+    @Query("SELECT * FROM group_expenses WHERE groupId = :groupId ORDER BY date DESC")
+    suspend fun getExpensesForGroupOnce(groupId: Long): List<GroupExpense>
+    
+    @Query("SELECT * FROM group_expenses WHERE expenseId = :expenseId LIMIT 1")
+    suspend fun getGroupExpenseForExpense(expenseId: Long): GroupExpense?
+    
+    @Query("SELECT * FROM group_expenses WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): GroupExpense?
+    
+    @Query("""
+        SELECT SUM(totalAmount) FROM group_expenses 
+        WHERE groupId = :groupId AND paidById = :paidById
+    """)
+    suspend fun getTotalPaidByMember(groupId: Long, paidById: Long): Double?
+    
+    @Query("""
+        SELECT SUM(totalAmount) FROM group_expenses 
+        WHERE groupId = :groupId
+    """)
+    suspend fun getTotalGroupExpenses(groupId: Long): Double?
+    
+    @Query("DELETE FROM group_expenses WHERE groupId = :groupId")
+    suspend fun deleteAllForGroup(groupId: Long)
+    
+    @Query("SELECT COUNT(*) FROM group_expenses WHERE groupId = :groupId")
+    suspend fun getExpenseCount(groupId: Long): Int
+}
