@@ -30,18 +30,28 @@ import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.ui.components.AppNavigationBar
 import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
+import com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
-import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
+import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
+import com.yourname.expensetracker.ui.screens.bank.BankConnectionsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetForecastingScreen
+import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
 import com.yourname.expensetracker.ui.screens.carbon.CarbonFootprintScreen
+import com.yourname.expensetracker.ui.screens.cashflow.CashFlowCalendarScreen
+import com.yourname.expensetracker.ui.screens.challenge.SpendingChallengesScreen
 import com.yourname.expensetracker.ui.screens.home.HomeScreen
+import com.yourname.expensetracker.ui.screens.investment.InvestmentPortfolioScreen
+import com.yourname.expensetracker.ui.screens.lifestyle.LifestyleInflationScreen
 import com.yourname.expensetracker.ui.screens.map.SpendingMapScreen
 import com.yourname.expensetracker.ui.screens.negotiation.BillNegotiationScreen
 import com.yourname.expensetracker.ui.screens.naturallanguage.NaturalLanguageSearchScreen
 import com.yourname.expensetracker.ui.screens.price.PriceProtectionScreen
 import com.yourname.expensetracker.ui.screens.receiptmatching.ReceiptMatchingScreen
+import com.yourname.expensetracker.ui.screens.reminder.BillRemindersScreen
 import com.yourname.expensetracker.ui.screens.review.ReviewScreen
 import com.yourname.expensetracker.ui.screens.savings.SavingsGoalsScreen
+import com.yourname.expensetracker.ui.screens.split.SplitTemplatesScreen
+import com.yourname.expensetracker.ui.screens.split.VisualSplitEditorScreen
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
 import com.yourname.expensetracker.ui.screens.warranty.WarrantyTrackerScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
@@ -177,6 +187,17 @@ fun MainScreen(mainViewModel: MainViewModel) {
     var showBillNegotiation by rememberSaveable { mutableStateOf(false) }
     var showNaturalLanguageSearch by rememberSaveable { mutableStateOf(false) }
     var showReceiptMatching by rememberSaveable { mutableStateOf(false) }
+    
+    // Additional Phase 4-5 Screens (previously orphaned)
+    var showInvestmentPortfolio by rememberSaveable { mutableStateOf(false) }
+    var showBankConnections by rememberSaveable { mutableStateOf(false) }
+    var showBillReminders by rememberSaveable { mutableStateOf(false) }
+    var showSpendingChallenges by rememberSaveable { mutableStateOf(false) }
+    var showAdvancedAnalytics by rememberSaveable { mutableStateOf(false) }
+    var showCashFlowCalendar by rememberSaveable { mutableStateOf(false) }
+    var showLifestyleInflation by rememberSaveable { mutableStateOf(false) }
+    var showSplitTemplates by rememberSaveable { mutableStateOf(false) }
+    var showVisualSplitEditor by rememberSaveable { mutableStateOf(false) }
 
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
@@ -257,7 +278,17 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         onNavigateToPriceProtection = { showPriceProtection = true },
                         onNavigateToBillNegotiation = { showBillNegotiation = true },
                         onNavigateToNaturalLanguageSearch = { showNaturalLanguageSearch = true },
-                        onNavigateToReceiptMatching = { showReceiptMatching = true }
+                        onNavigateToReceiptMatching = { showReceiptMatching = true },
+                        // Additional Phase 4-5 Screens
+                        onNavigateToInvestmentPortfolio = { showInvestmentPortfolio = true },
+                        onNavigateToBankConnections = { showBankConnections = true },
+                        onNavigateToBillReminders = { showBillReminders = true },
+                        onNavigateToSpendingChallenges = { showSpendingChallenges = true },
+                        onNavigateToAdvancedAnalytics = { showAdvancedAnalytics = true },
+                        onNavigateToCashFlowCalendar = { showCashFlowCalendar = true },
+                        onNavigateToLifestyleInflation = { showLifestyleInflation = true },
+                        onNavigateToSplitTemplates = { showSplitTemplates = true },
+                        onNavigateToVisualSplitEditor = { showVisualSplitEditor = true }
                     )
                     1 -> TransactionsScreen(
                         onNavigateToAnalytics = { selectedTab = 4 },
@@ -377,6 +408,93 @@ fun MainScreen(mainViewModel: MainViewModel) {
             if (showReceiptMatching) {
                 ReceiptMatchingScreen(
                     onNavigateBack = { showReceiptMatching = false }
+                )
+            }
+            
+            // Additional Phase 4-5 Screens
+            if (showInvestmentPortfolio) {
+                InvestmentPortfolioScreen(
+                    onNavigateBack = { showInvestmentPortfolio = false },
+                    onAddInvestment = { 
+                        // Handle add investment
+                        showInvestmentPortfolio = false 
+                    }
+                )
+            }
+            
+            if (showBankConnections) {
+                BankConnectionsScreen(
+                    onNavigateBack = { showBankConnections = false },
+                    onAddConnection = { 
+                        // Handle add bank connection
+                        showBankConnections = false 
+                    }
+                )
+            }
+            
+            if (showBillReminders) {
+                BillRemindersScreen(
+                    onNavigateBack = { showBillReminders = false }
+                )
+            }
+            
+            if (showSpendingChallenges) {
+                SpendingChallengesScreen(
+                    onNavigateBack = { showSpendingChallenges = false },
+                    onCreateChallenge = { 
+                        // Handle create challenge
+                        showSpendingChallenges = false 
+                    }
+                )
+            }
+            
+            if (showAdvancedAnalytics) {
+                AdvancedAnalyticsScreen(
+                    onNavigateBack = { showAdvancedAnalytics = false }
+                )
+            }
+            
+            if (showCashFlowCalendar) {
+                CashFlowCalendarScreen(
+                    onNavigateBack = { showCashFlowCalendar = false }
+                )
+            }
+            
+            if (showLifestyleInflation) {
+                LifestyleInflationScreen(
+                    onNavigateBack = { showLifestyleInflation = false }
+                )
+            }
+            
+            if (showSplitTemplates) {
+                SplitTemplatesScreen(
+                    onNavigateBack = { showSplitTemplates = false },
+                    onCreateTemplate = {
+                        // Navigate to split editor to create template
+                        showSplitTemplates = false
+                        showVisualSplitEditor = true
+                    },
+                    onEditTemplate = { template ->
+                        // Handle edit template
+                        showSplitTemplates = false
+                        showVisualSplitEditor = true
+                    }
+                )
+            }
+            
+            if (showVisualSplitEditor) {
+                VisualSplitEditorScreen(
+                    totalAmount = 100.0, // Would come from expense creation
+                    currencyCode = "EUR",
+                    onSplitComplete = { shares, splitType ->
+                        // Handle split completion
+                        showVisualSplitEditor = false
+                    },
+                    onSaveAsTemplate = { name, shares, splitType ->
+                        // Handle save as template
+                        showVisualSplitEditor = false
+                    },
+                    onNavigateBack = { showVisualSplitEditor = false }
                 )
             }
         }

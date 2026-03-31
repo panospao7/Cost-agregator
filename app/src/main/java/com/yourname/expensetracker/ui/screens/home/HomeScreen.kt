@@ -73,6 +73,16 @@ fun HomeScreen(
     onNavigateToBillNegotiation: () -> Unit = {},
     onNavigateToNaturalLanguageSearch: () -> Unit = {},
     onNavigateToReceiptMatching: () -> Unit = {},
+    // Additional Phase 4-5 Screens
+    onNavigateToInvestmentPortfolio: () -> Unit = {},
+    onNavigateToBankConnections: () -> Unit = {},
+    onNavigateToBillReminders: () -> Unit = {},
+    onNavigateToSpendingChallenges: () -> Unit = {},
+    onNavigateToAdvancedAnalytics: () -> Unit = {},
+    onNavigateToCashFlowCalendar: () -> Unit = {},
+    onNavigateToLifestyleInflation: () -> Unit = {},
+    onNavigateToSplitTemplates: () -> Unit = {},
+    onNavigateToVisualSplitEditor: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
@@ -684,6 +694,42 @@ fun HomeScreen(
                 onNavigateToReceiptMatching = {
                     showFeaturesMenu = false
                     onNavigateToReceiptMatching()
+                },
+                onNavigateToInvestmentPortfolio = {
+                    showFeaturesMenu = false
+                    onNavigateToInvestmentPortfolio()
+                },
+                onNavigateToBankConnections = {
+                    showFeaturesMenu = false
+                    onNavigateToBankConnections()
+                },
+                onNavigateToBillReminders = {
+                    showFeaturesMenu = false
+                    onNavigateToBillReminders()
+                },
+                onNavigateToSpendingChallenges = {
+                    showFeaturesMenu = false
+                    onNavigateToSpendingChallenges()
+                },
+                onNavigateToAdvancedAnalytics = {
+                    showFeaturesMenu = false
+                    onNavigateToAdvancedAnalytics()
+                },
+                onNavigateToCashFlowCalendar = {
+                    showFeaturesMenu = false
+                    onNavigateToCashFlowCalendar()
+                },
+                onNavigateToLifestyleInflation = {
+                    showFeaturesMenu = false
+                    onNavigateToLifestyleInflation()
+                },
+                onNavigateToSplitTemplates = {
+                    showFeaturesMenu = false
+                    onNavigateToSplitTemplates()
+                },
+                onNavigateToVisualSplitEditor = {
+                    showFeaturesMenu = false
+                    onNavigateToVisualSplitEditor()
                 }
             )
         }
@@ -1228,7 +1274,16 @@ private fun FeaturesMenu(
     onNavigateToPriceProtection: () -> Unit,
     onNavigateToBillNegotiation: () -> Unit,
     onNavigateToNaturalLanguageSearch: () -> Unit,
-    onNavigateToReceiptMatching: () -> Unit
+    onNavigateToReceiptMatching: () -> Unit,
+    onNavigateToInvestmentPortfolio: () -> Unit,
+    onNavigateToBankConnections: () -> Unit,
+    onNavigateToBillReminders: () -> Unit,
+    onNavigateToSpendingChallenges: () -> Unit,
+    onNavigateToAdvancedAnalytics: () -> Unit,
+    onNavigateToCashFlowCalendar: () -> Unit,
+    onNavigateToLifestyleInflation: () -> Unit,
+    onNavigateToSplitTemplates: () -> Unit,
+    onNavigateToVisualSplitEditor: () -> Unit
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -1312,6 +1367,78 @@ private fun FeaturesMenu(
                         description = "Match receipts to transactions",
                         color = Color(0xFF5D4037),
                         onClick = onNavigateToReceiptMatching
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.TrendingUp,
+                        title = "Investment Portfolio",
+                        description = "Track your investments and portfolio performance",
+                        color = Color(0xFF1565C0),
+                        onClick = onNavigateToInvestmentPortfolio
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.AccountBalance,
+                        title = "Bank Connections",
+                        description = "Connect and sync with your bank accounts",
+                        color = Color(0xFF00695C),
+                        onClick = onNavigateToBankConnections
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.Notifications,
+                        title = "Bill Reminders",
+                        description = "Never miss a bill payment with smart reminders",
+                        color = Color(0xFFD32F2F),
+                        onClick = onNavigateToBillReminders
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.LocalFireDepartment,
+                        title = "Spending Challenges",
+                        description = "Take on challenges to reduce spending",
+                        color = Color(0xFFF57C00),
+                        onClick = onNavigateToSpendingChallenges
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.Assessment,
+                        title = "Advanced Analytics",
+                        description = "Deep dive into your financial patterns",
+                        color = Color(0xFF7B1FA2),
+                        onClick = onNavigateToAdvancedAnalytics
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.CalendarToday,
+                        title = "Cash Flow Calendar",
+                        description = "Visualize your cash flow and predict future balance",
+                        color = Color(0xFF00796B),
+                        onClick = onNavigateToCashFlowCalendar
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.TrendingUp,
+                        title = "Lifestyle Inflation",
+                        description = "Monitor and control lifestyle creep",
+                        color = Color(0xFFC62828),
+                        onClick = onNavigateToLifestyleInflation
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.People,
+                        title = "Split Templates",
+                        description = "Manage and create expense split templates",
+                        color = Color(0xFF6D4C41),
+                        onClick = onNavigateToSplitTemplates
+                    )
+                    
+                    FeatureItem(
+                        icon = Icons.Rounded.CallSplit,
+                        title = "Visual Split Editor",
+                        description = "Interactive visual expense splitting tool",
+                        color = Color(0xFF455A64),
+                        onClick = onNavigateToVisualSplitEditor
                     )
                 }
                 
