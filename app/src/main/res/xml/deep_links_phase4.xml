@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Deep Links Configuration for Phase 4 Features -->
+<!-- Add to AndroidManifest.xml inside <activity> tag for MainActivity -->
+
+<!--
+<activity
+    android:name=".ui.MainActivity"
+    android:exported="true">
+    
+    <!-- Existing deep links -->
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="expensetracker" android:host="dashboard" />
+        <data android:scheme="expensetracker" android:host="activity" />
+        <data android:scheme="expensetracker" android:host="review" />
+        <data android:scheme="expensetracker" android:host="plan" />
+        <data android:scheme="expensetracker" android:host="add" />
+        <data android:scheme="expensetracker" android:host="analytics" />
+        <data android:scheme="expensetracker" android:host="map" />
+    </intent-filter>
+    
+    <!-- NEW: Phase 4 Feature Deep Links -->
+    <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        
+        <!-- Investment Portfolio -->
+        <data android:scheme="expensetracker" android:host="investments" />
+        
+        <!-- Bank Connections -->
+        <data android:scheme="expensetracker" android:host="banks" />
+        
+        <!-- Bill Reminders -->
+        <data android:scheme="expensetracker" android:host="bills" />
+        <data android:scheme="expensetracker" android:host="reminders" />
+        
+        <!-- Spending Challenges -->
+        <data android:scheme="expensetracker" android:host="challenges" />
+        
+        <!-- Advanced Analytics -->
+        <data android:scheme="expensetracker" android:host="advanced_analytics" />
+    </intent-filter>
+    
+</activity>
+-->
+
+<!-- 
+Usage Examples:
+
+1. Open Investment Portfolio:
+   expensetracker://investments
+
+2. Open Bank Connections:
+   expensetracker://banks
+
+3. Open Bill Reminders:
+   expensetracker://bills
+   expensetracker://reminders
+
+4. Open Spending Challenges:
+   expensetracker://challenges
+
+5. Open Advanced Analytics:
+   expensetracker://advanced_analytics
+
+6. With parameters (for notifications):
+   expensetracker://bills?urgent=true
+   expensetracker://challenges?achievement=7day
+   expensetracker://investments?alert=target_hit
+
+Integration Code in MainActivity.kt:
+
+private fun handleIntent(intent: android.content.Intent?) {
+    val data = intent?.data ?: return
+    if (data.scheme == "expensetracker") {
+        when (data.host) {
+            // Existing handlers
+            "dashboard" -> mainViewModel.navigateToTab(0)
+            "activity" -> mainViewModel.navigateToTab(1)
+            ...
+            
+            // NEW: Phase 4 handlers
+            "investments" -> {
+                // Show investment portfolio
+                showInvestmentPortfolio = true
+            }
+            "banks" -> {
+                // Show bank connections
+                showBankConnections = true
+            }
+            "bills", "reminders" -> {
+                // Show bill reminders
+                showBillReminders = true
+            }
+            "challenges" -> {
+                // Show spending challenges
+                showSpendingChallenges = true
+            }
+            "advanced_analytics" -> {
+                // Show advanced analytics
+                showAdvancedAnalytics = true
+            }
+        }
+    }
+}
+
+Notification Usage:
+
+// Bill reminder notification
+val intent = Intent(Intent.ACTION_VIEW, 
+    Uri.parse("expensetracker://bills?urgent=true"))
+val pendingIntent = PendingIntent.getActivity(context, 0, intent, 
+    PendingIntent.FLAG_IMMUTABLE)
+
+// Achievement notification
+val intent = Intent(Intent.ACTION_VIEW, 
+    Uri.parse("expensetracker://challenges?achievement=7day"))
+
+// Target price hit
+val intent = Intent(Intent.ACTION_VIEW, 
+    Uri.parse("expensetracker://investments?alert=target_hit&id=123"))
+-->
