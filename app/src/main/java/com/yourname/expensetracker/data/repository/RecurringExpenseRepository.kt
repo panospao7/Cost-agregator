@@ -17,6 +17,8 @@ class RecurringExpenseRepository @Inject constructor(
     fun getAllFlow(): Flow<List<ManualRecurringExpense>> = dao.getAllFlow()
 
     suspend fun getAll(): List<ManualRecurringExpense> = dao.getAll()
+    
+    suspend fun getById(id: Long): ManualRecurringExpense? = dao.getById(id)
 
     suspend fun getByMerchant(merchant: String): ManualRecurringExpense? = dao.getByMerchant(merchant)
 

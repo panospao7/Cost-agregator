@@ -26,4 +26,7 @@ interface RecurringExpenseDao {
     
     @Query("DELETE FROM manual_recurring_expenses WHERE id = :id")
     suspend fun deleteById(id: Long)
+    
+    @Query("SELECT * FROM manual_recurring_expenses WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): ManualRecurringExpense?
 }

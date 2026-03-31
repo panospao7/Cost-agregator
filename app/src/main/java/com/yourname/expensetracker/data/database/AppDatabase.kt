@@ -39,9 +39,12 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         ExpenseGroup::class,
         GroupMember::class,
         GroupExpense::class,
-        BudgetForecast::class
+        BudgetForecast::class,
+        Investment::class,
+        InvestmentValue::class,
+        BankConnection::class
     ],
-        version = 44,
+        version = 46,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -77,6 +80,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun groupMemberDao(): GroupMemberDao
     abstract fun groupExpenseDao(): GroupExpenseDao
     abstract fun budgetForecastDao(): BudgetForecastDao
+    abstract fun investmentDao(): InvestmentDao
+    abstract fun investmentValueDao(): InvestmentValueDao
+    abstract fun bankConnectionDao(): BankConnectionDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -1351,6 +1357,118 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_budget_forecasts_isActive 
                     ON budget_forecasts (isActive)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 44 -> 45: Investment Tracking
+        val MIGRATION_44_45 = object : androidx.room.migration.Migration(44, 45) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create investments table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS investments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        symbol TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        exchange TEXT,
+                        purchasePrice REAL NOT NULL,
+                        quantity REAL NOT NULL,
+                        purchaseDate INTEGER NOT NULL,
+                        purchaseFees REAL NOT NULL DEFAULT 0.0,
+                        currentPrice REAL NOT NULL,
+                        lastUpdated INTEGER NOT NULL,
+                        category TEXT,
+                        notes TEXT,
+                        isActive INTEGER NOT NULL DEFAULT 1,
+                        targetPrice REAL,
+                        stopLossPrice REAL,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_investments_type 
+                    ON investments (type)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_investments_symbol 
+                    ON investments (symbol)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_investments_isActive 
+                    ON investments (isActive)
+                """.trimIndent())
+                
+                // Create investment_values table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS investment_values (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        investmentId INTEGER NOT NULL,
+                        price REAL NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        totalValue REAL NOT NULL,
+                        dayChange REAL,
+                        dayChangePercent REAL,
+                        FOREIGN KEY(investmentId) REFERENCES investments(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_investment_values_investmentId_timestamp 
+                    ON investment_values (investmentId, timestamp)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_investment_values_timestamp 
+                    ON investment_values (timestamp)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 45 -> 46: Bank API Integration
+        val MIGRATION_45_46 = object : androidx.room.migration.Migration(45, 46) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create bank_connections table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS bank_connections (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        bankId TEXT NOT NULL,
+                        bankName TEXT NOT NULL,
+                        countryCode TEXT NOT NULL,
+                        accessToken TEXT,
+                        refreshToken TEXT,
+                        tokenExpiry INTEGER,
+                        isActive INTEGER NOT NULL DEFAULT 0,
+                        isConnected INTEGER NOT NULL DEFAULT 0,
+                        lastSync INTEGER,
+                        lastSyncStatus TEXT NOT NULL DEFAULT 'NEVER',
+                        autoSync INTEGER NOT NULL DEFAULT 1,
+                        syncFrequency TEXT NOT NULL DEFAULT 'DAILY',
+                        defaultCategoryId INTEGER,
+                        lastError TEXT,
+                        lastErrorTime INTEGER,
+                        consecutiveErrors INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_bank_connections_bankId 
+                    ON bank_connections (bankId)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_bank_connections_isActive 
+                    ON bank_connections (isActive)
+                """.trimIndent())
+                
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_bank_connections_lastSync 
+                    ON bank_connections (lastSync)
                 """.trimIndent())
             }
         }

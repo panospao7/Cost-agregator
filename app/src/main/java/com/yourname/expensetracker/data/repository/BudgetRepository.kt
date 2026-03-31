@@ -28,6 +28,8 @@ class BudgetRepository @Inject constructor(
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
 
     suspend fun getActiveBudgets(): List<Budget> = budgetDao.getActiveBudgets()
+    
+    suspend fun getById(id: Long): Budget? = budgetDao.getById(id)
 
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
         // We fetch the last 25 months to cover yearly budgets + rollover (need 24 months for full yearly history)

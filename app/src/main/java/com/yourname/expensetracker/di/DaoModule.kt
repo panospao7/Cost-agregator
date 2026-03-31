@@ -142,4 +142,19 @@ object DaoModule {
     @Singleton
     fun provideBudgetForecastDao(database: AppDatabase): BudgetForecastDao = 
         database.budgetForecastDao()
+
+    @Provides
+    @Singleton
+    fun provideInvestmentDao(database: AppDatabase): InvestmentDao = 
+        database.investmentDao()
+
+    @Provides
+    @Singleton
+    fun provideInvestmentValueDao(database: AppDatabase): InvestmentValueDao = 
+        database.investmentValueDao()
+
+    @Provides
+    @Singleton
+    fun provideBankConnectionDao(database: AppDatabase): BankConnectionDao = 
+        database.bankConnectionDao()
 }

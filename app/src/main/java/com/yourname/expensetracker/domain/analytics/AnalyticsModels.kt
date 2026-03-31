@@ -189,7 +189,11 @@ enum class InsightType {
     MERCHANT_FREQUENCY,
     DAILY_AVERAGE,
     TOP_MERCHANT,
-    STREAK
+    STREAK,
+    NEW_MERCHANT,
+    RECURRING_PATTERN,
+    SAVINGS_OPPORTUNITY,
+    SPENDING_PATTERN
 }
 
 data class RecurringCandidate(
