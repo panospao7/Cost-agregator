@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.home
 
+import android.app.Application
 import app.cash.turbine.test
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
@@ -137,8 +138,10 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         val expenseRepository = mockk<com.yourname.expensetracker.data.repository.ExpenseRepository>(relaxed = true)
         val widgetStyleRepository = mockk<com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository>(relaxed = true)
         val advancedAnalyticsEngine = mockk<com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine>(relaxed = true)
+        val application = mockk<Application>(relaxed = true)
 
         viewModel = HomeViewModel(
+            application,
             dashboardDataProvider,
             dashboardRepository,
             categoryRepository,
@@ -231,8 +234,10 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         val expenseRepository = mockk<com.yourname.expensetracker.data.repository.ExpenseRepository>(relaxed = true)
         val widgetStyleRepository = mockk<com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository>(relaxed = true)
         val advancedAnalyticsEngine = mockk<com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine>(relaxed = true)
+        val application = mockk<Application>(relaxed = true)
 
         viewModel = HomeViewModel(
+            application,
             dashboardDataProvider,
             dashboardRepository,
             categoryRepository,
@@ -443,7 +448,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             DashboardWidget.RecentTransactions(emptyList())
         ))
         assertEquals("insight", HomeViewModel.getWidgetId(
-            DashboardWidget.NaturalLanguageInsight("text", "icon")
+            DashboardWidget.NaturalLanguageInsight(
+                com.yourname.expensetracker.domain.model.UiText.DynamicString("text"), "icon")
         ))
         assertEquals("financial_weather", HomeViewModel.getWidgetId(
             DashboardWidget.FinancialWeatherWidget(
@@ -464,7 +470,9 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         val expenseRepository = mockk<com.yourname.expensetracker.data.repository.ExpenseRepository>(relaxed = true)
         val widgetStyleRepository = mockk<com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository>(relaxed = true)
         val advancedAnalyticsEngine = mockk<com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine>(relaxed = true)
+        val application = mockk<Application>(relaxed = true)
         val vm = HomeViewModel(
+            application,
             dashboardDataProvider,
             dashboardRepository,
             categoryRepository,

@@ -26,6 +26,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -47,7 +49,7 @@ fun ManualRecurringExpenseScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "Recurring Expenses",
+                        stringResource(R.string.recurring_title),
                         color = SemanticColors.TextPrimary,
                         fontWeight = FontWeight.Bold
                     ) 
@@ -56,7 +58,7 @@ fun ManualRecurringExpenseScreen(
                     IconButton(onClick = onNavigateBack) {
                         Icon(
                             Icons.Default.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.cd_back),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -65,7 +67,7 @@ fun ManualRecurringExpenseScreen(
                     IconButton(onClick = { viewModel.refresh() }) {
                         Icon(
                             Icons.Default.Refresh,
-                            contentDescription = "Refresh",
+                            contentDescription = stringResource(R.string.cd_refresh),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -81,7 +83,7 @@ fun ManualRecurringExpenseScreen(
                 onClick = { showAddDialog = true },
                 containerColor = SemanticColors.PrimaryIndigo
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Recurring Expense")
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.recurring_add_title))
             }
         }
     ) { padding ->
@@ -122,12 +124,11 @@ fun ManualRecurringExpenseScreen(
                             TotalMonthlyCard(totalMonthly = uiState.totalMonthly)
                         }
                         
-                        // Active Expenses Header
                         val activeExpenses = uiState.recurringExpenses.filter { it.isActive }
                         if (activeExpenses.isNotEmpty()) {
                             item {
                                 Text(
-                                    text = "Active Recurring Expenses (${activeExpenses.size})",
+                                    text = stringResource(R.string.header_active_recurring, activeExpenses.size),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = SemanticColors.TextPrimary,
                                     fontWeight = FontWeight.Bold
@@ -149,7 +150,7 @@ fun ManualRecurringExpenseScreen(
                         if (inactiveExpenses.isNotEmpty()) {
                             item {
                                 Text(
-                                    text = "Inactive (${inactiveExpenses.size})",
+                                    text = stringResource(R.string.header_inactive_recurring, inactiveExpenses.size),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = SemanticColors.TextSecondary,
                                     fontWeight = FontWeight.Bold,
@@ -194,8 +195,8 @@ fun ManualRecurringExpenseScreen(
         showDeleteConfirm?.let { expense ->
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = null },
-                title = { Text("Delete Recurring Expense?") },
-                text = { Text("Are you sure you want to delete ${expense.merchant}?") },
+                title = { Text(stringResource(R.string.recurring_delete_confirm_title)) },
+                text = { Text(stringResource(R.string.recurring_delete_confirm_message, expense.merchant)) },
                 confirmButton = {
                     Button(
                         onClick = {
@@ -206,12 +207,12 @@ fun ManualRecurringExpenseScreen(
                             containerColor = MaterialTheme.colorScheme.error
                         )
                     ) {
-                        Text("Delete")
+                        Text(stringResource(R.string.action_delete))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showDeleteConfirm = null }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.action_cancel))
                     }
                 }
             )
@@ -226,7 +227,7 @@ private fun SummaryCards(uiState: ManualRecurringExpenseUiState) {
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         SummaryCard(
-            title = "Active",
+            title = stringResource(R.string.label_active),
             value = uiState.activeCount.toString(),
             icon = Icons.Rounded.Repeat,
             color = Color(0xFF4CAF50),
@@ -234,7 +235,7 @@ private fun SummaryCards(uiState: ManualRecurringExpenseUiState) {
         )
         
         SummaryCard(
-            title = "Due Soon",
+            title = stringResource(R.string.label_due_soon),
             value = uiState.upcomingCount.toString(),
             icon = Icons.Rounded.Schedule,
             color = Color(0xFFFF9800),
@@ -306,7 +307,7 @@ private fun TotalMonthlyCard(totalMonthly: Double) {
                 .padding(20.dp)
         ) {
             Text(
-                text = "Monthly Total",
+                text = stringResource(R.string.label_monthly_total),
                 style = MaterialTheme.typography.labelMedium,
                 color = SemanticColors.TextSecondary
             )
@@ -401,14 +402,14 @@ private fun RecurringExpenseCard(
                 
                 if (isUpcoming && expense.isActive) {
                     Text(
-                        text = "Due ${dateFormat.format(Date(expense.nextDate))}",
+                        text = stringResource(R.string.label_due_format, dateFormat.format(Date(expense.nextDate))),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFFFF9800),
                         fontWeight = FontWeight.Medium
                     )
                 } else {
                     Text(
-                        text = "Next: ${dateFormat.format(Date(expense.nextDate))}",
+                        text = stringResource(R.string.label_next_format, dateFormat.format(Date(expense.nextDate))),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -427,7 +428,7 @@ private fun RecurringExpenseCard(
                 ) {
                     Icon(Icons.Rounded.Check, null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Mark as Paid")
+                    Text(stringResource(R.string.recurring_mark_paid))
                 }
             }
             
@@ -440,7 +441,7 @@ private fun RecurringExpenseCard(
                 ) {
                     Icon(Icons.Rounded.Delete, null)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Delete")
+                    Text(stringResource(R.string.action_delete))
                 }
             }
         }
@@ -461,7 +462,7 @@ private fun AddRecurringExpenseDialog(
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Recurring Expense") },
+        title = { Text(stringResource(R.string.dialog_add_recurring_title)) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -469,14 +470,14 @@ private fun AddRecurringExpenseDialog(
                 OutlinedTextField(
                     value = merchant,
                     onValueChange = { merchant = it },
-                    label = { Text("Merchant/Description") },
+                    label = { Text(stringResource(R.string.recurring_merchant_label)) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("Amount") },
+                    label = { Text(stringResource(R.string.recurring_amount_label)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -491,7 +492,7 @@ private fun AddRecurringExpenseDialog(
                         value = frequency.name.lowercase().replaceFirstChar { it.uppercase() },
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Frequency") },
+                        label = { Text(stringResource(R.string.label_frequency)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -520,7 +521,7 @@ private fun AddRecurringExpenseDialog(
                     value = dateFormat.format(Date(nextDate)),
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("Next Due Date") },
+                    label = { Text(stringResource(R.string.recurring_next_date_label)) },
                     trailingIcon = {
                         IconButton(onClick = { showDatePicker = true }) {
                             Icon(Icons.Rounded.CalendarToday, null)
@@ -532,7 +533,7 @@ private fun AddRecurringExpenseDialog(
                 OutlinedTextField(
                     value = note,
                     onValueChange = { note = it },
-                    label = { Text("Note (Optional)") },
+                    label = { Text(stringResource(R.string.recurring_note_label)) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -546,12 +547,12 @@ private fun AddRecurringExpenseDialog(
                 },
                 enabled = merchant.isNotBlank() && amount.toDoubleOrNull() != null
             ) {
-                Text("Add")
+                Text(stringResource(R.string.action_add))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
@@ -568,12 +569,12 @@ private fun AddRecurringExpenseDialog(
                         showDatePicker = false
                     }
                 ) {
-                    Text("OK")
+                    Text(stringResource(R.string.action_ok))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDatePicker = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
             }
         ) {
@@ -600,7 +601,7 @@ private fun EmptyState() {
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "No recurring expenses",
+            text = stringResource(R.string.empty_recurring_title),
             style = MaterialTheme.typography.bodyLarge,
             color = SemanticColors.TextSecondary
         )
@@ -608,7 +609,7 @@ private fun EmptyState() {
         Spacer(modifier = Modifier.height(8.dp))
         
         Text(
-            text = "Tap + to add rent, utilities, or other recurring payments",
+            text = stringResource(R.string.empty_recurring_message),
             style = MaterialTheme.typography.bodySmall,
             color = SemanticColors.TextSecondary,
             textAlign = TextAlign.Center
@@ -649,7 +650,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
                 containerColor = SemanticColors.PrimaryIndigo
             )
         ) {
-            Text("Try Again")
+            Text(stringResource(R.string.action_retry))
         }
     }
 }

@@ -36,19 +36,19 @@ class DatabaseMigrationTest {
 
     @Test
     @Throws(IOException::class)
-    fun migrate_all_versions_from_1_to_33() {
-        assumeTrue(hasSchema(1) && hasSchema(33))
+    fun migrate_all_versions_from_1_to_51() {
+        assumeTrue(hasSchema(1) && hasSchema(51))
         var db = helper.createDatabase(testDb, 1)
         db.close()
 
-        db = helper.runMigrationsAndValidate(testDb, 33, true)
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
         db.close()
     }
 
     @Test
     @Throws(IOException::class)
     fun migrate_6_to_7_adds_payment_columns() {
-        assumeTrue(hasSchema(6) && hasSchema(33))
+        assumeTrue(hasSchema(6) && hasSchema(51))
         var db = helper.createDatabase(testDb, 6)
         
         db.execSQL("""
@@ -57,7 +57,7 @@ class DatabaseMigrationTest {
         """)
         db.close()
 
-        db = helper.runMigrationsAndValidate(testDb, 33, true)
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
         
         val cursor = db.query("SELECT paymentMethod, isManualEntry, notes FROM expenses")
         assertTrue(cursor.moveToFirst())
@@ -71,11 +71,11 @@ class DatabaseMigrationTest {
     @Test
     @Throws(IOException::class)
     fun migrate_7_to_8_creates_budgets_table() {
-        assumeTrue(hasSchema(7) && hasSchema(33))
+        assumeTrue(hasSchema(7) && hasSchema(51))
         var db = helper.createDatabase(testDb, 7)
         db.close()
 
-        db = helper.runMigrationsAndValidate(testDb, 33, true)
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
         
         val cursor = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='budgets'")
         assertTrue(cursor.moveToFirst())
@@ -96,11 +96,11 @@ class DatabaseMigrationTest {
     @Test
     @Throws(IOException::class)
     fun migrate_8_to_9_creates_scanned_receipts_table() {
-        assumeTrue(hasSchema(8) && hasSchema(33))
+        assumeTrue(hasSchema(8) && hasSchema(51))
         var db = helper.createDatabase(testDb, 8)
         db.close()
 
-        db = helper.runMigrationsAndValidate(testDb, 33, true)
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
         
         val cursor = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='scanned_receipts'")
         assertTrue(cursor.moveToFirst())
@@ -111,7 +111,7 @@ class DatabaseMigrationTest {
     @Test
     @Throws(IOException::class)
     fun migrate_9_to_10_recreates_pending_reviews_with_status() {
-        assumeTrue(hasSchema(9) && hasSchema(33))
+        assumeTrue(hasSchema(9) && hasSchema(51))
         var db = helper.createDatabase(testDb, 9)
         
         db.execSQL("""
@@ -122,7 +122,7 @@ class DatabaseMigrationTest {
         """)
         db.close()
 
-        db = helper.runMigrationsAndValidate(testDb, 33, true)
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
         
         val cursor = db.query("SELECT status FROM pending_reviews")
         assertTrue(cursor.moveToFirst())
@@ -134,7 +134,7 @@ class DatabaseMigrationTest {
     @Test
     @Throws(IOException::class)
     fun migration_preserves_expense_data() {
-        assumeTrue(hasSchema(6) && hasSchema(33))
+        assumeTrue(hasSchema(6) && hasSchema(51))
         var db = helper.createDatabase(testDb, 6)
         
         db.execSQL("""
@@ -147,7 +147,7 @@ class DatabaseMigrationTest {
         """)
         db.close()
 
-        db = helper.runMigrationsAndValidate(testDb, 33, true)
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
         
         val cursor = db.query("SELECT amount, merchant FROM expenses ORDER BY amount")
         assertTrue(cursor.moveToFirst())
@@ -165,7 +165,7 @@ class DatabaseMigrationTest {
     @Test
     @Throws(IOException::class)
     fun migration_preserves_category_data() {
-        assumeTrue(hasSchema(10) && hasSchema(33))
+        assumeTrue(hasSchema(10) && hasSchema(51))
         var db = helper.createDatabase(testDb, 10)
         
         db.execSQL("""
@@ -180,7 +180,7 @@ class DatabaseMigrationTest {
         db.execSQL("INSERT INTO categories (name, icon, color) VALUES ('Transport', '🚗', '#00FF00')")
         db.close()
 
-        db = helper.runMigrationsAndValidate(testDb, 33, true)
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
         
         val cursor = db.query("SELECT name, icon FROM categories ORDER BY name")
         assertTrue(cursor.moveToFirst())
@@ -193,7 +193,7 @@ class DatabaseMigrationTest {
     @Test
     @Throws(IOException::class)
     fun foreign_key_constraints_maintained_after_migration() {
-        assumeTrue(hasSchema(10) && hasSchema(33))
+        assumeTrue(hasSchema(10) && hasSchema(51))
         var db = helper.createDatabase(testDb, 10)
         
         db.execSQL("""
@@ -219,7 +219,7 @@ class DatabaseMigrationTest {
         db.execSQL("INSERT INTO expenses (amount, currency, merchant, transactionType, date, categoryId) VALUES (10.0, 'EUR', 'Test', 'PURCHASE', 123456789, 1)")
         db.close()
 
-        db = helper.runMigrationsAndValidate(testDb, 33, true)
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
         
         val cursor = db.query("""
             SELECT e.amount, c.name 
@@ -333,7 +333,7 @@ class DatabaseMigrationTest {
     @Test
     @Throws(IOException::class)
     fun migrate_33_to_34_adds_ai_artifacts_table() {
-        assumeTrue(hasSchema(33) && hasSchema(34))
+        assumeTrue(hasSchema(51) && hasSchema(34))
 
         // Create DB at version 33 (no ai_artifacts table)
         var db = helper.createDatabase(testDb, 33)
@@ -466,6 +466,197 @@ class DatabaseMigrationTest {
         indexCursor.close()
         assertTrue(indices.any { it.contains("ai_chat_sessions") })
         assertTrue(indices.any { it.contains("ai_chat_messages") })
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_47_to_48_adds_isBusinessExpense_index() {
+        assumeTrue(hasSchema(47) && hasSchema(51))
+
+        var db = helper.createDatabase(testDb, 47)
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            48,
+            true,
+            AppDatabase.MIGRATION_47_48
+        )
+
+        // Verify the index exists
+        val indexCursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='index_expenses_isBusinessExpense'"
+        )
+        assertTrue("index_expenses_isBusinessExpense should exist", indexCursor.moveToFirst())
+        indexCursor.close()
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_46_to_48_chain_preserves_isBusinessExpense_index() {
+        assumeTrue(hasSchema(46) && hasSchema(51))
+
+        // Create DB at version 46 (has isBusinessExpense column but index added in 40->41)
+        var db = helper.createDatabase(testDb, 46)
+        db.close()
+
+        // Run full migration chain to 48
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
+
+        // Verify the index exists and schema is valid
+        val indexCursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='index_expenses_isBusinessExpense'"
+        )
+        assertTrue("index_expenses_isBusinessExpense should exist after 46->48 migration", indexCursor.moveToFirst())
+        indexCursor.close()
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_40_to_48_chain_creates_isBusinessExpense_index() {
+        assumeTrue(hasSchema(40) && hasSchema(51))
+
+        // Create DB at version 40 (before business expense fields)
+        var db = helper.createDatabase(testDb, 40)
+        db.close()
+
+        // Run full migration chain to 48
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
+
+        // Verify the index exists
+        val indexCursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='index_expenses_isBusinessExpense'"
+        )
+        assertTrue("index_expenses_isBusinessExpense should exist after 40->48 migration", indexCursor.moveToFirst())
+        indexCursor.close()
+
+        db.close()
+    }
+
+    // ── Migration 50 → 51 (Schema normalization) ───────────────────────────────
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_50_to_51_normalizes_indices() {
+        assumeTrue(hasSchema(50) && hasSchema(51))
+
+        // Create DB at version 50 (has schema drift issues)
+        var db = helper.createDatabase(testDb, 50)
+        db.close()
+
+        // Run migration to 51 and validate
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            51,
+            true,
+            AppDatabase.MIGRATION_50_51
+        )
+
+        // Verify scanned_receipts has correct indices
+        val indexCursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='scanned_receipts'"
+        )
+        val indices = mutableListOf<String>()
+        while (indexCursor.moveToNext()) {
+            indices.add(indexCursor.getString(0))
+        }
+        indexCursor.close()
+        
+        assertTrue("index_scanned_receipts_expenseId should exist", 
+            indices.contains("index_scanned_receipts_expenseId"))
+        assertTrue("index_scanned_receipts_createdAt should exist", 
+            indices.contains("index_scanned_receipts_createdAt"))
+        assertTrue("index_scanned_receipts_matchStatus should exist", 
+            indices.contains("index_scanned_receipts_matchStatus"))
+        
+        // Verify legacy extra indices do NOT exist
+        assertFalse("Legacy index_exchange_rates_from_to should be removed", 
+            indices.any { it == "index_exchange_rates_from_to" })
+        assertFalse("Legacy index_subscription_price_history_subscriptionId should be removed", 
+            indices.any { it == "index_subscription_price_history_subscriptionId" })
+        assertFalse("Legacy index_subscription_usage_subscriptionId should be removed", 
+            indices.any { it == "index_subscription_usage_subscriptionId" })
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_49_to_51_chain_passes() {
+        assumeTrue(hasSchema(49) && hasSchema(51))
+
+        // Create DB at version 49
+        var db = helper.createDatabase(testDb, 49)
+        db.close()
+
+        // Run full migration chain to 51
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
+
+        // Verify app can open without crash
+        val cursor = db.query("SELECT 1")
+        assertTrue(cursor.moveToFirst())
+        cursor.close()
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_38_to_51_chain_passes() {
+        assumeTrue(hasSchema(38) && hasSchema(51))
+
+        // Create DB at version 38 (scanned receipts era with matchStatus index introduced)
+        var db = helper.createDatabase(testDb, 38)
+        db.close()
+
+        // Run full migration chain to 51
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
+
+        // Verify scanned_receipts table and indices are valid
+        val cursor = db.query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='scanned_receipts'"
+        )
+        assertTrue("scanned_receipts table should exist", cursor.moveToFirst())
+        cursor.close()
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_33_to_51_chain_passes() {
+        assumeTrue(hasSchema(33) && hasSchema(51))
+
+        // Create DB at version 33 (stable baseline)
+        var db = helper.createDatabase(testDb, 33)
+        db.close()
+
+        // Run full migration chain to 51
+        db = helper.runMigrationsAndValidate(testDb, 51, true)
+
+        // Verify all expected tables exist
+        val expectedTables = listOf(
+            "raw_notifications", "blocked_packages", "expenses", "categories",
+            "merchant_categories", "pending_reviews", "user_corrections",
+            "source_stats", "budgets", "scanned_receipts", "manual_recurring_expenses",
+            "planned_expenses", "savings_goals", "merchant_canonicals", "merchant_aliases",
+            "merchant_locations", "merchant_location_corrections"
+        )
+        
+        expectedTables.forEach { tableName ->
+            val cursor = db.query("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='$tableName'
+            """)
+            assertTrue("Table $tableName should exist at v51", cursor.moveToFirst())
+            cursor.close()
+        }
 
         db.close()
     }

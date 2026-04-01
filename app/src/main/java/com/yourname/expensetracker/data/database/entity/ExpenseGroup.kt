@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -19,8 +20,8 @@ data class ExpenseGroup(
     val id: Long = 0,
     val name: String,              // Group name (e.g., "Weekend Trip")
     val description: String? = null, // Optional description
-    val defaultCurrency: String = "EUR",
-    val isActive: Boolean = true,
+    @ColumnInfo(defaultValue = "EUR") val defaultCurrency: String = "EUR",
+    @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
-    val createdBy: String = "me"   // User who created the group
+    @ColumnInfo(defaultValue = "me") val createdBy: String = "me"   // User who created the group
 )

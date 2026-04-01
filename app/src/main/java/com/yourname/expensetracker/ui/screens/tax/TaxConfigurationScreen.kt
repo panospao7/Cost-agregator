@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.tax.TaxBracket
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -43,7 +45,7 @@ fun TaxConfigurationScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "Tax Configuration",
+                        stringResource(R.string.tax_title),
                         color = SemanticColors.TextPrimary,
                         fontWeight = FontWeight.Bold
                     ) 
@@ -52,7 +54,7 @@ fun TaxConfigurationScreen(
                     IconButton(onClick = onNavigateBack) {
                         Icon(
                             Icons.Default.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.cd_back),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -108,7 +110,7 @@ fun TaxConfigurationScreen(
                         // Tax Brackets Header
                         item {
                             Text(
-                                text = "Income Tax Brackets",
+                                text = stringResource(R.string.header_income_tax_brackets),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = SemanticColors.TextPrimary,
                                 fontWeight = FontWeight.Bold
@@ -163,7 +165,7 @@ private fun CountrySelectionCard(
                 .padding(20.dp)
         ) {
             Text(
-                text = "Tax Region",
+                text = stringResource(R.string.label_tax_region),
                 style = MaterialTheme.typography.labelMedium,
                 color = SemanticColors.TextSecondary
             )
@@ -229,7 +231,7 @@ private fun VatRateCard(vatRate: Double) {
         ) {
             Column {
                 Text(
-                    text = "VAT Rate",
+                    text = stringResource(R.string.label_vat_rate),
                     style = MaterialTheme.typography.labelMedium,
                     color = SemanticColors.TextSecondary
                 )
@@ -326,7 +328,7 @@ private fun SampleCalculatorCard(
                 .padding(20.dp)
         ) {
             Text(
-                text = "Tax Calculator",
+                text = stringResource(R.string.label_tax_calculator),
                 style = MaterialTheme.typography.titleMedium,
                 color = Color(0xFF4CAF50),
                 fontWeight = FontWeight.Bold
@@ -337,7 +339,7 @@ private fun SampleCalculatorCard(
             OutlinedTextField(
                 value = sampleIncome,
                 onValueChange = onIncomeChange,
-                label = { Text("Annual Income ($currency)") },
+                label = { Text(stringResource(R.string.tax_annual_income_label, currency)) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -354,7 +356,7 @@ private fun SampleCalculatorCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Estimated Income",
+                            text = stringResource(R.string.label_estimated_income),
                             color = SemanticColors.TextSecondary
                         )
                         Text(
@@ -369,7 +371,7 @@ private fun SampleCalculatorCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Taxable Income",
+                            text = stringResource(R.string.label_taxable_income),
                             color = SemanticColors.TextSecondary
                         )
                         Text(
@@ -384,7 +386,7 @@ private fun SampleCalculatorCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Deductible Expenses",
+                            text = stringResource(R.string.label_deductible_expenses),
                             color = SemanticColors.TextSecondary
                         )
                         Text(
@@ -401,7 +403,7 @@ private fun SampleCalculatorCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Estimated Income Tax",
+                            text = stringResource(R.string.label_estimated_income_tax),
                             color = Color(0xFFF44336),
                             fontWeight = FontWeight.Medium
                         )
@@ -417,7 +419,7 @@ private fun SampleCalculatorCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Estimated VAT Paid",
+                            text = stringResource(R.string.label_estimated_vat_paid),
                             color = Color(0xFFF44336),
                             fontWeight = FontWeight.Medium
                         )
@@ -433,7 +435,7 @@ private fun SampleCalculatorCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Effective Tax Rate",
+                            text = stringResource(R.string.label_effective_tax_rate),
                             color = SemanticColors.TextSecondary
                         )
                         Text(
@@ -451,7 +453,7 @@ private fun SampleCalculatorCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Net Income (Est.)",
+                            text = stringResource(R.string.label_net_income),
                             color = Color(0xFF4CAF50),
                             fontWeight = FontWeight.Medium
                         )
@@ -500,7 +502,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
                 containerColor = SemanticColors.PrimaryIndigo
             )
         ) {
-            Text("Try Again")
+            Text(stringResource(R.string.action_retry))
         }
     }
 }

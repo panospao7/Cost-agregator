@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -46,8 +47,8 @@ data class GroupExpense(
     val date: Long,                // When the expense occurred
     val description: String,       // Description for the group context
     val totalAmount: Double,       // Total amount
-    val currency: String = "EUR",
-    val splitType: SplitType = SplitType.EQUAL, // How to split
+    @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "EQUAL") val splitType: SplitType = SplitType.EQUAL, // How to split
     val customSplitsJson: String? = null // JSON map of memberId -> amount/percentage for custom splits
 )
 

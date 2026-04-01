@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -54,7 +55,7 @@ data class MerchantLocationCorrection(
      * Radius in kilometres around (areaLatitude, areaLongitude) within which
      * this correction is considered valid.  Default 5 km covers most city areas.
      */
-    val areaRadiusKm: Float = 5.0f,
+    @ColumnInfo(defaultValue = "5.0") val areaRadiusKm: Float = 5.0f,
 
     /** Optional OSM ID of the corrected node (if user picked from Overpass results). */
     val osmId: String? = null,

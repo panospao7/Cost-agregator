@@ -22,7 +22,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -47,7 +49,7 @@ fun SubscriptionManagementScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "Subscription Management",
+                        stringResource(R.string.subscriptions_title),
                         color = SemanticColors.TextPrimary,
                         fontWeight = FontWeight.Bold
                     ) 
@@ -56,7 +58,7 @@ fun SubscriptionManagementScreen(
                     IconButton(onClick = onNavigateBack) {
                         Icon(
                             Icons.Default.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.cd_back),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -65,7 +67,7 @@ fun SubscriptionManagementScreen(
                     IconButton(onClick = { viewModel.refresh() }) {
                         Icon(
                             Icons.Default.Refresh,
-                            contentDescription = "Refresh",
+                            contentDescription = stringResource(R.string.cd_refresh),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -81,7 +83,7 @@ fun SubscriptionManagementScreen(
                 onClick = { showAddDialog = true },
                 containerColor = SemanticColors.PrimaryIndigo
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Subscription")
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_add))
             }
         }
     ) { padding ->
@@ -129,7 +131,7 @@ fun SubscriptionManagementScreen(
                         if (uiState.subscriptions.any { it.subscription.isActive }) {
                             item {
                                 Text(
-                                    text = "Active Subscriptions (${uiState.activeCount})",
+                                    text = stringResource(R.string.header_active_subscriptions, uiState.activeCount),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = SemanticColors.TextPrimary,
                                     fontWeight = FontWeight.Bold
@@ -154,7 +156,7 @@ fun SubscriptionManagementScreen(
                         if (uiState.subscriptions.any { !it.subscription.isActive }) {
                             item {
                                 Text(
-                                    text = "Inactive Subscriptions (${uiState.inactiveCount})",
+                                    text = stringResource(R.string.header_inactive_subscriptions, uiState.inactiveCount),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = SemanticColors.TextSecondary,
                                     fontWeight = FontWeight.Bold,
@@ -198,8 +200,8 @@ fun SubscriptionManagementScreen(
         showDeleteConfirm?.let { subscription ->
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = null },
-                title = { Text("Delete Subscription?") },
-                text = { Text("Are you sure you want to delete ${subscription.subscription.merchant}?") },
+                title = { Text(stringResource(R.string.subscriptions_delete_confirm_title)) },
+                text = { Text(stringResource(R.string.subscriptions_delete_confirm_message, subscription.subscription.merchant)) },
                 confirmButton = {
                     Button(
                         onClick = {
@@ -210,12 +212,12 @@ fun SubscriptionManagementScreen(
                             containerColor = MaterialTheme.colorScheme.error
                         )
                     ) {
-                        Text("Delete")
+                        Text(stringResource(R.string.action_delete))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showDeleteConfirm = null }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.action_cancel))
                     }
                 }
             )
@@ -230,7 +232,7 @@ private fun SummaryCards(uiState: SubscriptionManagementUiState) {
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         SummaryCard(
-            title = "Active",
+            title = stringResource(R.string.label_active),
             value = uiState.activeCount.toString(),
             icon = Icons.Rounded.CheckCircle,
             color = Color(0xFF4CAF50),
@@ -238,7 +240,7 @@ private fun SummaryCards(uiState: SubscriptionManagementUiState) {
         )
         
         SummaryCard(
-            title = "Inactive",
+            title = stringResource(R.string.label_inactive),
             value = uiState.inactiveCount.toString(),
             icon = Icons.Rounded.Cancel,
             color = Color(0xFFFF9800),
@@ -310,7 +312,7 @@ private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double) {
                 .padding(20.dp)
         ) {
             Text(
-                text = "Total Subscription Cost",
+                text = stringResource(R.string.label_total_subscription_cost),
                 style = MaterialTheme.typography.titleMedium,
                 color = SemanticColors.TextPrimary,
                 fontWeight = FontWeight.Bold
@@ -330,7 +332,7 @@ private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "per month",
+                        text = stringResource(R.string.label_per_month),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -344,7 +346,7 @@ private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "per year",
+                        text = stringResource(R.string.label_per_year),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -449,13 +451,13 @@ private fun SubscriptionCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${subscription.monthlyUsage} uses this month",
+                        text = stringResource(R.string.label_uses_this_month_format, subscription.monthlyUsage),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
                     
                     Text(
-                        text = "${currencyFormat.format(subscription.costPerUse)}/use",
+                        text = stringResource(R.string.label_per_use_format, currencyFormat.format(subscription.costPerUse)),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Medium
@@ -474,7 +476,7 @@ private fun SubscriptionCard(
                 ) {
                     Icon(Icons.Rounded.Add, null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Record Usage", style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.subscriptions_record_usage), style = MaterialTheme.typography.labelMedium)
                 }
             }
             
@@ -488,7 +490,7 @@ private fun SubscriptionCard(
                 ) {
                     Icon(Icons.Rounded.Delete, null)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Delete")
+                    Text(stringResource(R.string.action_delete))
                 }
             }
         }
@@ -505,11 +507,18 @@ private fun AddSubscriptionDialog(
     var frequency by remember { mutableStateOf(RecurrenceFrequency.MONTHLY) }
     var category by remember { mutableStateOf("") }
     
-    val categories = listOf("Streaming", "Software", "Fitness", "News", "Cloud Storage", "Other")
+    val categories = listOf(
+        stringResource(R.string.category_streaming),
+        stringResource(R.string.category_software),
+        stringResource(R.string.category_fitness),
+        stringResource(R.string.category_news),
+        stringResource(R.string.category_cloud_storage),
+        stringResource(R.string.category_other)
+    )
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Subscription") },
+        title = { Text(stringResource(R.string.subscriptions_add_title)) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -517,14 +526,14 @@ private fun AddSubscriptionDialog(
                 OutlinedTextField(
                     value = merchant,
                     onValueChange = { merchant = it },
-                    label = { Text("Merchant/Service") },
+                    label = { Text(stringResource(R.string.subscriptions_merchant_label)) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("Amount") },
+                    label = { Text(stringResource(R.string.label_amount)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -539,7 +548,7 @@ private fun AddSubscriptionDialog(
                         value = frequency.name.lowercase().replaceFirstChar { it.uppercase() },
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Frequency") },
+                        label = { Text(stringResource(R.string.label_frequency)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = frequencyExpanded) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -572,7 +581,7 @@ private fun AddSubscriptionDialog(
                         value = category,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Category (Optional)") },
+                        label = { Text(stringResource(R.string.subscriptions_category_label)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -605,12 +614,12 @@ private fun AddSubscriptionDialog(
                 },
                 enabled = merchant.isNotBlank() && amount.toDoubleOrNull() != null
             ) {
-                Text("Add")
+                Text(stringResource(R.string.action_add))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
@@ -649,7 +658,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
                 containerColor = SemanticColors.PrimaryIndigo
             )
         ) {
-            Text("Try Again")
+            Text(stringResource(R.string.action_retry))
         }
     }
 }

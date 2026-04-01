@@ -4,13 +4,16 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -49,6 +52,7 @@ class GroupTransactionCoordinatorTest {
     private lateinit var groupDao: ExpenseGroupDao
     private lateinit var memberDao: GroupMemberDao
     private lateinit var groupExpenseDao: GroupExpenseDao
+    private lateinit var expenseDao: ExpenseDao
     private lateinit var coordinator: GroupTransactionCoordinator
 
     @Before
@@ -61,6 +65,7 @@ class GroupTransactionCoordinatorTest {
         groupDao = database.expenseGroupDao()
         memberDao = database.groupMemberDao()
         groupExpenseDao = database.groupExpenseDao()
+        expenseDao = database.expenseDao()
         coordinator = GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao)
     }
 
@@ -172,9 +177,19 @@ class GroupTransactionCoordinatorTest {
         val aliceId = savedMembers.first { it.name == "Alice" }.id
         val bobId = savedMembers.first { it.name == "Bob" }.id
 
+        // Create an actual expense first (required for foreign key constraint)
+        val expense = Expense(
+            amount = 100.0,
+            merchant = "Test Merchant",
+            transactionType = TransactionType.PURCHASE,
+            notes = "Dinner",
+            date = System.currentTimeMillis()
+        )
+        val actualExpenseId = expenseDao.insert(expense)
+
         val groupExpense = GroupExpense(
             groupId = groupId,
-            expenseId = 123L,
+            expenseId = actualExpenseId,
             paidById = aliceId,
             date = System.currentTimeMillis(),
             description = "Dinner",
@@ -210,11 +225,21 @@ class GroupTransactionCoordinatorTest {
         )
         val groupId = coordinator.createGroupWithMembersAtomic(group, members)
 
-        // Add an expense
+        // Create an actual expense first (required for foreign key constraint)
+        val expense = Expense(
+            amount = 50.0,
+            merchant = "Test Merchant",
+            transactionType = TransactionType.PURCHASE,
+            notes = "Lunch",
+            date = System.currentTimeMillis()
+        )
+        val expenseId = expenseDao.insert(expense)
+
+        // Add group expense linking to actual expense
         val savedMembers = memberDao.getMembersForGroup(groupId).first()
         val groupExpense = GroupExpense(
             groupId = groupId,
-            expenseId = 456L,
+            expenseId = expenseId,
             paidById = savedMembers[0].id,
             date = System.currentTimeMillis(),
             description = "Lunch",
@@ -332,10 +357,20 @@ class GroupTransactionCoordinatorTest {
         val members = listOf(GroupMember(groupId = 0, name = "Alice"), GroupMember(groupId = 0, name = "Bob"))
         val groupId = coordinator.createGroupWithMembersAtomic(group, members)
 
+        // Create an actual expense first (required for foreign key constraint)
+        val expense = Expense(
+            amount = 0.0,
+            merchant = "Gift",
+            transactionType = TransactionType.PURCHASE,
+            notes = "Gift",
+            date = System.currentTimeMillis()
+        )
+        val actualExpenseId = expenseDao.insert(expense)
+
         val savedMembers = memberDao.getMembersForGroup(groupId).first()
         val groupExpense = GroupExpense(
             groupId = groupId,
-            expenseId = 789L,
+            expenseId = actualExpenseId,
             paidById = savedMembers[0].id,
             date = System.currentTimeMillis(),
             description = "Gift",

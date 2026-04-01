@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -22,5 +23,5 @@ data class ExchangeRate(
     val toCurrency: String,        // Target currency code (e.g., "EUR")
     val rate: Double,              // Exchange rate (how much 1 unit of fromCurrency is worth in toCurrency)
     val lastUpdated: Long = System.currentTimeMillis(),
-    val source: String = "manual"  // "manual", "api", "cached"
+    @ColumnInfo(defaultValue = "manual") val source: String = "manual"  // "manual", "api", "cached"
 )

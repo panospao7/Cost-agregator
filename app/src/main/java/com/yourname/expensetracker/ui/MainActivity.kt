@@ -151,15 +151,19 @@ fun MainScreen(mainViewModel: MainViewModel) {
     var showNotificationPermissionDialog by rememberSaveable { mutableStateOf(false) }
     var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
     
+    // Navigation Controller - Single source of truth for feature screens
+    val navigation = LocalNavigationController.current
+    val currentDestination = navigation.destination
+    
     LaunchedEffect(Unit) {
         mainViewModel.navigationRequest.collect { request ->
             when (request) {
                 is MainNavigationRequest.Tab -> {
-                    selectedTab = request.index
+                    navigation.navigateToTab(request.index)
                 }
                 is MainNavigationRequest.Transactions -> {
                     activeTransactionFilter = request.filter
-                    selectedTab = 1
+                    navigation.navigateToTab(1)
                 }
             }
         }
@@ -195,10 +199,15 @@ fun MainScreen(mainViewModel: MainViewModel) {
     // Budget Forecasting State (requires data parameter)
     var showBudgetForecasting by rememberSaveable { mutableStateOf(false) }
     var selectedBudgetForForecast by rememberSaveable { mutableStateOf<com.yourname.expensetracker.data.database.entity.Budget?>(null) }
-
-    // Navigation Controller - Single source of truth for feature screens
-    val navigation = LocalNavigationController.current
-    val currentDestination = navigation.destination
+    
+    // Sync: Keep selectedTab in sync with NavigationController
+    LaunchedEffect(currentDestination) {
+        navigation.getCurrentTabIndex()?.let { tabIndex ->
+            if (selectedTab != tabIndex) {
+                selectedTab = tabIndex
+            }
+        }
+    }
 
     NotificationPermissionDialog(
         showDialog = showNotificationPermissionDialog,
@@ -209,15 +218,18 @@ fun MainScreen(mainViewModel: MainViewModel) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            AppNavigationBar(
-                selectedTab = selectedTab,
-                onTabSelected = { index ->
-                    if (selectedTab != index) haptic(HapticType.Standard)
-                    if (index == 1) activeTransactionFilter = null
-                    selectedTab = index
-                },
-                pendingReviewCount = pendingCount
-            )
+            // Only show bottom bar when on main tabs (not feature screens)
+            if (navigation.isOnMainTab()) {
+                AppNavigationBar(
+                    selectedTab = selectedTab,
+                    onTabSelected = { index ->
+                        if (selectedTab != index) haptic(HapticType.Standard)
+                        if (index == 1) activeTransactionFilter = null
+                        navigation.navigateToTab(index)
+                    },
+                    pendingReviewCount = pendingCount
+                )
+            }
         },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
@@ -263,19 +275,20 @@ fun MainScreen(mainViewModel: MainViewModel) {
             ) { targetTab ->
                 when (targetTab) {
                     0 -> HomeScreen(
-                        onNavigateToReview = { selectedTab = 2 },
+                        onNavigateToReview = { navigation.navigateToTab(2) },
                         onNavigateToRecurring = { showRecurringExpenses = true },
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
-                            selectedTab = 1
+                            navigation.navigateToTab(1)
                         },
-                        onNavigateToAnalytics = { selectedTab = 4 },
-                        onNavigateToMap = { selectedTab = 5 },
-                        onNavigateToBudgetDetail = { selectedTab = 3 }
-                        // Feature navigation now handled via NavigationController in FeaturesMenu
+                        onNavigateToAnalytics = { navigation.navigateToTab(4) },
+                        onNavigateToMap = { navigation.navigateToTab(5) },
+                        onNavigateToBudgetDetail = { navigation.navigateToTab(3) },
+                        // Config-driven feature navigation - handles all 22 features
+                        onNavigateToFeature = { destination -> navigation.navigateTo(destination) }
                     )
                     1 -> TransactionsScreen(
-                        onNavigateToAnalytics = { selectedTab = 4 },
+                        onNavigateToAnalytics = { navigation.navigateToTab(4) },
                         initialFilter = activeTransactionFilter
                     )
                     2 -> ReviewScreen()
@@ -288,7 +301,7 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     4 -> com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen(
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
-                            selectedTab = 1
+                            navigation.navigateToTab(1)
                         }
                     )
                     5 -> SpendingMapScreen()
@@ -322,7 +335,7 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         activeTransactionFilter = filter
                         // Close recurring screen since it's an overlay
                         showRecurringExpenses = false
-                        selectedTab = 1
+                        navigation.navigateToTab(1)
                     }
                 )
             }
@@ -332,7 +345,7 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     onDismiss = { showAssistant = false },
                     onOpenTransactions = { filter ->
                         activeTransactionFilter = filter
-                        selectedTab = 1
+                        navigation.navigateToTab(1)
                         showAssistant = false
                     }
                 )
@@ -380,8 +393,8 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     NaturalLanguageSearchScreen(
                         onNavigateBack = { navigation.navigateBack() },
                         onViewTransaction = { transactionId ->
-                            // Navigate to transaction details
-                            navigation.navigateBack()
+                            // Navigate to Transactions tab (transaction detail view coming soon)
+                            navigation.navigateToTab(1)
                         }
                     )
                 }
@@ -394,8 +407,8 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     InvestmentPortfolioScreen(
                         onNavigateBack = { navigation.navigateBack() },
                         onAddInvestment = { 
-                            // Handle add investment
-                            navigation.navigateBack() 
+                            // Show "Coming soon" since add investment flow not implemented
+                            navigation.navigateBack()
                         }
                     )
                 }
@@ -403,8 +416,8 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     BankConnectionsScreen(
                         onNavigateBack = { navigation.navigateBack() },
                         onAddConnection = { 
-                            // Handle add bank connection
-                            navigation.navigateBack() 
+                            // Show "Coming soon" since add bank connection flow not implemented
+                            navigation.navigateBack()
                         }
                     )
                 }
@@ -417,8 +430,8 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     SpendingChallengesScreen(
                         onNavigateBack = { navigation.navigateBack() },
                         onCreateChallenge = { 
-                            // Handle create challenge
-                            navigation.navigateBack() 
+                            // Show "Coming soon" since create challenge flow not implemented
+                            navigation.navigateBack()
                         }
                     )
                 }

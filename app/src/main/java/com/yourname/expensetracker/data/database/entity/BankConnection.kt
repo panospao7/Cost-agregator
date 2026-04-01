@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -28,20 +29,20 @@ data class BankConnection(
     val tokenExpiry: Long? = null,
     
     // Connection status
-    val isActive: Boolean = false,
-    val isConnected: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val isActive: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val isConnected: Boolean = false,
     val lastSync: Long? = null,
-    val lastSyncStatus: SyncStatus = SyncStatus.NEVER,
+    @ColumnInfo(defaultValue = "NEVER") val lastSyncStatus: SyncStatus = SyncStatus.NEVER,
     
     // Account settings
-    val autoSync: Boolean = true,
-    val syncFrequency: SyncFrequency = SyncFrequency.DAILY,
+    @ColumnInfo(defaultValue = "1") val autoSync: Boolean = true,
+    @ColumnInfo(defaultValue = "DAILY") val syncFrequency: SyncFrequency = SyncFrequency.DAILY,
     val defaultCategoryId: Long? = null,
     
     // Error tracking
     val lastError: String? = null,
     val lastErrorTime: Long? = null,
-    val consecutiveErrors: Int = 0,
+    @ColumnInfo(defaultValue = "0") val consecutiveErrors: Int = 0,
     
     val createdAt: Long = System.currentTimeMillis()
 )

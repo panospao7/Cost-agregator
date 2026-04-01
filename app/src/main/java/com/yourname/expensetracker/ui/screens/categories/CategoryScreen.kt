@@ -19,6 +19,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,13 +37,13 @@ fun CategoryScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "Manage Categories",
+                        stringResource(R.string.screen_manage_categories),
                         color = SemanticColors.TextPrimary
                     ) 
                 },
                 navigationIcon = {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -53,7 +55,7 @@ fun CategoryScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showAddDialog = true },
-                modifier = Modifier.semantics { contentDescription = "Add new category" }
+                modifier = Modifier.semantics { contentDescription = stringResource(R.string.category_fab_add) }
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
             }
@@ -95,9 +97,12 @@ fun CategoryItem(category: Category) {
     
     val cardDescription = remember(category.name, category.isDefault) {
         buildString {
-            append("${category.name} category")
+            append(category.name)
+            append(" ")
+            append(stringResource(R.string.category_label))
             if (category.isDefault) {
-                append(", Default category")
+                append(", ")
+                append(stringResource(R.string.category_label_default))
             }
         }
     }
@@ -118,21 +123,21 @@ fun CategoryItem(category: Category) {
                     .background(color, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    category.icon,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.semantics { contentDescription = "${category.name} icon" }
-                )
+            Text(
+                category.icon,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = stringResource(R.string.a11y_category_icon, category.name) }
+            )
             }
             Spacer(modifier = Modifier.width(16.dp))
             Text(category.name, style = MaterialTheme.typography.bodyLarge)
             if (category.isDefault) {
                 Spacer(modifier = Modifier.weight(1f))
                 Text(
-                    "Default",
+                    stringResource(R.string.category_label_default),
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.Gray,
-                    modifier = Modifier.semantics { contentDescription = "Default category" }
+                    modifier = Modifier.semantics { contentDescription = stringResource(R.string.category_label_default) }
                 )
             }
         }
@@ -156,7 +161,7 @@ fun AddCategoryDialog(
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New Category") },
+        title = { Text(stringResource(R.string.category_dialog_new_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
@@ -167,12 +172,12 @@ fun AddCategoryDialog(
                         }
                         if (it.isNotBlank()) isNameError = false
                     },
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.category_dialog_label_name)) },
                     isError = isNameError || (name.isNotEmpty() && !isValidName),
                     supportingText = { 
                         when {
-                            isNameError -> Text("Name cannot be empty")
-                            name.isNotEmpty() && !isValidName -> Text("Invalid characters")
+                            isNameError -> Text(stringResource(R.string.category_error_name_empty))
+                            name.isNotEmpty() && !isValidName -> Text(stringResource(R.string.category_error_invalid_characters))
                         }
                     },
                     singleLine = true
@@ -180,7 +185,7 @@ fun AddCategoryDialog(
                 OutlinedTextField(
                     value = icon,
                     onValueChange = { if (it.length <= 10) icon = it },
-                    label = { Text("Icon (Emoji)") },
+                    label = { Text(stringResource(R.string.category_dialog_label_icon)) },
                     singleLine = true
                 )
                 OutlinedTextField(
@@ -191,12 +196,12 @@ fun AddCategoryDialog(
                         }
                         isColorError = false
                     },
-                    label = { Text("Color (Hex)") },
+                    label = { Text(stringResource(R.string.category_dialog_label_color)) },
                     isError = isColorError || (color.isNotEmpty() && !isValidColor),
                     supportingText = {
                         when {
-                            isColorError -> Text("Invalid color format")
-                            color.isNotEmpty() && !isValidColor -> Text("Use #RRGGBB format")
+                            isColorError -> Text(stringResource(R.string.category_error_invalid_color))
+                            color.isNotEmpty() && !isValidColor -> Text(stringResource(R.string.category_error_hex_format))
                         }
                     },
                     singleLine = true
@@ -216,12 +221,12 @@ fun AddCategoryDialog(
                     }
                 }
             ) {
-                Text("Add")
+                Text(stringResource(R.string.category_action_add))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )

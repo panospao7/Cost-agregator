@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -51,7 +52,7 @@ data class BudgetForecast(
     val forecastAccuracy: Double? = null, // 0.0-1.0, how accurate was this forecast
     
     // Status
-    val isActive: Boolean = true,
+    @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
     val createdAt: Long = System.currentTimeMillis()
 )
 

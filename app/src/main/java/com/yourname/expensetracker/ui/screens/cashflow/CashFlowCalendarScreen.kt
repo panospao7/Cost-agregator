@@ -19,6 +19,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -36,15 +38,15 @@ fun CashFlowCalendarScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Cash Flow Calendar") },
+                title = { Text(stringResource(R.string.screen_cash_flow_calendar)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.loadCurrentMonth() }) {
-                        Icon(Icons.Default.Today, contentDescription = "Today")
+                        Icon(Icons.Default.Today, contentDescription = stringResource(R.string.calendar_nav_today))
                     }
                 }
             )
@@ -63,7 +65,7 @@ fun CashFlowCalendarScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { viewModel.navigateToPreviousMonth() }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Previous")
+                    Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.calendar_nav_previous))
                 }
                 
                 Text(
@@ -73,7 +75,7 @@ fun CashFlowCalendarScreen(
                 )
                 
                 IconButton(onClick = { viewModel.navigateToNextMonth() }) {
-                    Icon(Icons.Default.ArrowForward, contentDescription = "Next")
+                    Icon(Icons.Default.ArrowForward, contentDescription = stringResource(R.string.calendar_nav_next))
                 }
             }
             
@@ -88,7 +90,7 @@ fun CashFlowCalendarScreen(
                     )
                 ) {
                     Text(
-                        text = "⚠️ ${state.upcomingBillsCount} bills due this month",
+                        text = stringResource(R.string.calendar_alert_bills_due, state.upcomingBillsCount),
                         modifier = Modifier.padding(16.dp),
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
@@ -104,7 +106,7 @@ fun CashFlowCalendarScreen(
                         viewModel.setStartingBalance(balance)
                     }
                 },
-                label = { Text("Starting Balance (€)") },
+                label = { Text(stringResource(R.string.calendar_label_starting_balance)) },
                 modifier = Modifier.fillMaxWidth()
             )
             
@@ -115,7 +117,15 @@ fun CashFlowCalendarScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").forEach { day ->
+                listOf(
+                    stringResource(R.string.calendar_weekday_sun),
+                    stringResource(R.string.calendar_weekday_mon),
+                    stringResource(R.string.calendar_weekday_tue),
+                    stringResource(R.string.calendar_weekday_wed),
+                    stringResource(R.string.calendar_weekday_thu),
+                    stringResource(R.string.calendar_weekday_fri),
+                    stringResource(R.string.calendar_weekday_sat)
+                ).forEach { day ->
                     Text(
                         text = day,
                         modifier = Modifier.weight(1f),

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -26,9 +27,9 @@ data class SplitItemAssignment(
     val expenseId: Long,
     val receiptItemId: Long? = null, // If splitting by receipt items
     val participantName: String,
-    val participantIndex: Int = 0,
+    @ColumnInfo(defaultValue = "0") val participantIndex: Int = 0,
     val assignedAmount: Double,
-    val isPaid: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val isPaid: Boolean = false,
     val paidAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis()
 )

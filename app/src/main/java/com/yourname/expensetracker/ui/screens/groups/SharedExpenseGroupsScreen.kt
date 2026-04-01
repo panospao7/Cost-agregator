@@ -27,6 +27,8 @@ import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -50,7 +52,7 @@ fun SharedExpenseGroupsScreen(
                         if (uiState.selectedGroup != null) {
                             uiState.selectedGroup!!.group.name
                         } else {
-                            "Shared Expense Groups"
+                            stringResource(R.string.groups_title)
                         },
                         color = SemanticColors.TextPrimary,
                         fontWeight = FontWeight.Bold
@@ -68,7 +70,7 @@ fun SharedExpenseGroupsScreen(
                     ) {
                         Icon(
                             if (uiState.selectedGroup != null) Icons.Default.ArrowBack else Icons.Default.Close,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.cd_back),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -78,14 +80,14 @@ fun SharedExpenseGroupsScreen(
                         IconButton(onClick = { viewModel.toggleAddExpense(true) }) {
                             Icon(
                                 Icons.Rounded.Add,
-                                contentDescription = "Add Expense",
+                                contentDescription = stringResource(R.string.a11y_add_expense_to_group),
                                 tint = SemanticColors.TextPrimary
                             )
                         }
                         IconButton(onClick = { viewModel.toggleAddMember(true) }) {
                             Icon(
                                 Icons.Rounded.PersonAdd,
-                                contentDescription = "Add Member",
+                                contentDescription = stringResource(R.string.a11y_add_member),
                                 tint = SemanticColors.TextPrimary
                             )
                         }
@@ -93,7 +95,7 @@ fun SharedExpenseGroupsScreen(
                     IconButton(onClick = { viewModel.refresh() }) {
                         Icon(
                             Icons.Rounded.Refresh,
-                            contentDescription = "Refresh",
+                            contentDescription = stringResource(R.string.cd_refresh),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -110,7 +112,7 @@ fun SharedExpenseGroupsScreen(
                     onClick = { viewModel.toggleCreateGroup(true) },
                     containerColor = SemanticColors.PrimaryIndigo
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Create Group")
+                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.a11y_create_group))
                 }
             }
         }
@@ -273,12 +275,12 @@ private fun GroupCard(
             ) {
                 Column {
                     Text(
-                        text = "${group.members.size} members",
+                        text = stringResource(R.string.label_members_count_format, group.members.size),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        text = "${group.expenses.size} expenses",
+                        text = stringResource(R.string.label_expenses_count_format, group.expenses.size),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -292,7 +294,7 @@ private fun GroupCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "total spent",
+                        text = stringResource(R.string.label_total_spent),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -330,7 +332,7 @@ private fun GroupDetailContent(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Total Group Spending",
+                        text = stringResource(R.string.label_total_group_spending),
                         style = MaterialTheme.typography.bodyMedium,
                         color = SemanticColors.TextSecondary
                     )
@@ -347,7 +349,7 @@ private fun GroupDetailContent(
         // Members Section
         item {
             Text(
-                text = "Members & Balances",
+                text = stringResource(R.string.header_members_balances),
                 style = MaterialTheme.typography.titleMedium,
                 color = SemanticColors.TextPrimary,
                 fontWeight = FontWeight.Bold
@@ -366,7 +368,7 @@ private fun GroupDetailContent(
         if (group.expenses.isNotEmpty()) {
             item {
                 Text(
-                    text = "Expenses",
+                    text = stringResource(R.string.header_expenses),
                     style = MaterialTheme.typography.titleMedium,
                     color = SemanticColors.TextPrimary,
                     fontWeight = FontWeight.Bold,
@@ -394,7 +396,7 @@ private fun GroupDetailContent(
             ) {
                 Icon(Icons.Rounded.Delete, null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Delete Group")
+                Text(stringResource(R.string.groups_delete_title))
             }
             Spacer(modifier = Modifier.height(80.dp))
         }
@@ -432,7 +434,7 @@ private fun MemberBalanceCard(
                 if (member.isCurrentUser) {
                     Icon(
                         imageVector = Icons.Rounded.Person,
-                        contentDescription = "You",
+                        contentDescription = stringResource(R.string.a11y_you),
                         tint = SemanticColors.PrimaryIndigo,
                         modifier = Modifier.size(20.dp)
                     )
@@ -440,7 +442,7 @@ private fun MemberBalanceCard(
                 }
                 
                 Text(
-                    text = member.name + if (member.isCurrentUser) " (You)" else "",
+                    text = if (member.isCurrentUser) stringResource(R.string.label_you_format, member.name) else member.name,
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary,
                     fontWeight = FontWeight.Medium
@@ -450,9 +452,9 @@ private fun MemberBalanceCard(
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = when {
-                        isPositive -> "gets back ${currencyFormat.format(balance)}"
-                        isZero -> "settled up"
-                        else -> "owes ${currencyFormat.format(-balance)}"
+                        isPositive -> stringResource(R.string.label_gets_back_format, currencyFormat.format(balance))
+                        isZero -> stringResource(R.string.label_settled_up)
+                        else -> stringResource(R.string.label_owes_format, currencyFormat.format(-balance))
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = when {
@@ -508,13 +510,13 @@ private fun ExpenseCard(
             Spacer(modifier = Modifier.height(4.dp))
             
             Text(
-                text = "Paid by ${expense.paidByName} on ${dateFormat.format(Date(expense.expense.date))}",
+                text = stringResource(R.string.label_paid_by_format, expense.paidByName, dateFormat.format(Date(expense.expense.date))),
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextSecondary
             )
             
             Text(
-                text = "Split: ${expense.expense.splitType.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                text = stringResource(R.string.label_split_format, expense.expense.splitType.name.lowercase().replaceFirstChar { it.uppercase() }),
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextSecondary
             )
@@ -541,7 +543,7 @@ private fun EmptyGroupsState() {
         Spacer(modifier = Modifier.height(24.dp))
         
         Text(
-            text = "No Shared Expense Groups",
+            text = stringResource(R.string.empty_groups_title),
             style = MaterialTheme.typography.headlineSmall,
             color = SemanticColors.TextPrimary,
             fontWeight = FontWeight.Bold
@@ -550,7 +552,7 @@ private fun EmptyGroupsState() {
         Spacer(modifier = Modifier.height(8.dp))
         
         Text(
-            text = "Create a group to split expenses with friends, family, or roommates",
+            text = stringResource(R.string.empty_groups_message),
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.TextSecondary,
             textAlign = TextAlign.Center
@@ -570,22 +572,22 @@ private fun CreateGroupDialog(
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create New Group") },
+        title = { Text(stringResource(R.string.groups_create_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Group Name") },
-                    placeholder = { Text("e.g., Weekend Trip") },
+                    label = { Text(stringResource(R.string.groups_name_label)) },
+                    placeholder = { Text(stringResource(R.string.groups_name_placeholder)) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("Description (Optional)") },
-                    placeholder = { Text("e.g., Paris trip with friends") },
+                    label = { Text(stringResource(R.string.groups_description_label)) },
+                    placeholder = { Text(stringResource(R.string.groups_description_placeholder)) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 
@@ -598,7 +600,7 @@ private fun CreateGroupDialog(
                         value = currency,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Currency") },
+                        label = { Text(stringResource(R.string.label_currency)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                         modifier = Modifier.fillMaxWidth().menuAnchor()
                     )
@@ -621,11 +623,11 @@ private fun CreateGroupDialog(
                 onClick = { onCreate(name, description.takeIf { it.isNotBlank() }, currency) },
                 enabled = name.isNotBlank()
             ) {
-                Text("Create")
+                Text(stringResource(R.string.groups_create_button))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
@@ -640,19 +642,19 @@ private fun AddMemberDialog(
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Member") },
+        title = { Text(stringResource(R.string.groups_add_member_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.groups_member_name_label)) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it },
-                    label = { Text("Email (Optional)") },
+                    label = { Text(stringResource(R.string.groups_member_email_label)) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -662,11 +664,11 @@ private fun AddMemberDialog(
                 onClick = { onAdd(name, email.takeIf { it.isNotBlank() }) },
                 enabled = name.isNotBlank()
             ) {
-                Text("Add")
+                Text(stringResource(R.string.groups_add_member_button))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
@@ -684,19 +686,19 @@ private fun AddExpenseDialog(
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Group Expense") },
+        title = { Text(stringResource(R.string.groups_add_expense_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("Description") },
+                    label = { Text(stringResource(R.string.groups_expense_description_label)) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("Amount") },
+                    label = { Text(stringResource(R.string.groups_expense_amount_label)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -712,7 +714,7 @@ private fun AddExpenseDialog(
                         value = selectedMember?.name ?: "",
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Paid By") },
+                        label = { Text(stringResource(R.string.groups_paid_by_label)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                         modifier = Modifier.fillMaxWidth().menuAnchor()
                     )
@@ -739,7 +741,7 @@ private fun AddExpenseDialog(
                         value = splitType.name.lowercase().replaceFirstChar { it.uppercase() },
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Split Type") },
+                        label = { Text(stringResource(R.string.groups_split_type_label)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(splitExpanded) },
                         modifier = Modifier.fillMaxWidth().menuAnchor()
                     )
@@ -766,11 +768,11 @@ private fun AddExpenseDialog(
                 },
                 enabled = description.isNotBlank() && amount.toDoubleOrNull() != null
             ) {
-                Text("Add")
+                Text(stringResource(R.string.groups_add_expense_button))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
@@ -797,7 +799,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(24.dp))
         Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)) {
-            Text("Try Again")
+            Text(stringResource(R.string.action_retry))
         }
     }
 }

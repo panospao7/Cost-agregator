@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -33,7 +34,8 @@ enum class MatchStatus {
     ],
     indices = [
         Index(value = ["expenseId"]),
-        Index(value = ["createdAt"])
+        Index(value = ["createdAt"]),
+        Index(name = "index_scanned_receipts_matchStatus", value = ["matchStatus"])
     ]
 )
 data class ScannedReceipt(
@@ -45,12 +47,12 @@ data class ScannedReceipt(
     val parsedDate: Long?,
     val parsedItems: String?,        // JSON array of line items
     val parsedTaxAmount: Double?,
-    val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",
     val confidence: Float,
     val expenseId: Long? = null,
-    val matchStatus: MatchStatus = MatchStatus.UNMATCHED,
+    @ColumnInfo(defaultValue = "UNMATCHED") val matchStatus: MatchStatus = MatchStatus.UNMATCHED,
     val matchConfidence: Float? = null,
     val suggestedExpenseId: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
-    val itemCategorizationStatus: CategorizationStatus = CategorizationStatus.PENDING
+    @ColumnInfo(defaultValue = "PENDING") val itemCategorizationStatus: CategorizationStatus = CategorizationStatus.PENDING
 )

@@ -46,7 +46,7 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         SplitTemplate::class,
         SplitItemAssignment::class
     ],
-        version = 47,
+            version = 51,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -1531,6 +1531,816 @@ abstract class AppDatabase : RoomDatabase() {
                 // Add columns to expenses table for enhanced split tracking
                 database.execSQL("ALTER TABLE expenses ADD COLUMN splitTemplateId INTEGER DEFAULT NULL")
                 database.execSQL("ALTER TABLE expenses ADD COLUMN splitVisualization TEXT DEFAULT NULL")
+            }
+        }
+
+        // Migration 47 -> 48: Add missing isBusinessExpense index to align entity with schema
+        // This index was created in migration 40->41 but not declared in the entity until now.
+        // This migration ensures the index exists for consistency with the entity definition.
+        val MIGRATION_47_48 = object : androidx.room.migration.Migration(47, 48) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create the index if it doesn't exist (idempotent operation)
+                database.execSQL("""
+                    CREATE INDEX IF NOT EXISTS index_expenses_isBusinessExpense 
+                    ON expenses (isBusinessExpense)
+                """.trimIndent())
+            }
+        }
+
+        // Migration 48 -> 49: Fix scanned_receipts default values
+        // The matchStatus and itemCategorizationStatus columns were added with SQL DEFAULT
+        // constraints in earlier migrations, but the entity now uses @ColumnInfo(defaultValue)
+        // annotations to match. This migration recreates the table to ensure schema consistency.
+        val MIGRATION_48_49 = object : androidx.room.migration.Migration(48, 49) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // Create new table with correct schema including DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE scanned_receipts_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            imagePath TEXT NOT NULL,
+                            rawOcrText TEXT NOT NULL,
+                            parsedTotal REAL,
+                            parsedMerchant TEXT,
+                            parsedDate INTEGER,
+                            parsedItems TEXT,
+                            parsedTaxAmount REAL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            confidence REAL NOT NULL,
+                            expenseId INTEGER,
+                            matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED',
+                            matchConfidence REAL,
+                            suggestedExpenseId INTEGER,
+                            createdAt INTEGER NOT NULL,
+                            itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING',
+                            FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    // Copy data from old table
+                    database.execSQL("""
+                        INSERT INTO scanned_receipts_new 
+                        SELECT id, imagePath, rawOcrText, parsedTotal, parsedMerchant, 
+                               parsedDate, parsedItems, parsedTaxAmount, currency, 
+                               confidence, expenseId, matchStatus, matchConfidence, 
+                               suggestedExpenseId, createdAt, itemCategorizationStatus 
+                        FROM scanned_receipts
+                    """.trimIndent())
+                    
+                    // Drop old table
+                    database.execSQL("DROP TABLE scanned_receipts")
+                    
+                    // Rename new table
+                    database.execSQL("ALTER TABLE scanned_receipts_new RENAME TO scanned_receipts")
+                    
+                    // Recreate indices
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
+                    
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Migration 49 -> 50: Comprehensive schema fix for all tables with default value mismatches
+        // This migration recreates tables with proper DEFAULT constraints to align with @ColumnInfo annotations
+        val MIGRATION_49_50 = object : androidx.room.migration.Migration(49, 50) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // Recreate scanned_receipts table with proper DEFAULT constraints (must be first due to FK dependencies)
+                    database.execSQL("""
+                        CREATE TABLE scanned_receipts_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            imagePath TEXT NOT NULL,
+                            rawOcrText TEXT NOT NULL,
+                            parsedTotal REAL,
+                            parsedMerchant TEXT,
+                            parsedDate INTEGER,
+                            parsedItems TEXT,
+                            parsedTaxAmount REAL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            confidence REAL NOT NULL,
+                            expenseId INTEGER,
+                            matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED',
+                            matchConfidence REAL,
+                            suggestedExpenseId INTEGER,
+                            createdAt INTEGER NOT NULL,
+                            itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING',
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("""
+                        INSERT INTO scanned_receipts_new 
+                        SELECT id, imagePath, rawOcrText, parsedTotal, parsedMerchant, 
+                               parsedDate, parsedItems, parsedTaxAmount, currency, 
+                               confidence, expenseId, matchStatus, matchConfidence, 
+                               suggestedExpenseId, createdAt, itemCategorizationStatus 
+                        FROM scanned_receipts
+                    """.trimIndent())
+                    
+                    database.execSQL("DROP TABLE scanned_receipts")
+                    database.execSQL("ALTER TABLE scanned_receipts_new RENAME TO scanned_receipts")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
+                    
+                    // Recreate expenses table with proper defaults
+                    database.execSQL("""
+                        CREATE TABLE expenses_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            amount REAL NOT NULL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            merchant TEXT NOT NULL,
+                            transactionType TEXT NOT NULL,
+                            date INTEGER NOT NULL,
+                            rawNotificationId INTEGER,
+                            categoryId INTEGER,
+                            createdAt INTEGER NOT NULL DEFAULT 0,
+                            paymentMethod TEXT NOT NULL DEFAULT 'UNKNOWN',
+                            isManualEntry INTEGER NOT NULL DEFAULT 0,
+                            notes TEXT,
+                            dedupeKey TEXT,
+                            transferDirection TEXT,
+                            transferAccountName TEXT,
+                            isNotMine INTEGER NOT NULL DEFAULT 0,
+                            ownerName TEXT,
+                            isSharedExpense INTEGER NOT NULL DEFAULT 0,
+                            sharedWithName TEXT,
+                            mySharePercentage INTEGER,
+                            myShareAmount REAL,
+                            latitude REAL,
+                            longitude REAL,
+                            locationSource TEXT,
+                            placeId TEXT,
+                            backfillAttempts INTEGER NOT NULL DEFAULT 0,
+                            resolvedAddress TEXT,
+                            merchantKey TEXT,
+                            isBusinessExpense INTEGER NOT NULL DEFAULT 0,
+                            businessPurpose TEXT,
+                            businessCategory TEXT,
+                            businessProject TEXT,
+                            requiresReceipt INTEGER NOT NULL DEFAULT 0,
+                            splitTemplateId INTEGER,
+                            splitVisualization TEXT,
+                            FOREIGN KEY (rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                            FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("""
+                        INSERT INTO expenses_new SELECT * FROM expenses
+                    """.trimIndent())
+                    
+                    database.execSQL("DROP TABLE expenses")
+                    database.execSQL("ALTER TABLE expenses_new RENAME TO expenses")
+                    
+                    // Recreate indices for expenses
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_rawNotificationId ON expenses (rawNotificationId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_date ON expenses (transactionType, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_categoryId_date ON expenses (transactionType, categoryId, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_categoryId_date ON expenses (categoryId, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_amount_merchant_date ON expenses (amount, merchant, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_merchant_date ON expenses (merchant, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_merchant_date ON expenses (transactionType, merchant, date)")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_expenses_dedupeKey ON expenses (dedupeKey)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_latitude_longitude ON expenses (latitude, longitude)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_merchantKey ON expenses (merchantKey)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_isBusinessExpense ON expenses (isBusinessExpense)")
+                    
+                    // Recreate categories table with proper DEFAULT for isDefault
+                    database.execSQL("""
+                        CREATE TABLE categories_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            name TEXT NOT NULL,
+                            icon TEXT NOT NULL,
+                            color TEXT NOT NULL,
+                            isDefault INTEGER NOT NULL DEFAULT 0
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO categories_new SELECT id, name, icon, color, isDefault FROM categories")
+                    database.execSQL("DROP TABLE categories")
+                    database.execSQL("ALTER TABLE categories_new RENAME TO categories")
+                    
+                    // Recreate budgets table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE budgets_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            categoryId INTEGER,
+                            amount REAL NOT NULL,
+                            period TEXT NOT NULL,
+                            startDate INTEGER NOT NULL,
+                            isActive INTEGER NOT NULL DEFAULT 1,
+                            notifyAtWarning REAL NOT NULL DEFAULT 0.75,
+                            notifyAtCritical REAL NOT NULL DEFAULT 0.9,
+                            rollover INTEGER NOT NULL DEFAULT 0,
+                            createdAt INTEGER NOT NULL,
+                            lastWarningNotifiedAt INTEGER,
+                            lastCriticalNotifiedAt INTEGER,
+                            lastExceededNotifiedAt INTEGER,
+                            FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO budgets_new SELECT id, categoryId, amount, period, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt FROM budgets")
+                    database.execSQL("DROP TABLE budgets")
+                    database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+                    
+                    // Recreate manual_recurring_expenses table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE manual_recurring_expenses_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            merchant TEXT NOT NULL,
+                            amount REAL NOT NULL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            frequency TEXT NOT NULL,
+                            nextDate INTEGER NOT NULL,
+                            note TEXT,
+                            createdAt INTEGER NOT NULL,
+                            isSubscription INTEGER NOT NULL DEFAULT 1,
+                            subscriptionCategory TEXT,
+                            usageTargetPerMonth INTEGER,
+                            cancellationUrl TEXT,
+                            isActive INTEGER NOT NULL DEFAULT 1
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO manual_recurring_expenses_new SELECT id, merchant, amount, currency, frequency, nextDate, note, createdAt, isSubscription, subscriptionCategory, usageTargetPerMonth, cancellationUrl, isActive FROM manual_recurring_expenses")
+                    database.execSQL("DROP TABLE manual_recurring_expenses")
+                    database.execSQL("ALTER TABLE manual_recurring_expenses_new RENAME TO manual_recurring_expenses")
+                    
+                    // Recreate warranties table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE warranties_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            receiptId INTEGER NOT NULL,
+                            expenseId INTEGER,
+                            productName TEXT NOT NULL,
+                            merchantName TEXT NOT NULL,
+                            purchaseDate INTEGER NOT NULL,
+                            warrantyDurationMonths INTEGER NOT NULL,
+                            warrantyEndDate INTEGER NOT NULL,
+                            warrantyType TEXT NOT NULL DEFAULT 'MANUFACTURER',
+                            supportPhone TEXT,
+                            supportEmail TEXT,
+                            warrantyDocumentUrl TEXT,
+                            notes TEXT,
+                            status TEXT NOT NULL DEFAULT 'ACTIVE',
+                            claimedAt INTEGER,
+                            createdAt INTEGER NOT NULL,
+                            updatedAt INTEGER NOT NULL,
+                            FOREIGN KEY (receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO warranties_new SELECT id, receiptId, expenseId, productName, merchantName, purchaseDate, warrantyDurationMonths, warrantyEndDate, warrantyType, supportPhone, supportEmail, warrantyDocumentUrl, notes, status, claimedAt, createdAt, updatedAt FROM warranties")
+                    database.execSQL("DROP TABLE warranties")
+                    database.execSQL("ALTER TABLE warranties_new RENAME TO warranties")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_receiptId ON warranties (receiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_expenseId ON warranties (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_warrantyEndDate ON warranties (warrantyEndDate)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_status ON warranties (status)")
+                    
+                    // Recreate return_windows table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE return_windows_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            receiptId INTEGER NOT NULL,
+                            expenseId INTEGER,
+                            productName TEXT NOT NULL,
+                            merchantName TEXT NOT NULL,
+                            purchaseDate INTEGER NOT NULL,
+                            returnDays INTEGER NOT NULL,
+                            returnDeadline INTEGER NOT NULL,
+                            returnPolicyUrl TEXT,
+                            returnConditions TEXT,
+                            status TEXT NOT NULL DEFAULT 'RETURNABLE',
+                            returnedAt INTEGER,
+                            refundAmount REAL,
+                            createdAt INTEGER NOT NULL,
+                            updatedAt INTEGER NOT NULL,
+                            FOREIGN KEY (receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO return_windows_new SELECT id, receiptId, expenseId, productName, merchantName, purchaseDate, returnDays, returnDeadline, returnPolicyUrl, returnConditions, status, returnedAt, refundAmount, createdAt, updatedAt FROM return_windows")
+                    database.execSQL("DROP TABLE return_windows")
+                    database.execSQL("ALTER TABLE return_windows_new RENAME TO return_windows")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_return_windows_receiptId ON return_windows (receiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_return_windows_expenseId ON return_windows (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_return_windows_returnDeadline ON return_windows (returnDeadline)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_return_windows_status ON return_windows (status)")
+                    
+                    // Recreate receipt_item_categorizations table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE receipt_item_categorizations_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            receiptId INTEGER NOT NULL,
+                            expenseId INTEGER,
+                            itemDescription TEXT NOT NULL,
+                            itemAmount REAL NOT NULL,
+                            suggestedCategoryId INTEGER,
+                            suggestedCategoryName TEXT,
+                            confidence REAL NOT NULL,
+                            aiRationale TEXT,
+                            alternativeCategoriesJson TEXT,
+                            userCorrectedCategoryId INTEGER,
+                            userCorrectedCategoryName TEXT,
+                            userCorrectedAt INTEGER,
+                            taxAmount REAL,
+                            isNewCategorySuggestion INTEGER NOT NULL DEFAULT 0,
+                            createdAt INTEGER NOT NULL,
+                            updatedAt INTEGER NOT NULL,
+                            FOREIGN KEY (receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO receipt_item_categorizations_new SELECT id, receiptId, expenseId, itemDescription, itemAmount, suggestedCategoryId, suggestedCategoryName, confidence, aiRationale, alternativeCategoriesJson, userCorrectedCategoryId, userCorrectedCategoryName, userCorrectedAt, taxAmount, isNewCategorySuggestion, createdAt, updatedAt FROM receipt_item_categorizations")
+                    database.execSQL("DROP TABLE receipt_item_categorizations")
+                    database.execSQL("ALTER TABLE receipt_item_categorizations_new RENAME TO receipt_item_categorizations")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_item_categorizations_receiptId ON receipt_item_categorizations (receiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_item_categorizations_expenseId ON receipt_item_categorizations (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_item_categorizations_suggestedCategoryId ON receipt_item_categorizations (suggestedCategoryId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_item_categorizations_userCorrectedCategoryId ON receipt_item_categorizations (userCorrectedCategoryId)")
+                    
+                    // Recreate split_templates table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE split_templates_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            name TEXT NOT NULL,
+                            totalSplits INTEGER NOT NULL DEFAULT 2,
+                            splitType TEXT NOT NULL DEFAULT 'PERCENTAGE',
+                            shares TEXT NOT NULL,
+                            description TEXT,
+                            isDefault INTEGER NOT NULL DEFAULT 0,
+                            createdAt INTEGER NOT NULL,
+                            updatedAt INTEGER NOT NULL,
+                            useCount INTEGER NOT NULL DEFAULT 0
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO split_templates_new SELECT id, name, totalSplits, splitType, shares, description, isDefault, createdAt, updatedAt, useCount FROM split_templates")
+                    database.execSQL("DROP TABLE split_templates")
+                    database.execSQL("ALTER TABLE split_templates_new RENAME TO split_templates")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_split_templates_isDefault ON split_templates (isDefault)")
+                    
+                    // Recreate split_item_assignments table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE split_item_assignments_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            expenseId INTEGER NOT NULL,
+                            receiptItemId INTEGER,
+                            participantName TEXT NOT NULL,
+                            participantIndex INTEGER NOT NULL DEFAULT 0,
+                            assignedAmount REAL NOT NULL,
+                            isPaid INTEGER NOT NULL DEFAULT 0,
+                            paidAt INTEGER,
+                            createdAt INTEGER NOT NULL,
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE CASCADE
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO split_item_assignments_new SELECT id, expenseId, receiptItemId, participantName, participantIndex, assignedAmount, isPaid, paidAt, createdAt FROM split_item_assignments")
+                    database.execSQL("DROP TABLE split_item_assignments")
+                    database.execSQL("ALTER TABLE split_item_assignments_new RENAME TO split_item_assignments")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_split_item_assignments_expenseId ON split_item_assignments (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_split_item_assignments_receiptItemId ON split_item_assignments (receiptItemId)")
+                    
+                    // Recreate bank_connections table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE bank_connections_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            bankId TEXT NOT NULL,
+                            bankName TEXT NOT NULL,
+                            countryCode TEXT NOT NULL,
+                            accessToken TEXT,
+                            refreshToken TEXT,
+                            tokenExpiry INTEGER,
+                            isActive INTEGER NOT NULL DEFAULT 0,
+                            isConnected INTEGER NOT NULL DEFAULT 0,
+                            lastSync INTEGER,
+                            lastSyncStatus TEXT NOT NULL DEFAULT 'NEVER',
+                            autoSync INTEGER NOT NULL DEFAULT 1,
+                            syncFrequency TEXT NOT NULL DEFAULT 'DAILY',
+                            defaultCategoryId INTEGER,
+                            lastError TEXT,
+                            lastErrorTime INTEGER,
+                            consecutiveErrors INTEGER NOT NULL DEFAULT 0,
+                            createdAt INTEGER NOT NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO bank_connections_new SELECT id, bankId, bankName, countryCode, accessToken, refreshToken, tokenExpiry, isActive, isConnected, lastSync, lastSyncStatus, autoSync, syncFrequency, defaultCategoryId, lastError, lastErrorTime, consecutiveErrors, createdAt FROM bank_connections")
+                    database.execSQL("DROP TABLE bank_connections")
+                    database.execSQL("ALTER TABLE bank_connections_new RENAME TO bank_connections")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_bankId ON bank_connections (bankId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_isActive ON bank_connections (isActive)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_lastSync ON bank_connections (lastSync)")
+                    
+                    // Recreate investments table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE investments_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            name TEXT NOT NULL,
+                            symbol TEXT NOT NULL,
+                            type TEXT NOT NULL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            exchange TEXT,
+                            purchasePrice REAL NOT NULL,
+                            quantity REAL NOT NULL,
+                            purchaseDate INTEGER NOT NULL,
+                            purchaseFees REAL NOT NULL DEFAULT 0.0,
+                            currentPrice REAL NOT NULL,
+                            lastUpdated INTEGER NOT NULL,
+                            category TEXT,
+                            notes TEXT,
+                            isActive INTEGER NOT NULL DEFAULT 1,
+                            targetPrice REAL,
+                            stopLossPrice REAL,
+                            createdAt INTEGER NOT NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO investments_new SELECT id, name, symbol, type, currency, exchange, purchasePrice, quantity, purchaseDate, purchaseFees, currentPrice, lastUpdated, category, notes, isActive, targetPrice, stopLossPrice, createdAt FROM investments")
+                    database.execSQL("DROP TABLE investments")
+                    database.execSQL("ALTER TABLE investments_new RENAME TO investments")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_investments_type ON investments (type)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_investments_symbol ON investments (symbol)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_investments_isActive ON investments (isActive)")
+                    
+                    // Recreate expense_groups table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE expense_groups_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            name TEXT NOT NULL,
+                            description TEXT,
+                            defaultCurrency TEXT NOT NULL DEFAULT 'EUR',
+                            isActive INTEGER NOT NULL DEFAULT 1,
+                            createdAt INTEGER NOT NULL,
+                            createdBy TEXT NOT NULL DEFAULT 'me'
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO expense_groups_new SELECT id, name, description, defaultCurrency, isActive, createdAt, createdBy FROM expense_groups")
+                    database.execSQL("DROP TABLE expense_groups")
+                    database.execSQL("ALTER TABLE expense_groups_new RENAME TO expense_groups")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expense_groups_isActive ON expense_groups (isActive)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expense_groups_createdAt ON expense_groups (createdAt)")
+                    
+                    // Recreate group_members table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE group_members_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            groupId INTEGER NOT NULL,
+                            name TEXT NOT NULL,
+                            email TEXT,
+                            isCurrentUser INTEGER NOT NULL DEFAULT 0,
+                            joinedAt INTEGER NOT NULL,
+                            FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO group_members_new SELECT id, groupId, name, email, isCurrentUser, joinedAt FROM group_members")
+                    database.execSQL("DROP TABLE group_members")
+                    database.execSQL("ALTER TABLE group_members_new RENAME TO group_members")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_name ON group_members (groupId, name)")
+                    
+                    // Recreate group_expenses table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE group_expenses_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            groupId INTEGER NOT NULL,
+                            expenseId INTEGER NOT NULL,
+                            paidById INTEGER NOT NULL,
+                            date INTEGER NOT NULL,
+                            description TEXT NOT NULL,
+                            totalAmount REAL NOT NULL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            splitType TEXT NOT NULL DEFAULT 'EQUAL',
+                            customSplitsJson TEXT,
+                            FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE,
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE CASCADE,
+                            FOREIGN KEY (paidById) REFERENCES group_members(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO group_expenses_new SELECT id, groupId, expenseId, paidById, date, description, totalAmount, currency, splitType, customSplitsJson FROM group_expenses")
+                    database.execSQL("DROP TABLE group_expenses")
+                    database.execSQL("ALTER TABLE group_expenses_new RENAME TO group_expenses")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId ON group_expenses (groupId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_expenseId ON group_expenses (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_paidById ON group_expenses (paidById)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId_date ON group_expenses (groupId, date)")
+                    
+                    // Recreate pending_reviews table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE pending_reviews_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            rawNotificationId INTEGER,
+                            scannedReceiptId INTEGER,
+                            suggestedAmount REAL NOT NULL,
+                            suggestedCurrency TEXT NOT NULL,
+                            suggestedMerchant TEXT NOT NULL,
+                            suggestedType TEXT NOT NULL,
+                            suggestedCategoryId INTEGER,
+                            suggestedDate INTEGER,
+                            confidence REAL NOT NULL,
+                            matchType TEXT,
+                            explanation TEXT,
+                            packageName TEXT NOT NULL,
+                            notificationTitle TEXT,
+                            notificationText TEXT,
+                            createdAt INTEGER NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'PENDING',
+                            suggestedDirection TEXT,
+                            suggestedAccountName TEXT,
+                            suggestedLatitude REAL,
+                            suggestedLongitude REAL,
+                            FOREIGN KEY (rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                            FOREIGN KEY (scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO pending_reviews_new SELECT id, rawNotificationId, scannedReceiptId, suggestedAmount, suggestedCurrency, suggestedMerchant, suggestedType, suggestedCategoryId, suggestedDate, confidence, matchType, explanation, packageName, notificationTitle, notificationText, createdAt, status, suggestedDirection, suggestedAccountName, suggestedLatitude, suggestedLongitude FROM pending_reviews")
+                    database.execSQL("DROP TABLE pending_reviews")
+                    database.execSQL("ALTER TABLE pending_reviews_new RENAME TO pending_reviews")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+                    
+                    // Recreate planned_expenses table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE planned_expenses_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            description TEXT NOT NULL,
+                            amount REAL NOT NULL,
+                            date INTEGER NOT NULL,
+                            categoryId INTEGER,
+                            isRecurring INTEGER NOT NULL DEFAULT 0,
+                            priority TEXT NOT NULL,
+                            createdAt INTEGER NOT NULL,
+                            FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO planned_expenses_new SELECT id, description, amount, date, categoryId, isRecurring, priority, createdAt FROM planned_expenses")
+                    database.execSQL("DROP TABLE planned_expenses")
+                    database.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_date ON planned_expenses (date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_categoryId ON planned_expenses (categoryId)")
+                    
+                    // Recreate savings_goals table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE savings_goals_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            name TEXT NOT NULL,
+                            targetAmount REAL NOT NULL,
+                            currentAmount REAL NOT NULL DEFAULT 0.0,
+                            targetDate INTEGER,
+                            protectionLevel TEXT NOT NULL,
+                            createdAt INTEGER NOT NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO savings_goals_new SELECT id, name, targetAmount, currentAmount, targetDate, protectionLevel, createdAt FROM savings_goals")
+                    database.execSQL("DROP TABLE savings_goals")
+                    database.execSQL("ALTER TABLE savings_goals_new RENAME TO savings_goals")
+                    
+                    // Recreate source_stats table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE source_stats_new (
+                            packageName TEXT PRIMARY KEY NOT NULL,
+                            totalNotifications INTEGER NOT NULL DEFAULT 0,
+                            acceptedAsExpense INTEGER NOT NULL DEFAULT 0,
+                            rejectedByUser INTEGER NOT NULL DEFAULT 0,
+                            autoRejected INTEGER NOT NULL DEFAULT 0,
+                            pendingReview INTEGER NOT NULL DEFAULT 0,
+                            duplicates INTEGER NOT NULL DEFAULT 0,
+                            lastSeen INTEGER NOT NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO source_stats_new SELECT packageName, totalNotifications, acceptedAsExpense, rejectedByUser, autoRejected, pendingReview, duplicates, lastSeen FROM source_stats")
+                    database.execSQL("DROP TABLE source_stats")
+                    database.execSQL("ALTER TABLE source_stats_new RENAME TO source_stats")
+                    
+                    // Recreate user_corrections table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE user_corrections_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            packageName TEXT NOT NULL,
+                            originalMerchant TEXT NOT NULL,
+                            correctedMerchant TEXT,
+                            originalAmount REAL NOT NULL,
+                            correctedAmount REAL,
+                            originalCategoryId INTEGER,
+                            correctedCategoryId INTEGER,
+                            originalType TEXT,
+                            correctedType TEXT,
+                            wasRejected INTEGER NOT NULL DEFAULT 0,
+                            wasApproved INTEGER NOT NULL DEFAULT 0,
+                            notificationTitle TEXT,
+                            notificationText TEXT,
+                            createdAt INTEGER NOT NULL,
+                            FOREIGN KEY (originalCategoryId) REFERENCES categories(id) ON DELETE SET NULL,
+                            FOREIGN KEY (correctedCategoryId) REFERENCES categories(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO user_corrections_new SELECT id, packageName, originalMerchant, correctedMerchant, originalAmount, correctedAmount, originalCategoryId, correctedCategoryId, originalType, correctedType, wasRejected, wasApproved, notificationTitle, notificationText, createdAt FROM user_corrections")
+                    database.execSQL("DROP TABLE user_corrections")
+                    database.execSQL("ALTER TABLE user_corrections_new RENAME TO user_corrections")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_originalCategoryId ON user_corrections (originalCategoryId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_correctedCategoryId ON user_corrections (correctedCategoryId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_packageName ON user_corrections (packageName)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_wasApproved ON user_corrections (wasApproved)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_user_corrections_wasRejected ON user_corrections (wasRejected)")
+                    
+                    // Recreate merchant_canonicals table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE merchant_canonicals_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            normalizedName TEXT NOT NULL,
+                            searchKey TEXT NOT NULL,
+                            categoryId INTEGER,
+                            totalOccurrences INTEGER NOT NULL DEFAULT 0,
+                            totalSpent REAL NOT NULL DEFAULT 0.0,
+                            isVerified INTEGER NOT NULL DEFAULT 0,
+                            logoUrl TEXT,
+                            createdAt INTEGER NOT NULL,
+                            updatedAt INTEGER NOT NULL,
+                            FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO merchant_canonicals_new SELECT id, normalizedName, searchKey, categoryId, totalOccurrences, totalSpent, isVerified, logoUrl, createdAt, updatedAt FROM merchant_canonicals")
+                    database.execSQL("DROP TABLE merchant_canonicals")
+                    database.execSQL("ALTER TABLE merchant_canonicals_new RENAME TO merchant_canonicals")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_canonicals_normalizedName ON merchant_canonicals (normalizedName)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_canonicals_searchKey ON merchant_canonicals (searchKey)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_canonicals_categoryId ON merchant_canonicals (categoryId)")
+                    
+                    // Recreate merchant_aliases table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE merchant_aliases_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            rawName TEXT NOT NULL,
+                            normalizedKey TEXT NOT NULL,
+                            canonicalId INTEGER NOT NULL,
+                            occurrenceCount INTEGER NOT NULL DEFAULT 1,
+                            isUserDefined INTEGER NOT NULL DEFAULT 0,
+                            createdAt INTEGER NOT NULL,
+                            lastUsedAt INTEGER NOT NULL,
+                            FOREIGN KEY (canonicalId) REFERENCES merchant_canonicals(id) ON DELETE CASCADE
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO merchant_aliases_new SELECT id, rawName, normalizedKey, canonicalId, occurrenceCount, isUserDefined, createdAt, lastUsedAt FROM merchant_aliases")
+                    database.execSQL("DROP TABLE merchant_aliases")
+                    database.execSQL("ALTER TABLE merchant_aliases_new RENAME TO merchant_aliases")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_aliases_rawName ON merchant_aliases (rawName)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_aliases_normalizedKey ON merchant_aliases (normalizedKey)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_aliases_canonicalId ON merchant_aliases (canonicalId)")
+                    
+                    // Recreate merchant_locations table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE merchant_locations_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            normalizedMerchantName TEXT NOT NULL,
+                            areaKey TEXT DEFAULT 'global',
+                            displayName TEXT NOT NULL,
+                            latitude REAL NOT NULL,
+                            longitude REAL NOT NULL,
+                            source TEXT NOT NULL,
+                            osmId TEXT,
+                            displayAddress TEXT,
+                            confidence REAL NOT NULL DEFAULT 1.0,
+                            lastResolvedAt INTEGER NOT NULL,
+                            hitCount INTEGER NOT NULL DEFAULT 1
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO merchant_locations_new SELECT id, normalizedMerchantName, areaKey, displayName, latitude, longitude, source, osmId, displayAddress, confidence, lastResolvedAt, hitCount FROM merchant_locations")
+                    database.execSQL("DROP TABLE merchant_locations")
+                    database.execSQL("ALTER TABLE merchant_locations_new RENAME TO merchant_locations")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_locations_normalizedMerchantName_areaKey ON merchant_locations (normalizedMerchantName, areaKey)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt ON merchant_locations (lastResolvedAt)")
+                    
+                    // Recreate merchant_location_corrections table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE merchant_location_corrections_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            normalizedMerchantName TEXT NOT NULL,
+                            correctedLatitude REAL NOT NULL,
+                            correctedLongitude REAL NOT NULL,
+                            areaLatitude REAL,
+                            areaLongitude REAL,
+                            areaKey TEXT NOT NULL,
+                            areaRadiusKm REAL NOT NULL DEFAULT 5.0,
+                            osmId TEXT,
+                            displayAddress TEXT,
+                            createdAt INTEGER NOT NULL
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO merchant_location_corrections_new SELECT id, normalizedMerchantName, correctedLatitude, correctedLongitude, areaLatitude, areaLongitude, areaKey, areaRadiusKm, osmId, displayAddress, createdAt FROM merchant_location_corrections")
+                    database.execSQL("DROP TABLE merchant_location_corrections")
+                    database.execSQL("ALTER TABLE merchant_location_corrections_new RENAME TO merchant_location_corrections")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_location_corrections_normalizedMerchantName_areaKey ON merchant_location_corrections (normalizedMerchantName, areaKey)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_location_corrections_createdAt ON merchant_location_corrections (createdAt)")
+                    
+                    // Recreate merchant_categories table with proper DEFAULT constraints
+                    database.execSQL("""
+                        CREATE TABLE merchant_categories_new (
+                            merchantPattern TEXT PRIMARY KEY NOT NULL,
+                            categoryId INTEGER NOT NULL,
+                            confidence REAL NOT NULL DEFAULT 1.0,
+                            timesUsed INTEGER NOT NULL DEFAULT 1,
+                            normalizedCanonicalName TEXT,
+                            FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE CASCADE
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO merchant_categories_new SELECT merchantPattern, categoryId, confidence, timesUsed, normalizedCanonicalName FROM merchant_categories")
+                    database.execSQL("DROP TABLE merchant_categories")
+                    database.execSQL("ALTER TABLE merchant_categories_new RENAME TO merchant_categories")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_categories_categoryId ON merchant_categories (categoryId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_categories_normalizedCanonicalName ON merchant_categories (normalizedCanonicalName)")
+                    
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Migration 50 -> 51: Schema normalization - fix index drift and table defaults
+        val MIGRATION_50_51 = object : androidx.room.migration.Migration(50, 51) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // 1. Ensure required index exists on scanned_receipts
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
+                    
+                    // 2. Drop known legacy extra indices (Room drift sources)
+                    database.execSQL("DROP INDEX IF EXISTS index_exchange_rates_from_to")
+                    database.execSQL("DROP INDEX IF EXISTS index_expenses_date")
+                    database.execSQL("DROP INDEX IF EXISTS index_expenses_transactionType_merchant")
+                    database.execSQL("DROP INDEX IF EXISTS index_merchant_location_corrections_merchant_area")
+                    database.execSQL("DROP INDEX IF EXISTS index_merchant_locations_normalizedMerchantName")
+                    database.execSQL("DROP INDEX IF EXISTS index_subscription_price_history_subscriptionId")
+                    database.execSQL("DROP INDEX IF EXISTS index_subscription_usage_subscriptionId")
+                    
+                    // 3. Recreate canonical indices that may be missing on upgraded DBs
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_exchange_rates_fromCurrency_toCurrency ON exchange_rates(fromCurrency, toCurrency)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp ON raw_notifications(packageName, timestamp)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications(capturedAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_price_history_subscriptionId_recordedAt ON subscription_price_history(subscriptionId, recordedAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_usage_subscriptionId_usedAt ON subscription_usage(subscriptionId, usedAt)")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_locations_normalizedMerchantName_areaKey ON merchant_locations(normalizedMerchantName, areaKey)")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_location_corrections_normalizedMerchantName_areaKey ON merchant_location_corrections(normalizedMerchantName, areaKey)")
+                    
+                    // 4. Normalize merchant_locations table - remove SQL default from areaKey to match entity
+                    database.execSQL("""
+                        CREATE TABLE merchant_locations_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            normalizedMerchantName TEXT NOT NULL,
+                            areaKey TEXT,
+                            displayName TEXT NOT NULL,
+                            latitude REAL NOT NULL,
+                            longitude REAL NOT NULL,
+                            source TEXT NOT NULL,
+                            osmId TEXT,
+                            displayAddress TEXT,
+                            confidence REAL NOT NULL DEFAULT 1.0,
+                            lastResolvedAt INTEGER NOT NULL,
+                            hitCount INTEGER NOT NULL DEFAULT 1
+                        )
+                    """.trimIndent())
+                    
+                    database.execSQL("INSERT INTO merchant_locations_new SELECT id, normalizedMerchantName, areaKey, displayName, latitude, longitude, source, osmId, displayAddress, confidence, lastResolvedAt, hitCount FROM merchant_locations")
+                    database.execSQL("DROP TABLE merchant_locations")
+                    database.execSQL("ALTER TABLE merchant_locations_new RENAME TO merchant_locations")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_locations_normalizedMerchantName_areaKey ON merchant_locations(normalizedMerchantName, areaKey)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt ON merchant_locations(lastResolvedAt)")
+                    
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
             }
         }
     }

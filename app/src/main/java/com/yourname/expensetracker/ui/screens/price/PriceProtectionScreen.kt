@@ -20,6 +20,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
@@ -44,10 +46,10 @@ fun PriceProtectionScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Price Protection") },
+                title = { Text(stringResource(R.string.screen_price_protection)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
+                        Icon(Icons.Default.ArrowBack, stringResource(R.string.action_back))
                     }
                 }
             )
@@ -63,7 +65,7 @@ fun PriceProtectionScreen(
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("Price Drops") },
+                    text = { Text(stringResource(R.string.price_tab_drops)) },
                     icon = { 
                         BadgedBox(
                             badge = {
@@ -79,13 +81,13 @@ fun PriceProtectionScreen(
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("Protected Items") },
+                    text = { Text(stringResource(R.string.price_tab_protected)) },
                     icon = { Icon(Icons.Rounded.Shield, null) }
                 )
                 Tab(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    text = { Text("Deals") },
+                    text = { Text(stringResource(R.string.price_tab_deals)) },
                     icon = { Icon(Icons.Rounded.LocalOffer, null) }
                 )
             }
@@ -146,7 +148,7 @@ fun PriceDropsTab(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Available Refunds",
+                            text = stringResource(R.string.price_available_refunds),
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
@@ -159,7 +161,7 @@ fun PriceDropsTab(
                         )
                         
                         Text(
-                            text = "from ${priceDrops.size} items with price drops",
+                            text = stringResource(R.string.price_items_with_drops, priceDrops.size),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
@@ -217,7 +219,7 @@ fun PriceDropCard(alert: PriceProtectionTracker.PriceDropAlert) {
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "You Paid",
+                        text = stringResource(R.string.price_label_you_paid),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -236,7 +238,7 @@ fun PriceDropCard(alert: PriceProtectionTracker.PriceDropAlert) {
                 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "Current Price",
+                        text = stringResource(R.string.price_label_current_price),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -249,7 +251,7 @@ fun PriceDropCard(alert: PriceProtectionTracker.PriceDropAlert) {
                 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "Refund",
+                        text = stringResource(R.string.price_label_refund),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -293,7 +295,7 @@ fun PriceDropCard(alert: PriceProtectionTracker.PriceDropAlert) {
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
-                            text = "${alert.daysRemaining} days left",
+                            text = stringResource(R.string.price_days_left, alert.daysRemaining),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = if (alert.daysRemaining < 7) 
@@ -315,7 +317,7 @@ fun PriceDropCard(alert: PriceProtectionTracker.PriceDropAlert) {
                 ) {
                     Icon(Icons.Rounded.OpenInNew, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("File Price Protection Claim")
+                    Text(stringResource(R.string.price_action_file_claim))
                 }
             }
         }
@@ -351,21 +353,21 @@ fun ProtectedItemsTab(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer
                     )
                 ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Shield,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "$protectedCount of ${items.size} items are eligible for price protection",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Shield,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = stringResource(R.string.price_eligible_count, protectedCount, items.size),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
                 }
             }
             
@@ -417,7 +419,7 @@ fun ProtectedItemCard(item: PriceProtectionTracker.PriceProtectedItem) {
                 if (item.priceProtectionEligible) {
                     Icon(
                         imageVector = Icons.Rounded.Verified,
-                        contentDescription = "Eligible",
+                        contentDescription = stringResource(R.string.price_eligible),
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -447,7 +449,7 @@ fun ProtectedItemCard(item: PriceProtectionTracker.PriceProtectedItem) {
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = "✓ Price protection active for 30 days",
+                        text = stringResource(R.string.price_protection_active),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -484,7 +486,7 @@ fun DealsTab(
             if (deals.isNotEmpty()) {
                 item {
                     Text(
-                        text = "Better Deals Found",
+                        text = stringResource(R.string.price_better_deals_found),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -499,7 +501,7 @@ fun DealsTab(
             if (coupons.isNotEmpty()) {
                 item {
                     Text(
-                        text = "Available Coupons",
+                        text = stringResource(R.string.price_available_coupons),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -514,7 +516,7 @@ fun DealsTab(
             if (benefits.isNotEmpty()) {
                 item {
                     Text(
-                        text = "Credit Card Benefits",
+                        text = stringResource(R.string.price_credit_card_benefits),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -574,7 +576,7 @@ fun DealCard(deal: PriceProtectionTracker.DealAlternative) {
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Text(
-                        text = "Save ${String.format("%.0f", deal.savingsPercent)}%",
+                        text = stringResource(R.string.price_label_save_percent, deal.savingsPercent.toInt()),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
@@ -586,7 +588,7 @@ fun DealCard(deal: PriceProtectionTracker.DealAlternative) {
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "Save ${numberFormat.format(deal.savings)} at ${deal.betterMerchant}",
+                text = stringResource(R.string.price_save_at_merchant, numberFormat.format(deal.savings), deal.betterMerchant),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -618,18 +620,18 @@ fun CouponCard(coupon: PriceProtectionTracker.CouponMatch) {
             
             Spacer(modifier = Modifier.width(12.dp))
             
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = coupon.description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = "At: ${coupon.merchant}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = coupon.description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = stringResource(R.string.price_at_merchant, coupon.merchant),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
         }
     }
 }
@@ -676,7 +678,7 @@ fun CreditCardBenefitCard(benefit: PriceProtectionTracker.CreditCardBenefit) {
                 
                 if (benefit.requiresAction && benefit.actionDescription != null) {
                     Text(
-                        text = "⚠️ ${benefit.actionDescription}",
+                        text = stringResource(R.string.price_action_required, benefit.actionDescription),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary,
                         modifier = Modifier.padding(top = 4.dp)
@@ -712,28 +714,28 @@ fun EmptyPriceDropsState(onRefresh: () -> Unit) {
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        Text(
-            text = "No Price Drops Found",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Text(
-            text = "We'll monitor your recent purchases for price drops and notify you when refunds are available",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        Button(onClick = onRefresh) {
-            Icon(Icons.Rounded.Refresh, null)
-            Spacer(Modifier.width(8.dp))
-            Text("Check Now")
-        }
+            Text(
+                text = stringResource(R.string.price_empty_no_drops),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = stringResource(R.string.price_empty_no_drops_message),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            Button(onClick = onRefresh) {
+                Icon(Icons.Rounded.Refresh, null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.price_action_check_now))
+            }
     }
 }
 
@@ -755,20 +757,20 @@ fun EmptyProtectedItemsState() {
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        Text(
-            text = "No Protected Items",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Text(
-            text = "Scan receipts to track purchases eligible for price protection",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
+            Text(
+                text = stringResource(R.string.price_empty_no_protected),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = stringResource(R.string.price_empty_no_protected_message),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
     }
 }
 
@@ -789,19 +791,19 @@ fun EmptyDealsState() {
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        Text(
-            text = "No Active Deals",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Text(
-            text = "We'll find coupons and better deals for your recent purchases",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
+            Text(
+                text = stringResource(R.string.price_empty_no_deals),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = stringResource(R.string.price_empty_no_deals_message),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
     }
 }

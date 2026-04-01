@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.BankConnection
 import com.yourname.expensetracker.data.database.entity.SyncStatus
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,15 +37,15 @@ fun BankConnectionsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Bank Connections") },
+                title = { Text(stringResource(R.string.screen_bank_connections)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.cd_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = onAddConnection) {
-                        Icon(Icons.Default.Add, "Connect Bank")
+                        Icon(Icons.Default.Add, stringResource(R.string.label_connect_bank))
                     }
                 }
             )
@@ -90,7 +92,7 @@ private fun EmptyBankConnectionsView(onAddConnection: () -> Unit) {
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "No Bank Connections",
+            text = stringResource(R.string.empty_bank_connections_title),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
@@ -98,7 +100,7 @@ private fun EmptyBankConnectionsView(onAddConnection: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
         
         Text(
-            text = "Connect your bank accounts to automatically import transactions",
+            text = stringResource(R.string.empty_bank_connections_message),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -108,7 +110,7 @@ private fun EmptyBankConnectionsView(onAddConnection: () -> Unit) {
         Button(onClick = onAddConnection) {
             Icon(Icons.Default.Add, null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Connect Bank")
+            Text(stringResource(R.string.label_connect_bank))
         }
     }
 }
@@ -154,14 +156,14 @@ private fun BankConnectionCard(
             
             connection.lastSync?.let { lastSync ->
                 Text(
-                    text = "Last synced: ${dateFormat.format(Date(lastSync))}",
+                    text = stringResource(R.string.label_last_synced_format, dateFormat.format(Date(lastSync))),
                     style = MaterialTheme.typography.bodySmall
                 )
             }
             
             if (!connection.lastError.isNullOrEmpty()) {
                 Text(
-                    text = "Error: ${connection.lastError}",
+                    text = stringResource(R.string.label_error_prefix_format, connection.lastError),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -177,7 +179,7 @@ private fun BankConnectionCard(
                     OutlinedButton(onClick = onSync) {
                         Icon(Icons.Default.Sync, null)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Sync Now")
+                        Text(stringResource(R.string.label_sync_now))
                     }
                 }
                 
@@ -187,7 +189,7 @@ private fun BankConnectionCard(
                         contentColor = MaterialTheme.colorScheme.error
                     )
                 ) {
-                    Text(if (connection.isConnected) "Disconnect" else "Remove")
+                    Text(if (connection.isConnected) stringResource(R.string.label_disconnect) else stringResource(R.string.label_remove))
                 }
             }
         }
@@ -200,28 +202,28 @@ private fun ConnectionStatusIcon(isConnected: Boolean, syncStatus: SyncStatus) {
         isConnected && syncStatus == SyncStatus.SUCCESS -> {
             Icon(
                 imageVector = Icons.Default.CheckCircle,
-                contentDescription = "Connected",
+                contentDescription = stringResource(R.string.cd_connected),
                 tint = MaterialTheme.colorScheme.tertiary
             )
         }
         isConnected && syncStatus == SyncStatus.FAILED -> {
             Icon(
                 imageVector = Icons.Default.Error,
-                contentDescription = "Sync Failed",
+                contentDescription = stringResource(R.string.cd_sync_failed),
                 tint = MaterialTheme.colorScheme.error
             )
         }
         isConnected -> {
             Icon(
                 imageVector = Icons.Default.Sync,
-                contentDescription = "Syncing",
+                contentDescription = stringResource(R.string.cd_syncing),
                 tint = MaterialTheme.colorScheme.primary
             )
         }
         else -> {
             Icon(
                 imageVector = Icons.Default.Error,
-                contentDescription = "Disconnected",
+                contentDescription = stringResource(R.string.cd_disconnected),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }

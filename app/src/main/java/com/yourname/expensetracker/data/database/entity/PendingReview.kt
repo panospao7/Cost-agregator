@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -52,7 +53,7 @@ data class PendingReview(
     val notificationTitle: String?,
     val notificationText: String?,
     val createdAt: Long = System.currentTimeMillis(),
-    val status: PendingReviewStatus = PendingReviewStatus.PENDING,
+    @ColumnInfo(defaultValue = "PENDING") val status: PendingReviewStatus = PendingReviewStatus.PENDING,
     // Transfer direction fields (v24)
     val suggestedDirection: String? = null,    // INCOMING, OUTGOING
     val suggestedAccountName: String? = null,  // Account name from/to

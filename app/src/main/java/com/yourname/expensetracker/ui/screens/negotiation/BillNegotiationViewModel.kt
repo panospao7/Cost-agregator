@@ -56,4 +56,42 @@ class BillNegotiationViewModel @Inject constructor(
             loadOpportunities()
         }
     }
+    
+    fun recordOutcome(
+        opportunity: SmartBillNegotiationEngine.NegotiationOpportunity,
+        outcome: NegotiationOutcome,
+        actualSavings: Double?,
+        notes: String
+    ) {
+        viewModelScope.launch {
+            val newMonthlyRate = if (outcome == NegotiationOutcome.SUCCESS && actualSavings != null) {
+                opportunity.currentPrice - actualSavings
+            } else null
+            
+            val outcomeType = when (outcome) {
+                NegotiationOutcome.SUCCESS -> SmartBillNegotiationEngine.OutcomeType.SUCCESSFUL_NEGOTIATION
+                NegotiationOutcome.PARTIAL -> SmartBillNegotiationEngine.OutcomeType.PARTIAL_SUCCESS
+                NegotiationOutcome.FAILED -> SmartBillNegotiationEngine.OutcomeType.NO_CHANGE
+                NegotiationOutcome.CANCELLED -> SmartBillNegotiationEngine.OutcomeType.CANCELLED
+                NegotiationOutcome.PENDING -> SmartBillNegotiationEngine.OutcomeType.NO_CHANGE
+            }
+            
+            val negotiationOutcome = SmartBillNegotiationEngine.NegotiationOutcome(
+                success = outcome == NegotiationOutcome.SUCCESS || outcome == NegotiationOutcome.PARTIAL,
+                newMonthlyRate = newMonthlyRate?.takeIf { it > 0 },
+                outcomeType = outcomeType,
+                notes = notes.takeIf { it.isNotBlank() }
+            )
+            
+            negotiationEngine.recordNegotiationOutcome(
+                subscriptionId = opportunity.subscriptionId,
+                outcome = negotiationOutcome,
+                newPrice = newMonthlyRate?.takeIf { it > 0 },
+                savings = actualSavings?.takeIf { it > 0 },
+                notes = notes.takeIf { it.isNotBlank() }
+            )
+            // Refresh the list
+            loadOpportunities()
+        }
+    }
 }

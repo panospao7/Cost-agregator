@@ -495,11 +495,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             val diff = monthSpent - previousMonthTotal
             return when {
                 diff < 0 -> Pair(
-                    UiText.from(R.string.widget_insight_spent_less_format, -diff.toInt()),
+                    UiText.from(R.string.widget_insight_spent_less_format, -diff),
                     "📉"
                 )
                 diff > previousMonthTotal * 0.2 -> Pair(
-                    UiText.from(R.string.widget_insight_spent_higher_format, diff.toInt()),
+                    UiText.from(R.string.widget_insight_spent_higher_format, diff),
                     "📈"
                 )
                 else -> null

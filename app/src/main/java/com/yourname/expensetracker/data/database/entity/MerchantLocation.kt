@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -50,11 +51,11 @@ data class MerchantLocation(
     val displayAddress: String? = null,
 
     /** Confidence score 0.0–1.0 assigned by the resolver. */
-    val confidence: Float = 1.0f,
+    @ColumnInfo(defaultValue = "1.0") val confidence: Float = 1.0f,
 
     /** Epoch ms of the last successful resolution. Used for cache-staleness checks. */
     val lastResolvedAt: Long = System.currentTimeMillis(),
 
     /** How many expense rows share this cache entry (informational). */
-    val hitCount: Int = 1
+    @ColumnInfo(defaultValue = "1") val hitCount: Int = 1
 )

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.negotiation
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -33,6 +35,7 @@ fun BillNegotiationScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     var selectedOpportunity by remember { mutableStateOf<SmartBillNegotiationEngine.NegotiationOpportunity?>(null) }
     var showScriptDialog by remember { mutableStateOf(false) }
+    var showOutcomeDialog by remember { mutableStateOf(false) }
     
     LaunchedEffect(Unit) {
         viewModel.loadOpportunities()
@@ -115,7 +118,8 @@ fun BillNegotiationScreen(
                                 showScriptDialog = true
                             },
                             onRecordOutcome = {
-                                // TODO: Implement outcome recording
+                                selectedOpportunity = opportunity
+                                showOutcomeDialog = true
                             }
                         )
                     }
@@ -129,6 +133,23 @@ fun BillNegotiationScreen(
         NegotiationScriptDialog(
             opportunity = selectedOpportunity!!,
             onDismiss = { showScriptDialog = false }
+        )
+    }
+    
+    // Outcome Recording Dialog
+    if (showOutcomeDialog && selectedOpportunity != null) {
+        OutcomeRecordingDialog(
+            opportunity = selectedOpportunity!!,
+            onDismiss = { showOutcomeDialog = false },
+            onSave = { outcome, savings, notes ->
+                viewModel.recordOutcome(
+                    opportunity = selectedOpportunity!!,
+                    outcome = outcome,
+                    actualSavings = savings,
+                    notes = notes
+                )
+                showOutcomeDialog = false
+            }
         )
     }
 }
@@ -529,6 +550,110 @@ fun RetentionOfferCard(offer: SmartBillNegotiationEngine.RetentionOffer) {
             }
         }
     }
+}
+
+@Composable
+fun OutcomeRecordingDialog(
+    opportunity: SmartBillNegotiationEngine.NegotiationOpportunity,
+    onDismiss: () -> Unit,
+    onSave: (outcome: NegotiationOutcome, savings: Double?, notes: String) -> Unit
+) {
+    var selectedOutcome by remember { mutableStateOf(NegotiationOutcome.SUCCESS) }
+    var savingsAmount by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Record Negotiation Outcome") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "Service: ${opportunity.serviceName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                // Outcome selection
+                Text(
+                    text = "Outcome",
+                    style = MaterialTheme.typography.labelMedium
+                )
+                
+                Column {
+                    NegotiationOutcome.values().forEach { outcome ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedOutcome = outcome },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedOutcome == outcome,
+                                onClick = { selectedOutcome = outcome }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = outcome.displayName,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+                
+                // Savings amount (only for SUCCESS)
+                if (selectedOutcome == NegotiationOutcome.SUCCESS) {
+                    OutlinedTextField(
+                        value = savingsAmount,
+                        onValueChange = { savingsAmount = it },
+                        label = { Text("Actual Monthly Savings") },
+                        placeholder = { Text("e.g., 15.00") },
+                        prefix = { Text(numberFormat.currency.symbol) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                
+                // Notes
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text("Notes (optional)") },
+                    placeholder = { Text("e.g., Called provider, mentioned competitor offer...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val savings = if (selectedOutcome == NegotiationOutcome.SUCCESS) {
+                        savingsAmount.toDoubleOrNull()
+                    } else null
+                    onSave(selectedOutcome, savings, notes)
+                }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+enum class NegotiationOutcome(val displayName: String) {
+    SUCCESS("Successful - Got discount"),
+    PARTIAL("Partial - Some improvement"),
+    FAILED("Failed - No change"),
+    CANCELLED("Cancelled service instead"),
+    PENDING("Still in progress")
 }
 
 @Composable

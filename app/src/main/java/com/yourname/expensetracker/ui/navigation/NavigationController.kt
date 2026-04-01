@@ -75,6 +75,24 @@ class NavigationController(
     }
     
     /**
+     * Navigate to a specific tab by index (0-5).
+     * This clears the feature back stack and updates the destination.
+     */
+    fun navigateToTab(tabIndex: Int) {
+        clearBackStack()
+        currentDestination.value = when (tabIndex) {
+            0 -> NavigationDestination.Home
+            1 -> NavigationDestination.Transactions
+            2 -> NavigationDestination.Assistant
+            3 -> NavigationDestination.Budget
+            4 -> NavigationDestination.Analytics
+            5 -> NavigationDestination.SpendingMap
+            else -> NavigationDestination.Home
+        }
+        _navigationEvents.tryEmit(NavigationEvent.NavigateTo(currentDestination.value))
+    }
+    
+    /**
      * Check if currently on a specific destination.
      */
     fun isCurrent(destination: NavigationDestination): Boolean {
@@ -89,15 +107,32 @@ class NavigationController(
     }
     
     /**
-     * Check if destination is a main tab.
+     * Check if destination is a main tab (0-5).
      */
     private fun isMainTab(destination: NavigationDestination): Boolean {
         return when (destination) {
             is NavigationDestination.Home,
             is NavigationDestination.Transactions,
+            is NavigationDestination.Assistant,
+            is NavigationDestination.Budget,
             is NavigationDestination.Analytics,
-            is NavigationDestination.Assistant -> true
+            is NavigationDestination.SpendingMap -> true
             else -> false
+        }
+    }
+    
+    /**
+     * Get the current tab index (0-5) if on a main tab, null otherwise.
+     */
+    fun getCurrentTabIndex(): Int? {
+        return when (currentDestination.value) {
+            is NavigationDestination.Home -> 0
+            is NavigationDestination.Transactions -> 1
+            is NavigationDestination.Assistant -> 2
+            is NavigationDestination.Budget -> 3
+            is NavigationDestination.Analytics -> 4
+            is NavigationDestination.SpendingMap -> 5
+            else -> null
         }
     }
     
@@ -106,19 +141,6 @@ class NavigationController(
      */
     fun canNavigateBack(): Boolean {
         return backStack.isNotEmpty() || !isOnMainTab()
-    }
-    
-    /**
-     * Get the current tab index (0-3) if on a main tab, null otherwise.
-     */
-    fun getCurrentTabIndex(): Int? {
-        return when (currentDestination.value) {
-            is NavigationDestination.Home -> 0
-            is NavigationDestination.Transactions -> 1
-            is NavigationDestination.Analytics -> 2
-            is NavigationDestination.Assistant -> 3
-            else -> null
-        }
     }
     
     /**

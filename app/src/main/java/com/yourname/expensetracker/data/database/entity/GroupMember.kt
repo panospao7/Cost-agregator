@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -29,6 +30,6 @@ data class GroupMember(
     val groupId: Long,
     val name: String,              // Member name (e.g., "John", "Alice")
     val email: String? = null,     // Optional contact
-    val isCurrentUser: Boolean = false, // Is this the app user?
+    @ColumnInfo(defaultValue = "0") val isCurrentUser: Boolean = false, // Is this the app user?
     val joinedAt: Long = System.currentTimeMillis()
 )

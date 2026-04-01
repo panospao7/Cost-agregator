@@ -16,6 +16,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 
@@ -33,10 +35,10 @@ fun SplitTemplatesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Split Templates") },
+                title = { Text(stringResource(R.string.screen_split_templates)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
+                        Icon(Icons.Default.ArrowBack, stringResource(R.string.action_back))
                     }
                 }
             )
@@ -45,7 +47,7 @@ fun SplitTemplatesScreen(
             ExtendedFloatingActionButton(
                 onClick = onCreateTemplate,
                 icon = { Icon(Icons.Default.Add, null) },
-                text = { Text("New Template") }
+                text = { Text(stringResource(R.string.split_action_new_template)) }
             )
         }
     ) { padding ->
@@ -83,8 +85,8 @@ fun SplitTemplatesScreen(
     showDeleteDialog?.let { template ->
         AlertDialog(
             onDismissRequest = { showDeleteDialog = null },
-            title = { Text("Delete Template?") },
-            text = { Text("Are you sure you want to delete \"${template.name}\"? This cannot be undone.") },
+            title = { Text(stringResource(R.string.split_dialog_delete_title)) },
+            text = { Text(stringResource(R.string.split_dialog_delete_message_format, template.name)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -95,12 +97,12 @@ fun SplitTemplatesScreen(
                         contentColor = MaterialTheme.colorScheme.error
                     )
                 ) {
-                    Text("Delete")
+                    Text(stringResource(R.string.action_delete))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = null }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
             }
         )
@@ -127,7 +129,7 @@ fun EmptyTemplatesState(
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "No Split Templates",
+            text = stringResource(R.string.split_empty_title),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
@@ -135,7 +137,7 @@ fun EmptyTemplatesState(
         Spacer(modifier = Modifier.height(8.dp))
         
         Text(
-            text = "Create templates for quick splitting with your regular groups",
+            text = stringResource(R.string.split_empty_message),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -147,7 +149,7 @@ fun EmptyTemplatesState(
         Button(onClick = onCreateTemplate) {
             Icon(Icons.Default.Add, null)
             Spacer(Modifier.width(8.dp))
-            Text("Create Template")
+            Text(stringResource(R.string.split_action_create_template))
         }
     }
 }
@@ -187,7 +189,7 @@ fun TemplateCard(
                     Spacer(modifier = Modifier.height(4.dp))
                     
                     Text(
-                        text = "${template.totalSplits} people • ${template.splitType.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                        text = stringResource(R.string.split_template_people_type, template.totalSplits, template.splitType.name.lowercase().replaceFirstChar { it.uppercase() }),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -196,7 +198,7 @@ fun TemplateCard(
                 if (isDefault) {
                                     Icon(
                     imageVector = Icons.Default.Star,
-                    contentDescription = "Default template",
+                    contentDescription = stringResource(R.string.split_label_default_template),
                     tint = MaterialTheme.colorScheme.primary
                 )
                 }
@@ -218,7 +220,7 @@ fun TemplateCard(
             
             if (shares.isNotEmpty()) {
                 Text(
-                    text = "Participants:",
+                    text = stringResource(R.string.split_label_participants),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -263,7 +265,7 @@ fun TemplateCard(
                     ) {
                         Icon(Icons.Default.Star, null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Set Default")
+                        Text(stringResource(R.string.split_action_set_default))
                     }
                 }
                 
@@ -273,7 +275,7 @@ fun TemplateCard(
                 ) {
                     Icon(Icons.Default.Edit, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Edit")
+                    Text(stringResource(R.string.split_action_edit))
                 }
                 
                 OutlinedButton(
@@ -285,7 +287,7 @@ fun TemplateCard(
                 ) {
                     Icon(Icons.Default.Delete, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Delete")
+                    Text(stringResource(R.string.split_action_delete))
                 }
             }
         }

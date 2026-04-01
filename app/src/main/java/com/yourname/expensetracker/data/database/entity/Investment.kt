@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -21,14 +22,14 @@ data class Investment(
     val name: String,              // Full name (e.g., "Apple Inc.")
     val symbol: String,          // Ticker (e.g., "AAPL", "BTC")
     val type: InvestmentType,     // STOCK, CRYPTO, BOND, ETF, etc.
-    val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",
     val exchange: String? = null, // NYSE, NASDAQ, BINANCE, etc.
     
     // Purchase details
     val purchasePrice: Double,
     val quantity: Double,
     val purchaseDate: Long,
-    val purchaseFees: Double = 0.0,
+    @ColumnInfo(defaultValue = "0.0") val purchaseFees: Double = 0.0,
     
     // Current tracking
     val currentPrice: Double = purchasePrice,
@@ -37,7 +38,7 @@ data class Investment(
     // Notes and categorization
     val category: String? = null,    // "Tech", "Crypto", "Blue Chip"
     val notes: String? = null,
-    val isActive: Boolean = true,
+    @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
     
     // Target/alert settings
     val targetPrice: Double? = null,

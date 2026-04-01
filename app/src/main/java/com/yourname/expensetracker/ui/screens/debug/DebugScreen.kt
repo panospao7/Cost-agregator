@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,6 +39,11 @@ import com.yourname.expensetracker.domain.ai.model.routeDisplayText
 import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.R
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -69,15 +75,15 @@ fun DebugScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Debug: Notifications ($count)") },
+                title = { Text(stringResource(R.string.debug_title_format, count)) },
                 navigationIcon = {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.clearAll() }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Clear all")
+                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_clear))
                     }
                 }
             )
@@ -100,7 +106,7 @@ fun DebugScreen(
                         .fillMaxWidth()
                         .padding(16.dp)
                 ) {
-                    Text("Open Notification Access Settings")
+                    Text(stringResource(R.string.debug_open_notification_settings))
                 }
             }
 
@@ -126,7 +132,7 @@ fun DebugScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "📡 Service Diagnostics",
+                                stringResource(R.string.debug_section_service_diagnostics),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -134,7 +140,7 @@ fun DebugScreen(
                                 TextButton(
                                     onClick = { diagnosticsStats = viewModel.getServiceDiagnostics() }
                                 ) {
-                                    Text("↻", fontSize = 14.sp)
+                                    Text(stringResource(R.string.debug_refresh), fontSize = 14.sp)
                                 }
                                 TextButton(
                                     onClick = { 
@@ -142,7 +148,7 @@ fun DebugScreen(
                                         diagnosticsStats = viewModel.getServiceDiagnostics()
                                     }
                                 ) {
-                                    Text("Reset", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                    Text(stringResource(R.string.debug_reset), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                                 }
                             }
                         }
@@ -159,7 +165,7 @@ fun DebugScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF4CAF50)
                                 )
-                                Text("Starts", style = MaterialTheme.typography.bodySmall)
+                                Text(stringResource(R.string.debug_status_starts), style = MaterialTheme.typography.bodySmall)
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
@@ -168,7 +174,7 @@ fun DebugScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFFFFC107)
                                 )
-                                Text("Disconnects", style = MaterialTheme.typography.bodySmall)
+                                Text(stringResource(R.string.debug_status_disconnects), style = MaterialTheme.typography.bodySmall)
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
@@ -177,7 +183,7 @@ fun DebugScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFFF44336)
                                 )
-                                Text("Killed", style = MaterialTheme.typography.bodySmall)
+                                Text(stringResource(R.string.debug_status_killed), style = MaterialTheme.typography.bodySmall)
                             }
                         }
                         
@@ -190,20 +196,20 @@ fun DebugScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    "Last start: ${
+                                    stringResource(R.string.debug_last_start, 
                                         if (diagnosticsStats.lastRestartTime > 0) 
                                             DateFormatterUtils.timeWithSecondsAndDate().format(Date(diagnosticsStats.lastRestartTime))
-                                        else "Never"
-                                    }",
+                                        else stringResource(R.string.debug_status_active)
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 10.sp
                                 )
                                 Text(
-                                    "Last kill: ${
+                                    stringResource(R.string.debug_last_kill,
                                         if (diagnosticsStats.lastKillTime > 0) 
                                             DateFormatterUtils.timeWithSecondsAndDate().format(Date(diagnosticsStats.lastKillTime))
-                                        else "Never"
-                                    }",
+                                        else stringResource(R.string.debug_status_active)
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 10.sp,
                                     color = if (diagnosticsStats.lastKillTime > diagnosticsStats.lastRestartTime) 
@@ -231,29 +237,29 @@ fun DebugScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                "🤖 AI Runtime Diagnostics",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            TextButton(onClick = viewModel::refreshAiRuntimeStatuses) {
-                                Text("Refresh")
-                            }
+                        Text(
+                            stringResource(R.string.debug_section_ai_runtime),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        TextButton(onClick = viewModel::refreshAiRuntimeStatuses) {
+                            Text(stringResource(R.string.debug_refresh))
+                        }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            "Network: ${if (aiRuntimeMeta.networkAvailable) "available" else "offline"}",
+                            stringResource(R.string.debug_network_available),
                             style = MaterialTheme.typography.bodySmall
                         )
                         DebugRuntimeGuidance(aiSettings, aiRuntimeStatuses.values.any { it != OnDeviceModelStatus.AVAILABLE })
                         Text(
-                            "Wi-Fi: ${if (aiRuntimeMeta.wifiConnected) "connected" else "not connected"}",
+                            stringResource(R.string.debug_network_connected),
                             style = MaterialTheme.typography.bodySmall
                         )
                         if (aiRuntimeMeta.lastRefreshedAt > 0L) {
                             Text(
-                                "Last refreshed: ${DateFormatterUtils.timeWithSecondsAndDate().format(Date(aiRuntimeMeta.lastRefreshedAt))}",
+                                stringResource(R.string.debug_last_refreshed, DateFormatterUtils.timeWithSecondsAndDate().format(Date(aiRuntimeMeta.lastRefreshedAt))),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 10.sp
                             )
@@ -315,7 +321,7 @@ fun DebugScreen(
                             HorizontalDivider()
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Recent AI runtime events",
+                                stringResource(R.string.debug_recent_ai_events),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -338,7 +344,7 @@ fun DebugScreen(
                             HorizontalDivider()
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Phase 4A rollout state",
+                                stringResource(R.string.debug_phase_4a_rollout),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -369,13 +375,13 @@ fun DebugScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            "🧪 Mass Simulation",
+                            stringResource(R.string.debug_section_mass_simulation),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         
-                        Text("Quantity: ${simulationCount.toInt()}")
+                        Text(stringResource(R.string.debug_quantity_format, simulationCount.toInt()))
                         Slider(
                             value = simulationCount,
                             onValueChange = { simulationCount = it },
@@ -394,7 +400,7 @@ fun DebugScreen(
                                     color = MaterialTheme.colorScheme.onPrimary
                                 )
                             } else {
-                                Text("Generate ${simulationCount.toInt()} Transactions")
+                                Text(stringResource(R.string.debug_generate_transactions, simulationCount.toInt()))
                             }
                         }
                     }
@@ -408,7 +414,7 @@ fun DebugScreen(
                         onClick = { showCategorizationDebug = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("🛠️ Categorization Pipeline Debug")
+                        Text(stringResource(R.string.debug_categorization_pipeline))
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -420,7 +426,7 @@ fun DebugScreen(
                             containerColor = MaterialTheme.colorScheme.tertiary
                         )
                     ) {
-                        Text("Simulate Single Purchase (€12.50)")
+                        Text(stringResource(R.string.debug_simulate_purchase))
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -432,7 +438,7 @@ fun DebugScreen(
                             containerColor = MaterialTheme.colorScheme.primary
                         )
                     ) {
-                        Text("Simulate Single Deposit (€500)")
+                        Text(stringResource(R.string.debug_simulate_deposit))
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -444,7 +450,7 @@ fun DebugScreen(
                             containerColor = MaterialTheme.colorScheme.secondary
                         )
                     ) {
-                        Text("Sync Active Notifications")
+                        Text(stringResource(R.string.debug_sync_notifications))
                     }
                     
                     Spacer(modifier = Modifier.height(8.dp))
@@ -456,7 +462,7 @@ fun DebugScreen(
                             containerColor = MaterialTheme.colorScheme.error
                         )
                     ) {
-                        Text("Reset All Expenses")
+                        Text(stringResource(R.string.debug_reset_expenses))
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -468,7 +474,7 @@ fun DebugScreen(
                             containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                         )
                     ) {
-                        Text("Reset All Budgets")
+                        Text(stringResource(R.string.debug_reset_budgets))
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -480,7 +486,7 @@ fun DebugScreen(
                             containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
                         )
                     ) {
-                        Text("Reset Trust Scores")
+                        Text(stringResource(R.string.debug_reset_trust_scores))
                     }
                 }
             }
@@ -511,7 +517,7 @@ fun DebugScreen(
                             FilterChip(
                                 selected = selectedFilter == null,
                                 onClick = { viewModel.setPackageFilter(null) },
-                                label = { Text("All") }
+                                label = { Text(stringResource(R.string.debug_filter_all)) }
                             )
                         }
                         items(packages, key = { it }) { pkg ->
@@ -557,14 +563,14 @@ fun DebugScreen(
                                         color = MaterialTheme.colorScheme.error
                                     ) 
                                 },
-                                trailingIcon = {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "Unblock",
-                                        modifier = Modifier.size(16.dp),
-                                        tint = MaterialTheme.colorScheme.error
-                                    )
-                                },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.debug_notification_unblock),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            },
                                 colors = InputChipDefaults.inputChipColors(
                                     selectedContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
                                 )
@@ -586,10 +592,10 @@ fun DebugScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("No notifications captured yet")
+                            Text(stringResource(R.string.debug_notification_no_notifications))
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Make sure notification access is enabled",
+                                stringResource(R.string.debug_notification_access_required),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -599,7 +605,7 @@ fun DebugScreen(
                 item {
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        "Captured Notifications (${notifications.size})",
+                        stringResource(R.string.debug_captured_notifications_count, notifications.size),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(horizontal = 16.dp),
                         color = MaterialTheme.colorScheme.outline
@@ -829,14 +835,14 @@ fun NotificationCard(
                 ) {
                     AssistChip(
                         onClick = onMarkRelevant,
-                        label = { Text("Expense ✓", fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.debug_notification_expense), fontSize = 11.sp) },
                         leadingIcon = {
                             Icon(Icons.Default.Check, null, Modifier.size(16.dp))
                         }
                     )
                     AssistChip(
                         onClick = onMarkIrrelevant,
-                        label = { Text("Ignore ✗", fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.debug_notification_ignore), fontSize = 11.sp) },
                         leadingIcon = {
                             Icon(Icons.Default.Close, null, Modifier.size(16.dp))
                         }
@@ -846,7 +852,7 @@ fun NotificationCard(
                     
                     AssistChip(
                         onClick = onBlockPackage,
-                        label = { Text("Block App", fontSize = 11.sp) },
+                        label = { Text(stringResource(R.string.debug_notification_block_app), fontSize = 11.sp) },
                         colors = AssistChipDefaults.assistChipColors(
                             containerColor = MaterialTheme.colorScheme.errorContainer,
                             labelColor = MaterialTheme.colorScheme.onErrorContainer
@@ -881,41 +887,41 @@ fun MlStatsSection(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                "🧠 ML Classifier",
+                stringResource(R.string.debug_section_ml_classifier),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(
-                        "Status: ${if (classifierStats.isReady) "✅ Active" else "⏳ Training"}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "Positive samples: ${classifierStats.totalPositive}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "Negative samples: ${classifierStats.totalNegative}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "Vocabulary: ${classifierStats.vocabularySize} words",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                OutlinedButton(
-                    onClick = onRetrain,
-                    enabled = classifierStats.totalPositive + classifierStats.totalNegative >= 20
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Retrain", fontSize = 12.sp)
+                    Column {
+                        Text(
+                            stringResource(R.string.debug_status_format, if (classifierStats.isReady) stringResource(R.string.debug_status_active) else stringResource(R.string.debug_status_training)),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            stringResource(R.string.debug_label_positive_samples, classifierStats.totalPositive),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            stringResource(R.string.debug_label_negative_samples, classifierStats.totalNegative),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            stringResource(R.string.debug_label_vocabulary, classifierStats.vocabularySize),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onRetrain,
+                        enabled = classifierStats.totalPositive + classifierStats.totalNegative >= 20
+                    ) {
+                        Text(stringResource(R.string.debug_retrain), fontSize = 12.sp)
+                    }
                 }
-            }
 
             // Source trust scores
             if (sourceStats.isNotEmpty()) {
@@ -923,7 +929,7 @@ fun MlStatsSection(
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "📊 Source Trust Scores",
+                    stringResource(R.string.debug_section_source_trust),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -1048,6 +1054,7 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
     
     var showImportDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
+    var showCsvImportDialog by remember { mutableStateOf(false) }
     
     Card(
         modifier = Modifier
@@ -1058,35 +1065,35 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "💾 Database Management",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
-            )
+                Text(
+                    stringResource(R.string.debug_section_database_management),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
             
             Spacer(modifier = Modifier.height(8.dp))
             
             // Database Stats
             databaseStats?.let { stats ->
                 Text(
-                    "📊 Current Data:",
+                    stringResource(R.string.debug_current_data),
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    "• ${stats.transactionCount} transactions",
+                    stringResource(R.string.debug_transactions_count, stats.transactionCount),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
-                    "• ${stats.categoryCount} categories",
+                    stringResource(R.string.debug_categories_count, stats.categoryCount),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
-                    "• ${stats.merchantCount} merchants",
+                    stringResource(R.string.debug_merchants_count, stats.merchantCount),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
-                    "• ${stats.pendingReviewCount} pending reviews",
+                    stringResource(R.string.debug_pending_reviews_count, stats.pendingReviewCount),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1125,7 +1132,7 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Text("Import", fontSize = 12.sp)
+                        Text(stringResource(R.string.debug_import), fontSize = 12.sp)
                     }
                 }
                 
@@ -1134,19 +1141,21 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
                     onClick = { showResetDialog = true },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Reset", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.debug_reset), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                 }
             }
             
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Text(
-                "💡 Export saves to Downloads folder. Import replaces current data (auto-backup created).",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // CSV Import Button (for migrating from old versions)
+                OutlinedButton(
+                    onClick = { showCsvImportDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.debug_import_csv_button), fontSize = 12.sp)
+                }
+            }
         }
-    }
     
     // Import Dialog
     if (showImportDialog) {
@@ -1162,30 +1171,74 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
     
     // Reset Confirmation Dialog
     if (showResetDialog) {
+        val resetSuccessMessage = stringResource(R.string.debug_toast_reset_success)
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
-            title = { Text("⚠️ Reset Database?") },
-            text = { 
-                Text("This will delete ALL your data. A safety backup will be created first. This action cannot be undone.")
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.resetDatabase()
-                        showResetDialog = false
-                        android.widget.Toast.makeText(context, "Database reset. Safety backup created. Restart app.", android.widget.Toast.LENGTH_LONG).show()
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text("Reset")
+        title = { Text(stringResource(R.string.debug_dialog_reset_database_title)) },
+        text = { 
+            Text(stringResource(R.string.debug_dialog_reset_database_message))
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    viewModel.resetDatabase()
+                    showResetDialog = false
+                    android.widget.Toast.makeText(context, resetSuccessMessage, android.widget.Toast.LENGTH_LONG).show()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text(stringResource(R.string.debug_reset))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { showResetDialog = false }) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+        )
+    }
+    
+    // CSV Import Dialog
+    if (showCsvImportDialog) {
+        CsvImportDialog(
+            context = context,
+            onDismiss = { showCsvImportDialog = false },
+            onImport = { uri ->
+                // Read CSV content and import
+                val csvContent = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    stream.bufferedReader().readText()
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showResetDialog = false }) {
-                    Text("Cancel")
+                
+                csvContent?.let { content ->
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val importer = com.yourname.expensetracker.util.CsvExpenseImporter(context)
+                        val result = importer.importFromContent(content) { progress, total ->
+                            // Could update UI with progress here
+                        }
+                        
+                        withContext(Dispatchers.Main) {
+                            when (result) {
+                                is com.yourname.expensetracker.util.CsvExpenseImporter.ImportResult.Success -> {
+                                    android.widget.Toast.makeText(
+                                        context, 
+                                        "✅ Imported ${result.imported} expenses (${result.errors} errors)", 
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                                is com.yourname.expensetracker.util.CsvExpenseImporter.ImportResult.Error -> {
+                                    android.widget.Toast.makeText(
+                                        context, 
+                                        "❌ Import failed: ${result.message}", 
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                        }
+                    }
                 }
+                showCsvImportDialog = false
             }
         )
     }
@@ -1217,11 +1270,11 @@ private fun ImportDatabaseDialog(
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Import Database") },
+        title = { Text(stringResource(R.string.debug_dialog_import_database_title)) },
         text = {
             Column {
                 Text(
-                    "Select a backup file to import. Current data will be backed up first.",
+                    stringResource(R.string.debug_dialog_select_file),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1231,12 +1284,117 @@ private fun ImportDatabaseDialog(
                     onClick = { launcher.launch(arrayOf("application/octet-stream", "*/*")) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (selectedFileName == null) "Select File" else "Change File")
+                    Text(if (selectedFileName == null) stringResource(R.string.debug_dialog_select_file) else stringResource(R.string.debug_dialog_change_file))
                 }
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 // Show selected file info
+                if (selectedFileName != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                stringResource(R.string.debug_dialog_selected),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                selectedFileName!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        stringResource(R.string.debug_import_no_file),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    stringResource(R.string.debug_dialog_import_replace_data),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { 
+                    selectedUri?.let { onImport(it) }
+                },
+                enabled = selectedUri != null
+            ) {
+                Text(stringResource(R.string.debug_import))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun CsvImportDialog(
+    context: Context,
+    onDismiss: () -> Unit,
+    onImport: (android.net.Uri) -> Unit
+) {
+    var selectedFileName by remember { mutableStateOf<String?>(null) }
+    var selectedUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var importProgress by remember { mutableStateOf(0) }
+    var isImporting by remember { mutableStateOf(false) }
+    
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        uri?.let { selectedUri = it }
+        selectedUri?.let { uri ->
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0) {
+                        selectedFileName = cursor.getString(nameIndex)
+                    }
+                }
+            }
+        }
+    }
+    
+    AlertDialog(
+        onDismissRequest = { if (!isImporting) onDismiss() },
+        title = { Text(stringResource(R.string.debug_dialog_import_csv_title)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.debug_import_csv_format_description),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                OutlinedButton(
+                    onClick = { launcher.launch(arrayOf("text/csv", "text/plain", "*/*")) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isImporting
+                ) {
+                    Text(if (selectedFileName == null) stringResource(R.string.debug_select_csv_file) else stringResource(R.string.debug_dialog_change_file))
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
                 if (selectedFileName != null) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -1258,9 +1416,22 @@ private fun ImportDatabaseDialog(
                             )
                         }
                     }
+                    
+                    if (isImporting) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LinearProgressIndicator(
+                            progress = { importProgress / 100f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            stringResource(R.string.debug_importing_progress, importProgress),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 } else {
                     Text(
-                        "No file selected",
+                        stringResource(R.string.debug_import_no_file),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 4.dp)
@@ -1270,7 +1441,7 @@ private fun ImportDatabaseDialog(
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 Text(
-                    "⚠️ This will replace all current data. A safety backup will be created first.",
+                    stringResource(R.string.debug_import_replace_warning),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
                 )
@@ -1281,14 +1452,14 @@ private fun ImportDatabaseDialog(
                 onClick = { 
                     selectedUri?.let { onImport(it) }
                 },
-                enabled = selectedUri != null
+                enabled = selectedUri != null && !isImporting
             ) {
-                Text("Import")
+                Text(stringResource(R.string.debug_import_csv))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )

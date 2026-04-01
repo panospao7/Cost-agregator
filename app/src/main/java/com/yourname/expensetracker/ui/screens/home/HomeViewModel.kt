@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.home
 
+import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
@@ -94,6 +95,7 @@ data class DashboardState(
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
+    private val application: Application,
     private val dashboardDataProvider: DashboardDataProvider,
     private val dashboardRepository: DashboardRepository,
     private val categoryRepository: CategoryRepository,
@@ -216,7 +218,7 @@ class HomeViewModel @Inject constructor(
                                     )
                                 }
                                 entity.status == AiArtifactStatus.FAILED ->
-                                    AiLoadState.Error(runtimeStatus ?: entity.errorMessage ?: "Generation failed")
+                                    AiLoadState.Error(runtimeStatus ?: entity.errorMessage ?: application.getString(R.string.home_error_generation_failed))
                                 else -> AiLoadState.Idle
                             }
                         }
@@ -632,12 +634,13 @@ class HomeViewModel @Inject constructor(
                     if (state.periodTotals.isNotEmpty()) {
                         val start = state.periodTotals.minOf { it.startDateMs }
                         val end = state.periodTotals.maxOf { it.endDateMs }
-                        val label = when (state.currentLevel) {
-                            PeriodType.YEAR -> "Year Total"
-                            PeriodType.MONTH -> "Monthly Overview"
-                            PeriodType.WEEK -> "Weekly Overview"
-                            PeriodType.DAY -> "Daily Overview"
+                        val labelRes = when (state.currentLevel) {
+                            PeriodType.YEAR -> R.string.period_overview_year
+                            PeriodType.MONTH -> R.string.period_overview_month
+                            PeriodType.WEEK -> R.string.period_overview_week
+                            PeriodType.DAY -> R.string.period_overview_day
                         }
+                        val label = application.getString(labelRes)
                         Triple(start, end, label)
                     } else {
                         // Fallback to current month

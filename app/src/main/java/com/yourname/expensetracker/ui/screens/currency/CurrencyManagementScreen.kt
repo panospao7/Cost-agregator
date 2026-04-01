@@ -18,12 +18,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.NumberFormat
@@ -46,7 +48,7 @@ fun CurrencyManagementScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "Currency Management",
+                        stringResource(R.string.currency_title),
                         color = SemanticColors.TextPrimary,
                         fontWeight = FontWeight.Bold
                     ) 
@@ -55,7 +57,7 @@ fun CurrencyManagementScreen(
                     IconButton(onClick = onNavigateBack) {
                         Icon(
                             Icons.Default.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.cd_back),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -64,7 +66,7 @@ fun CurrencyManagementScreen(
                     IconButton(onClick = { viewModel.refreshRates() }) {
                         Icon(
                             Icons.Default.Refresh,
-                            contentDescription = "Refresh Rates",
+                            contentDescription = stringResource(R.string.cd_refresh),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -147,18 +149,18 @@ fun CurrencyManagementScreen(
                                         Column {
                                             Text(
                                                 text = if (uiState.isOffline) 
-                                                    "Offline Mode" 
+                                                    stringResource(R.string.warning_offline_mode)
                                                 else 
-                                                    "Rates May Be Outdated",
+                                                    stringResource(R.string.warning_rates_outdated),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
                                             Text(
                                                 text = if (uiState.isOffline) 
-                                                    "Using last known rates. Connect to internet for latest rates." 
+                                                    stringResource(R.string.warning_rates_outdated_message)
                                                 else 
-                                                    "Exchange rates are older than 24 hours. Tap refresh to update.",
+                                                    stringResource(R.string.warning_rates_stale_message),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -179,7 +181,7 @@ fun CurrencyManagementScreen(
                             ) {
                                 Icon(Icons.Rounded.CurrencyExchange, null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Quick Conversion")
+                                Text(stringResource(R.string.label_quick_conversion))
                             }
                         }
                         
@@ -201,7 +203,7 @@ fun CurrencyManagementScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Exchange Rates",
+                                    text = stringResource(R.string.header_exchange_rates),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = SemanticColors.TextPrimary,
                                     fontWeight = FontWeight.Bold
@@ -210,7 +212,7 @@ fun CurrencyManagementScreen(
                                 uiState.lastUpdated?.let { timestamp ->
                                     val dateFormat = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
                                     Text(
-                                        text = "Updated: ${dateFormat.format(Date(timestamp))}",
+                                        text = stringResource(R.string.label_updated_format, dateFormat.format(Date(timestamp))),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = SemanticColors.TextSecondary
                                     )
@@ -226,7 +228,7 @@ fun CurrencyManagementScreen(
                         // Supported Currencies Header
                         item {
                             Text(
-                                text = "Supported Currencies",
+                                text = stringResource(R.string.header_supported_currencies),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = SemanticColors.TextPrimary,
                                 fontWeight = FontWeight.Bold,
@@ -295,7 +297,7 @@ private fun HomeCurrencyCard(
                 .padding(20.dp)
         ) {
             Text(
-                text = "Home Currency",
+                text = stringResource(R.string.label_home_currency),
                 style = MaterialTheme.typography.labelMedium,
                 color = SemanticColors.TextSecondary
             )
@@ -320,7 +322,7 @@ private fun HomeCurrencyCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = currentCurrency?.name ?: "Unknown",
+                        text = currentCurrency?.name ?: stringResource(R.string.label_unknown),
                         style = MaterialTheme.typography.bodyMedium,
                         color = SemanticColors.TextSecondary
                     )
@@ -336,7 +338,7 @@ private fun HomeCurrencyCard(
                 onExpandedChange = { expanded = it }
             ) {
                 OutlinedTextField(
-                    value = "Change Home Currency",
+                    value = stringResource(R.string.label_change_home_currency),
                     onValueChange = {},
                     readOnly = true,
                     trailingIcon = { 
@@ -479,7 +481,7 @@ private fun CurrencyCard(
             if (isHomeCurrency) {
                 Icon(
                     imageVector = Icons.Rounded.CheckCircle,
-                    contentDescription = "Home Currency",
+                    contentDescription = stringResource(R.string.cd_home_currency),
                     tint = SemanticColors.PrimaryIndigo,
                     modifier = Modifier.size(20.dp)
                 )
@@ -514,7 +516,7 @@ private fun ConversionResultCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Conversion Result",
+                    text = stringResource(R.string.label_conversion_result),
                     style = MaterialTheme.typography.titleMedium,
                     color = Color(0xFF4CAF50),
                     fontWeight = FontWeight.Bold
@@ -523,7 +525,7 @@ private fun ConversionResultCard(
                 IconButton(onClick = onClear) {
                     Icon(
                         Icons.Rounded.Close,
-                        contentDescription = "Clear",
+                        contentDescription = stringResource(R.string.cd_clear),
                         tint = SemanticColors.TextSecondary
                     )
                 }
@@ -574,7 +576,7 @@ private fun ConversionResultCard(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "Rate: 1 ${result.originalCurrency} = ${numberFormat.format(result.rateUsed)} ${result.targetCurrency}",
+                text = stringResource(R.string.label_rate_format, result.originalCurrency, numberFormat.format(result.rateUsed), result.targetCurrency),
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextSecondary,
                 textAlign = TextAlign.Center,
@@ -598,7 +600,7 @@ private fun ConversionDialog(
         onDismissRequest = onDismiss,
         title = { 
             Text(
-                "Currency Conversion",
+                stringResource(R.string.label_currency_conversion),
                 fontWeight = FontWeight.Bold
             ) 
         },
@@ -610,7 +612,7 @@ private fun ConversionDialog(
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("Amount") },
+                    label = { Text(stringResource(R.string.label_amount)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -625,7 +627,7 @@ private fun ConversionDialog(
                         value = fromCurrency,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("From") },
+                        label = { Text(stringResource(R.string.label_from)) },
                         trailingIcon = { 
                             ExposedDropdownMenuDefaults.TrailingIcon(expanded = fromExpanded)
                         },
@@ -662,7 +664,7 @@ private fun ConversionDialog(
                         value = toCurrency,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("To") },
+                        label = { Text(stringResource(R.string.label_to)) },
                         trailingIcon = { 
                             ExposedDropdownMenuDefaults.TrailingIcon(expanded = toExpanded)
                         },
@@ -698,12 +700,12 @@ private fun ConversionDialog(
                     }
                 }
             ) {
-                Text("Convert")
+                Text(stringResource(R.string.currency_convert_button))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
@@ -742,7 +744,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
                 containerColor = SemanticColors.PrimaryIndigo
             )
         ) {
-            Text("Try Again")
+            Text(stringResource(R.string.action_retry))
         }
     }
 }

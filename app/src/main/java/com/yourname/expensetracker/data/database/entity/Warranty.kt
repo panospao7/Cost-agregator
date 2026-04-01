@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -38,12 +39,12 @@ data class Warranty(
     val purchaseDate: Long,
     val warrantyDurationMonths: Int,
     val warrantyEndDate: Long,
-    val warrantyType: WarrantyType = WarrantyType.MANUFACTURER,
+    @ColumnInfo(defaultValue = "MANUFACTURER") val warrantyType: WarrantyType = WarrantyType.MANUFACTURER,
     val supportPhone: String? = null,
     val supportEmail: String? = null,
     val warrantyDocumentUrl: String? = null,
     val notes: String? = null,
-    val status: WarrantyStatus = WarrantyStatus.ACTIVE,
+    @ColumnInfo(defaultValue = "ACTIVE") val status: WarrantyStatus = WarrantyStatus.ACTIVE,
     val claimedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -40,7 +41,7 @@ data class ReturnWindow(
     val returnDeadline: Long,
     val returnPolicyUrl: String? = null,
     val returnConditions: String? = null,
-    val status: ReturnStatus = ReturnStatus.RETURNABLE,
+    @ColumnInfo(defaultValue = "RETURNABLE") val status: ReturnStatus = ReturnStatus.RETURNABLE,
     val returnedAt: Long? = null,
     val refundAmount: Double? = null,
     val createdAt: Long = System.currentTimeMillis(),

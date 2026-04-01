@@ -22,6 +22,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -43,7 +45,7 @@ fun ExportOptionsScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "Export Options",
+                        stringResource(R.string.export_title),
                         color = SemanticColors.TextPrimary,
                         fontWeight = FontWeight.Bold
                     ) 
@@ -52,7 +54,7 @@ fun ExportOptionsScreen(
                     IconButton(onClick = onNavigateBack) {
                         Icon(
                             Icons.Default.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.cd_back),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -95,7 +97,7 @@ fun ExportOptionsScreen(
                 // Export Format Header
                 item {
                     Text(
-                        text = "Export Format",
+                        text = stringResource(R.string.header_export_format),
                         style = MaterialTheme.typography.titleMedium,
                         color = SemanticColors.TextPrimary,
                         fontWeight = FontWeight.Bold
@@ -129,7 +131,7 @@ fun ExportOptionsScreen(
                         } else {
                             Icon(Icons.Rounded.Download, null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Generate Export")
+                            Text(stringResource(R.string.export_generate_button))
                         }
                     }
                 }
@@ -175,12 +177,12 @@ fun ExportOptionsScreen(
                             showDatePicker = false
                         }
                     ) {
-                        Text("OK")
+                        Text(stringResource(R.string.action_ok))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showDatePicker = false }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.action_cancel))
                     }
                 }
             ) {
@@ -213,7 +215,7 @@ private fun DateRangeCard(
                 .padding(20.dp)
         ) {
             Text(
-                text = "Date Range",
+                text = stringResource(R.string.label_date_range),
                 style = MaterialTheme.typography.titleMedium,
                 color = SemanticColors.TextPrimary,
                 fontWeight = FontWeight.Bold
@@ -229,7 +231,7 @@ private fun DateRangeCard(
                 // Start Date
                 Column {
                     Text(
-                        text = "From",
+                        text = stringResource(R.string.label_from),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -247,7 +249,7 @@ private fun DateRangeCard(
                 // End Date
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "To",
+                        text = stringResource(R.string.label_to),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -352,7 +354,7 @@ private fun ExportFormatCard(
             if (isSelected) {
                 Icon(
                     imageVector = Icons.Rounded.CheckCircle,
-                    contentDescription = "Selected",
+                    contentDescription = stringResource(R.string.cd_selected),
                     tint = SemanticColors.PrimaryIndigo
                 )
             }
@@ -384,7 +386,7 @@ private fun ExportResultCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Export Generated",
+                    text = stringResource(R.string.export_success_title),
                     style = MaterialTheme.typography.titleMedium,
                     color = Color(0xFF4CAF50),
                     fontWeight = FontWeight.Bold
@@ -393,7 +395,7 @@ private fun ExportResultCard(
                 IconButton(onClick = onDismiss) {
                     Icon(
                         Icons.Rounded.Close,
-                        contentDescription = "Dismiss",
+                        contentDescription = stringResource(R.string.cd_dismiss),
                         tint = SemanticColors.TextSecondary
                     )
                 }
@@ -428,14 +430,14 @@ private fun ExportResultCard(
                 ) {
                     Icon(Icons.Rounded.ContentCopy, null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Copy to Clipboard")
+                    Text(stringResource(R.string.export_copy_button))
                 }
             }
             
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "Tip: Paste the data into a text editor and save with the appropriate extension (.csv or .iif)",
+                text = stringResource(R.string.export_tip_format, ".csv or .iif"),
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextSecondary,
                 textAlign = TextAlign.Center
@@ -459,7 +461,7 @@ private fun InstructionsCard() {
                 .padding(20.dp)
         ) {
             Text(
-                text = "How to Use",
+                text = stringResource(R.string.export_how_to_title),
                 style = MaterialTheme.typography.titleSmall,
                 color = SemanticColors.TextPrimary,
                 fontWeight = FontWeight.Bold
@@ -468,11 +470,11 @@ private fun InstructionsCard() {
             Spacer(modifier = Modifier.height(12.dp))
             
             val instructions = listOf(
-                "1. Select your desired date range",
-                "2. Choose the export format for your accounting software",
-                "3. Click 'Generate Export' to create the data",
-                "4. Copy the data and save it as a file",
-                "5. Import the file into your accounting software"
+                stringResource(R.string.export_instructions_1),
+                stringResource(R.string.export_instructions_2),
+                stringResource(R.string.export_instructions_3),
+                stringResource(R.string.export_instructions_4),
+                stringResource(R.string.export_instructions_5)
             )
             
             instructions.forEach { instruction ->

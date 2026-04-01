@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -21,7 +22,7 @@ data class MerchantCategory(
     @PrimaryKey
     val merchantPattern: String,
     val categoryId: Long,
-    val confidence: Float = 1.0f,
-    val timesUsed: Int = 1,
+    @ColumnInfo(defaultValue = "1.0") val confidence: Float = 1.0f,
+    @ColumnInfo(defaultValue = "1") val timesUsed: Int = 1,
     val normalizedCanonicalName: String? = null
 )

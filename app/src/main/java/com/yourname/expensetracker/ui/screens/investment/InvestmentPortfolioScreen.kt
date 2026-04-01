@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.investment.InvestmentPerformance
 import com.yourname.expensetracker.domain.investment.PortfolioSummary
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -33,15 +35,15 @@ fun InvestmentPortfolioScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Investment Portfolio") },
+                title = { Text(stringResource(R.string.screen_investment_portfolio)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.cd_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = onAddInvestment) {
-                        Icon(Icons.Default.Add, "Add Investment")
+                        Icon(Icons.Default.Add, stringResource(R.string.a11y_add_expense))
                     }
                 }
             )
@@ -60,7 +62,7 @@ fun InvestmentPortfolioScreen(
             
             item {
                 Text(
-                    text = "Your Investments",
+                    text = stringResource(R.string.header_your_investments),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -91,7 +93,7 @@ private fun PortfolioSummaryCard(summary: PortfolioSummary) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "Total Portfolio Value",
+                text = stringResource(R.string.label_total_portfolio_value),
                 style = MaterialTheme.typography.labelLarge
             )
             
@@ -108,16 +110,16 @@ private fun PortfolioSummaryCard(summary: PortfolioSummary) {
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 SummaryItem(
-                    label = "Invested",
+                    label = stringResource(R.string.label_invested),
                     value = currencyFormat.format(summary.totalInvested)
                 )
                 SummaryItem(
-                    label = "Gain/Loss",
+                    label = stringResource(R.string.label_gain_loss),
                     value = currencyFormat.format(summary.totalGainLoss),
                     isPositive = summary.totalGainLoss >= 0
                 )
                 SummaryItem(
-                    label = "Return",
+                    label = stringResource(R.string.label_return_percent),
                     value = percentFormat.format(summary.totalGainLossPercent / 100),
                     isPositive = summary.totalGainLossPercent >= 0
                 )

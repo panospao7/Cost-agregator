@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.Index
@@ -14,14 +15,14 @@ data class SplitTemplate(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val name: String,
-    val totalSplits: Int = 2,
-    val splitType: SplitType = SplitType.PERCENTAGE,
+    @ColumnInfo(defaultValue = "2") val totalSplits: Int = 2,
+    @ColumnInfo(defaultValue = "PERCENTAGE") val splitType: SplitType = SplitType.PERCENTAGE,
     val shares: String, // JSON array of SplitShare objects
     val description: String? = null,
-    val isDefault: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val isDefault: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
-    val useCount: Int = 0
+    @ColumnInfo(defaultValue = "0") val useCount: Int = 0
 ) {
     enum class SplitType {
         EQUAL,

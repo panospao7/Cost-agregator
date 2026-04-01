@@ -33,7 +33,8 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
         Index(value = ["transactionType", "merchant", "date"]),
         Index(value = ["dedupeKey"], unique = true), // Atomic duplicate prevention
         Index(value = ["latitude", "longitude"]),     // Location queries (v28)
-        Index(value = ["merchantKey"])                // Unified merchant identity key (v32)
+        Index(value = ["merchantKey"]),                // Unified merchant identity key (v32)
+        Index(value = ["isBusinessExpense"])         // Business expense queries (v41)
     ]
 )
 data class Expense(
@@ -41,7 +42,7 @@ data class Expense(
     val id: Long = 0,
     
     val amount: Double,
-    val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",
     
     val merchant: String,
     
@@ -54,19 +55,19 @@ data class Expense(
     
     val categoryId: Long? = null,
     
-    val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "0") val createdAt: Long = System.currentTimeMillis(),
 
-    val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN,
-    val isManualEntry: Boolean = false,
+    @ColumnInfo(defaultValue = "UNKNOWN") val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN,
+    @ColumnInfo(defaultValue = "0") val isManualEntry: Boolean = false,
     val notes: String? = null,
 
     val dedupeKey: String? = null,
 
     val transferDirection: TransferDirection? = null,
     val transferAccountName: String? = null,
-    val isNotMine: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val isNotMine: Boolean = false,
     val ownerName: String? = null,
-    val isSharedExpense: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val isSharedExpense: Boolean = false,
     val sharedWithName: String? = null,
     val mySharePercentage: Int? = null,
     val myShareAmount: Double? = null,
@@ -80,7 +81,7 @@ data class Expense(
     // Number of times the backfill worker has tried and failed to geocode this expense (v29).
     // Expenses that reach MAX_BACKFILL_ATTEMPTS are skipped by the worker to prevent
     // indefinite Nominatim calls for unresolvable merchants.
-    val backfillAttempts: Int = 0,
+    @ColumnInfo(defaultValue = "0") val backfillAttempts: Int = 0,
 
     // Human-readable resolved address string (v30), e.g. "Σκλαβενίτης, Γλυφάδα, Αττική"
     val resolvedAddress: String? = null,
@@ -91,11 +92,11 @@ data class Expense(
     val merchantKey: String? = null,
 
     // Business/Personal separation fields (v41)
-    val isBusinessExpense: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val isBusinessExpense: Boolean = false,
     val businessPurpose: String? = null, // e.g., "Client meeting", "Conference travel"
     val businessCategory: String? = null, // e.g., "Travel", "Meals", "Office Supplies", "Software"
     val businessProject: String? = null,  // For project-based expense tracking
-    val requiresReceipt: Boolean = false,  // Flag for tax-deductible expenses needing receipts
+    @ColumnInfo(defaultValue = "0") val requiresReceipt: Boolean = false,  // Flag for tax-deductible expenses needing receipts
 
     // Enhanced Split Transaction fields (v47)
     val splitTemplateId: Long? = null,  // Reference to SplitTemplate used

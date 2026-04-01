@@ -59,6 +59,8 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.widget.model.WidgetStyle
 import com.yourname.expensetracker.domain.widget.model.StyledWidgets
 import com.yourname.expensetracker.service.NavigationAction
+import com.yourname.expensetracker.ui.navigation.NavigationDestination
+import com.yourname.expensetracker.ui.navigation.FeatureConfig
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,24 +71,8 @@ fun HomeScreen(
     onNavigateToAnalytics: () -> Unit = {},
     onNavigateToMap: () -> Unit = {},
     onNavigateToBudgetDetail: (String) -> Unit = {},
-    // Phase 4-5 Feature Navigation
-    onNavigateToSavingsGoals: () -> Unit = {},
-    onNavigateToCarbonFootprint: () -> Unit = {},
-    onNavigateToWarrantyTracker: () -> Unit = {},
-    onNavigateToPriceProtection: () -> Unit = {},
-    onNavigateToBillNegotiation: () -> Unit = {},
-    onNavigateToNaturalLanguageSearch: () -> Unit = {},
-    onNavigateToReceiptMatching: () -> Unit = {},
-    // Additional Phase 4-5 Screens
-    onNavigateToInvestmentPortfolio: () -> Unit = {},
-    onNavigateToBankConnections: () -> Unit = {},
-    onNavigateToBillReminders: () -> Unit = {},
-    onNavigateToSpendingChallenges: () -> Unit = {},
-    onNavigateToAdvancedAnalytics: () -> Unit = {},
-    onNavigateToCashFlowCalendar: () -> Unit = {},
-    onNavigateToLifestyleInflation: () -> Unit = {},
-    onNavigateToSplitTemplates: () -> Unit = {},
-    onNavigateToVisualSplitEditor: () -> Unit = {},
+    // Unified Feature Navigation - handles all 22 features from FeatureConfig
+    onNavigateToFeature: (NavigationDestination) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.dashboard.collectAsState()
@@ -679,69 +665,9 @@ fun HomeScreen(
         if (showFeaturesMenu) {
             FeaturesMenu(
                 onDismiss = { showFeaturesMenu = false },
-                onNavigateToSavingsGoals = {
+                onNavigateToFeature = { destination ->
                     showFeaturesMenu = false
-                    onNavigateToSavingsGoals()
-                },
-                onNavigateToCarbonFootprint = {
-                    showFeaturesMenu = false
-                    onNavigateToCarbonFootprint()
-                },
-                onNavigateToWarrantyTracker = {
-                    showFeaturesMenu = false
-                    onNavigateToWarrantyTracker()
-                },
-                onNavigateToPriceProtection = {
-                    showFeaturesMenu = false
-                    onNavigateToPriceProtection()
-                },
-                onNavigateToBillNegotiation = {
-                    showFeaturesMenu = false
-                    onNavigateToBillNegotiation()
-                },
-                onNavigateToNaturalLanguageSearch = {
-                    showFeaturesMenu = false
-                    onNavigateToNaturalLanguageSearch()
-                },
-                onNavigateToReceiptMatching = {
-                    showFeaturesMenu = false
-                    onNavigateToReceiptMatching()
-                },
-                onNavigateToInvestmentPortfolio = {
-                    showFeaturesMenu = false
-                    onNavigateToInvestmentPortfolio()
-                },
-                onNavigateToBankConnections = {
-                    showFeaturesMenu = false
-                    onNavigateToBankConnections()
-                },
-                onNavigateToBillReminders = {
-                    showFeaturesMenu = false
-                    onNavigateToBillReminders()
-                },
-                onNavigateToSpendingChallenges = {
-                    showFeaturesMenu = false
-                    onNavigateToSpendingChallenges()
-                },
-                onNavigateToAdvancedAnalytics = {
-                    showFeaturesMenu = false
-                    onNavigateToAdvancedAnalytics()
-                },
-                onNavigateToCashFlowCalendar = {
-                    showFeaturesMenu = false
-                    onNavigateToCashFlowCalendar()
-                },
-                onNavigateToLifestyleInflation = {
-                    showFeaturesMenu = false
-                    onNavigateToLifestyleInflation()
-                },
-                onNavigateToSplitTemplates = {
-                    showFeaturesMenu = false
-                    onNavigateToSplitTemplates()
-                },
-                onNavigateToVisualSplitEditor = {
-                    showFeaturesMenu = false
-                    onNavigateToVisualSplitEditor()
+                    onNavigateToFeature(destination)
                 }
             )
         }
@@ -1316,22 +1242,7 @@ fun DateSelector(
 @Composable
 private fun FeaturesMenu(
     onDismiss: () -> Unit,
-    onNavigateToSavingsGoals: () -> Unit,
-    onNavigateToCarbonFootprint: () -> Unit,
-    onNavigateToWarrantyTracker: () -> Unit,
-    onNavigateToPriceProtection: () -> Unit,
-    onNavigateToBillNegotiation: () -> Unit,
-    onNavigateToNaturalLanguageSearch: () -> Unit,
-    onNavigateToReceiptMatching: () -> Unit,
-    onNavigateToInvestmentPortfolio: () -> Unit,
-    onNavigateToBankConnections: () -> Unit,
-    onNavigateToBillReminders: () -> Unit,
-    onNavigateToSpendingChallenges: () -> Unit,
-    onNavigateToAdvancedAnalytics: () -> Unit,
-    onNavigateToCashFlowCalendar: () -> Unit,
-    onNavigateToLifestyleInflation: () -> Unit,
-    onNavigateToSplitTemplates: () -> Unit,
-    onNavigateToVisualSplitEditor: () -> Unit
+    onNavigateToFeature: (NavigationDestination) -> Unit
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -1357,137 +1268,21 @@ private fun FeaturesMenu(
                     modifier = Modifier.padding(bottom = 20.dp)
                 )
                 
-                // Feature Items Grid
+                // Config-driven Feature Items - All 22 features from FeatureConfig
                 Column(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    FeatureItem(
-                        icon = Icons.Rounded.Savings,
-                        title = stringResource(R.string.feature_savings_goals),
-                        description = stringResource(R.string.feature_savings_goals_desc),
-                        color = Color(0xFF4CAF50),
-                        onClick = onNavigateToSavingsGoals
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.Eco,
-                        title = stringResource(R.string.feature_carbon_footprint),
-                        description = stringResource(R.string.feature_carbon_footprint_desc),
-                        color = Color(0xFF2E7D32),
-                        onClick = onNavigateToCarbonFootprint
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.Security,
-                        title = stringResource(R.string.feature_warranty_tracker),
-                        description = stringResource(R.string.feature_warranty_tracker_desc),
-                        color = Color(0xFF1976D2),
-                        onClick = onNavigateToWarrantyTracker
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.Shield,
-                        title = stringResource(R.string.feature_price_protection),
-                        description = stringResource(R.string.feature_price_protection_desc),
-                        color = Color(0xFF7B1FA2),
-                        onClick = onNavigateToPriceProtection
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.LocalOffer,
-                        title = stringResource(R.string.feature_bill_negotiation),
-                        description = stringResource(R.string.feature_bill_negotiation_desc),
-                        color = Color(0xFFF57C00),
-                        onClick = onNavigateToBillNegotiation
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.Search,
-                        title = stringResource(R.string.feature_smart_search),
-                        description = stringResource(R.string.feature_smart_search_desc),
-                        color = Color(0xFF00796B),
-                        onClick = onNavigateToNaturalLanguageSearch
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.ReceiptLong,
-                        title = stringResource(R.string.feature_receipt_matching),
-                        description = stringResource(R.string.feature_receipt_matching_desc),
-                        color = Color(0xFF5D4037),
-                        onClick = onNavigateToReceiptMatching
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.TrendingUp,
-                        title = stringResource(R.string.feature_investment_portfolio),
-                        description = stringResource(R.string.feature_investment_portfolio_desc),
-                        color = Color(0xFF1565C0),
-                        onClick = onNavigateToInvestmentPortfolio
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.AccountBalance,
-                        title = stringResource(R.string.feature_bank_connections),
-                        description = stringResource(R.string.feature_bank_connections_desc),
-                        color = Color(0xFF00695C),
-                        onClick = onNavigateToBankConnections
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.Notifications,
-                        title = stringResource(R.string.feature_bill_reminders),
-                        description = stringResource(R.string.feature_bill_reminders_desc),
-                        color = Color(0xFFD32F2F),
-                        onClick = onNavigateToBillReminders
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.LocalFireDepartment,
-                        title = stringResource(R.string.feature_spending_challenges),
-                        description = stringResource(R.string.feature_spending_challenges_desc),
-                        color = Color(0xFFF57C00),
-                        onClick = onNavigateToSpendingChallenges
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.Assessment,
-                        title = stringResource(R.string.feature_advanced_analytics),
-                        description = stringResource(R.string.feature_advanced_analytics_desc),
-                        color = Color(0xFF7B1FA2),
-                        onClick = onNavigateToAdvancedAnalytics
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.CalendarToday,
-                        title = stringResource(R.string.feature_cashflow_calendar),
-                        description = stringResource(R.string.feature_cashflow_calendar_desc),
-                        color = Color(0xFF00796B),
-                        onClick = onNavigateToCashFlowCalendar
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.TrendingUp,
-                        title = stringResource(R.string.feature_lifestyle_inflation),
-                        description = stringResource(R.string.feature_lifestyle_inflation_desc),
-                        color = Color(0xFFC62828),
-                        onClick = onNavigateToLifestyleInflation
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.People,
-                        title = stringResource(R.string.feature_split_templates),
-                        description = stringResource(R.string.feature_split_templates_desc),
-                        color = Color(0xFF6D4C41),
-                        onClick = onNavigateToSplitTemplates
-                    )
-                    
-                    FeatureItem(
-                        icon = Icons.Rounded.CallSplit,
-                        title = stringResource(R.string.feature_visual_split),
-                        description = stringResource(R.string.feature_visual_split_desc),
-                        color = Color(0xFF455A64),
-                        onClick = onNavigateToVisualSplitEditor
-                    )
+                    FeatureConfig.allFeatures.forEach { feature ->
+                        FeatureItem(
+                            icon = feature.icon,
+                            title = stringResource(feature.titleRes),
+                            description = feature.descriptionRes?.let { stringResource(it) } ?: "",
+                            color = feature.color,
+                            isNew = feature.isNew,
+                            isBeta = feature.isBeta,
+                            onClick = { onNavigateToFeature(feature.destination) }
+                        )
+                    }
                 }
                 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -1509,6 +1304,8 @@ private fun FeatureItem(
     title: String,
     description: String,
     color: Color,
+    isNew: Boolean = false,
+    isBeta: Boolean = false,
     onClick: () -> Unit
 ) {
     Card(
@@ -1543,12 +1340,26 @@ private fun FeatureItem(
             Spacer(modifier = Modifier.width(16.dp))
             
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = SemanticColors.TextPrimary
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = SemanticColors.TextPrimary
+                    )
+                    if (isNew) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Badge(containerColor = Color(0xFF4CAF50)) {
+                            Text("NEW", fontSize = 10.sp)
+                        }
+                    }
+                    if (isBeta) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Badge(containerColor = Color(0xFFFF9800)) {
+                            Text("BETA", fontSize = 10.sp)
+                        }
+                    }
+                }
                 Text(
                     text = description,
                     style = MaterialTheme.typography.bodySmall,

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -9,7 +10,7 @@ data class SavingsGoal(
     val id: Long = 0,
     val name: String,
     val targetAmount: Double,
-    val currentAmount: Double = 0.0,
+    @ColumnInfo(defaultValue = "0.0") val currentAmount: Double = 0.0,
     val targetDate: Long? = null,
     val protectionLevel: GoalProtectionLevel = GoalProtectionLevel.WARNING,
     val createdAt: Long = System.currentTimeMillis()

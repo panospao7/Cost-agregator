@@ -16,6 +16,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -31,15 +33,15 @@ fun ReceiptMatchingScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Receipt Matching") },
+                title = { Text(stringResource(R.string.screen_receipt_matching)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.action_refresh))
                     }
                 }
             )
@@ -49,7 +51,7 @@ fun ReceiptMatchingScreen(
                 ExtendedFloatingActionButton(
                     onClick = { viewModel.runAutoMatching() },
                     icon = { Icon(Icons.Default.Search, null) },
-                    text = { Text("Auto-Match") }
+                    text = { Text(stringResource(R.string.receipt_action_auto_match)) }
                 )
             }
         }
@@ -66,18 +68,18 @@ fun ReceiptMatchingScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 StatCard(
-                    title = "Unmatched",
+                    title = stringResource(R.string.receipt_stat_unmatched),
                     value = state.unmatchedReceipts.size.toString(),
                     modifier = Modifier.weight(1f)
                 )
                 StatCard(
-                    title = "Suggestions",
+                    title = stringResource(R.string.receipt_stat_suggestions),
                     value = state.pendingSuggestionCount.toString(),
                     modifier = Modifier.weight(1f),
                     isAlert = state.pendingSuggestionCount > 0
                 )
                 StatCard(
-                    title = "Auto-Matched",
+                    title = stringResource(R.string.receipt_stat_auto_matched),
                     value = state.autoMatchedCount.toString(),
                     modifier = Modifier.weight(1f)
                 )
@@ -97,7 +99,7 @@ fun ReceiptMatchingScreen(
                 EmptyState()
             } else {
                 Text(
-                    text = "Match Suggestions",
+                    text = stringResource(R.string.receipt_section_suggestions),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -169,12 +171,12 @@ private fun MatchSuggestionCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = suggestion.receipt.parsedMerchant ?: "Unknown",
+                        text = suggestion.receipt.parsedMerchant ?: stringResource(R.string.receipt_label_unknown),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Receipt: €${String.format("%.2f", suggestion.receipt.parsedTotal ?: 0.0)}",
+                        text = stringResource(R.string.receipt_receipt_total, String.format("%.2f", suggestion.receipt.parsedTotal ?: 0.0)),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
@@ -190,7 +192,7 @@ private fun MatchSuggestionCard(
                     else 
                         MaterialTheme.colorScheme.secondaryContainer
                 ) {
-                    Text("${(suggestion.confidence * 100).toInt()}%")
+                    Text(stringResource(R.string.receipt_confidence_format, (suggestion.confidence * 100).toInt()))
                 }
             }
             
@@ -211,11 +213,11 @@ private fun MatchSuggestionCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "Suggested Match:",
+                        text = stringResource(R.string.receipt_label_suggested_match),
                         style = MaterialTheme.typography.labelSmall
                     )
                     Text(
-                        text = "${suggestion.expenseMerchant ?: "Unknown"} - €${String.format("%.2f", suggestion.expenseAmount ?: 0.0)}",
+                        text = stringResource(R.string.receipt_suggested_match_details, suggestion.expenseMerchant ?: stringResource(R.string.receipt_label_unknown), String.format("%.2f", suggestion.expenseAmount ?: 0.0)),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
@@ -233,7 +235,7 @@ private fun MatchSuggestionCard(
                 ) {
                     Icon(Icons.Default.Check, null)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Approve")
+                    Text(stringResource(R.string.receipt_action_approve))
                 }
                 
                 OutlinedButton(
@@ -242,7 +244,7 @@ private fun MatchSuggestionCard(
                 ) {
                     Icon(Icons.Default.Close, null)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Reject")
+                    Text(stringResource(R.string.receipt_action_reject))
                 }
             }
         }
@@ -266,11 +268,11 @@ private fun EmptyState() {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "No match suggestions",
+                text = stringResource(R.string.receipt_empty_title),
                 style = MaterialTheme.typography.titleMedium
             )
             Text(
-                text = "Scan receipts to see match suggestions here",
+                text = stringResource(R.string.receipt_empty_message),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

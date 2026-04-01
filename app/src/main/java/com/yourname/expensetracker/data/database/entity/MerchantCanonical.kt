@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -27,9 +28,9 @@ data class MerchantCanonical(
     val normalizedName: String, // e.g., "McDonald's"
     val searchKey: String,      // e.g., "mcdonalds" (stripped)
     val categoryId: Long? = null,
-    val totalOccurrences: Int = 0,
-    val totalSpent: Double = 0.0,
-    val isVerified: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val totalOccurrences: Int = 0,
+    @ColumnInfo(defaultValue = "0.0") val totalSpent: Double = 0.0,
+    @ColumnInfo(defaultValue = "0") val isVerified: Boolean = false,
     val logoUrl: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()

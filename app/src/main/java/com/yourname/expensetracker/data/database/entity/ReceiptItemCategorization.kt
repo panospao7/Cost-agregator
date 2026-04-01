@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -47,7 +48,7 @@ data class ReceiptItemCategorization(
     val userCorrectedCategoryName: String?,
     val userCorrectedAt: Long?,
     val taxAmount: Double?,
-    val isNewCategorySuggestion: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val isNewCategorySuggestion: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

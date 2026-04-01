@@ -106,30 +106,26 @@ fun NaturalLanguageSearchScreen(
                                 }
                                 IconButton(
                                     onClick = {
-                                        when {
-                                            ContextCompat.checkSelfPermission(
-                                                context, 
-                                                Manifest.permission.RECORD_AUDIO
-                                            ) == PackageManager.PERMISSION_GRANTED -> {
-                                                startVoiceSearch(context, viewModel) { 
-                                                    isListening = false 
-                                                }
-                                                isListening = true
-                                            }
-                                            else -> {
-                                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                            }
-                                        }
-                                    }
+                                        // Voice search coming soon - placeholder disabled
+                                        // when {
+                                        //     ContextCompat.checkSelfPermission(
+                                        //         context, 
+                                        //         Manifest.permission.RECORD_AUDIO
+                                        //     ) == PackageManager.PERMISSION_GRANTED -> {
+                                        //         startVoiceSearch(context, viewModel) { 
+                                        //             isListening = false 
+                                        //         }
+                                        //         isListening = true
+                                        //     }
+                                        //     else -> {
+                                        //         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                        //     }
+                                        // }
+                                    },
+                                    enabled = false // Disabled until voice search is implemented
                                 ) {
-                                    Icon(
-                                        if (isListening) Icons.Rounded.Mic else Icons.Rounded.MicNone,
-                                        "Voice Search",
-                                        tint = if (isListening) 
-                                            MaterialTheme.colorScheme.error 
-                                        else 
-                                            MaterialTheme.colorScheme.primary
-                                    )
+                                    Icon(Icons.Default.Mic, "Voice search (Coming soon)", 
+                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                                 }
                             }
                         }

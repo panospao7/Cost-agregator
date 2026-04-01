@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -10,7 +11,7 @@ data class Category(
     val name: String,
     val icon: String, // Emoji or simple string
     val color: String, // Hex color code
-    val isDefault: Boolean = false // If true, cannot be deleted (easily)
+    @ColumnInfo(defaultValue = "0") val isDefault: Boolean = false // If true, cannot be deleted (easily)
 ) {
     init {
         require(name.isNotBlank()) { "Category name cannot be blank" }

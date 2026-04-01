@@ -15,6 +15,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.savings.SavingsStreak
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -30,15 +32,15 @@ fun SavingsGoalsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Savings Goals") },
+                title = { Text(stringResource(R.string.screen_savings_goals)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.action_refresh))
                     }
                 }
             )
@@ -47,7 +49,7 @@ fun SavingsGoalsScreen(
             ExtendedFloatingActionButton(
                 onClick = { /* Show add goal dialog */ },
                 icon = { Icon(Icons.Default.Add, null) },
-                text = { Text("Add Goal") }
+                text = { Text(stringResource(R.string.savings_action_add_goal)) }
             )
         }
     ) { padding ->
@@ -70,7 +72,7 @@ fun SavingsGoalsScreen(
             // Smart Recommendations
             if (state.smartRecommendations.isNotEmpty()) {
                 Text(
-                    text = "💡 Smart Recommendations",
+                    text = stringResource(R.string.savings_section_recommendations),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -90,7 +92,7 @@ fun SavingsGoalsScreen(
 
             // Goals List
             Text(
-                text = "Your Goals",
+                text = stringResource(R.string.savings_section_your_goals),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -144,7 +146,7 @@ private fun GamificationHeader(
             ) {
                 Column {
                     Text(
-                        text = "Level $level",
+                        text = stringResource(R.string.savings_level_format, level),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -160,7 +162,7 @@ private fun GamificationHeader(
                     Badge(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer
                     ) {
-                        Text("${streak.currentStreakDays}🔥")
+                        Text("${streak.currentStreakDays}${stringResource(R.string.savings_fire_emoji)}")
                     }
                 }
             }
@@ -168,14 +170,14 @@ private fun GamificationHeader(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "Total Saved: €${String.format("%.2f", totalSaved)}",
+                text = stringResource(R.string.savings_label_total_saved, String.format("%.2f", totalSaved)),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
             
             if (streak != null) {
                 Text(
-                    text = "${streak.monthlyContributions} contributions this month",
+                    text = stringResource(R.string.savings_contributions_this_month, streak.monthlyContributions),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -208,7 +210,7 @@ private fun SmartRecommendationCard(rec: SmartRecommendation) {
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = "Safe to save: €${String.format("%.2f", rec.recommendedAmount)}",
+                    text = stringResource(R.string.savings_safe_to_save, String.format("%.2f", rec.recommendedAmount)),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
@@ -224,7 +226,7 @@ private fun SmartRecommendationCard(rec: SmartRecommendation) {
                     containerColor = MaterialTheme.colorScheme.primary
                 )
             ) {
-                Text("Save")
+                Text(stringResource(R.string.savings_action_save))
             }
         }
     }
@@ -259,24 +261,24 @@ private fun GoalCard(
                         fontWeight = FontWeight.SemiBold
                     )
                     
-                    if (goal.targetDate != null) {
-                        Text(
-                            text = "Target: ${dateFormat.format(Date(goal.targetDate))}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                if (goal.targetDate != null) {
+                    Text(
+                        text = stringResource(R.string.savings_target_date, dateFormat.format(Date(goal.targetDate))),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 }
                 
                 if (isCompleted) {
                     Badge(
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer
                     ) {
-                        Text("✅ Done")
+                        Text(stringResource(R.string.savings_done))
                     }
                 } else {
                     TextButton(onClick = onQuickAdd) {
-                        Text("+€10")
+                        Text(stringResource(R.string.savings_action_add_amount, "10"))
                     }
                 }
             }
@@ -296,18 +298,18 @@ private fun GoalCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "€${String.format("%.2f", goal.currentAmount)}",
+                    text = stringResource(R.string.savings_amount_eur, String.format("%.2f", goal.currentAmount)),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "of €${String.format("%.2f", goal.targetAmount)}",
+                    text = stringResource(R.string.savings_of_target, String.format("%.2f", goal.targetAmount)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             
             Text(
-                text = "${(progress * 100).toInt()}% complete",
+                text = stringResource(R.string.savings_progress_percent_complete, (progress * 100).toInt()),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -330,11 +332,11 @@ private fun EmptyGoalsState() {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "No savings goals yet",
+                text = stringResource(R.string.savings_empty_title),
                 style = MaterialTheme.typography.titleMedium
             )
             Text(
-                text = "Create a goal and start saving!",
+                text = stringResource(R.string.savings_empty_message),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

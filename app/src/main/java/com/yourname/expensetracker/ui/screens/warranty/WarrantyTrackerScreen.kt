@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -32,15 +34,15 @@ fun WarrantyTrackerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Warranty Tracker") },
+                title = { Text(stringResource(R.string.screen_warranty_tracker)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.action_refresh))
                     }
                 }
             )
@@ -58,13 +60,13 @@ fun WarrantyTrackerScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 SummaryCard(
-                    title = "Active",
+                    title = stringResource(R.string.warranty_summary_active),
                     value = state.activeCount.toString(),
                     icon = Icons.Default.Shield,
                     modifier = Modifier.weight(1f)
                 )
                 SummaryCard(
-                    title = "Expiring Soon",
+                    title = stringResource(R.string.warranty_summary_expiring),
                     value = state.expiringSoonCount.toString(),
                     icon = Icons.Default.Shield,
                     modifier = Modifier.weight(1f),
@@ -82,11 +84,11 @@ fun WarrantyTrackerScreen(
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Text(
-                        text = "Protected Value",
+                        text = stringResource(R.string.warranty_summary_protected_value),
                         style = MaterialTheme.typography.labelMedium
                     )
                     Text(
-                        text = "€${String.format("%.2f", state.totalProtectedValue)}",
+                        text = stringResource(R.string.warranty_protected_value, String.format("%.2f", state.totalProtectedValue)),
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -103,17 +105,17 @@ fun WarrantyTrackerScreen(
                 FilterChip(
                     selected = state.selectedFilter == null,
                     onClick = { viewModel.filterByStatus(null) },
-                    label = { Text("All") }
+                    label = { Text(stringResource(R.string.warranty_filter_all)) }
                 )
                 FilterChip(
                     selected = state.selectedFilter == WarrantyStatus.ACTIVE,
                     onClick = { viewModel.filterByStatus(WarrantyStatus.ACTIVE) },
-                    label = { Text("Active") }
+                    label = { Text(stringResource(R.string.warranty_filter_active)) }
                 )
                 FilterChip(
                     selected = state.selectedFilter == WarrantyStatus.EXPIRED,
                     onClick = { viewModel.filterByStatus(WarrantyStatus.EXPIRED) },
-                    label = { Text("Expired") }
+                    label = { Text(stringResource(R.string.warranty_filter_expired)) }
                 )
             }
 
@@ -229,7 +231,7 @@ private fun WarrantyCard(
                             MaterialTheme.colorScheme.errorContainer
                     ) {
                         Text(
-                            if (isExpired) "EXPIRED" else "${daysRemaining}d left",
+                            if (isExpired) stringResource(R.string.warranty_badge_expired) else stringResource(R.string.warranty_days_left_format, daysRemaining),
                             color = if (isExpired) 
                                 MaterialTheme.colorScheme.onError 
                             else 
@@ -242,13 +244,13 @@ private fun WarrantyCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Expires: ${dateFormat.format(Date(warranty.warrantyEndDate))}",
+                text = stringResource(R.string.warranty_expires_date, dateFormat.format(Date(warranty.warrantyEndDate))),
                 style = MaterialTheme.typography.bodyMedium
             )
 
             warranty.supportPhone?.let {
                 Text(
-                    text = "Support: $it",
+                    text = stringResource(R.string.warranty_support_phone, it),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -260,10 +262,10 @@ private fun WarrantyCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     TextButton(onClick = onMarkClaimed) {
-                        Text("Mark Claimed")
+                        Text(stringResource(R.string.warranty_action_mark_claimed))
                     }
                     IconButton(onClick = onDelete) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.warranty_action_delete))
                     }
                 }
             }
@@ -288,11 +290,11 @@ private fun EmptyWarrantyState() {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "No warranties tracked",
+                text = stringResource(R.string.warranty_empty_title),
                 style = MaterialTheme.typography.titleMedium
             )
             Text(
-                text = "Scan receipts to automatically detect warranties",
+                text = stringResource(R.string.warranty_empty_message),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
