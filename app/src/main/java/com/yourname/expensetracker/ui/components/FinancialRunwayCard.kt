@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 @Composable
 fun FinancialRunwayCard(
@@ -66,7 +68,7 @@ fun FinancialRunwayCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "FINANCIAL RUNWAY",
+                    text = stringResource(R.string.financial_runway_title),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = accentColor,
@@ -105,7 +107,7 @@ fun FinancialRunwayCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "days",
+                    text = stringResource(R.string.financial_runway_days),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Medium,
                     color = SemanticColors.TextSecondary,

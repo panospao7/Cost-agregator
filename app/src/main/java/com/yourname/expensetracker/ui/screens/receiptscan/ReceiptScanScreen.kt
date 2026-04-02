@@ -60,6 +60,8 @@ import com.yourname.expensetracker.ui.components.ai.ReceiptAssistCard
 import com.yourname.expensetracker.ui.components.ai.ReceiptItemBreakdownCard
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import kotlinx.coroutines.delay
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.util.Currency
 import java.util.Date
 
@@ -126,22 +128,23 @@ fun ReceiptScanScreen(
                 title = {
                     Text(
                         when (state.step) {
-                            ScanStep.CAPTURE -> "Scan Receipt"
-                            ScanStep.PROCESSING -> "Processing..."
-                            ScanStep.REVIEW -> "Review & Save"
-                            ScanStep.DONE -> "Saved!"
-                            ScanStep.ERROR -> "Error"
+                            ScanStep.CAPTURE -> stringResource(R.string.receipt_scan_title)
+                            ScanStep.PROCESSING -> stringResource(R.string.receipt_processing_title)
+                            ScanStep.REVIEW -> stringResource(R.string.receipt_review_title)
+                            ScanStep.DONE -> stringResource(R.string.receipt_saved_title)
+                            ScanStep.ERROR -> stringResource(R.string.receipt_error_title)
                         },
                         color = SemanticColors.TextPrimary
                     )
                 },
                 navigationIcon = {
+                    val closeScannerCd = stringResource(R.string.receipt_close_scanner_cd)
                     IconButton(
                         onClick = {
                             viewModel.reset()
                             onDismiss()
                         },
-                        modifier = Modifier.semantics { contentDescription = "Close receipt scanner" }
+                        modifier = Modifier.semantics { contentDescription = closeScannerCd }
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null)
                     }
@@ -149,9 +152,10 @@ fun ReceiptScanScreen(
                 actions = {
                     // Debug button (only show in review/error steps)
                     if ((state.step == ScanStep.REVIEW || state.step == ScanStep.ERROR) && state.debugData != null) {
+                        val viewDebugCd = stringResource(R.string.receipt_view_debug_cd)
                         IconButton(
                             onClick = { showDebugViewer = true },
-                            modifier = Modifier.semantics { contentDescription = "View debug information" }
+                            modifier = Modifier.semantics { contentDescription = viewDebugCd }
                         ) {
                             Icon(
                                 imageVector = Icons.Default.BugReport,
@@ -206,7 +210,7 @@ fun ReceiptScanScreen(
                 ScanStep.DONE -> DoneStep()
 
                 ScanStep.ERROR -> ErrorStep(
-                    errorMessage = state.errorMessage ?: "Unknown error",
+                    errorMessage = state.errorMessage ?: stringResource(R.string.error_unknown),
                     onRetry = { viewModel.retry() }
                 )
             }
@@ -239,17 +243,18 @@ private fun CaptureStep(
             if (imageUri != null) {
                 AsyncImage(
                     model = imageUri,
-                    contentDescription = "Receipt preview",
+                    contentDescription = stringResource(R.string.receipt_preview_cd),
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(RoundedCornerShape(16.dp)),
                     contentScale = ContentScale.Fit
                 )
             } else {
+                val noImageCd = stringResource(R.string.receipt_no_image_selected_cd)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.semantics { contentDescription = "No receipt image selected. Take a photo or select from gallery to begin." }
+                    modifier = Modifier.semantics { contentDescription = noImageCd }
                 ) {
                     Icon(
                         imageVector = Icons.Default.ReceiptLong,
@@ -259,7 +264,7 @@ private fun CaptureStep(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        "Take a photo or select from gallery",
+                        stringResource(R.string.receipt_capture_prompt),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -271,6 +276,8 @@ private fun CaptureStep(
     Spacer(modifier = Modifier.height(24.dp))
 
     // Action buttons
+    val takePhotoCd = stringResource(R.string.receipt_take_photo_cd)
+    val selectGalleryCd = stringResource(R.string.receipt_select_gallery_cd)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -279,7 +286,7 @@ private fun CaptureStep(
             onClick = onCameraClick,
             modifier = Modifier
                 .weight(1f)
-                .semantics { contentDescription = "Take photo with camera" },
+                .semantics { contentDescription = takePhotoCd },
             shape = RoundedCornerShape(12.dp)
         ) {
             Icon(
@@ -288,13 +295,13 @@ private fun CaptureStep(
                 modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Camera")
+            Text(stringResource(R.string.receipt_camera_button))
         }
         OutlinedButton(
             onClick = onGalleryClick,
             modifier = Modifier
                 .weight(1f)
-                .semantics { contentDescription = "Select image from gallery" },
+                .semantics { contentDescription = selectGalleryCd },
             shape = RoundedCornerShape(12.dp)
         ) {
             Icon(
@@ -303,7 +310,7 @@ private fun CaptureStep(
                 modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Gallery")
+            Text(stringResource(R.string.receipt_gallery_button))
         }
     }
 
@@ -326,37 +333,38 @@ private fun CaptureStep(
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    "Tips for best results:",
+                    stringResource(R.string.receipt_tips_title),
                     fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.labelLarge
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
-            Text("• Place receipt on a flat, dark surface", style = MaterialTheme.typography.bodySmall)
-            Text("• Ensure good lighting with no shadows", style = MaterialTheme.typography.bodySmall)
-            Text("• Capture the entire receipt in frame", style = MaterialTheme.typography.bodySmall)
-            Text("• Keep the camera steady", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.receipt_tip_flat_surface), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.receipt_tip_lighting), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.receipt_tip_frame), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.receipt_tip_steady), style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
 private fun ProcessingStep() {
+    val processingCd = stringResource(R.string.receipt_processing_cd)
     Spacer(modifier = Modifier.height(80.dp))
     CircularProgressIndicator(
         modifier = Modifier
             .size(64.dp)
-            .semantics { contentDescription = "Processing receipt, please wait" },
+            .semantics { contentDescription = processingCd },
         strokeWidth = 4.dp
     )
     Spacer(modifier = Modifier.height(24.dp))
     Text(
-        "Scanning receipt...",
+        stringResource(R.string.receipt_scanning_text),
         style = MaterialTheme.typography.titleMedium
     )
     Spacer(modifier = Modifier.height(8.dp))
     Text(
-        "Reading text and extracting details",
+        stringResource(R.string.receipt_reading_text),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
@@ -374,15 +382,15 @@ private fun ReviewStep(
     state.quickSavePreview?.let { preview ->
         AlertDialog(
             onDismissRequest = viewModel::dismissReceiptQuickSaveConfirmation,
-            title = { Text("Quick save with AI?") },
+            title = { Text(stringResource(R.string.receipt_quick_save_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "This fills missing draft fields from AI suggestions and then uses the normal save path.",
+                        stringResource(R.string.receipt_quick_save_description),
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "AI will fill: ${preview.autoAppliedFields.joinToString(", ")}",
+                        stringResource(R.string.receipt_ai_fill_format, preview.autoAppliedFields.joinToString(", ")),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.secondary
                     )
@@ -416,12 +424,12 @@ private fun ReviewStep(
             },
             confirmButton = {
                 TextButton(onClick = viewModel::confirmReceiptQuickSave) {
-                    Text("Save now")
+                    Text(stringResource(R.string.receipt_save_now_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = viewModel::dismissReceiptQuickSaveConfirmation) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.cancel_button))
                 }
             }
         )
@@ -437,7 +445,7 @@ private fun ReviewStep(
         ) {
             AsyncImage(
                 model = state.imageUri,
-                contentDescription = "Receipt",
+                contentDescription = stringResource(R.string.receipt_image_cd),
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(12.dp)),
@@ -464,19 +472,19 @@ private fun ReviewStep(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            "Need help filling missing fields?",
+                            stringResource(R.string.receipt_assist_title),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            state.receiptAssistMessage ?: "AI can suggest merchant, total, and date from the OCR text.",
+                            state.receiptAssistMessage ?: stringResource(R.string.receipt_assist_description),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(onClick = { viewModel.requestReceiptAssist(force = true) }) {
-                            Text("Try AI assist")
+                            Text(stringResource(R.string.receipt_try_ai_button))
                         }
                     }
                 }
@@ -494,7 +502,7 @@ private fun ReviewStep(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text("AI is reviewing the OCR text for missing receipt fields.")
+                        Text(stringResource(R.string.receipt_ai_reviewing))
                     }
                 }
             }
@@ -518,7 +526,7 @@ private fun ReviewStep(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            "AI receipt assist failed",
+                            stringResource(R.string.receipt_ai_failed),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onErrorContainer
@@ -539,7 +547,7 @@ private fun ReviewStep(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(onClick = { viewModel.requestReceiptAssist(force = true) }) {
-                            Text("Retry AI assist")
+                            Text(stringResource(R.string.receipt_retry_ai_button))
                         }
                     }
                 }
@@ -560,19 +568,19 @@ private fun ReviewStep(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            "Need help choosing a category?",
+                            stringResource(R.string.receipt_category_assist_title),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            state.categoryAssistMessage ?: "AI can suggest a category from the receipt text and parsed fields.",
+                            state.categoryAssistMessage ?: stringResource(R.string.receipt_category_assist_description),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(onClick = { viewModel.requestCategoryAssist() }) {
-                            Text("Suggest category with AI")
+                            Text(stringResource(R.string.receipt_suggest_category_button))
                         }
                     }
                 }
@@ -590,7 +598,7 @@ private fun ReviewStep(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text("AI is checking the best category for this receipt.")
+                        Text(stringResource(R.string.receipt_ai_checking_category))
                     }
                 }
             }
@@ -611,7 +619,7 @@ private fun ReviewStep(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            "AI category assist failed",
+                            stringResource(R.string.receipt_category_ai_failed),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onErrorContainer
@@ -632,7 +640,7 @@ private fun ReviewStep(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(onClick = { viewModel.requestCategoryAssist(force = true) }) {
-                            Text("Retry category assist")
+                            Text(stringResource(R.string.receipt_retry_category_button))
                         }
                     }
                 }
@@ -659,7 +667,7 @@ private fun ReviewStep(
                     style = MaterialTheme.typography.bodySmall
                 )
                 TextButton(onClick = viewModel::clearReceiptAssistMessage) {
-                    Text("OK")
+                    Text(stringResource(R.string.receipt_ok_button))
                 }
             }
         }
@@ -684,7 +692,7 @@ private fun ReviewStep(
                     style = MaterialTheme.typography.bodySmall
                 )
                 TextButton(onClick = viewModel::clearCategoryAssistMessage) {
-                    Text("OK")
+                    Text(stringResource(R.string.receipt_ok_button))
                 }
             }
         }
@@ -694,24 +702,26 @@ private fun ReviewStep(
     Spacer(modifier = Modifier.height(16.dp))
 
     // Merchant
+    val merchantInputCd = stringResource(R.string.receipt_merchant_input_cd)
     OutlinedTextField(
         value = state.editMerchant,
         onValueChange = { viewModel.updateMerchant(it) },
-        label = { Text("Merchant") },
-        placeholder = { Text("Store name") },
+        label = { Text(stringResource(R.string.receipt_merchant_label)) },
+        placeholder = { Text(stringResource(R.string.receipt_merchant_placeholder)) },
         singleLine = true,
         modifier = Modifier
             .fillMaxWidth()
-            .semantics { contentDescription = "Merchant name input field" }
+            .semantics { contentDescription = merchantInputCd }
     )
 
     Spacer(modifier = Modifier.height(12.dp))
 
     // Amount
+    val amountInputCd = stringResource(R.string.receipt_amount_input_cd)
     OutlinedTextField(
         value = state.editAmount,
         onValueChange = { viewModel.updateAmount(it) },
-        label = { Text("Total Amount") },
+        label = { Text(stringResource(R.string.receipt_total_amount_label)) },
         leadingIcon = { 
             Text(getCurrencySymbol(parsed?.currency), fontSize = 18.sp, fontWeight = FontWeight.Bold) 
         },
@@ -719,7 +729,7 @@ private fun ReviewStep(
         singleLine = true,
         modifier = Modifier
             .fillMaxWidth()
-            .semantics { contentDescription = "Total amount input field" }
+            .semantics { contentDescription = amountInputCd }
     )
 
     Spacer(modifier = Modifier.height(12.dp))
@@ -733,8 +743,14 @@ private fun ReviewStep(
     Spacer(modifier = Modifier.height(12.dp))
 
     // Payment Method
+    val paymentSelected = stringResource(R.string.receipt_payment_selected)
+    val paymentNotSelected = stringResource(R.string.receipt_payment_not_selected)
+    val cardPaymentCd = stringResource(R.string.receipt_payment_card_cd, paymentSelected)
+    val cardPaymentNotCd = stringResource(R.string.receipt_payment_card_cd, paymentNotSelected)
+    val cashPaymentCd = stringResource(R.string.receipt_payment_cash_cd, paymentSelected)
+    val cashPaymentNotCd = stringResource(R.string.receipt_payment_cash_cd, paymentNotSelected)
     Text(
-        "Payment Method",
+        stringResource(R.string.receipt_payment_method_label),
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.Medium
     )
@@ -744,20 +760,20 @@ private fun ReviewStep(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         PaymentMethodChip(
-            label = "Card",
+            label = stringResource(R.string.transactions_payment_method_card),
             selected = state.paymentMethod == PaymentMethod.CARD,
             onClick = { viewModel.selectPaymentMethod(PaymentMethod.CARD) },
             modifier = Modifier
                 .weight(1f)
-                .semantics { contentDescription = "Card payment method, ${if (state.paymentMethod == PaymentMethod.CARD) "selected" else "not selected"}" }
+                .semantics { contentDescription = if (state.paymentMethod == PaymentMethod.CARD) cardPaymentCd else cardPaymentNotCd }
         )
         PaymentMethodChip(
-            label = "Cash",
+            label = stringResource(R.string.transactions_payment_method_cash),
             selected = state.paymentMethod == PaymentMethod.CASH,
             onClick = { viewModel.selectPaymentMethod(PaymentMethod.CASH) },
             modifier = Modifier
                 .weight(1f)
-                .semantics { contentDescription = "Cash payment method, ${if (state.paymentMethod == PaymentMethod.CASH) "selected" else "not selected"}" }
+                .semantics { contentDescription = if (state.paymentMethod == PaymentMethod.CASH) cashPaymentCd else cashPaymentNotCd }
         )
     }
 
@@ -765,7 +781,7 @@ private fun ReviewStep(
 
     // Category
     Text(
-        "Category",
+        stringResource(R.string.receipt_category_label),
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.Medium
     )
@@ -809,7 +825,7 @@ private fun ReviewStep(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Detected Items (${parsed.lineItems.size})",
+                        stringResource(R.string.receipt_detected_items_format, parsed.lineItems.size),
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelLarge
                     )
@@ -821,9 +837,10 @@ private fun ReviewStep(
                             strokeWidth = 2.dp
                         )
                     } else {
+                        val analyzeItemsCd = stringResource(R.string.receipt_analyze_items_cd)
                         TextButton(
                             onClick = { viewModel.analyzeReceiptItems() },
-                            modifier = Modifier.semantics { contentDescription = "Analyze receipt items with AI" }
+                            modifier = Modifier.semantics { contentDescription = analyzeItemsCd }
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Search,
@@ -831,7 +848,7 @@ private fun ReviewStep(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Analyze")
+                            Text(stringResource(R.string.receipt_analyze_button))
                         }
                     }
                 }
@@ -875,7 +892,7 @@ private fun ReviewStep(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "Tax/VAT",
+                            stringResource(R.string.receipt_tax_vat_label),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -891,19 +908,21 @@ private fun ReviewStep(
 
     // Notes
     Spacer(modifier = Modifier.height(12.dp))
+    val notesInputCd = stringResource(R.string.receipt_notes_input_cd)
     OutlinedTextField(
         value = state.notes,
         onValueChange = { viewModel.updateNotes(it) },
-        label = { Text("Notes (optional)") },
+        label = { Text(stringResource(R.string.receipt_notes_label)) },
         modifier = Modifier
             .fillMaxWidth()
-            .semantics { contentDescription = "Optional notes input field" },
+            .semantics { contentDescription = notesInputCd },
         minLines = 1,
         maxLines = 3
     )
 
     // Raw OCR toggle
     Spacer(modifier = Modifier.height(8.dp))
+    val toggleCd = stringResource(R.string.receipt_toggle_cd)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -912,14 +931,14 @@ private fun ReviewStep(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            "Raw OCR Text",
+            stringResource(R.string.receipt_raw_ocr_label),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Icon(
             if (state.showRawText) Icons.Default.KeyboardArrowUp
             else Icons.Default.KeyboardArrowDown,
-            contentDescription = "Toggle",
+            contentDescription = toggleCd,
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
@@ -934,7 +953,7 @@ private fun ReviewStep(
             )
         ) {
             Text(
-                text = state.rawOcrText.ifBlank { "No text detected" },
+                text = state.rawOcrText.ifBlank { stringResource(R.string.receipt_no_text_detected) },
                 modifier = Modifier.padding(12.dp),
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
@@ -991,7 +1010,7 @@ private fun ReviewStep(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        "A similar transaction already exists",
+                        stringResource(R.string.receipt_duplicate_transaction),
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
                 }
@@ -1028,16 +1047,17 @@ private fun ReviewStep(
     Spacer(modifier = Modifier.height(16.dp))
 
     if (viewModel.canOfferReceiptQuickSave()) {
+        val quickSaveCd = stringResource(R.string.receipt_quick_save_cd)
         FilledTonalButton(
             onClick = viewModel::requestReceiptQuickSaveConfirmation,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
-                .semantics { contentDescription = "Quick save expense using AI to fill missing fields" },
+                .semantics { contentDescription = quickSaveCd },
             enabled = !state.isSaving,
             shape = RoundedCornerShape(12.dp)
         ) {
-            Text("Quick Save With AI")
+            Text(stringResource(R.string.receipt_quick_save_button))
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -1054,7 +1074,7 @@ private fun ReviewStep(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        text = "Quick save is standing by",
+                        text = stringResource(R.string.receipt_quick_save_standby),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -1071,12 +1091,13 @@ private fun ReviewStep(
     }
 
     // Save button
+    val saveCd = stringResource(R.string.receipt_save_cd)
     Button(
         onClick = { viewModel.saveExpense() },
         modifier = Modifier
             .fillMaxWidth()
             .height(52.dp)
-            .semantics { contentDescription = "Save expense to database" },
+            .semantics { contentDescription = saveCd },
         enabled = !state.isSaving,
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -1093,7 +1114,7 @@ private fun ReviewStep(
                 modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Save Expense", fontSize = 16.sp)
+            Text(stringResource(R.string.receipt_save_button), fontSize = 16.sp)
         }
     }
 
@@ -1109,9 +1130,9 @@ private fun ConfidenceIndicator(confidence: Float) {
         else -> Color(0xFFFF5722)
     }
     val label = when {
-        confidence >= 0.7f -> "High confidence"
-        confidence >= 0.4f -> "Medium confidence"
-        else -> "Low confidence - please verify"
+        confidence >= 0.7f -> stringResource(R.string.receipt_confidence_high)
+        confidence >= 0.4f -> stringResource(R.string.receipt_confidence_medium)
+        else -> stringResource(R.string.receipt_confidence_low)
     }
 
     Row(
@@ -1125,7 +1146,7 @@ private fun ConfidenceIndicator(confidence: Float) {
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            "$label ($percentage%)",
+            stringResource(R.string.receipt_confidence_indicator_format, label, percentage),
             style = MaterialTheme.typography.labelSmall,
             color = color
         )
@@ -1137,19 +1158,19 @@ private fun DoneStep() {
     Spacer(modifier = Modifier.height(80.dp))
     Icon(
         imageVector = Icons.Default.CheckCircle,
-        contentDescription = "Success",
+        contentDescription = stringResource(R.string.receipt_success_cd),
         modifier = Modifier.size(72.dp),
         tint = MaterialTheme.colorScheme.primary
     )
     Spacer(modifier = Modifier.height(16.dp))
     Text(
-        "Expense saved!",
+        stringResource(R.string.receipt_saved_message),
         style = MaterialTheme.typography.titleLarge,
         fontWeight = FontWeight.Bold
     )
     Spacer(modifier = Modifier.height(8.dp))
     Text(
-        "Your receipt has been processed and saved.",
+        stringResource(R.string.receipt_saved_description),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
@@ -1160,16 +1181,17 @@ private fun ErrorStep(
     errorMessage: String,
     onRetry: () -> Unit
 ) {
+    val retryCd = stringResource(R.string.receipt_retry_cd)
     Spacer(modifier = Modifier.height(80.dp))
     Icon(
         imageVector = Icons.Default.Error,
-        contentDescription = "Error",
+        contentDescription = stringResource(R.string.receipt_error_cd),
         modifier = Modifier.size(64.dp),
         tint = MaterialTheme.colorScheme.error
     )
     Spacer(modifier = Modifier.height(16.dp))
     Text(
-        "Something went wrong",
+        stringResource(R.string.receipt_error_message),
         style = MaterialTheme.typography.titleLarge,
         fontWeight = FontWeight.Bold
     )
@@ -1183,7 +1205,7 @@ private fun ErrorStep(
     Button(
         onClick = onRetry,
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.semantics { contentDescription = "Retry receipt processing" }
+        modifier = Modifier.semantics { contentDescription = retryCd }
     ) {
         Icon(
             imageVector = Icons.Default.Refresh,
@@ -1191,6 +1213,6 @@ private fun ErrorStep(
             modifier = Modifier.size(20.dp)
         )
         Spacer(modifier = Modifier.width(4.dp))
-        Text("Try Again")
+        Text(stringResource(R.string.receipt_try_again_button))
     }
 }

@@ -24,6 +24,9 @@ import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
 import java.text.NumberFormat
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.model.asString
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,17 +46,17 @@ fun CarbonFootprintScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Carbon Footprint") },
+                title = { Text(stringResource(R.string.carbon_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
+                        Icon(Icons.Default.ArrowBack, stringResource(R.string.carbon_back_cd))
                     }
                 },
                 actions = {
                     var expanded by remember { mutableStateOf(false) }
                     Box {
                         TextButton(onClick = { expanded = true }) {
-                            Text("$selectedPeriod days")
+                            Text(stringResource(R.string.carbon_days_format, selectedPeriod))
                             Icon(Icons.Default.ArrowDropDown, null)
                         }
                         DropdownMenu(
@@ -62,7 +65,7 @@ fun CarbonFootprintScreen(
                         ) {
                             listOf(7, 30, 90, 365).forEach { days ->
                                 DropdownMenuItem(
-                                    text = { Text("$days days") },
+                                    text = { Text(stringResource(R.string.carbon_days_format, days)) },
                                     onClick = {
                                         selectedPeriod = days
                                         expanded = false
@@ -104,7 +107,7 @@ fun CarbonFootprintScreen(
                     // Category breakdown
                     item {
                         Text(
-                            text = "Emissions by Category",
+                            text = stringResource(R.string.carbon_emissions_by_category),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -128,7 +131,7 @@ fun CarbonFootprintScreen(
                     if (data.recommendations.isNotEmpty()) {
                         item {
                             Text(
-                                text = "💡 Sustainability Tips",
+                                text = stringResource(R.string.carbon_sustainability_tips),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(top = 8.dp)
@@ -144,7 +147,7 @@ fun CarbonFootprintScreen(
                     if (data.alternatives.isNotEmpty()) {
                         item {
                             Text(
-                                text = "🌱 Sustainable Alternatives",
+                                text = stringResource(R.string.carbon_sustainable_alternatives),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(top = 8.dp)
@@ -204,19 +207,20 @@ fun CarbonScoreCard(report: CarbonFootprintCalculator.CarbonFootprintReport) {
             
             Column {
                 Text(
-                    text = "Sustainability Score",
+                    text = stringResource(R.string.carbon_sustainability_score),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 
                 Spacer(modifier = Modifier.height(4.dp))
                 
+                val scoreText = when {
+                    report.sustainabilityScore >= 70 -> stringResource(R.string.carbon_score_excellent)
+                    report.sustainabilityScore >= 50 -> stringResource(R.string.carbon_score_good)
+                    else -> stringResource(R.string.carbon_score_high)
+                }
                 Text(
-                    text = when {
-                        report.sustainabilityScore >= 70 -> "Excellent! You're living sustainably"
-                        report.sustainabilityScore >= 50 -> "Good progress, room for improvement"
-                        else -> "Your footprint is higher than average"
-                    },
+                    text = scoreText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -238,7 +242,7 @@ fun TotalEmissionsCard(report: CarbonFootprintCalculator.CarbonFootprintReport) 
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "Total Emissions",
+                text = stringResource(R.string.carbon_total_emissions),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
             )
@@ -253,7 +257,7 @@ fun TotalEmissionsCard(report: CarbonFootprintCalculator.CarbonFootprintReport) 
             )
             
             Text(
-                text = "CO₂ equivalent",
+                text = stringResource(R.string.carbon_co2_equivalent),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
             )
@@ -271,7 +275,7 @@ fun TotalEmissionsCard(report: CarbonFootprintCalculator.CarbonFootprintReport) 
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "per day",
+                        text = stringResource(R.string.carbon_per_day),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
@@ -284,7 +288,7 @@ fun TotalEmissionsCard(report: CarbonFootprintCalculator.CarbonFootprintReport) 
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "per year",
+                        text = stringResource(R.string.carbon_per_year),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
@@ -349,7 +353,7 @@ fun CategoryEmissionCard(category: CarbonFootprintCalculator.CategoryEmission) {
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = "${category.transactionCount} transactions",
+                    text = stringResource(R.string.carbon_transactions_format, category.transactionCount),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -380,7 +384,7 @@ fun BenchmarkCard(report: CarbonFootprintCalculator.CarbonFootprintReport) {
             modifier = Modifier.padding(16.dp)
         ) {
             Text(
-                text = "Comparisons",
+                text = stringResource(R.string.carbon_comparisons),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -388,7 +392,7 @@ fun BenchmarkCard(report: CarbonFootprintCalculator.CarbonFootprintReport) {
             Spacer(modifier = Modifier.height(12.dp))
             
             BenchmarkRow(
-                label = "vs. Greek Average",
+                label = stringResource(R.string.carbon_vs_greek_average),
                 comparison = report.comparisonToNationalAverage,
                 averageValue = 10.0
             )
@@ -396,7 +400,7 @@ fun BenchmarkCard(report: CarbonFootprintCalculator.CarbonFootprintReport) {
             Spacer(modifier = Modifier.height(8.dp))
             
             BenchmarkRow(
-                label = "vs. Global Average",
+                label = stringResource(R.string.carbon_vs_global_average),
                 comparison = report.comparisonToGlobalAverage,
                 averageValue = 12.0
             )
@@ -410,13 +414,17 @@ fun BenchmarkCard(report: CarbonFootprintCalculator.CarbonFootprintReport) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Paris Agreement Target",
+                    text = stringResource(R.string.carbon_paris_target),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 
                 val gap = report.parisAgreementGap
+                val targetText = if (gap > 0) 
+                    stringResource(R.string.carbon_above_target_format, gap) 
+                else 
+                    stringResource(R.string.carbon_below_target_format, gap)
                 Text(
-                    text = if (gap > 0) "+$gap% above target" else "$gap% below target",
+                    text = targetText,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     color = if (gap > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
@@ -433,7 +441,7 @@ fun BenchmarkCard(report: CarbonFootprintCalculator.CarbonFootprintReport) {
                 )
                 
                 Text(
-                    text = "Target: 4 kg CO₂/day by 2030",
+                    text = stringResource(R.string.carbon_paris_target_description),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)
@@ -504,14 +512,14 @@ fun OffsetCard(
             
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Offset Your Emissions",
+                    text = stringResource(R.string.carbon_offset_emissions),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
                 
                 Text(
-                    text = "${String.format("%.1f", report.totalEmissionsKg)} kg CO₂ = ${numberFormat.format(report.offsetCost)}",
+                    text = stringResource(R.string.carbon_offset_format, report.totalEmissionsKg, numberFormat.format(report.offsetCost)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
                 )
@@ -524,7 +532,7 @@ fun OffsetCard(
                     contentColor = MaterialTheme.colorScheme.tertiaryContainer
                 )
             ) {
-                Text("Offset")
+                Text(stringResource(R.string.carbon_offset_button))
             }
         }
     }
@@ -562,7 +570,7 @@ fun RecommendationCard(recommendation: CarbonFootprintCalculator.SustainabilityR
                 Spacer(modifier = Modifier.width(8.dp))
                 
                 Text(
-                    text = recommendation.title,
+                    text = recommendation.title.asString(),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -582,14 +590,14 @@ fun RecommendationCard(recommendation: CarbonFootprintCalculator.SustainabilityR
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Impact: ${recommendation.potentialImpact}",
+                    text = stringResource(R.string.carbon_impact_format, recommendation.potentialImpact),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium
                 )
                 
                 Text(
-                    text = "Save ${String.format("%.1f", recommendation.savings)} kg CO₂",
+                    text = stringResource(R.string.carbon_save_format, recommendation.savings),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -608,7 +616,7 @@ fun AlternativeCard(alternative: CarbonFootprintCalculator.SustainableAlternativ
             modifier = Modifier.padding(16.dp)
         ) {
             Text(
-                text = "Instead of: ${alternative.currentBehavior}",
+                text = stringResource(R.string.carbon_instead_of_format, alternative.currentBehavior),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -616,7 +624,7 @@ fun AlternativeCard(alternative: CarbonFootprintCalculator.SustainableAlternativ
             Spacer(modifier = Modifier.height(4.dp))
             
             Text(
-                text = "→ Try: ${alternative.alternative}",
+                text = stringResource(R.string.carbon_try_format, alternative.alternative),
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.primary
@@ -631,14 +639,14 @@ fun AlternativeCard(alternative: CarbonFootprintCalculator.SustainableAlternativ
                 val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
                 
                 Text(
-                    text = "-${String.format("%.1f", alternative.co2Reduction)} kg CO₂",
+                    text = stringResource(R.string.carbon_reduction_format, alternative.co2Reduction),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium
                 )
                 
                 Text(
-                    text = "Save ${numberFormat.format(alternative.costSavings)}/mo",
+                    text = stringResource(R.string.carbon_savings_format, numberFormat.format(alternative.costSavings)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.tertiary,
                     fontWeight = FontWeight.Medium
@@ -668,7 +676,7 @@ fun EmptyCarbonState(
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "No Data Available",
+            text = stringResource(R.string.carbon_no_data),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
@@ -676,7 +684,7 @@ fun EmptyCarbonState(
         Spacer(modifier = Modifier.height(8.dp))
         
         Text(
-            text = "Add transactions to calculate your carbon footprint",
+            text = stringResource(R.string.carbon_add_transactions_hint),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -686,7 +694,7 @@ fun EmptyCarbonState(
         Spacer(modifier = Modifier.height(24.dp))
         
         Button(onClick = onRetry) {
-            Text("Calculate Footprint")
+            Text(stringResource(R.string.carbon_calculate_button))
         }
     }
 }

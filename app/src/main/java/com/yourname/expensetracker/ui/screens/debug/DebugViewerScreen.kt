@@ -21,6 +21,8 @@ import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 /**
  * Debug viewer for OCR and parsing results.
@@ -131,7 +133,7 @@ private fun RawTextTab(debugData: DebugData) {
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "Characters: ${debugData.rawText.length} | Lines: ${debugData.rawText.lines().size}",
+                text = stringResource(R.string.debug_characters_lines_format, debugData.rawText.length, debugData.rawText.lines().size),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

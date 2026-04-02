@@ -1,11 +1,13 @@
 package com.yourname.expensetracker.domain.logic
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.model.FinancialForecast
 import com.yourname.expensetracker.domain.model.RiskLevel
 import com.yourname.expensetracker.domain.model.WeatherNarrative
 import com.yourname.expensetracker.domain.model.NarrativeSection
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import javax.inject.Inject
@@ -85,7 +87,7 @@ class NarrativeGenerator @Inject constructor() {
         if (criticalBudgets.isNotEmpty()) {
             sections.add(
                 NarrativeSection(
-                    title = "Budget Alerts",
+                    title = UiText.from(R.string.domain_narrative_budget_alerts),
                     icon = "🚨",
                     items = criticalBudgets.map { 
                         val name = it.category?.name ?: "Total Budget"
@@ -96,7 +98,7 @@ class NarrativeGenerator @Inject constructor() {
         } else if (budgetStatuses.isNotEmpty()) {
             sections.add(
                 NarrativeSection(
-                    title = "Budget Health",
+                    title = UiText.from(R.string.domain_narrative_budget_health),
                     icon = "✅",
                     items = listOf("All active budgets are currently on track")
                 )
@@ -107,7 +109,7 @@ class NarrativeGenerator @Inject constructor() {
         if (components.goalReserves > 0) {
             sections.add(
                 NarrativeSection(
-                    title = "Goal Reserves",
+                    title = UiText.from(R.string.domain_narrative_goal_reserves),
                     icon = "⛨",
                     items = listOf("€${String.format(java.util.Locale.US, "%.0f", components.goalReserves)} locked for high-priority savings")
                 )
@@ -122,7 +124,7 @@ class NarrativeGenerator @Inject constructor() {
         if (importantPlans.isNotEmpty()) {
             sections.add(
                 NarrativeSection(
-                    title = "Committed Plans",
+                    title = UiText.from(R.string.domain_narrative_committed_plans),
                     icon = "🎯",
                     items = importantPlans.map { 
                         val priorityLabel = if (it.priority == PlannedExpensePriority.MUST) "Must" else "Likely"
@@ -136,7 +138,7 @@ class NarrativeGenerator @Inject constructor() {
         if (components.predictedDiscretionary > 0) {
             sections.add(
                 NarrativeSection(
-                    title = "Predicted Activity",
+                    title = UiText.from(R.string.domain_narrative_predicted_activity),
                     icon = "📈",
                     items = listOf(
                         "Habit-based forecast: €${String.format(java.util.Locale.US, "%.0f", components.predictedDiscretionary)} likely spending based on your typical month."

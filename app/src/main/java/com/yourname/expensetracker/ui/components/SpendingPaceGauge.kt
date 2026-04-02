@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 @Composable
 fun SpendingPaceGauge(
@@ -96,7 +98,7 @@ fun SpendingPaceGauge(
                     color = SemanticColors.TextPrimary
                 )
                 Text(
-                    text = "Day ${pace.daysElapsed}/${pace.daysInMonth}",
+                    text = stringResource(R.string.pace_day_format, pace.daysElapsed, pace.daysInMonth),
                     style = MaterialTheme.typography.labelSmall,
                     color = SemanticColors.TextSecondary
                 )

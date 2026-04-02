@@ -410,7 +410,7 @@ fun ProtectedItemCard(item: PriceProtectionTracker.PriceProtectedItem) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Purchased: ${dateFormatter.format(purchaseDate)}",
+                        text = stringResource(R.string.price_purchased_label, dateFormatter.format(purchaseDate)),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -432,11 +432,11 @@ fun ProtectedItemCard(item: PriceProtectionTracker.PriceProtectedItem) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Price: ${numberFormat.format(item.purchasePrice)}",
+                    text = stringResource(R.string.price_price_label, numberFormat.format(item.purchasePrice)),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "Return: ${item.returnWindowDays} days",
+                    text = stringResource(R.string.price_return_label, item.returnWindowDays),
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -561,11 +561,11 @@ fun DealCard(deal: PriceProtectionTracker.DealAlternative) {
             ) {
                 Column {
                     Text(
-                        text = "Current: ${numberFormat.format(deal.originalPrice)}",
+                        text = stringResource(R.string.price_current_label, numberFormat.format(deal.originalPrice)),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        text = "At: ${deal.betterMerchant}",
+                        text = stringResource(R.string.price_merchant_at_label, deal.betterMerchant),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -664,17 +664,17 @@ fun CreditCardBenefitCard(benefit: PriceProtectionTracker.CreditCardBenefit) {
             
             Spacer(modifier = Modifier.width(12.dp))
             
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = benefit.benefitDescription,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = "via ${benefit.cardName}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = benefit.benefitDescription,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = stringResource(R.string.price_via_card, benefit.cardName),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 
                 if (benefit.requiresAction && benefit.actionDescription != null) {
                     Text(
@@ -687,7 +687,7 @@ fun CreditCardBenefitCard(benefit: PriceProtectionTracker.CreditCardBenefit) {
             }
             
             Text(
-                text = "+${numberFormat.format(benefit.estimatedValue)}",
+                text = stringResource(R.string.price_plus_value_format, numberFormat.format(benefit.estimatedValue)),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary

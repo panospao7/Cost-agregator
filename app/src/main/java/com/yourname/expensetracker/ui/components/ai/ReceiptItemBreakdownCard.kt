@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -49,7 +51,7 @@ fun ReceiptItemBreakdownCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "AI Item Breakdown (${items.size})",
+                    text = stringResource(R.string.receipt_ai_breakdown_format, items.size),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -94,7 +96,7 @@ private fun CategorizedItemRow(
     
     val displayCategoryName = item.userCorrectedCategoryName 
         ?: item.suggestedCategoryName 
-        ?: "Select..."
+        ?: stringResource(R.string.receipt_select_category)
     
     val isUserCorrected = item.userCorrectedCategoryId != null
     val needsReview = item.confidence < 0.7f && !isUserCorrected
@@ -117,7 +119,7 @@ private fun CategorizedItemRow(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                text = "€${String.format("%.2f", item.itemAmount)}",
+                            text = stringResource(R.string.currency_eur_format, item.itemAmount),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium
             )
@@ -183,7 +185,7 @@ private fun CategorizedItemRow(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Info,
-                        contentDescription = "Why this category?",
+                        contentDescription = stringResource(R.string.receipt_why_this_category_cd),
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -217,9 +219,9 @@ private fun CategorizedItemRow(
 @Composable
 private fun ConfidenceBadge(confidence: Float) {
     val (icon, color, label) = when {
-        confidence >= 0.9f -> Triple(Icons.Default.Check, SemanticColors.SuccessGreen, "High")
-        confidence >= 0.7f -> Triple(Icons.Default.Check, SemanticColors.WarningOrange, "Good")
-        else -> Triple(Icons.Default.Warning, SemanticColors.DangerRed, "Low")
+        confidence >= 0.9f -> Triple(Icons.Default.Check, SemanticColors.SuccessGreen, stringResource(R.string.confidence_high))
+        confidence >= 0.7f -> Triple(Icons.Default.Check, SemanticColors.WarningOrange, stringResource(R.string.confidence_good))
+        else -> Triple(Icons.Default.Warning, SemanticColors.DangerRed, stringResource(R.string.confidence_low))
     }
     
     Surface(
@@ -266,7 +268,7 @@ private fun AlternativeCategoriesRow(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
-                text = "Or:",
+                text = stringResource(R.string.receipt_alternative_prefix),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.CenterVertically)
@@ -296,7 +298,7 @@ private fun CategoryPickerDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select Category") },
+        title = { Text(stringResource(R.string.receipt_select_category_dialog_title)) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -318,7 +320,7 @@ private fun CategoryPickerDialog(
                             {
                                 Icon(
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = "Selected"
+                                    contentDescription = stringResource(R.string.filter_selected_cd)
                                 )
                             }
                         } else null,
@@ -329,7 +331,7 @@ private fun CategoryPickerDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )

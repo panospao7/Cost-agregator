@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.ui.screens.debug
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.data.repository.NotificationRepository
@@ -16,6 +18,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -25,6 +28,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class DebugViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repository: NotificationRepository,
     private val reviewQueueRepository: com.yourname.expensetracker.data.repository.ReviewQueueRepository,
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
@@ -193,8 +197,8 @@ class DebugViewModel @Inject constructor(
             val fakeNotification = RawNotification(
                 packageName = "com.test.bank",
                 appName = "Test Bank",
-                title = "Purchase Alert",
-                text = "You paid €12.50 at Amazon",
+                title = context.getString(R.string.debug_purchase_alert_title),
+                text = context.getString(R.string.debug_purchase_message_format, 12.50, "Amazon"),
                 timestamp = timeProvider.now(),
                 capturedAt = timeProvider.now()
             )
@@ -216,7 +220,7 @@ class DebugViewModel @Inject constructor(
             val fakeNotification = RawNotification(
                 packageName = template.first,
                 appName = template.second,
-                title = "Deposit Received",
+                title = context.getString(R.string.debug_deposit_received_title),
                 text = template.third,
                 timestamp = timeProvider.now(),
                 capturedAt = timeProvider.now()

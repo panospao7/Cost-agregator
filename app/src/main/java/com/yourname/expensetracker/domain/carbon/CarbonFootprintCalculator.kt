@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.domain.carbon
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.UiText
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import java.time.Instant
@@ -290,7 +292,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "FUEL" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Transportation",
-                        title = "Reduce Fuel Consumption",
+                        title = UiText.from(R.string.domain_carbon_reduce_fuel),
                         description = "Your fuel purchases account for significant emissions. Consider public transport, carpooling, or switching to an electric/hybrid vehicle.",
                         potentialImpact = "Up to 40% reduction",
                         difficulty = Difficulty.MEDIUM,
@@ -300,7 +302,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "FLIGHT" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Travel",
-                        title = "Fly Less or Offset",
+                        title = UiText.from(R.string.domain_carbon_fly_less),
                         description = "Air travel has very high emissions. Consider train travel for shorter trips or purchase carbon offsets for necessary flights.",
                         potentialImpact = "50-100% reduction for avoided flights",
                         difficulty = Difficulty.HARD,
@@ -310,7 +312,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "CLOTHING" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Shopping",
-                        title = "Sustainable Fashion",
+                        title = UiText.from(R.string.domain_carbon_sustainable_fashion),
                         description = "Fast fashion has high environmental impact. Try secondhand, sustainable brands, or a capsule wardrobe.",
                         potentialImpact = "30-50% reduction",
                         difficulty = Difficulty.EASY,
@@ -320,7 +322,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "RESTAURANT", "FAST_FOOD" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Food",
-                        title = "Eat More Plants",
+                        title = UiText.from(R.string.domain_carbon_eat_plants),
                         description = "Restaurant meals and meat-heavy options have higher emissions. Try more plant-based options and cook at home.",
                         potentialImpact = "20-30% reduction",
                         difficulty = Difficulty.EASY,
@@ -330,7 +332,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "ELECTRONICS" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Technology",
-                        title = "Extend Device Life",
+                        title = UiText.from(R.string.domain_carbon_extend_device),
                         description = "Electronics manufacturing is carbon-intensive. Keep devices longer, buy refurbished, and recycle properly.",
                         potentialImpact = "Up to 60% reduction",
                         difficulty = Difficulty.EASY,
@@ -345,7 +347,7 @@ class CarbonFootprintCalculator @Inject constructor(
             recommendations.add(
                 SustainabilityRecommendation(
                     category = "General",
-                    title = "Track and Improve",
+                    title = UiText.from(R.string.domain_carbon_track_improve),
                     description = "Your emissions are moderate. Continue tracking and look for small improvements in your daily spending habits.",
                     potentialImpact = "10-20% reduction",
                     difficulty = Difficulty.EASY,
@@ -358,7 +360,7 @@ class CarbonFootprintCalculator @Inject constructor(
         recommendations.add(
             SustainabilityRecommendation(
                 category = "Offset",
-                title = "Purchase Carbon Offsets",
+                title = UiText.from(R.string.domain_carbon_purchase_offsets),
                 description = "While reducing emissions is best, you can offset unavoidable emissions through verified carbon offset programs.",
                 potentialImpact = "100% offset possible",
                 difficulty = Difficulty.EASY,
@@ -467,7 +469,7 @@ class CarbonFootprintCalculator @Inject constructor(
     
     data class SustainabilityRecommendation(
         val category: String,
-        val title: String,
+        val title: UiText,
         val description: String,
         val potentialImpact: String,
         val difficulty: Difficulty,

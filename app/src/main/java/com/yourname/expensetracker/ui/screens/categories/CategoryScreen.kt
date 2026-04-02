@@ -53,9 +53,10 @@ fun CategoryScreen(
             )
         },
         floatingActionButton = {
+            val fabDescription = stringResource(R.string.category_fab_add)
             FloatingActionButton(
                 onClick = { showAddDialog = true },
-                modifier = Modifier.semantics { contentDescription = stringResource(R.string.category_fab_add) }
+                modifier = Modifier.semantics { contentDescription = fabDescription }
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
             }
@@ -95,14 +96,16 @@ fun CategoryItem(category: Category) {
         }
     }
     
-    val cardDescription = remember(category.name, category.isDefault) {
+    val categoryLabel = stringResource(R.string.category_label)
+    val defaultLabel = stringResource(R.string.category_label_default)
+    val cardDescription = remember(category.name, category.isDefault, categoryLabel, defaultLabel) {
         buildString {
             append(category.name)
             append(" ")
-            append(stringResource(R.string.category_label))
+            append(categoryLabel)
             if (category.isDefault) {
                 append(", ")
-                append(stringResource(R.string.category_label_default))
+                append(defaultLabel)
             }
         }
     }
@@ -123,21 +126,23 @@ fun CategoryItem(category: Category) {
                     .background(color, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
+            val iconDescription = stringResource(R.string.a11y_category_icon, category.name)
             Text(
                 category.icon,
                 style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.semantics { contentDescription = stringResource(R.string.a11y_category_icon, category.name) }
+                modifier = Modifier.semantics { contentDescription = iconDescription }
             )
             }
             Spacer(modifier = Modifier.width(16.dp))
             Text(category.name, style = MaterialTheme.typography.bodyLarge)
             if (category.isDefault) {
                 Spacer(modifier = Modifier.weight(1f))
+                val defaultLabel = stringResource(R.string.category_label_default)
                 Text(
                     stringResource(R.string.category_label_default),
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.Gray,
-                    modifier = Modifier.semantics { contentDescription = stringResource(R.string.category_label_default) }
+                    modifier = Modifier.semantics { contentDescription = defaultLabel }
                 )
             }
         }

@@ -8,7 +8,9 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 
 /**
  * Integration points for adding new features to existing screens.
@@ -31,25 +33,25 @@ object FeatureIntegration {
         onAdvancedAnalytics: () -> Unit
     ) {
         DropdownMenuItem(
-            text = { Text("Investment Portfolio") },
+            text = { Text(stringResource(R.string.menu_investment_portfolio)) },
             onClick = onInvestmentPortfolio,
             leadingIcon = { Icon(Icons.Default.TrendingUp, null) }
         )
         
         DropdownMenuItem(
-            text = { Text("Bank Connections") },
+            text = { Text(stringResource(R.string.menu_bank_connections)) },
             onClick = onBankConnections,
             leadingIcon = { Icon(Icons.Default.AccountBalance, null) }
         )
         
         DropdownMenuItem(
-            text = { Text("Bill Reminders") },
+            text = { Text(stringResource(R.string.menu_bill_reminders)) },
             onClick = onBillReminders,
             leadingIcon = { Icon(Icons.Default.Notifications, null) }
         )
         
         DropdownMenuItem(
-            text = { Text("Spending Challenges") },
+            text = { Text(stringResource(R.string.menu_spending_challenges)) },
             onClick = onSpendingChallenges,
             leadingIcon = { Icon(Icons.Default.LocalFireDepartment, null) }
         )
@@ -57,7 +59,7 @@ object FeatureIntegration {
         HorizontalDivider()
         
         DropdownMenuItem(
-            text = { Text("Advanced Analytics") },
+            text = { Text(stringResource(R.string.menu_advanced_analytics)) },
             onClick = onAdvancedAnalytics,
             leadingIcon = { Icon(Icons.Default.Analytics, null) }
         )
@@ -74,14 +76,14 @@ object FeatureIntegration {
         onSpendingChallenges: () -> Unit
     ) {
         Text(
-            text = "Quick Actions",
+            text = stringResource(R.string.feature_quick_actions_title),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         )
         
         ListItem(
-            headlineContent = { Text("Investment Portfolio") },
-            supportingContent = { Text("Track your investments") },
+            headlineContent = { Text(stringResource(R.string.menu_investment_portfolio)) },
+            supportingContent = { Text(stringResource(R.string.desc_track_investments)) },
             leadingContent = { 
                 Icon(Icons.Default.TrendingUp, null, tint = MaterialTheme.colorScheme.tertiary) 
             },
@@ -92,8 +94,8 @@ object FeatureIntegration {
         )
         
         ListItem(
-            headlineContent = { Text("Bank Connections") },
-            supportingContent = { Text("Connect your banks") },
+            headlineContent = { Text(stringResource(R.string.menu_bank_connections)) },
+            supportingContent = { Text(stringResource(R.string.desc_connect_banks)) },
             leadingContent = { 
                 Icon(Icons.Default.AccountBalance, null, tint = MaterialTheme.colorScheme.primary) 
             },
@@ -104,8 +106,8 @@ object FeatureIntegration {
         )
         
         ListItem(
-            headlineContent = { Text("Bill Reminders") },
-            supportingContent = { Text("Upcoming payments") },
+            headlineContent = { Text(stringResource(R.string.menu_bill_reminders)) },
+            supportingContent = { Text(stringResource(R.string.desc_upcoming_payments)) },
             leadingContent = { 
                 Icon(Icons.Default.Notifications, null, tint = MaterialTheme.colorScheme.error) 
             },
@@ -116,8 +118,8 @@ object FeatureIntegration {
         )
         
         ListItem(
-            headlineContent = { Text("Spending Challenges") },
-            supportingContent = { Text("No-spend streaks") },
+            headlineContent = { Text(stringResource(R.string.menu_spending_challenges)) },
+            supportingContent = { Text(stringResource(R.string.desc_no_spend_streaks)) },
             leadingContent = { 
                 Icon(Icons.Default.LocalFireDepartment, null, tint = MaterialTheme.colorScheme.tertiary) 
             },
@@ -139,21 +141,21 @@ object FeatureIntegration {
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "Budget Tools",
+            text = stringResource(R.string.feature_budget_tools_title),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp)
         )
         
         ListItem(
-            headlineContent = { Text("Bill Reminders") },
-            supportingContent = { Text("Track recurring payments") },
+            headlineContent = { Text(stringResource(R.string.menu_bill_reminders)) },
+            supportingContent = { Text(stringResource(R.string.desc_track_recurring)) },
             leadingContent = { Icon(Icons.Default.Notifications, null) },
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
         
         ListItem(
-            headlineContent = { Text("Spending Challenges") },
-            supportingContent = { Text("Complete challenges to save") },
+            headlineContent = { Text(stringResource(R.string.menu_spending_challenges)) },
+            supportingContent = { Text(stringResource(R.string.desc_complete_challenges)) },
             leadingContent = { Icon(Icons.Default.LocalFireDepartment, null) },
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
@@ -174,7 +176,7 @@ object FeatureIntegration {
         ) {
             Icon(Icons.Default.Analytics, null)
             Spacer(modifier = Modifier.padding(horizontal = 8.dp))
-            Text("Open Advanced Analytics Dashboard")
+            Text(stringResource(R.string.button_open_advanced_analytics))
         }
     }
 
@@ -191,28 +193,28 @@ object FeatureIntegration {
     ) {
         NavigationDrawerItem(
             icon = { Icon(Icons.Default.TrendingUp, null) },
-            label = { Text("Investment Portfolio") },
+            label = { Text(stringResource(R.string.menu_investment_portfolio)) },
             selected = false,
             onClick = onInvestmentPortfolio
         )
         
         NavigationDrawerItem(
             icon = { Icon(Icons.Default.AccountBalance, null) },
-            label = { Text("Bank Connections") },
+            label = { Text(stringResource(R.string.menu_bank_connections)) },
             selected = false,
             onClick = onBankConnections
         )
         
         NavigationDrawerItem(
             icon = { Icon(Icons.Default.Notifications, null) },
-            label = { Text("Bill Reminders") },
+            label = { Text(stringResource(R.string.menu_bill_reminders)) },
             selected = false,
             onClick = onBillReminders
         )
         
         NavigationDrawerItem(
             icon = { Icon(Icons.Default.LocalFireDepartment, null) },
-            label = { Text("Spending Challenges") },
+            label = { Text(stringResource(R.string.menu_spending_challenges)) },
             selected = false,
             onClick = onSpendingChallenges
         )
@@ -221,7 +223,7 @@ object FeatureIntegration {
         
         NavigationDrawerItem(
             icon = { Icon(Icons.Default.Analytics, null) },
-            label = { Text("Advanced Analytics") },
+            label = { Text(stringResource(R.string.menu_advanced_analytics)) },
             selected = false,
             onClick = onAdvancedAnalytics
         )

@@ -32,9 +32,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.components.ai.AssistantResultCard
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -80,16 +82,16 @@ fun AssistantSheet(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
                     Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                    Text("Assistant", style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.assistant_title), style = MaterialTheme.typography.titleLarge)
                 }
 
                 Row {
                     if (uiState.canPersistHistory) {
                         IconButton(onClick = { viewModel.clearSession() }) {
-                            Icon(Icons.Rounded.History, contentDescription = "Clear session")
+                            Icon(Icons.Rounded.History, contentDescription = stringResource(R.string.assistant_clear_session_cd))
                         }
                         IconButton(onClick = { viewModel.clearAllHistory() }) {
-                            Icon(Icons.Rounded.DeleteSweep, contentDescription = "Clear history")
+                            Icon(Icons.Rounded.DeleteSweep, contentDescription = stringResource(R.string.assistant_clear_history_cd))
                         }
                     }
                 }
@@ -97,7 +99,7 @@ fun AssistantSheet(
 
             if (uiState.isDisabled) {
                 Text(
-                    text = uiState.disabledReason ?: "Assistant is unavailable",
+                    text = uiState.disabledReason ?: stringResource(R.string.assistant_unavailable),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -168,7 +170,7 @@ fun AssistantSheet(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.height(16.dp), strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.padding(horizontal = 6.dp))
-                        Text("Thinking...", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.assistant_thinking), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
 
@@ -179,7 +181,7 @@ fun AssistantSheet(
                         color = MaterialTheme.colorScheme.error
                     )
                     TextButton(onClick = { viewModel.retryLast() }) {
-                        Text("Retry")
+                        Text(stringResource(R.string.assistant_retry))
                     }
                 }
 
@@ -192,7 +194,7 @@ fun AssistantSheet(
                         value = uiState.input,
                         onValueChange = viewModel::updateInput,
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Ask about your expenses") },
+                        placeholder = { Text(stringResource(R.string.assistant_input_placeholder)) },
                         minLines = 1,
                         maxLines = 4
                     )
@@ -200,7 +202,7 @@ fun AssistantSheet(
                         onClick = { viewModel.submitQuery() },
                         enabled = uiState.input.isNotBlank() && !uiState.isLoading
                     ) {
-                        Icon(Icons.Rounded.Send, contentDescription = "Send")
+                        Icon(Icons.Rounded.Send, contentDescription = stringResource(R.string.assistant_send_cd))
                     }
                 }
             }
@@ -213,14 +215,14 @@ private fun StarterPrompts(
     onPromptSelected: (String) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Try asking:", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.assistant_try_asking), style = MaterialTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SuggestionChip(onClick = { onPromptSelected("How much did I spend this month?") }, label = { Text("This month total") })
-            SuggestionChip(onClick = { onPromptSelected("Top merchants this month") }, label = { Text("Top merchants") })
+            SuggestionChip(onClick = { onPromptSelected("How much did I spend this month?") }, label = { Text(stringResource(R.string.assistant_suggestion_this_month)) })
+            SuggestionChip(onClick = { onPromptSelected("Top merchants this month") }, label = { Text(stringResource(R.string.assistant_suggestion_top_merchants)) })
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SuggestionChip(onClick = { onPromptSelected("Largest purchase this month") }, label = { Text("Largest purchase") })
-            SuggestionChip(onClick = { onPromptSelected("Show groceries this month") }, label = { Text("Show groceries") })
+            SuggestionChip(onClick = { onPromptSelected("Largest purchase this month") }, label = { Text(stringResource(R.string.assistant_suggestion_largest)) })
+            SuggestionChip(onClick = { onPromptSelected("Show groceries this month") }, label = { Text(stringResource(R.string.assistant_suggestion_groceries)) })
         }
     }
 }

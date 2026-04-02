@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -48,7 +50,7 @@ data class DayOfWeekSpending(
 
 data class DashboardInsight(
     val type: DashboardInsightType,
-    val title: String,
+    val title: UiText,
     val description: String,
     val severity: DashboardInsightSeverity
 )
@@ -252,7 +254,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             insights.add(
                 DashboardInsight(
                     type = DashboardInsightType.BUDGET_WARNING,
-                    title = "High Spending Alert",
+                    title = UiText.from(R.string.domain_analytics_high_spending),
                     description = "You've spent ${String.format("%.1f", (totalSpent/totalIncome)*100)}% of your income this period",
                     severity = DashboardInsightSeverity.WARNING
                 )
@@ -280,7 +282,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             insights.add(
                 DashboardInsight(
                     type = DashboardInsightType.SPENDING_PATTERN,
-                    title = "Weekend Spending High",
+                    title = UiText.from(R.string.domain_analytics_weekend_high),
                     description = "Your weekend spending is higher than average weekday spending",
                     severity = DashboardInsightSeverity.INFO
                 )
@@ -294,7 +296,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 insights.add(
                     DashboardInsight(
                         type = DashboardInsightType.SAVINGS_OPPORTUNITY,
-                        title = "Great Savings Rate",
+                        title = UiText.from(R.string.domain_analytics_great_savings),
                         description = "You're saving ${String.format("%.1f", savingsRate)}% of your income!",
                         severity = DashboardInsightSeverity.INFO
                     )

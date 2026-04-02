@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import android.content.Context
 import android.net.Uri
 import java.util.Date
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -36,6 +37,7 @@ import timber.log.Timber
 
 @Singleton
 class ReceiptRepository @Inject constructor(
+    private val context: Context,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
@@ -474,6 +476,7 @@ class ReceiptRepository @Inject constructor(
         
         // Detect issues automatically
         val issues = com.yourname.expensetracker.ui.screens.debug.DebugIssueDetector.detectIssues(
+            context = context,
             rawText = ocrResult.fullText,
             transactions = parsedTransactions,
             processingTimeMs = timeProvider.now() - startTime

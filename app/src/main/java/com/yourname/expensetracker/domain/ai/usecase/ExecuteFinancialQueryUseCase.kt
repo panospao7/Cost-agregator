@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -10,6 +11,7 @@ import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import javax.inject.Inject
 
@@ -67,7 +69,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             }
 
         return FinancialQueryResult.Breakdown(
-            title = "Top categories",
+            title = UiText.from(R.string.domain_ai_top_categories),
             rows = rows,
             drilldownIntent = intent
         )
@@ -91,7 +93,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             }
 
         return FinancialQueryResult.Breakdown(
-            title = "Top merchants",
+            title = UiText.from(R.string.domain_ai_top_merchants),
             rows = merchantStats,
             drilldownIntent = intent
         )
@@ -105,7 +107,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             ?: return FinancialQueryResult.Unsupported("No matching transactions found")
 
         return FinancialQueryResult.Summary(
-            title = "Largest purchase",
+            title = UiText.from(R.string.domain_ai_largest_purchase),
             primaryText = "${largest.merchant}: %.2f EUR".format(largest.effectiveAmount),
             supportingText = null,
             drilldownIntent = intent.copy(
@@ -140,7 +142,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         }
 
         return FinancialQueryResult.Summary(
-            title = "Total spending",
+            title = UiText.from(R.string.domain_ai_total_spending),
             primaryText = "%.2f EUR".format(currentTotal),
             supportingText = supporting,
             drilldownIntent = intent
@@ -153,7 +155,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     ): FinancialQueryResult {
         val count = loadFilteredExpenses(intent, period).size
         return FinancialQueryResult.Summary(
-            title = "Transaction count",
+            title = UiText.from(R.string.domain_ai_transaction_count),
             primaryText = count.toString(),
             drilldownIntent = intent
         )
@@ -166,7 +168,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         val expenses = loadFilteredExpenses(intent, period)
         val average = if (expenses.isEmpty()) 0.0 else expenses.sumOf { it.expense.effectiveAmount } / expenses.size
         return FinancialQueryResult.Summary(
-            title = "Average spending",
+            title = UiText.from(R.string.domain_ai_average_spending),
             primaryText = "%.2f EUR".format(average),
             supportingText = if (expenses.isNotEmpty()) "Across ${expenses.size} transactions" else null,
             drilldownIntent = intent
@@ -189,10 +191,10 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         maxAmount = intent.filters.maxAmount
     )
 
-    private fun buildListTitle(intent: FinancialQueryIntent): String = when {
-        intent.filters.categoryIds.isNotEmpty() -> "Matching category transactions"
-        intent.filters.merchants.isNotEmpty() -> "Matching merchant transactions"
-        else -> "Matching transactions"
+    private fun buildListTitle(intent: FinancialQueryIntent): UiText = when {
+        intent.filters.categoryIds.isNotEmpty() -> UiText.from("Matching category transactions")
+        intent.filters.merchants.isNotEmpty() -> UiText.from("Matching merchant transactions")
+        else -> UiText.from("Matching transactions")
     }
 
     private fun previousEquivalentPeriod(period: PeriodRange): PeriodRange {

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.ai.model
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.model.UiText
 
 enum class QueryMetric {
     LIST,
@@ -86,14 +87,14 @@ sealed interface FinancialQueryInterpretationResult {
 
 sealed interface FinancialQueryResult {
     data class Summary(
-        val title: String,
+        val title: UiText,
         val primaryText: String,
         val supportingText: String? = null,
         val drilldownIntent: FinancialQueryIntent? = null
     ) : FinancialQueryResult
 
     data class Breakdown(
-        val title: String,
+        val title: UiText,
         val rows: List<Row>,
         val drilldownIntent: FinancialQueryIntent? = null
     ) : FinancialQueryResult {
@@ -106,7 +107,7 @@ sealed interface FinancialQueryResult {
     }
 
     data class TransactionList(
-        val title: String,
+        val title: UiText,
         val previewCount: Int,
         val drilldownIntent: FinancialQueryIntent
     ) : FinancialQueryResult

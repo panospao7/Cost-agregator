@@ -28,6 +28,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.categorization.CategorizationDebugTrace
 import com.yourname.expensetracker.domain.categorization.LayerDebugResult
 import com.yourname.expensetracker.domain.categorization.MatchType
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlinx.coroutines.launch
@@ -77,7 +79,7 @@ fun CategorizationDebugScreen(
                 title = { Text("Categorization Debug") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 actions = {
@@ -89,7 +91,7 @@ fun CategorizationDebugScreen(
                                 snackbarHostState.showSnackbar("Trace copied to clipboard")
                             }
                         }) {
-                            Icon(Icons.Rounded.ContentCopy, contentDescription = "Copy JSON", tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = stringResource(R.string.action_copy), tint = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
@@ -240,7 +242,7 @@ private fun TraceView(trace: CategorizationDebugTrace) {
                         Text("Explanation: ${trace.finalResult.explanation}", style = MaterialTheme.typography.bodySmall)
                     } else {
                         Text(
-                            text = "UNCATEGORIZED",
+                            text = stringResource(R.string.debug_categorization_uncategorized),
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )

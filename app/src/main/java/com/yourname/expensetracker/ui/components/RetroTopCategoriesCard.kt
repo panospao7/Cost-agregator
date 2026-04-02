@@ -30,6 +30,8 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.analytics.CategoryTrendDirection
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.util.Date
 
 /**
@@ -159,7 +161,7 @@ private fun RetroCategoriesHeader(totalCategories: Int) {
         )
         
         Text(
-            text = "HIGH SCORES",
+            text = stringResource(R.string.retro_high_scores),
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = 2.sp
@@ -179,7 +181,7 @@ private fun RetroCategoriesHeader(totalCategories: Int) {
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
             Text(
-                text = "[${minOf(totalCategories, 5)}/$totalCategories]",
+                text = stringResource(R.string.retro_count_format, minOf(totalCategories, 5), totalCategories),
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     fontWeight = FontWeight.Bold
@@ -297,7 +299,7 @@ private fun RetroCategoryRow(
                     // Category name in brackets
                     Column {
                         Text(
-                            text = "[${category.category.name.uppercase()}]",
+                            text = stringResource(R.string.retro_category_format, category.category.name.uppercase()),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -464,7 +466,7 @@ private fun RetroCategoryDetailDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "[${category.category.name.uppercase()}]",
+                            text = stringResource(R.string.retro_category_format, category.category.name.uppercase()),
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold
@@ -663,7 +665,7 @@ private fun RetroTransactionsSection(
         
         if (transactions.isEmpty()) {
             Text(
-                text = "[NO TRANSACTIONS]",
+                text = stringResource(R.string.retro_no_transactions),
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                 ),
@@ -683,7 +685,7 @@ private fun RetroTransactionsSection(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "> ${expense.merchant.take(20)}",
+                        text = stringResource(R.string.retro_merchant_format, expense.merchant.take(20)),
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                         ),
@@ -704,7 +706,7 @@ private fun RetroTransactionsSection(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "[${DateFormatterUtils.monthDayShort().format(Date(expense.date))}]",
+                        text = stringResource(R.string.retro_date_format, DateFormatterUtils.monthDayShort().format(Date(expense.date))),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                         ),

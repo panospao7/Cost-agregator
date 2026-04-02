@@ -24,11 +24,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine
 import java.text.NumberFormat
@@ -65,10 +67,10 @@ fun NaturalLanguageSearchScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Smart Search") },
+                title = { Text(stringResource(R.string.nlp_search_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
+                        Icon(Icons.Default.ArrowBack, stringResource(R.string.action_back))
                     }
                 }
             )
@@ -92,39 +94,23 @@ fun NaturalLanguageSearchScreen(
                     OutlinedTextField(
                         value = query,
                         onValueChange = { viewModel.updateQuery(it) },
-                        label = { Text("Ask about your spending...") },
+                        label = { Text(stringResource(R.string.nlp_search_label)) },
                         placeholder = { 
-                            Text("e.g., \"How much did I spend at restaurants last month?\"") 
+                            Text(stringResource(R.string.nlp_search_placeholder)) 
                         },
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             Row {
                                 if (query.isNotEmpty()) {
                                     IconButton(onClick = { viewModel.clearQuery() }) {
-                                        Icon(Icons.Default.Clear, "Clear")
+                                        Icon(Icons.Default.Clear, stringResource(R.string.cd_clear))
                                     }
                                 }
                                 IconButton(
-                                    onClick = {
-                                        // Voice search coming soon - placeholder disabled
-                                        // when {
-                                        //     ContextCompat.checkSelfPermission(
-                                        //         context, 
-                                        //         Manifest.permission.RECORD_AUDIO
-                                        //     ) == PackageManager.PERMISSION_GRANTED -> {
-                                        //         startVoiceSearch(context, viewModel) { 
-                                        //             isListening = false 
-                                        //         }
-                                        //         isListening = true
-                                        //     }
-                                        //     else -> {
-                                        //         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                        //     }
-                                        // }
-                                    },
-                                    enabled = false // Disabled until voice search is implemented
+                                    onClick = { },
+                                    enabled = false
                                 ) {
-                                    Icon(Icons.Default.Mic, "Voice search (Coming soon)", 
+                                    Icon(Icons.Default.Mic, stringResource(R.string.nlp_search_voice_cd), 
                                         tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                                 }
                             }
@@ -136,7 +122,7 @@ fun NaturalLanguageSearchScreen(
                     // Example queries
                     if (query.isEmpty()) {
                         Text(
-                            text = "Try asking:",
+                            text = stringResource(R.string.nlp_try_asking),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -147,10 +133,10 @@ fun NaturalLanguageSearchScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            ExampleChip("Total spent this week") { viewModel.updateQuery(it) }
-                            ExampleChip("Restaurants over €50") { viewModel.updateQuery(it) }
-                            ExampleChip("Groceries in January") { viewModel.updateQuery(it) }
-                            ExampleChip("Gas stations last month") { viewModel.updateQuery(it) }
+                            ExampleChip(stringResource(R.string.nlp_example_total_week)) { viewModel.updateQuery(it) }
+                            ExampleChip(stringResource(R.string.nlp_example_restaurants)) { viewModel.updateQuery(it) }
+                            ExampleChip(stringResource(R.string.nlp_example_groceries)) { viewModel.updateQuery(it) }
+                            ExampleChip(stringResource(R.string.nlp_example_gas)) { viewModel.updateQuery(it) }
                         }
                     }
                 }
@@ -206,7 +192,7 @@ fun InterpretingState() {
             CircularProgressIndicator()
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Understanding your question...",
+                text = stringResource(R.string.nlp_understanding),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -249,7 +235,7 @@ fun SearchResultsContent(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "Total",
+                                text = stringResource(R.string.nlp_total_label),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                             )
@@ -272,7 +258,7 @@ fun SearchResultsContent(
                             Spacer(modifier = Modifier.height(8.dp))
                             
                             Text(
-                                text = "${results.size} transactions",
+                                text = stringResource(R.string.nlp_transactions_count_format, results.size),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
                             )
@@ -312,7 +298,7 @@ fun InterpretationCard(interpretation: NaturalLanguageSearchEngine.QueryInterpre
                 Spacer(modifier = Modifier.width(8.dp))
                 
                 Text(
-                    text = "I understood:",
+                    text = stringResource(R.string.nlp_understood_label),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -320,7 +306,7 @@ fun InterpretationCard(interpretation: NaturalLanguageSearchEngine.QueryInterpre
                 Spacer(modifier = Modifier.weight(1f))
                 
                 Text(
-                    text = "${interpretation.confidence.toInt()}% confidence",
+                    text = stringResource(R.string.nlp_confidence_format, interpretation.confidence.toInt()),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -338,10 +324,10 @@ fun InterpretationCard(interpretation: NaturalLanguageSearchEngine.QueryInterpre
                         ExtractedChip(
                             icon = Icons.Rounded.AttachMoney,
                             label = when (amount.comparison) {
-                                NaturalLanguageSearchEngine.AmountComparison.OVER -> "Over €${amount.value}"
-                                NaturalLanguageSearchEngine.AmountComparison.UNDER -> "Under €${amount.value}"
-                                NaturalLanguageSearchEngine.AmountComparison.EXACTLY -> "€${amount.value}"
-                                NaturalLanguageSearchEngine.AmountComparison.BETWEEN -> "€${amount.value}+"
+                                NaturalLanguageSearchEngine.AmountComparison.OVER -> stringResource(R.string.nlp_amount_over_format, amount.value)
+                                NaturalLanguageSearchEngine.AmountComparison.UNDER -> stringResource(R.string.nlp_amount_under_format, amount.value)
+                                NaturalLanguageSearchEngine.AmountComparison.EXACTLY -> stringResource(R.string.nlp_amount_exactly_format, amount.value)
+                                NaturalLanguageSearchEngine.AmountComparison.BETWEEN -> stringResource(R.string.nlp_amount_between_format, amount.value)
                             }
                         )
                     }
@@ -478,7 +464,7 @@ fun EmptySearchState() {
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "No transactions found",
+            text = stringResource(R.string.nlp_no_results),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -504,7 +490,7 @@ fun InitialSearchState() {
             Spacer(modifier = Modifier.height(16.dp))
             
             Text(
-                text = "Ask about your spending",
+                text = stringResource(R.string.nlp_initial_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -512,7 +498,7 @@ fun InitialSearchState() {
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "Search using natural language\nlike \"restaurants over €50 last month\"",
+                text = stringResource(R.string.nlp_initial_subtitle),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center

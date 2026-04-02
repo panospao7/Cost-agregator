@@ -542,7 +542,7 @@ fun DebugScreen(
                 if (blockedApps.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Blocked Apps:",
+                        text = stringResource(R.string.debug_blocked_apps),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         color = MaterialTheme.colorScheme.error
@@ -796,7 +796,7 @@ fun NotificationCard(
                 
                 // Package name
                 Text(
-                    text = "Package: ${notification.packageName}",
+                    text = stringResource(R.string.debug_notification_package, notification.packageName),
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.outline
@@ -805,7 +805,7 @@ fun NotificationCard(
                 // SubText if present
                 notification.subText?.let {
                     Text(
-                        text = "SubText: $it",
+                        text = stringResource(R.string.debug_notification_subtext, it),
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.outline
@@ -816,7 +816,7 @@ fun NotificationCard(
                 notification.extrasJson?.let {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Extras:",
+                        text = stringResource(R.string.debug_notification_extras),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
                     )

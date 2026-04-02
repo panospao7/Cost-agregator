@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.assistant
 
+import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
@@ -18,7 +19,9 @@ import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCas
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import com.yourname.expensetracker.R
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -80,6 +83,7 @@ sealed interface AssistantNavigationEvent {
 
 @HiltViewModel
 class AssistantViewModel @Inject constructor(
+    private val application: Application,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiChatRepository: AiChatRepository,
     private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
@@ -300,7 +304,7 @@ class AssistantViewModel @Inject constructor(
         val current = _uiState.value.currentSessionId
         if (current != null) return current
 
-        val created = aiChatRepository.createSession(title = "Assistant")
+        val created = aiChatRepository.createSession(title = UiText.from(R.string.assistant_title).asString(application))
         if (created != null) {
             _uiState.value = _uiState.value.copy(currentSessionId = created)
         }
@@ -333,9 +337,9 @@ class AssistantViewModel @Inject constructor(
     }
 
     private fun FinancialQueryResult.toDisplayText(): String = when (this) {
-        is FinancialQueryResult.Summary -> listOfNotNull(title, primaryText, supportingText).joinToString("\n")
-        is FinancialQueryResult.Breakdown -> title
-        is FinancialQueryResult.TransactionList -> "$title ($previewCount)"
+        is FinancialQueryResult.Summary -> listOfNotNull(title.asString(application), primaryText, supportingText).joinToString("\n")
+        is FinancialQueryResult.Breakdown -> title.asString(application)
+        is FinancialQueryResult.TransactionList -> "${title.asString(application)} ($previewCount)"
         is FinancialQueryResult.Clarification -> prompt
         is FinancialQueryResult.Unsupported -> reason
     }
@@ -343,14 +347,14 @@ class AssistantViewModel @Inject constructor(
     private fun FinancialQueryResult.toPayloadJson(): String? = when (this) {
         is FinancialQueryResult.Summary -> JSONObject()
             .put("type", "summary")
-            .put("title", title)
+            .put("title", title.asString(application))
             .put("primaryText", primaryText)
             .put("supportingText", supportingText)
             .toString()
 
         is FinancialQueryResult.Breakdown -> JSONObject()
             .put("type", "breakdown")
-            .put("title", title)
+            .put("title", title.asString(application))
             .put(
                 "rows",
                 JSONArray().apply {
@@ -369,7 +373,7 @@ class AssistantViewModel @Inject constructor(
 
         is FinancialQueryResult.TransactionList -> JSONObject()
             .put("type", "transaction_list")
-            .put("title", title)
+            .put("title", title.asString(application))
             .put("previewCount", previewCount)
             .toString()
 

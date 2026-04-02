@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.ui.screens.debug
 
+import android.content.Context
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 
 /**
@@ -28,6 +30,7 @@ data class DebugIssue(
 object DebugIssueDetector {
     
     fun detectIssues(
+        context: Context,
         rawText: String,
         transactions: List<ParsedTransaction>,
         processingTimeMs: Long
@@ -39,8 +42,8 @@ object DebugIssueDetector {
             issues.add(DebugIssue(
                 severity = IssueSeverity.CRITICAL,
                 category = "PARSING_FAILURE",
-                message = "No transactions were parsed from the document",
-                suggestion = "Check if the document format is supported or try re-scanning with better quality"
+                message = context.getString(R.string.debug_issue_no_transactions),
+                suggestion = context.getString(R.string.debug_suggestion_check_document_format)
             ))
         }
         
@@ -51,9 +54,9 @@ object DebugIssueDetector {
                 issues.add(DebugIssue(
                     severity = IssueSeverity.CRITICAL,
                     category = "MISSING_FIELD",
-                    message = "Transaction #${index + 1}: Missing merchant name",
+                    message = context.getString(R.string.debug_issue_missing_merchant_format, index + 1),
                     transactionIndex = index,
-                    suggestion = "Verify OCR quality or manually enter merchant name"
+                    suggestion = context.getString(R.string.debug_suggestion_verify_ocr)
                 ))
             }
             
@@ -61,9 +64,9 @@ object DebugIssueDetector {
                 issues.add(DebugIssue(
                     severity = IssueSeverity.CRITICAL,
                     category = "INVALID_AMOUNT",
-                    message = "Transaction #${index + 1}: Invalid amount (${tx.amount})",
+                    message = context.getString(R.string.debug_issue_invalid_amount_format, index + 1, tx.amount),
                     transactionIndex = index,
-                    suggestion = "Check number format in source document"
+                    suggestion = context.getString(R.string.debug_suggestion_check_number_format)
                 ))
             }
             
@@ -72,9 +75,9 @@ object DebugIssueDetector {
                 issues.add(DebugIssue(
                     severity = IssueSeverity.WARNING,
                     category = "LOW_CONFIDENCE",
-                    message = "Transaction #${index + 1}: Low confidence (${(tx.confidence * 100).toInt()}%)",
+                    message = context.getString(R.string.debug_issue_low_confidence_format, index + 1, (tx.confidence * 100).toInt()),
                     transactionIndex = index,
-                    suggestion = "Manually verify merchant name and amount"
+                    suggestion = context.getString(R.string.debug_suggestion_verify_manually)
                 ))
             }
             
@@ -83,9 +86,9 @@ object DebugIssueDetector {
                 issues.add(DebugIssue(
                     severity = IssueSeverity.WARNING,
                     category = "MISSING_DATE",
-                    message = "Transaction #${index + 1}: Missing transaction date",
+                    message = context.getString(R.string.debug_issue_missing_date_format, index + 1),
                     transactionIndex = index,
-                    suggestion = "Date will default to current time"
+                    suggestion = context.getString(R.string.debug_suggestion_date_will_default)
                 ))
             }
             
@@ -94,9 +97,9 @@ object DebugIssueDetector {
                 issues.add(DebugIssue(
                     severity = IssueSeverity.WARNING,
                     category = "UNUSUAL_AMOUNT",
-                    message = "Transaction #${index + 1}: Unusually large amount (€${tx.amount})",
+                    message = context.getString(R.string.debug_issue_unusual_amount_format, index + 1, tx.amount),
                     transactionIndex = index,
-                    suggestion = "Verify this is not a decimal separator error"
+                    suggestion = context.getString(R.string.debug_suggestion_verify_decimal_format)
                 ))
             }
         }
@@ -109,8 +112,8 @@ object DebugIssueDetector {
             issues.add(DebugIssue(
                 severity = IssueSeverity.WARNING,
                 category = "OCR_QUALITY",
-                message = "Very short OCR output ($lineCount lines)",
-                suggestion = "Document may not have been fully scanned"
+                message = context.getString(R.string.debug_ocr_short_output_format, lineCount),
+                suggestion = context.getString(R.string.debug_ocr_document_not_fully_scanned)
             ))
         }
         
@@ -118,19 +121,19 @@ object DebugIssueDetector {
             issues.add(DebugIssue(
                 severity = IssueSeverity.WARNING,
                 category = "OCR_QUALITY",
-                message = "Very little text extracted ($charCount characters)",
-                suggestion = "Try re-scanning with better lighting or higher resolution"
+                message = context.getString(R.string.debug_ocr_little_text_format, charCount),
+                suggestion = context.getString(R.string.debug_ocr_rescan_better_format)
             ))
         }
         
         // Check for special characters indicating OCR errors
-        val specialCharCount = rawText.count { it == '�' || it == '?' }
+        val specialCharCount = rawText.count { it == '\uFFFD' || it == '?' }
         if (specialCharCount > charCount * 0.05) {  // More than 5% special chars
             issues.add(DebugIssue(
                 severity = IssueSeverity.WARNING,
                 category = "OCR_QUALITY",
-                message = "High number of unrecognized characters detected",
-                suggestion = "OCR quality may be poor, consider re-scanning"
+                message = context.getString(R.string.debug_ocr_unrecognized_chars),
+                suggestion = context.getString(R.string.debug_ocr_poor_quality)
             ))
         }
         
@@ -139,14 +142,14 @@ object DebugIssueDetector {
             issues.add(DebugIssue(
                 severity = IssueSeverity.INFO,
                 category = "PERFORMANCE",
-                message = "Processing took ${processingTimeMs / 1000.0}s",
-                suggestion = "Consider using PDF format for faster processing"
+                message = context.getString(R.string.debug_performance_slow_format, processingTimeMs / 1000.0),
+                suggestion = context.getString(R.string.debug_suggestion_use_pdf)
             ))
         } else {
             issues.add(DebugIssue(
                 severity = IssueSeverity.INFO,
                 category = "PERFORMANCE",
-                message = "Processing completed in ${processingTimeMs}ms"
+                message = context.getString(R.string.debug_performance_fast_format, processingTimeMs)
             ))
         }
         
@@ -156,7 +159,7 @@ object DebugIssueDetector {
             issues.add(DebugIssue(
                 severity = IssueSeverity.INFO,
                 category = "SUMMARY",
-                message = "Successfully parsed $successCount/${transactions.size} transactions with good confidence"
+                message = context.getString(R.string.debug_summary_parsed_format, successCount, transactions.size)
             ))
         }
         

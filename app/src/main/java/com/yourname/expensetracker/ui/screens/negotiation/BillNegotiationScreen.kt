@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.negotiation
 
+import androidx.annotation.StringRes
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -16,14 +17,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine
 import java.text.NumberFormat
 import java.util.Locale
+
+enum class NegotiationOutcome(@StringRes val displayNameRes: Int) {
+    SUCCESS(R.string.negotiation_outcome_success),
+    PARTIAL(R.string.negotiation_outcome_partial),
+    FAILED(R.string.negotiation_outcome_failed),
+    CANCELLED(R.string.negotiation_outcome_cancelled),
+    PENDING(R.string.negotiation_outcome_pending)
+}
+
+enum class NegotiationPower(@StringRes val displayNameRes: Int) {
+    STRONG(R.string.negotiation_power_strong),
+    MODERATE(R.string.negotiation_power_moderate),
+    WEAK(R.string.negotiation_power_weak),
+    POOR(R.string.negotiation_power_poor)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,10 +62,10 @@ fun BillNegotiationScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Bill Negotiation") },
+                title = { Text(stringResource(R.string.bill_negotiation_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
+                        Icon(Icons.Default.ArrowBack, stringResource(R.string.action_back))
                     }
                 }
             )
@@ -80,7 +98,7 @@ fun BillNegotiationScreen(
                             modifier = Modifier.padding(20.dp)
                         ) {
                             Text(
-                                text = "Potential Savings",
+                                text = stringResource(R.string.bill_negotiation_potential_savings),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                             )
@@ -96,7 +114,7 @@ fun BillNegotiationScreen(
                             )
                             
                             Text(
-                                text = "per year from ${opportunities.size} negotiable bills",
+                                text = stringResource(R.string.bill_negotiation_savings_subtitle_format, opportunities.size),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                             )
@@ -203,12 +221,18 @@ fun NegotiationOpportunityCard(
                 }
                 
                 // Power indicator
+                val powerLabel = when (opportunity.negotiationPower) {
+                    SmartBillNegotiationEngine.NegotiationPower.STRONG -> stringResource(R.string.negotiation_power_strong)
+                    SmartBillNegotiationEngine.NegotiationPower.MODERATE -> stringResource(R.string.negotiation_power_moderate)
+                    SmartBillNegotiationEngine.NegotiationPower.WEAK -> stringResource(R.string.negotiation_power_weak)
+                    SmartBillNegotiationEngine.NegotiationPower.POOR -> stringResource(R.string.negotiation_power_poor)
+                }
                 Surface(
                     color = powerColor.copy(alpha = 0.2f),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Text(
-                        text = opportunity.negotiationPower.name,
+                        text = powerLabel,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelMedium,
                         color = powerColor
@@ -224,7 +248,7 @@ fun NegotiationOpportunityCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 PriceColumn(
-                    label = "Current",
+                    label = stringResource(R.string.bill_negotiation_current_label),
                     price = opportunity.currentPrice,
                     isStrikethrough = true
                 )
@@ -237,7 +261,7 @@ fun NegotiationOpportunityCard(
                 )
                 
                 PriceColumn(
-                    label = "Target",
+                    label = stringResource(R.string.bill_negotiation_target_label),
                     price = opportunity.competitivePrice,
                     isHighlight = true
                 )
@@ -246,7 +270,7 @@ fun NegotiationOpportunityCard(
                     horizontalAlignment = Alignment.End
                 ) {
                     Text(
-                        text = "Save",
+                        text = stringResource(R.string.bill_negotiation_save_label),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -257,7 +281,7 @@ fun NegotiationOpportunityCard(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "/month",
+                        text = stringResource(R.string.bill_negotiation_per_month),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -271,7 +295,7 @@ fun NegotiationOpportunityCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Success Probability: ${opportunity.successProbability}%",
+                    text = stringResource(R.string.bill_negotiation_success_probability_format, opportunity.successProbability),
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f)
                 )
@@ -295,7 +319,7 @@ fun NegotiationOpportunityCard(
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 Text(
-                    text = "Alternatives: ${opportunity.alternativeProviders.joinToString(", ")}",
+                    text = stringResource(R.string.bill_negotiation_alternatives_format, opportunity.alternativeProviders.joinToString(", ")),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -314,7 +338,7 @@ fun NegotiationOpportunityCard(
                 ) {
                     Icon(Icons.Default.Chat, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("View Script")
+                    Text(stringResource(R.string.bill_negotiation_view_script))
                 }
                 
                 Button(
@@ -323,7 +347,7 @@ fun NegotiationOpportunityCard(
                 ) {
                     Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Record Outcome")
+                    Text(stringResource(R.string.bill_negotiation_record_outcome))
                 }
             }
         }
@@ -398,7 +422,7 @@ fun NegotiationScriptDialog(
         onDismissRequest = onDismiss,
         title = { 
             Column {
-                Text("Negotiation Script")
+                Text(stringResource(R.string.bill_negotiation_script_title))
                 Text(
                     text = opportunity.serviceName,
                     style = MaterialTheme.typography.bodySmall,
@@ -415,14 +439,14 @@ fun NegotiationScriptDialog(
             ) {
                 // Opening
                 ScriptSection(
-                    title = "Opening",
+                    title = stringResource(R.string.bill_negotiation_opening),
                     content = script.opening,
                     isHighlight = true
                 )
                 
                 // Talking Points
                 ScriptSection(
-                    title = "Key Talking Points",
+                    title = stringResource(R.string.bill_negotiation_key_talking_points),
                     content = script.talkingPoints.joinToString("\n• ", prefix = "• ")
                 )
                 
@@ -431,7 +455,7 @@ fun NegotiationScriptDialog(
                     Spacer(modifier = Modifier.height(16.dp))
                     
                     Text(
-                        text = "Mention These Offers:",
+                        text = stringResource(R.string.bill_negotiation_mention_offers),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -443,21 +467,21 @@ fun NegotiationScriptDialog(
                 
                 // Close
                 ScriptSection(
-                    title = "Closing Statement",
+                    title = stringResource(R.string.bill_negotiation_closing_statement),
                     content = script.close,
                     isHighlight = true
                 )
                 
                 // Fallback
                 ScriptSection(
-                    title = "If They Say No",
+                    title = stringResource(R.string.bill_negotiation_fallback_ask),
                     content = script.fallbackAsk
                 )
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text(stringResource(R.string.action_close))
             }
         }
     )
@@ -526,7 +550,7 @@ fun RetentionOfferCard(offer: SmartBillNegotiationEngine.RetentionOffer) {
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = "Duration: ${offer.duration}",
+                    text = stringResource(R.string.bill_negotiation_duration_format, offer.duration),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -542,7 +566,7 @@ fun RetentionOfferCard(offer: SmartBillNegotiationEngine.RetentionOffer) {
                 )
             } ?: offer.discountPercent?.let {
                 Text(
-                    text = "${String.format("%.0f", it)}% off",
+                    text = stringResource(R.string.bill_negotiation_discount_percent_format, it),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold
@@ -565,21 +589,21 @@ fun OutcomeRecordingDialog(
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Record Negotiation Outcome") },
+        title = { Text(stringResource(R.string.bill_negotiation_record_outcome_title)) },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "Service: ${opportunity.serviceName}",
+                    text = stringResource(R.string.bill_negotiation_service_label_format, opportunity.serviceName),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold
                 )
                 
                 // Outcome selection
                 Text(
-                    text = "Outcome",
+                    text = stringResource(R.string.bill_negotiation_outcome_label),
                     style = MaterialTheme.typography.labelMedium
                 )
                 
@@ -597,7 +621,7 @@ fun OutcomeRecordingDialog(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = outcome.displayName,
+                                text = stringResource(outcome.displayNameRes),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
@@ -609,8 +633,8 @@ fun OutcomeRecordingDialog(
                     OutlinedTextField(
                         value = savingsAmount,
                         onValueChange = { savingsAmount = it },
-                        label = { Text("Actual Monthly Savings") },
-                        placeholder = { Text("e.g., 15.00") },
+                        label = { Text(stringResource(R.string.bill_negotiation_actual_savings_label)) },
+                        placeholder = { Text(stringResource(R.string.bill_negotiation_savings_placeholder)) },
                         prefix = { Text(numberFormat.currency.symbol) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth()
@@ -621,8 +645,8 @@ fun OutcomeRecordingDialog(
                 OutlinedTextField(
                     value = notes,
                     onValueChange = { notes = it },
-                    label = { Text("Notes (optional)") },
-                    placeholder = { Text("e.g., Called provider, mentioned competitor offer...") },
+                    label = { Text(stringResource(R.string.bill_negotiation_notes_label)) },
+                    placeholder = { Text(stringResource(R.string.bill_negotiation_notes_placeholder)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3
                 )
@@ -637,23 +661,15 @@ fun OutcomeRecordingDialog(
                     onSave(selectedOutcome, savings, notes)
                 }
             ) {
-                Text("Save")
+                Text(stringResource(R.string.action_save))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
-}
-
-enum class NegotiationOutcome(val displayName: String) {
-    SUCCESS("Successful - Got discount"),
-    PARTIAL("Partial - Some improvement"),
-    FAILED("Failed - No change"),
-    CANCELLED("Cancelled service instead"),
-    PENDING("Still in progress")
 }
 
 @Composable
@@ -675,7 +691,7 @@ fun EmptyNegotiationState() {
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "No Negotiation Opportunities",
+            text = stringResource(R.string.bill_negotiation_empty_title),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
@@ -683,7 +699,7 @@ fun EmptyNegotiationState() {
         Spacer(modifier = Modifier.height(8.dp))
         
         Text(
-            text = "Your current bills are already at competitive rates. Great job managing your subscriptions!",
+            text = stringResource(R.string.bill_negotiation_empty_subtitle),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center

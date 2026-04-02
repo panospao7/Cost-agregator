@@ -206,16 +206,16 @@ class HomeViewModel @Inject constructor(
                                 entity == null -> AiLoadState.Idle
                                 entity.status == AiArtifactStatus.RUNNING -> AiLoadState.Loading
                                 entity.status == AiArtifactStatus.READY && entity.summaryText != null -> {
-                                    AiLoadState.Ready(
-                                        DashboardBriefingUi(
-                                            title = UiText.StringResource(R.string.home_ai_briefing_title),
-                                            text  = UiText.from(entity.summaryText),
-                                            icon  = "✨",
-                                            isAi  = true,
-                                            runtimeStatusMessage = runtimeStatus,
-                                            diagnostics = entity.toDiagnosticsOrNull()?.toDisplayText()
-                                        )
+                                AiLoadState.Ready(
+                                    DashboardBriefingUi(
+                                        title = UiText.StringResource(R.string.home_ai_briefing_title),
+                                        text  = UiText.from(entity.summaryText!!),
+                                        icon  = "✨",
+                                        isAi  = true,
+                                        runtimeStatusMessage = runtimeStatus,
+                                        diagnostics = entity.toDiagnosticsOrNull()?.toDisplayText()
                                     )
+                                )
                                 }
                                 entity.status == AiArtifactStatus.FAILED ->
                                     AiLoadState.Error(runtimeStatus ?: entity.errorMessage ?: application.getString(R.string.home_error_generation_failed))

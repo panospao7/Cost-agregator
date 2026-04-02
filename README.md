@@ -265,3 +265,5 @@ copies or substantial portions of the Software.
 **Made with ❤️ using Kotlin and Jetpack Compose**
 
 *Last updated: March 31, 2026*
+
+> ✅ Smoke test passed — workflow system operational (2026-04-01)

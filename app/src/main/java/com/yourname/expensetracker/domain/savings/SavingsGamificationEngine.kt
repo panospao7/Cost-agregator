@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.domain.savings
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -17,7 +19,7 @@ data class SavingsStreak(
 
 data class SavingsAchievement(
     val id: String,
-    val title: String,
+    val title: UiText,
     val description: String,
     val icon: String, // Emoji or icon name
     val isUnlocked: Boolean,
@@ -91,7 +93,7 @@ class SavingsGamificationEngine @Inject constructor(
         return listOf(
             SavingsAchievement(
                 id = "first_goal",
-                title = "Goal Setter",
+                title = UiText.from(R.string.domain_savings_goal_setter),
                 description = "Create your first savings goal",
                 icon = "🎯",
                 isUnlocked = goalCount >= 1,
@@ -101,7 +103,7 @@ class SavingsGamificationEngine @Inject constructor(
             ),
             SavingsAchievement(
                 id = "saving_streak_7",
-                title = "Week Warrior",
+                title = UiText.from(R.string.domain_savings_week_warrior),
                 description = "Save for 7 consecutive days",
                 icon = "🔥",
                 isUnlocked = false, // Would track daily
@@ -111,7 +113,7 @@ class SavingsGamificationEngine @Inject constructor(
             ),
             SavingsAchievement(
                 id = "century_saver",
-                title = "Century Club",
+                title = UiText.from(R.string.domain_savings_century_club),
                 description = "Save €100 total",
                 icon = "💯",
                 isUnlocked = totalSaved >= 100,
@@ -121,7 +123,7 @@ class SavingsGamificationEngine @Inject constructor(
             ),
             SavingsAchievement(
                 id = "goal_crusher",
-                title = "Goal Crusher",
+                title = UiText.from(R.string.domain_savings_goal_crusher),
                 description = "Complete your first savings goal",
                 icon = "🏆",
                 isUnlocked = completedGoals >= 1,
@@ -132,7 +134,7 @@ class SavingsGamificationEngine @Inject constructor(
             ),
             SavingsAchievement(
                 id = "thousand_saver",
-                title = "Grand Saver",
+                title = UiText.from(R.string.domain_savings_grand_saver),
                 description = "Save €1,000 total",
                 icon = "💰",
                 isUnlocked = totalSaved >= 1000,

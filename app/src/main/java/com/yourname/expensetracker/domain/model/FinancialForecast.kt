@@ -49,7 +49,7 @@ data class WeatherNarrative(
 )
 
 data class NarrativeSection(
-    val title: String,
+    val title: UiText,
     val icon: String,
     val items: List<String>
 )

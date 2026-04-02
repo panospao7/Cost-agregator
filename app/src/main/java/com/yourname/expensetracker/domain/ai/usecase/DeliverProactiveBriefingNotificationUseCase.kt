@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
+import android.content.Context
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
@@ -11,6 +13,7 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
+    private val context: Context,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiEngagementRepository: AiEngagementRepository,
@@ -38,7 +41,7 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
         val summary = artifact.summaryText?.trim()?.takeIf { it.isNotBlank() } ?: return
         notificationService.sendAiBriefingReady(
             notificationId = targetKey.hashCode(),
-            title = "Your AI briefing is ready",
+            title = context.getString(R.string.notification_briefing_ready_title),
             message = summary.take(180),
             targetKey = targetKey
         )

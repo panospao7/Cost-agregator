@@ -15,11 +15,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
+import com.yourname.expensetracker.domain.model.asString
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -40,17 +43,17 @@ fun LifestyleInflationScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Lifestyle Inflation") },
+                title = { Text(stringResource(R.string.lifestyle_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
+                        Icon(Icons.Default.ArrowBack, stringResource(R.string.action_back))
                     }
                 },
                 actions = {
                     var expanded by remember { mutableStateOf(false) }
                     Box {
                         TextButton(onClick = { expanded = true }) {
-                            Text("$selectedPeriod months")
+                            Text(stringResource(R.string.lifestyle_period_format, selectedPeriod))
                             Icon(Icons.Default.ArrowDropDown, null)
                         }
                         DropdownMenu(
@@ -59,7 +62,7 @@ fun LifestyleInflationScreen(
                         ) {
                             listOf(6, 12, 24).forEach { months ->
                                 DropdownMenuItem(
-                                    text = { Text("$months months") },
+                                    text = { Text(stringResource(R.string.lifestyle_period_format, months)) },
                                     onClick = {
                                         selectedPeriod = months
                                         expanded = false
@@ -102,7 +105,7 @@ fun LifestyleInflationScreen(
                     if (data.lifestyleCreepAlerts.isNotEmpty()) {
                         item {
                             Text(
-                                text = "⚠️ Lifestyle Creep Alerts",
+                                text = stringResource(R.string.lifestyle_creep_alerts_title),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.error
@@ -123,7 +126,7 @@ fun LifestyleInflationScreen(
                     if (data.recommendations.isNotEmpty()) {
                         item {
                             Text(
-                                text = "💡 Recommendations",
+                                text = stringResource(R.string.lifestyle_recommendations_title),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -168,7 +171,7 @@ fun LifestyleOverviewCard(report: LifestyleInflationDetector.LifestyleInflationR
             modifier = Modifier.padding(20.dp)
         ) {
             Text(
-                text = "Lifestyle Inflation Analysis",
+                text = stringResource(R.string.lifestyle_analysis_title),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -187,7 +190,7 @@ fun LifestyleOverviewCard(report: LifestyleInflationDetector.LifestyleInflationR
                 Spacer(modifier = Modifier.width(8.dp))
                 
                 Text(
-                    text = if (report.lifestyleInflationRate > 0) "inflation rate" else "deflation rate",
+                    text = if (report.lifestyleInflationRate > 0) stringResource(R.string.lifestyle_inflation_rate) else stringResource(R.string.lifestyle_deflation_rate),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -198,13 +201,13 @@ fun LifestyleOverviewCard(report: LifestyleInflationDetector.LifestyleInflationR
             Text(
                 text = when {
                     report.lifestyleInflationRate > 0.1 -> 
-                        "⚠️ Your lifestyle is inflating faster than your income"
+                        stringResource(R.string.lifestyle_status_high_inflation)
                     report.lifestyleInflationRate > 0.05 -> 
-                        "⚡ Spending is growing slightly faster than income"
+                        stringResource(R.string.lifestyle_status_moderate_inflation)
                     report.lifestyleInflationRate > -0.05 -> 
-                        "✅ Your lifestyle inflation is well controlled"
+                        stringResource(R.string.lifestyle_status_controlled)
                     else -> 
-                        "🎉 Great! You're spending less even with stable/increased income"
+                        stringResource(R.string.lifestyle_status_deflation)
                 },
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -216,22 +219,22 @@ fun LifestyleOverviewCard(report: LifestyleInflationDetector.LifestyleInflationR
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 MetricItem(
-                    label = "Income Growth",
+                    label = stringResource(R.string.lifestyle_income_growth),
                     value = numberFormat.format(report.incomeGrowthRate),
                     isPositive = report.incomeGrowthRate > 0
                 )
                 
                 MetricItem(
-                    label = "Spending Growth",
+                    label = stringResource(R.string.lifestyle_spending_growth),
                     value = numberFormat.format(report.spendingGrowthRate),
                     isPositive = report.spendingGrowthRate < report.incomeGrowthRate
                 )
                 
                 MetricItem(
-                    label = "Savings Rate",
+                    label = stringResource(R.string.lifestyle_savings_rate),
                     value = report.monthlyData.lastOrNull()?.let { 
                         numberFormat.format(it.savingsRate / 100) 
-                    } ?: "N/A",
+                    } ?: stringResource(R.string.label_no_data),
                     isPositive = (report.monthlyData.lastOrNull()?.savingsRate ?: 0.0) > 20
                 )
             }
@@ -270,7 +273,7 @@ fun CorrelationMetricsCard(report: LifestyleInflationDetector.LifestyleInflation
             modifier = Modifier.padding(16.dp)
         ) {
             Text(
-                text = "Income-Spending Relationship",
+                text = stringResource(R.string.lifestyle_relationship_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -283,7 +286,7 @@ fun CorrelationMetricsCard(report: LifestyleInflationDetector.LifestyleInflation
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Correlation",
+                        text = stringResource(R.string.lifestyle_correlation),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
@@ -315,7 +318,7 @@ fun CorrelationMetricsCard(report: LifestyleInflationDetector.LifestyleInflation
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Income Elasticity",
+                        text = stringResource(R.string.lifestyle_income_elasticity),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
@@ -333,11 +336,12 @@ fun CorrelationMetricsCard(report: LifestyleInflationDetector.LifestyleInflation
                 Box(
                     modifier = Modifier.weight(2f)
                 ) {
+                    val elasticityPercent = String.format("%.0f", report.incomeElasticity * 100)
                     Text(
                         text = when {
-                            report.incomeElasticity > 1.5 -> "⚠️ For every 1% income ↑, spending ↑ ${String.format("%.0f", report.incomeElasticity * 100)}%"
-                            report.incomeElasticity > 1.0 -> "⚡ Spending grows faster than income"
-                            else -> "✅ Spending growth is under control"
+                            report.incomeElasticity > 1.5 -> stringResource(R.string.lifestyle_elasticity_high_format, elasticityPercent)
+                            report.incomeElasticity > 1.0 -> stringResource(R.string.lifestyle_elasticity_moderate)
+                            else -> stringResource(R.string.lifestyle_elasticity_controlled)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -411,17 +415,17 @@ fun CreepAlertCard(alert: LifestyleInflationDetector.LifestyleCreepAlert) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Income: +${String.format("%.1f", alert.incomeGrowthPercent)}%",
+                    text = stringResource(R.string.lifestyle_income_format, alert.incomeGrowthPercent),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Spending: +${String.format("%.1f", alert.spendingGrowthPercent)}%",
+                    text = stringResource(R.string.lifestyle_spending_format, alert.spendingGrowthPercent),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
                 Text(
-                    text = "Discretionary: +${String.format("%.1f", alert.discretionaryGrowthPercent)}%",
+                    text = stringResource(R.string.lifestyle_discretionary_format, alert.discretionaryGrowthPercent),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.tertiary
                 )
@@ -441,7 +445,7 @@ fun MonthlyTrendCard(monthlyData: List<LifestyleInflationDetector.MonthlyLifesty
             modifier = Modifier.padding(16.dp)
         ) {
             Text(
-                text = "Monthly Breakdown",
+                text = stringResource(R.string.lifestyle_monthly_breakdown),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -517,9 +521,9 @@ fun MonthlyTrendCard(monthlyData: List<LifestyleInflationDetector.MonthlyLifesty
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                LegendItem(color = MaterialTheme.colorScheme.outline, label = "Essential")
-                LegendItem(color = MaterialTheme.colorScheme.tertiary, label = "Discretionary")
-                LegendItem(color = MaterialTheme.colorScheme.primary, label = "Savings")
+                LegendItem(color = MaterialTheme.colorScheme.outline, label = stringResource(R.string.lifestyle_legend_essential))
+                LegendItem(color = MaterialTheme.colorScheme.tertiary, label = stringResource(R.string.lifestyle_legend_discretionary))
+                LegendItem(color = MaterialTheme.colorScheme.primary, label = stringResource(R.string.lifestyle_legend_savings))
             }
         }
     }
@@ -576,7 +580,7 @@ fun RecommendationCard(recommendation: LifestyleInflationDetector.LifestyleRecom
                 Spacer(modifier = Modifier.width(8.dp))
                 
                 Text(
-                    text = recommendation.title,
+                    text = recommendation.title.asString(),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -606,7 +610,7 @@ fun RecommendationCard(recommendation: LifestyleInflationDetector.LifestyleRecom
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 Text(
-                    text = "Action Items:",
+                    text = stringResource(R.string.lifestyle_action_items),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -652,7 +656,7 @@ fun HedonicAdaptationCard(score: Double) {
                 Spacer(modifier = Modifier.width(8.dp))
                 
                 Text(
-                    text = "Hedonic Adaptation Score",
+                    text = stringResource(R.string.lifestyle_hedonic_score),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -675,9 +679,9 @@ fun HedonicAdaptationCard(score: Double) {
             
             Text(
                 text = when {
-                    score > 70 -> "High volatility in discretionary spending suggests hedonic treadmill - each purchase brings less satisfaction"
-                    score > 40 -> "Moderate spending variation - watch for lifestyle inflation patterns"
-                    else -> "Stable discretionary spending habits - good control over lifestyle inflation"
+                    score > 70 -> stringResource(R.string.lifestyle_hedonic_high)
+                    score > 40 -> stringResource(R.string.lifestyle_hedonic_moderate)
+                    else -> stringResource(R.string.lifestyle_hedonic_controlled)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -721,7 +725,7 @@ fun EmptyState(
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "No Data Available",
+            text = stringResource(R.string.lifestyle_no_data_title),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
@@ -729,7 +733,7 @@ fun EmptyState(
         Spacer(modifier = Modifier.height(8.dp))
         
         Text(
-            text = "Add income and spending transactions to see lifestyle inflation analysis",
+            text = stringResource(R.string.lifestyle_no_data_subtitle),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -739,7 +743,7 @@ fun EmptyState(
         Spacer(modifier = Modifier.height(24.dp))
         
         Button(onClick = onRetry) {
-            Text("Retry Analysis")
+            Text(stringResource(R.string.lifestyle_retry_button))
         }
     }
 }

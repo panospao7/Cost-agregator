@@ -15,6 +15,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
 
@@ -26,9 +28,9 @@ fun DedupeAssistCard(
     modifier: Modifier = Modifier
 ) {
     val title = when (suggestion.verdict) {
-        DuplicateVerdict.LIKELY_DUPLICATE -> "AI thinks this may duplicate an existing record"
-        DuplicateVerdict.LIKELY_DISTINCT -> "AI thinks this likely is a distinct transaction"
-        DuplicateVerdict.UNCERTAIN -> "AI is unsure whether this is a duplicate"
+        DuplicateVerdict.LIKELY_DUPLICATE -> stringResource(R.string.ai_dedupe_verdict_duplicate)
+        DuplicateVerdict.LIKELY_DISTINCT -> stringResource(R.string.ai_dedupe_verdict_distinct)
+        DuplicateVerdict.UNCERTAIN -> stringResource(R.string.ai_dedupe_verdict_uncertain)
     }
 
     Card(
@@ -45,7 +47,7 @@ fun DedupeAssistCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "AI Duplicate Check",
+                text = stringResource(R.string.ai_dedupe_title),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -70,11 +72,11 @@ fun DedupeAssistCard(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onDismiss) {
-                    Text("Dismiss")
+                    Text(stringResource(R.string.action_dismiss))
                 }
                 suggestion.confidence?.let {
                     Text(
-                        text = "${(it * 100).toInt()}% confidence",
+                        text = stringResource(R.string.ai_dedupe_confidence_format, (it * 100).toInt()),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 12.dp)

@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
@@ -45,6 +47,30 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.*
 import java.util.Currency
+
+@Composable
+private fun getTransactionTypeLabel(type: TransactionType): String {
+    return when (type) {
+        TransactionType.PURCHASE -> stringResource(R.string.transaction_type_purchase)
+        TransactionType.DEPOSIT -> stringResource(R.string.transaction_type_deposit)
+        TransactionType.WITHDRAWAL -> stringResource(R.string.transaction_type_withdrawal)
+        TransactionType.TRANSFER -> stringResource(R.string.transaction_type_transfer)
+        TransactionType.UNKNOWN -> stringResource(R.string.transaction_type_unknown)
+    }
+}
+
+@Composable
+private fun getRecurrenceFrequencyLabel(frequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency): String {
+    return when (frequency) {
+        com.yourname.expensetracker.domain.model.RecurrenceFrequency.WEEKLY -> stringResource(R.string.recurrence_weekly)
+        com.yourname.expensetracker.domain.model.RecurrenceFrequency.BIWEEKLY -> stringResource(R.string.recurrence_biweekly)
+        com.yourname.expensetracker.domain.model.RecurrenceFrequency.MONTHLY -> stringResource(R.string.recurrence_monthly)
+        com.yourname.expensetracker.domain.model.RecurrenceFrequency.QUARTERLY -> stringResource(R.string.recurrence_quarterly)
+        com.yourname.expensetracker.domain.model.RecurrenceFrequency.SEMI_ANNUALLY -> stringResource(R.string.recurrence_semi_annually)
+        com.yourname.expensetracker.domain.model.RecurrenceFrequency.ANNUALLY -> stringResource(R.string.recurrence_annually)
+        com.yourname.expensetracker.domain.model.RecurrenceFrequency.IRREGULAR -> stringResource(R.string.recurrence_irregular)
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -147,6 +173,7 @@ fun AddExpenseSheet(
                 )
 
                 // === Amount Field ===
+                val amountCd = stringResource(R.string.add_expense_amount_cd, state.amount)
                 OutlinedTextField(
                     value = state.amount,
                     onValueChange = { viewModel.updateAmount(it) },
@@ -165,7 +192,7 @@ fun AddExpenseSheet(
                     leadingIcon = { Text(Currency.getInstance("EUR").symbol, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .semantics { contentDescription = "Amount field, current value ${state.amount} Euro" }
+                        .semantics { contentDescription = amountCd }
                 )
 
                 // === Payment Method ===
@@ -178,23 +205,35 @@ fun AddExpenseSheet(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    val cardLabel = stringResource(com.yourname.expensetracker.R.string.payment_method_card)
+                    val cashLabel = stringResource(com.yourname.expensetracker.R.string.payment_method_cash)
+                    val transferLabel = stringResource(com.yourname.expensetracker.R.string.payment_method_transfer)
+                    val selectedStr = stringResource(R.string.add_expense_selected)
+                    val notSelectedStr = stringResource(R.string.add_expense_not_selected)
+                    val cardCd = stringResource(R.string.add_expense_payment_method_cd_format, cardLabel, if (state.paymentMethod == PaymentMethod.CARD) selectedStr else notSelectedStr)
+                    val cashCd = stringResource(R.string.add_expense_payment_method_cd_format, cashLabel, if (state.paymentMethod == PaymentMethod.CASH) selectedStr else notSelectedStr)
+                    val transferCd = stringResource(R.string.add_expense_payment_method_cd_format, transferLabel, if (state.paymentMethod == PaymentMethod.BANK_TRANSFER) selectedStr else notSelectedStr)
+                    
                     PaymentMethodChip(
-                        label = stringResource(com.yourname.expensetracker.R.string.payment_method_card),
+                        label = cardLabel,
                         selected = state.paymentMethod == PaymentMethod.CARD,
                         onClick = { viewModel.selectPaymentMethod(PaymentMethod.CARD) },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        contentDescription = cardCd
                     )
                     PaymentMethodChip(
-                        label = stringResource(com.yourname.expensetracker.R.string.payment_method_cash),
+                        label = cashLabel,
                         selected = state.paymentMethod == PaymentMethod.CASH,
                         onClick = { viewModel.selectPaymentMethod(PaymentMethod.CASH) },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        contentDescription = cashCd
                     )
                     PaymentMethodChip(
-                        label = stringResource(com.yourname.expensetracker.R.string.payment_method_transfer),
+                        label = transferLabel,
                         selected = state.paymentMethod == PaymentMethod.BANK_TRANSFER,
                         onClick = { viewModel.selectPaymentMethod(PaymentMethod.BANK_TRANSFER) },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        contentDescription = transferCd
                     )
                 }
 
@@ -217,6 +256,7 @@ fun AddExpenseSheet(
                 )
 
                 // === Transaction Type (collapsible) ===
+                val transactionTypeLabel = getTransactionTypeLabel(state.transactionType)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -225,8 +265,7 @@ fun AddExpenseSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        stringResource(com.yourname.expensetracker.R.string.transaction_type_prefix, state.transactionType.name.lowercase()
-                            .replaceFirstChar { it.uppercase() }),
+                        stringResource(R.string.transaction_type_prefix, transactionTypeLabel),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Medium
                     )
@@ -243,12 +282,13 @@ fun AddExpenseSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         TransactionType.values().filter { it != TransactionType.UNKNOWN }.forEach { type ->
+                            val typeLabel = getTransactionTypeLabel(type)
                             FilterChip(
                                 selected = state.transactionType == type,
                                 onClick = { viewModel.selectTransactionType(type) },
                                 label = {
                                     Text(
-                                        type.name.lowercase().replaceFirstChar { it.uppercase() },
+                                        typeLabel,
                                         fontSize = 12.sp
                                     )
                                 }
@@ -324,11 +364,12 @@ fun AddExpenseSheet(
                             com.yourname.expensetracker.domain.model.RecurrenceFrequency.values()
                                 .filter { it != com.yourname.expensetracker.domain.model.RecurrenceFrequency.IRREGULAR }
                                 .forEach { freq ->
+                                    val freqLabel = getRecurrenceFrequencyLabel(freq)
                                     FilterChip(
                                         selected = state.recurrenceFrequency == freq,
                                         onClick = { viewModel.setRecurrenceFrequency(freq) },
                                         label = { 
-                                            Text(freq.name.lowercase().replaceFirstChar { it.uppercase() }) 
+                                            Text(freqLabel) 
                                         }
                                     )
                                 }
@@ -343,7 +384,7 @@ fun AddExpenseSheet(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        "Not mine (belongs to someone else)",
+                        stringResource(R.string.add_expense_not_mine),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Medium
                     )
@@ -357,7 +398,7 @@ fun AddExpenseSheet(
                     OutlinedTextField(
                         value = state.ownerName,
                         onValueChange = { viewModel.updateOwnerName(it) },
-                        label = { Text("Owner name (e.g., Partner, Roommate)") },
+                        label = { Text(stringResource(R.string.add_expense_owner_name_placeholder)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -372,7 +413,7 @@ fun AddExpenseSheet(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        "Shared expense (split with someone)",
+                        stringResource(R.string.add_expense_shared),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Medium
                     )
@@ -387,7 +428,7 @@ fun AddExpenseSheet(
                         OutlinedTextField(
                             value = state.sharedWithName,
                             onValueChange = { viewModel.updateSharedWithName(it) },
-                            label = { Text("Shared with (name)") },
+                            label = { Text(stringResource(R.string.add_expense_shared_with_label)) },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
@@ -398,18 +439,18 @@ fun AddExpenseSheet(
                             OutlinedTextField(
                                 value = state.mySharePercentage,
                                 onValueChange = { viewModel.updateMySharePercentage(it) },
-                                label = { Text("My share %") },
+                                label = { Text(stringResource(R.string.add_expense_my_share_label)) },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
-                                placeholder = { Text("e.g., 50") }
+                                placeholder = { Text(stringResource(R.string.add_expense_share_placeholder)) }
                             )
                             OutlinedTextField(
                                 value = state.myShareAmount,
                                 onValueChange = { viewModel.updateMyShareAmount(it) },
-                                label = { Text("Or amount") },
+                                label = { Text(stringResource(R.string.add_expense_or_amount_label)) },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
-                                placeholder = { Text("e.g., 25.00") }
+                                placeholder = { Text(stringResource(R.string.add_expense_amount_placeholder_short)) }
                             )
                         }
                     }
@@ -421,7 +462,7 @@ fun AddExpenseSheet(
                 AnimatedVisibility(visible = state.transactionType == TransactionType.TRANSFER) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            "Transfer direction",
+                            stringResource(R.string.add_expense_transfer_direction),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Medium
                         )
@@ -432,23 +473,23 @@ fun AddExpenseSheet(
                             FilterChip(
                                 selected = state.transferDirection == TransferDirection.INCOMING,
                                 onClick = { viewModel.setTransferDirection(TransferDirection.INCOMING) },
-                                label = { Text("Incoming (to me)") },
+                                label = { Text(stringResource(R.string.add_expense_incoming)) },
                                 modifier = Modifier.weight(1f)
                             )
                             FilterChip(
                                 selected = state.transferDirection == TransferDirection.OUTGOING,
                                 onClick = { viewModel.setTransferDirection(TransferDirection.OUTGOING) },
-                                label = { Text("Outgoing (from me)") },
+                                label = { Text(stringResource(R.string.add_expense_outgoing)) },
                                 modifier = Modifier.weight(1f)
                             )
                         }
                         OutlinedTextField(
                             value = state.transferAccountName,
                             onValueChange = { viewModel.updateTransferAccountName(it) },
-                            label = { Text("Account/Person name") },
+                            label = { Text(stringResource(R.string.add_expense_account_name_label)) },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
-                            placeholder = { Text("e.g., Savings account, John, Bank transfer") }
+                            placeholder = { Text(stringResource(R.string.add_expense_account_placeholder)) }
                         )
                     }
                 }
@@ -477,7 +518,7 @@ fun AddExpenseSheet(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                "❌ ${result.message}",
+                                stringResource(R.string.add_expense_error_format, result.message),
                                 modifier = Modifier.padding(12.dp),
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
@@ -609,12 +650,13 @@ fun PaymentMethodChip(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    contentDescription: String = ""
 ) {
     Surface(
         onClick = onClick,
         modifier = modifier.semantics {
-            contentDescription = "$label payment method, ${if (selected) "selected" else "not selected"}"
+            this.contentDescription = contentDescription
         },
         shape = RoundedCornerShape(12.dp),
         color = if (selected)
@@ -656,47 +698,52 @@ fun CategoryGrid(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                row.forEach { category ->
-                    val isSelected = selectedId == category.id
-                    val catColor = remember(category.color) {
-                        try {
-                            Color(android.graphics.Color.parseColor(category.color))
-                        } catch (e: Exception) {
-                            Color.Gray
-                        }
-                    }
-                    Surface(
-                        onClick = { onSelect(category.id) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .semantics {
-                                contentDescription = "${category.name} category, ${if (isSelected) "selected" else "not selected"}"
-                            },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) catColor.copy(alpha = 0.2f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                        border = if (isSelected) androidx.compose.foundation.BorderStroke(
-                            2.dp, catColor
-                        ) else null
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                category.icon,
-                                fontSize = 20.sp,
-                                modifier = Modifier.semantics { contentDescription = "${category.name} icon" }
-                            )
-                            Text(
-                                category.name,
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+            row.forEach { category ->
+                val isSelected = selectedId == category.id
+                val catColor = remember(category.color) {
+                    try {
+                        Color(android.graphics.Color.parseColor(category.color))
+                    } catch (e: Exception) {
+                        Color.Gray
                     }
                 }
+                val selectedStr = stringResource(R.string.add_expense_selected)
+                val notSelectedStr = stringResource(R.string.add_expense_not_selected)
+                val selectedState = if (isSelected) selectedStr else notSelectedStr
+                val categoryCd = stringResource(R.string.add_expense_category_cd_format, category.name, selectedState)
+                val categoryIconCd = stringResource(R.string.add_expense_category_icon_cd, category.name)
+                Surface(
+                    onClick = { onSelect(category.id) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics {
+                            contentDescription = categoryCd
+                        },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) catColor.copy(alpha = 0.2f)
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    border = if (isSelected) androidx.compose.foundation.BorderStroke(
+                        2.dp, catColor
+                    ) else null
+                ) {
+                    Column(
+                        modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            category.icon,
+                            fontSize = 20.sp,
+                            modifier = Modifier.semantics { contentDescription = categoryIconCd }
+                        )
+                        Text(
+                            category.name,
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
                 // Fill remaining space in last row
                 repeat(4 - row.size) {
                     Spacer(modifier = Modifier.weight(1f))
@@ -719,12 +766,13 @@ fun DateSelector(
     )
 
     val formattedDate = dateFormat.format(Instant.ofEpochMilli(dateMs).atZone(ZoneId.systemDefault()))
+    val dateSelectorCd = stringResource(R.string.add_expense_date_selector_cd_format, formattedDate)
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { showDatePicker = true }
-            .semantics { contentDescription = "Date selector, current date $formattedDate, double tap to change" },
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { showDatePicker = true }
+                .semantics { contentDescription = dateSelectorCd },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.service.warranty
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
@@ -34,8 +35,8 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 // HIGH FIX: Use NotificationIdGenerator instead of toInt()
                 notificationService.sendBudgetAlert(
                     notificationId = NotificationIdGenerator.forWarranty(warranty.id, 7),
-                    title = "⚠️ Warranty Expiring Soon",
-                    message = "${warranty.productName} warranty expires in 7 days (${warranty.merchantName})"
+                    title = applicationContext.getString(R.string.warranty_expiring_soon_title),
+                    message = applicationContext.getString(R.string.warranty_expires_in_7_days_format, warranty.productName, warranty.merchantName)
                 )
             }
             
@@ -46,8 +47,8 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 // HIGH FIX: Use NotificationIdGenerator with different offset for 30-day alerts
                 notificationService.sendBudgetAlert(
                     notificationId = NotificationIdGenerator.forWarranty(warranty.id, 30),
-                    title = "📅 Warranty Expiration Reminder",
-                    message = "${warranty.productName} warranty expires in 30 days"
+                    title = applicationContext.getString(R.string.warranty_expiration_reminder_title),
+                    message = applicationContext.getString(R.string.warranty_expires_in_30_days_format, warranty.productName)
                 )
             }
             

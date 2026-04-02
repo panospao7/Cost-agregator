@@ -28,6 +28,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.SplitShare
 import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import com.yourname.expensetracker.domain.split.EnhancedSplitManager
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.NumberFormat
 import java.util.Currency
 import java.util.Locale
@@ -48,9 +50,11 @@ fun VisualSplitEditorScreen(
     val currentSplit by viewModel.currentSplit.collectAsState()
     
     var splitType by remember { mutableStateOf(SplitTemplate.SplitType.EQUAL) }
-    var participants by remember { mutableStateOf(listOf(
-        SplitShare(0, "You", color = "#FF6B6B"),
-        SplitShare(1, "Person 2", color = "#4ECDC4")
+    val youLabel = stringResource(R.string.split_you)
+    val person2Label = stringResource(R.string.visual_split_person_format, 2)
+    var participants by remember(youLabel, person2Label) { mutableStateOf(listOf(
+        SplitShare(0, youLabel, color = "#FF6B6B"),
+        SplitShare(1, person2Label, color = "#4ECDC4")
     )) }
     var showTemplateDialog by remember { mutableStateOf(false) }
     var showSaveTemplateDialog by remember { mutableStateOf(false) }
@@ -84,15 +88,15 @@ fun VisualSplitEditorScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Split Expense") },
+                title = { Text(stringResource(R.string.split_editor_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
+                        Icon(Icons.Default.ArrowBack, stringResource(R.string.visual_split_back_cd))
                     }
                 },
                 actions = {
                     IconButton(onClick = { showTemplateDialog = true }) {
-                        Icon(Icons.Default.Bookmark, "Templates")
+                        Icon(Icons.Default.Bookmark, stringResource(R.string.visual_split_templates_cd))
                     }
                 }
             )
@@ -110,7 +114,7 @@ fun VisualSplitEditorScreen(
                     currentSplit?.let { split ->
                         if (split.remainingAmount != 0.0) {
                             Text(
-                                text = "Remaining: ${numberFormat.format(split.remainingAmount)}",
+                                text = stringResource(R.string.visual_split_remaining_format, numberFormat.format(split.remainingAmount)),
                                 color = if (split.remainingAmount > 0) MaterialTheme.colorScheme.primary 
                                         else MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodyMedium,
@@ -129,7 +133,7 @@ fun VisualSplitEditorScreen(
                         ) {
                             Icon(Icons.Default.Save, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Save Template")
+                            Text(stringResource(R.string.visual_split_save_template))
                         }
                         
                         Button(
@@ -139,7 +143,7 @@ fun VisualSplitEditorScreen(
                             modifier = Modifier.weight(1f),
                             enabled = currentSplit?.remainingAmount == 0.0
                         ) {
-                            Text("Apply Split")
+                            Text(stringResource(R.string.visual_split_apply_split))
                         }
                     }
                 }
@@ -166,7 +170,7 @@ fun VisualSplitEditorScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Total Amount",
+                            text = stringResource(R.string.visual_split_total_amount),
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
@@ -183,7 +187,7 @@ fun VisualSplitEditorScreen(
             // Split Type Selector
             item {
                 Text(
-                    text = "Split Type",
+                    text = stringResource(R.string.visual_split_split_type),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -202,10 +206,10 @@ fun VisualSplitEditorScreen(
                         ) {
                             Text(
                                 when (type) {
-                                    SplitTemplate.SplitType.EQUAL -> "Equal"
-                                    SplitTemplate.SplitType.PERCENTAGE -> "%"
-                                    SplitTemplate.SplitType.CUSTOM_AMOUNT -> "Amount"
-                                    SplitTemplate.SplitType.UNEQUAL -> "Custom"
+                                    SplitTemplate.SplitType.EQUAL -> stringResource(R.string.visual_split_type_equal)
+                                    SplitTemplate.SplitType.PERCENTAGE -> stringResource(R.string.visual_split_type_percentage)
+                                    SplitTemplate.SplitType.CUSTOM_AMOUNT -> stringResource(R.string.visual_split_type_amount)
+                                    SplitTemplate.SplitType.UNEQUAL -> stringResource(R.string.visual_split_type_custom)
                                 }
                             )
                         }
@@ -233,25 +237,26 @@ fun VisualSplitEditorScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Participants (${participants.size})",
+                        text = stringResource(R.string.visual_split_participants_format, participants.size),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     
+                    val personLabel = stringResource(R.string.visual_split_person_format, participants.size + 1)
                     TextButton(
                         onClick = {
                             if (participants.size < 10) {
                                 participants = participants + SplitShare(
                                     participantIndex = participants.size,
-                                    participantName = "Person ${participants.size + 1}",
+                                    participantName = personLabel,
                                     color = getRandomColor(participants.size)
                                 )
                             }
                         },
                         enabled = participants.size < 10
                     ) {
-                        Icon(Icons.Default.Add, null)
-                        Text("Add")
+                        Icon(Icons.Default.Add, stringResource(R.string.visual_split_add_cd))
+                        Text(stringResource(R.string.visual_split_add))
                     }
                 }
             }
@@ -306,14 +311,20 @@ fun VisualSplitEditorScreen(
     if (showTemplateDialog) {
         AlertDialog(
             onDismissRequest = { showTemplateDialog = false },
-            title = { Text("Select Template") },
+            title = { Text(stringResource(R.string.visual_split_select_template)) },
             text = {
                 LazyColumn {
                     items(templates) { template ->
                         ListItem(
                             headlineContent = { Text(template.name) },
                             supportingContent = { 
-                                Text("${template.totalSplits} people • ${template.splitType.name}")
+                                val splitTypeLabel = when (template.splitType) {
+                                    SplitTemplate.SplitType.EQUAL -> stringResource(R.string.split_type_equal)
+                                    SplitTemplate.SplitType.PERCENTAGE -> stringResource(R.string.split_type_percentage)
+                                    SplitTemplate.SplitType.CUSTOM_AMOUNT -> stringResource(R.string.split_type_custom_amount)
+                                    SplitTemplate.SplitType.UNEQUAL -> stringResource(R.string.split_type_custom)
+                                }
+                                Text(stringResource(R.string.visual_split_template_people_type_format, template.totalSplits, splitTypeLabel))
                             },
                             leadingContent = {
                                 Icon(
@@ -337,7 +348,7 @@ fun VisualSplitEditorScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showTemplateDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
             }
         )
@@ -347,13 +358,13 @@ fun VisualSplitEditorScreen(
     if (showSaveTemplateDialog) {
         AlertDialog(
             onDismissRequest = { showSaveTemplateDialog = false },
-            title = { Text("Save as Template") },
+            title = { Text(stringResource(R.string.visual_split_save_as_template)) },
             text = {
                 OutlinedTextField(
                     value = templateName,
                     onValueChange = { templateName = it },
-                    label = { Text("Template Name") },
-                    placeholder = { Text("e.g., Dinner with Friends") }
+                    label = { Text(stringResource(R.string.visual_split_template_name_label)) },
+                    placeholder = { Text(stringResource(R.string.visual_split_template_name_placeholder)) }
                 )
             },
             confirmButton = {
@@ -368,12 +379,12 @@ fun VisualSplitEditorScreen(
                     },
                     enabled = templateName.isNotBlank()
                 ) {
-                    Text("Save")
+                    Text(stringResource(R.string.visual_split_action_save))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showSaveTemplateDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
             }
         )
@@ -436,7 +447,7 @@ fun VisualSplitChart(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "${segment.participantName}: ${String.format("%.1f", segment.percentage)}%",
+                            text = stringResource(R.string.visual_split_segment_format, segment.participantName, String.format("%.1f", segment.percentage)),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -489,14 +500,14 @@ fun ParticipantSplitCard(
                 OutlinedTextField(
                     value = participant.participantName,
                     onValueChange = onNameChange,
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.visual_split_participant_name_label)) },
                     modifier = Modifier.weight(1f),
                     singleLine = true
                 )
                 
                 if (canRemove) {
                     IconButton(onClick = onRemove) {
-                        Icon(Icons.Default.Close, "Remove", tint = MaterialTheme.colorScheme.error)
+                        Icon(Icons.Default.Close, stringResource(R.string.visual_split_remove_cd), tint = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -507,7 +518,7 @@ fun ParticipantSplitCard(
             when (splitType) {
                 SplitTemplate.SplitType.EQUAL -> {
                     Text(
-                        text = "Equal split: ${numberFormat.format(assignedAmount)}",
+                        text = stringResource(R.string.visual_split_equal_split_format, numberFormat.format(assignedAmount)),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -521,14 +532,15 @@ fun ParticipantSplitCard(
                             onValueChange = { 
                                 it.toDoubleOrNull()?.let { onPercentageChange(it) }
                             },
-                            label = { Text("Percentage") },
-                            suffix = { Text("%") },
+                            label = { Text(stringResource(R.string.visual_split_percentage_label)) },
+                            suffix = { Text(stringResource(R.string.visual_split_percentage_suffix)) },
                             modifier = Modifier.width(120.dp),
                             singleLine = true
                         )
                         Spacer(modifier = Modifier.width(12.dp))
+                        val amountPrefix = stringResource(R.string.visual_split_amount_prefix_format, numberFormat.format(assignedAmount))
                         Text(
-                            text = "= ${numberFormat.format(assignedAmount)}",
+                            text = amountPrefix,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
@@ -540,7 +552,7 @@ fun ParticipantSplitCard(
                         onValueChange = { 
                             it.toDoubleOrNull()?.let { onAmountChange(it) }
                         },
-                        label = { Text("Amount") },
+                        label = { Text(stringResource(R.string.visual_split_amount_label)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )

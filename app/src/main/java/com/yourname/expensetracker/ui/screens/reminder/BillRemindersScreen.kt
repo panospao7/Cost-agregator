@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.reminder.BillReminder
 import com.yourname.expensetracker.domain.reminder.ReminderUrgency
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -33,10 +35,10 @@ fun BillRemindersScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Bill Reminders") },
+                title = { Text(stringResource(R.string.bill_reminders_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
                     }
                 }
             )
@@ -55,7 +57,7 @@ fun BillRemindersScreen(
             
             item {
                 Text(
-                    text = "Upcoming Bills",
+                    text = stringResource(R.string.bill_reminders_upcoming),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -88,17 +90,17 @@ private fun MonthlyBillsCard(total: Double) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Text(
-                    text = "Expected Monthly Bills",
-                    style = MaterialTheme.typography.labelLarge
-                )
-                Text(
-                    text = currencyFormat.format(total),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+        Column {
+            Text(
+                text = stringResource(R.string.bill_reminders_expected_monthly),
+                style = MaterialTheme.typography.labelLarge
+            )
+            Text(
+                text = currencyFormat.format(total),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
             
             Icon(
                 imageVector = Icons.Default.Notifications,
@@ -158,11 +160,12 @@ private fun BillReminderCard(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
+                        val statusText = if (reminder.isOverdue) 
+                            stringResource(R.string.bill_reminders_overdue)
+                        else 
+                            stringResource(R.string.bill_reminders_due_in_days_format, reminder.daysUntilDue)
                         Text(
-                            text = if (reminder.isOverdue) 
-                                "⚠️ Overdue!" 
-                            else 
-                                "Due in ${reminder.daysUntilDue} days",
+                            text = statusText,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (reminder.isOverdue || reminder.urgency == ReminderUrgency.CRITICAL)
                                 MaterialTheme.colorScheme.error
@@ -187,7 +190,7 @@ private fun BillReminderCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Due: ${dateFormat.format(java.util.Date(reminder.dueDate))}",
+                    text = stringResource(R.string.bill_reminders_due_format, dateFormat.format(java.util.Date(reminder.dueDate))),
                     style = MaterialTheme.typography.bodySmall
                 )
                 
@@ -198,7 +201,7 @@ private fun BillReminderCard(
                             containerColor = MaterialTheme.colorScheme.tertiary
                         )
                     ) {
-                        Text("Mark Paid")
+                        Text(stringResource(R.string.bill_reminders_mark_paid))
                     }
                 } else {
                     Button(
@@ -207,9 +210,9 @@ private fun BillReminderCard(
                             containerColor = MaterialTheme.colorScheme.error
                         )
                     ) {
-                        Icon(Icons.Default.Warning, null)
+                        Icon(Icons.Default.Warning, contentDescription = null)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Pay Now")
+                        Text(stringResource(R.string.bill_reminders_pay_now))
                     }
                 }
             }

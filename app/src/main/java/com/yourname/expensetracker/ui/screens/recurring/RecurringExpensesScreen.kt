@@ -14,11 +14,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
@@ -191,7 +194,9 @@ fun RecurringExpensesScreen(
     val planned by viewModel.plannedExpenses.collectAsState()
     
     var selectedTabIndex by remember { mutableStateOf(0) }
-    val tabs = listOf("Recurring", "Planned")
+    val recurringTabTitle = stringResource(R.string.recurring_tab_recurring)
+    val plannedTabTitle = stringResource(R.string.recurring_tab_planned)
+    val tabs = listOf(recurringTabTitle, plannedTabTitle)
 
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
@@ -199,13 +204,13 @@ fun RecurringExpensesScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "Manage Upcoming",
+                        stringResource(R.string.recurring_screen_title),
                         color = SemanticColors.TextPrimary
                     ) 
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.recurring_back_cd))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -222,12 +227,17 @@ fun RecurringExpensesScreen(
                 contentColor = MaterialTheme.colorScheme.primary
             ) {
                 tabs.forEachIndexed { index, title ->
+                    val tabStatus = if (selectedTabIndex == index) 
+                        stringResource(R.string.recurring_tab_selected) 
+                    else 
+                        stringResource(R.string.recurring_tab_not_selected)
+                    val tabCd = stringResource(R.string.recurring_tab_cd_format, title, tabStatus)
                     Tab(
                         selected = selectedTabIndex == index,
                         onClick = { selectedTabIndex = index },
                         text = { Text(title) },
                         modifier = Modifier.semantics {
-                            contentDescription = "$title tab, ${if (selectedTabIndex == index) "selected" else "not selected"}"
+                            contentDescription = tabCd
                         }
                     )
                 }
@@ -236,13 +246,14 @@ fun RecurringExpensesScreen(
             if (selectedTabIndex == 0) {
                 // Recurring Tab
                 if (patterns.isEmpty()) {
+                    val emptyRecurringCd = stringResource(R.string.recurring_empty_recurring_cd)
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .semantics { contentDescription = "No recurring expenses found" },
+                            .semantics { contentDescription = emptyRecurringCd },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("No recurring expenses found.")
+                        Text(stringResource(R.string.recurring_empty_recurring_title))
                     }
                 } else {
                     LazyColumn(
@@ -268,13 +279,14 @@ fun RecurringExpensesScreen(
             } else {
                 // Planned Tab
                 if (planned.isEmpty()) {
+                    val emptyPlannedCd = stringResource(R.string.recurring_empty_planned_cd)
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .semantics { contentDescription = "No planned expenses found" },
+                            .semantics { contentDescription = emptyPlannedCd },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("No planned expenses found.")
+                        Text(stringResource(R.string.recurring_empty_planned_title))
                     }
                 } else {
                     LazyColumn(
@@ -300,12 +312,17 @@ fun PlannedExpenseItem(
     expense: com.yourname.expensetracker.domain.model.PlannedExpense,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
+    val priorityText = expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }
+    val cardDesc = stringResource(
+        R.string.recurring_planned_item_cd_format,
+        expense.description,
+        expense.amount,
+        priorityText
+    )
     Card(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        modifier = Modifier.semantics {
-            contentDescription = "${expense.description}, €${String.format("%.2f", expense.amount)}, " +
-                    "${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }} priority"
-        }
+        modifier = Modifier.semantics { contentDescription = cardDesc }
     ) {
         Row(
             modifier = Modifier
@@ -332,15 +349,16 @@ fun PlannedExpenseItem(
                     dateFormat.format(Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()))
                 }
                 Text(
-                    text = "Date: $formattedDate",
+                    text = stringResource(R.string.recurring_date_label, formattedDate),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             
+            val deleteCd = stringResource(R.string.recurring_delete_planned_cd_format, expense.description)
             IconButton(
                 onClick = onDelete,
-                modifier = Modifier.semantics { contentDescription = "Delete planned expense ${expense.description}" }
+                modifier = Modifier.semantics { contentDescription = deleteCd }
             ) {
                 Icon(
                     Icons.Default.Delete, 
@@ -359,21 +377,25 @@ fun RecurringExpenseItem(
     onConfirm: () -> Unit,
     onMerchantClick: () -> Unit = {}
 ) {
+    val context = LocalContext.current
 
     val isManual = remember(pattern.id, pattern.confidence) { 
         pattern.id != null || pattern.confidence >= 0.99f 
     }
     
+    val confirmedText = stringResource(R.string.recurring_item_confirmed_cd)
+    val suggestedText = stringResource(R.string.recurring_item_suggested_cd)
+    
     // Remember expensive string calculations
-    val cardDescription = remember(pattern, isManual) {
+    val cardDescription = remember(pattern, isManual, confirmedText, suggestedText) {
         buildString {
             append("${pattern.merchantName}, ")
             append("${String.format("%.2f", pattern.averageAmount)} ${pattern.currency}, ")
             append("${pattern.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}")
             if (isManual) {
-                append(", Confirmed recurring expense")
+                append(", $confirmedText")
             } else {
-                append(", Suggested pattern, tap to confirm")
+                append(", $suggestedText")
             }
         }
     }
@@ -412,16 +434,17 @@ fun RecurringExpenseItem(
                     dateFormat.format(Instant.ofEpochMilli(pattern.nextExpectedDate).atZone(ZoneId.systemDefault()))
                 }
                 Text(
-                    text = "Next: $formattedDate",
+                    text = stringResource(R.string.recurring_next_label, formattedDate),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             
             if (isManual) {
+                val deleteCd = stringResource(R.string.recurring_delete_rule_cd_format, pattern.merchantName)
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.semantics { contentDescription = "Delete recurring rule for ${pattern.merchantName}" }
+                    modifier = Modifier.semantics { contentDescription = deleteCd }
                 ) {
                     Icon(
                         Icons.Default.Delete, 
@@ -430,10 +453,11 @@ fun RecurringExpenseItem(
                     )
                 }
             } else {
+                val confirmCd = stringResource(R.string.recurring_confirm_cd_format, pattern.merchantName)
                 SuggestionChip(
                     onClick = onConfirm,
-                    label = { Text("Confirm Pattern") },
-                    modifier = Modifier.semantics { contentDescription = "Confirm recurring pattern for ${pattern.merchantName}" }
+                    label = { Text(stringResource(R.string.recurring_confirm_pattern)) },
+                    modifier = Modifier.semantics { contentDescription = confirmCd }
                 )
             }
 

@@ -12,6 +12,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
@@ -62,7 +64,7 @@ fun NoSpendStreakWidget(
                         color = SemanticColors.SuccessGreen
                     ) {
                         Text(
-                            text = "NEW RECORD! 🏆",
+                            text = stringResource(R.string.streak_new_record) + " 🏆",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimary,
@@ -87,7 +89,7 @@ fun NoSpendStreakWidget(
                         MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = if (currentStreak == 1) "day" else "days",
+                    text = if (currentStreak == 1) stringResource(R.string.streak_day) else stringResource(R.string.streak_days),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 4.dp)
@@ -96,9 +98,9 @@ fun NoSpendStreakWidget(
             
             Text(
                 text = if (currentStreak > 0) 
-                    "without spending" 
+                    stringResource(R.string.streak_without_spending)
                 else 
-                    "Start a no-spend streak today!",
+                    stringResource(R.string.streak_start_today),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -143,11 +145,11 @@ fun NoSpendStreakWidget(
                 
                 Text(
                     text = if (isNewRecord) 
-                        "You've beaten your personal best!" 
+                        stringResource(R.string.streak_new_record_message)
                     else if (isNearBest) 
-                        "Almost at your personal best! 💪" 
+                        stringResource(R.string.streak_almost_best) + " 💪"
                     else 
-                        "Personal best: $personalBest days",
+                        stringResource(R.string.streak_personal_best, personalBest),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (isNearBest) SemanticColors.WarningOrange else MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -173,7 +175,7 @@ fun NoSpendStreakWidget(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "dry days",
+                            text = stringResource(R.string.streak_dry_days),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -187,7 +189,7 @@ fun NoSpendStreakWidget(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "of month saved",
+                                text = stringResource(R.string.streak_of_month_saved),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -203,7 +205,7 @@ fun NoSpendStreakWidget(
                                 color = SemanticColors.PrimaryIndigo
                             )
                             Text(
-                                text = "best streak",
+                                text = stringResource(R.string.streak_best),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -269,9 +271,9 @@ fun NoSpendStreakWidgetCompact(
                 Column {
                     Text(
                         text = if (currentStreak > 0) 
-                            "$currentStreak day${if (currentStreak == 1) "" else "s"} no spend" 
+                            stringResource(R.string.streak_no_spend_format, currentStreak, if (currentStreak == 1) "" else "s")
                         else 
-                            "Start a streak!",
+                            stringResource(R.string.streak_start_streak),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -279,9 +281,9 @@ fun NoSpendStreakWidgetCompact(
                     if (currentStreak > 0 && personalBest > 0) {
                         Text(
                             text = if (currentStreak >= personalBest) 
-                                "New record! 🏆" 
+                                stringResource(R.string.streak_new_record_short)
                             else 
-                                "Best: $personalBest days",
+                                stringResource(R.string.streak_best_short, personalBest),
                             style = MaterialTheme.typography.labelSmall,
                             color = if (currentStreak >= personalBest) 
                                 SemanticColors.SuccessGreen 

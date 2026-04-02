@@ -61,7 +61,7 @@ fun LocationCorrectionSheet(
         ) {
             // ── Header ──────────────────────────────────────────────────────
             Text(
-                text = "Correct location",
+                text = stringResource(R.string.location_correct_title),
                 style = MaterialTheme.typography.titleLarge
             )
             Text(

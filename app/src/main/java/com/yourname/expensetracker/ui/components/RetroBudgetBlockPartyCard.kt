@@ -31,6 +31,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 /**
  * Retro 8-bit game style Budget Block Party card - V2 Enhanced Edition.
@@ -161,7 +163,7 @@ private fun RetroHeaderV2(days: List<DayBudgetStatus>) {
         )
         
         Text(
-            text = "BUDGET BLOCKS",
+            text = stringResource(R.string.retro_budget_blocks),
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = 3.sp
@@ -857,7 +859,7 @@ private fun RetroDayAtAGlanceDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "[$dateStr]",
+                            text = stringResource(R.string.retro_date_format, dateStr),
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -900,7 +902,7 @@ private fun RetroDayAtAGlanceDialog(
             
             // Target Breakdown - compact layout
             RetroDialogSection(
-                title = "◄ TARGET BREAKDOWN ►",
+                title = stringResource(R.string.retro_target_breakdown),
                 titleColor = RetroColorsV2.NeonYellow
             ) {
                 Column {
@@ -967,7 +969,7 @@ private fun RetroDayAtAGlanceDialog(
             
             // Actual Spending - compact layout
             RetroDialogSection(
-                title = "◄ ACTUAL SPENDING ►",
+                title = stringResource(R.string.retro_actual_spending),
                 titleColor = RetroColorsV2.NeonYellow
             ) {
                 Column {
@@ -1013,7 +1015,7 @@ private fun RetroDayAtAGlanceDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "> ${exp.merchant.take(18)}",
+                                    text = stringResource(R.string.retro_merchant_format, exp.merchant.take(18)),
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                                     ),
@@ -1038,7 +1040,7 @@ private fun RetroDayAtAGlanceDialog(
                         if (day.topTransactions.size > 3) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "... and ${day.topTransactions.size - 3} more",
+                                text = stringResource(R.string.retro_more_format, day.topTransactions.size - 3),
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                                 ),
@@ -1049,7 +1051,7 @@ private fun RetroDayAtAGlanceDialog(
                     } else if (day.actualSpent == 0.0) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "[NO TRANSACTIONS]",
+                            text = stringResource(R.string.retro_no_transactions),
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                             ),

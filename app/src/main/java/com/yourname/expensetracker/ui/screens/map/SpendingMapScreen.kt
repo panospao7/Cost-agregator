@@ -30,6 +30,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.ui.components.LocationCorrectionSheet
 import com.yourname.expensetracker.ui.components.LocationPermissionDialog
@@ -214,23 +216,25 @@ fun SpendingMapScreen(
                 // Re-centre on device location button
                 if (state.locationPermissionGranted &&
                     state.deviceLatitude != null && state.deviceLongitude != null) {
+                    val centerLocationCd = stringResource(R.string.map_center_my_location_cd)
                     FloatingActionButton(
-                        onClick = { centreOnDeviceRequest = true },  // F3: trigger centre
+                        onClick = { centreOnDeviceRequest = true },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(12.dp)
-                            .semantics { contentDescription = "Center map on my current location" },
+                            .semantics { contentDescription = centerLocationCd },
                         containerColor = MaterialTheme.colorScheme.surface
                     ) {
                         Icon(Icons.Default.MyLocation, contentDescription = null)
                     }
                 } else if (!state.locationPermissionGranted) {
+                    val enableLocationCd = stringResource(R.string.map_enable_location_cd)
                     FloatingActionButton(
                         onClick = { viewModel.onShowPermissionRationale(true) },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(12.dp)
-                            .semantics { contentDescription = "Enable location permission to center map on my location" },
+                            .semantics { contentDescription = enableLocationCd },
                         containerColor = MaterialTheme.colorScheme.surface
                     ) {
                         Icon(Icons.Default.LocationSearching, contentDescription = null)
@@ -260,7 +264,7 @@ fun SpendingMapScreen(
                 val marker = state.selectedMarker
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text(
-                        text = "Multiple shops found — pick the right one:",
+                        text = stringResource(R.string.map_multiple_shops),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
@@ -308,7 +312,7 @@ fun SpendingMapScreen(
                 ) {
                     item {
                         Text(
-                            text = "Top spending places",
+                            text = stringResource(R.string.map_top_spending_places),
                             style = MaterialTheme.typography.titleSmall
                         )
                     }
@@ -493,13 +497,13 @@ private fun MarkerDetailCard(
                     )
                     marker.locationSource?.let { src ->
                         Text(
-                            text = "Source: $src",
+                            text = stringResource(R.string.map_source_format, src),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                TextButton(onClick = onDismiss) { Text("Close") }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.map_close_button)) }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -520,7 +524,7 @@ private fun MarkerDetailCard(
                         )
                     }
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Re-resolve")
+                    Text(stringResource(R.string.map_reresolve_button))
                 }
                 OutlinedButton(onClick = onCorrectPin) {
                     Icon(
@@ -529,7 +533,7 @@ private fun MarkerDetailCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Correct pin")
+                    Text(stringResource(R.string.map_correct_pin_button))
                 }
             }
         }
@@ -556,7 +560,7 @@ private fun LocationStatsBar(located: Int, unlocated: Int) {
                 modifier = Modifier.size(16.dp)
             )
             Text(
-                text = "$located located · $unlocated without location",
+                text = stringResource(R.string.map_stats_format, located, unlocated),
                 style = MaterialTheme.typography.labelMedium
             )
         }
@@ -594,15 +598,16 @@ private fun UnlocatedExpensesPanel(
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
+                    val suffix = if (expenses.size == 1) stringResource(R.string.map_unlocated_suffix_single) else stringResource(R.string.map_unlocated_suffix_plural)
                     Text(
-                        text = "${expenses.size} unlocated expense${if (expenses.size != 1) "s" else ""}",
+                        text = stringResource(R.string.map_unlocated_expenses_format, expenses.size, suffix),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Medium
                     )
                 }
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (expanded) "Collapse" else "Expand"
+                    contentDescription = if (expanded) stringResource(R.string.a11y_collapse) else stringResource(R.string.a11y_expand)
                 )
             }
 
@@ -626,7 +631,7 @@ private fun UnlocatedExpensesPanel(
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Text(
-                                    text = expense.resolvedAddress ?: "No address",
+                                    text = expense.resolvedAddress ?: stringResource(R.string.map_no_address),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -639,7 +644,7 @@ private fun UnlocatedExpensesPanel(
                             IconButton(onClick = { onPinClick(expense) }) {
                                 Icon(
                                     Icons.Default.AddLocation,
-                                    contentDescription = "Pin this expense",
+                                    contentDescription = stringResource(R.string.map_pin_expense_cd),
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }
@@ -675,7 +680,7 @@ private fun PinExpenseSheet(
                 .padding(16.dp)
         ) {
             Text(
-                text = "Pin expense",
+                text = stringResource(R.string.map_pin_expense_title),
                 style = MaterialTheme.typography.titleLarge
             )
             Spacer(modifier = Modifier.height(4.dp))
@@ -717,7 +722,7 @@ private fun PinExpenseSheet(
                     onClick = onDismiss,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
                 Button(
                     onClick = {
@@ -728,7 +733,7 @@ private fun PinExpenseSheet(
                     enabled = selectedLat != null && selectedLon != null,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Save")
+                    Text(stringResource(R.string.action_save))
                 }
             }
 

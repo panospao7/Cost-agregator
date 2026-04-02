@@ -22,6 +22,8 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter as VMOwnershipFilter
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -63,7 +65,7 @@ fun TransactionFilterSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Filter Transactions",
+                    text = stringResource(R.string.filter_transactions_title),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -77,20 +79,20 @@ fun TransactionFilterSheet(
                         selectedMonth = null
                     }
                 ) {
-                    Text("Reset All", color = SemanticColors.DangerRed)
+                    Text(stringResource(R.string.filter_reset_all), color = SemanticColors.DangerRed)
                 }
             }
 
             // Transaction Type Section
-            FilterSection(title = "Transaction Type") {
+            FilterSection(title = stringResource(R.string.filter_transaction_type_title)) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    val types = listOf(null to "All Types") + TransactionType.values()
+                    val types = listOf(null to stringResource(R.string.filter_all_types)) + TransactionType.values()
                         .filter { it != TransactionType.UNKNOWN }
-                        .map { it to it.name }
+                        .map { it to getTransactionTypeLabel(it) }
                     
                     types.forEach { (type, label) ->
                         FilterChip(
@@ -113,7 +115,7 @@ fun TransactionFilterSheet(
             }
 
             // Ownership Section
-            FilterSection(title = "Ownership") {
+            FilterSection(title = stringResource(R.string.filter_ownership_title)) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -123,7 +125,7 @@ fun TransactionFilterSheet(
                         FilterChip(
                             selected = selectedOwnership == ownership,
                             onClick = { selectedOwnership = ownership },
-                            label = { Text(ownership.label) },
+                            label = { Text(stringResource(getOwnershipLabelRes(ownership))) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
                                 selectedLabelColor = SemanticColors.PrimaryIndigo
@@ -140,14 +142,14 @@ fun TransactionFilterSheet(
             }
 
             // Category Section
-            FilterSection(title = "Category") {
+            FilterSection(title = stringResource(R.string.filter_category_title)) {
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     item {
                         CategorySelectCard(
-                            name = "All Categories",
+                            name = stringResource(R.string.filter_all_categories),
                             icon = "📁",
                             colorHex = "#808080", // Gray
                             isSelected = selectedCategoryId == null,
@@ -167,7 +169,7 @@ fun TransactionFilterSheet(
             }
 
             // Date Range - Year section
-            FilterSection(title = "Year") {
+            FilterSection(title = stringResource(R.string.filter_year_title)) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -194,7 +196,7 @@ fun TransactionFilterSheet(
                     FilterChip(
                         selected = selectedYear == null,
                         onClick = { selectedYear = null },
-                        label = { Text("All Years") },
+                        label = { Text(stringResource(R.string.filter_all_years)) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f),
                             selectedLabelColor = SemanticColors.PrimaryIndigo
@@ -211,16 +213,16 @@ fun TransactionFilterSheet(
 
             // Month selection (only if year is selected)
             if (selectedYear != null) {
-                FilterSection(title = "Month") {
+                FilterSection(title = stringResource(R.string.filter_month_title)) {
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         listOf(
-                            1 to "Jan", 2 to "Feb", 3 to "Mar", 4 to "Apr",
-                            5 to "May", 6 to "Jun", 7 to "Jul", 8 to "Aug",
-                            9 to "Sep", 10 to "Oct", 11 to "Nov", 12 to "Dec"
+                            1 to stringResource(R.string.month_jan_short), 2 to stringResource(R.string.month_feb_short), 3 to stringResource(R.string.month_mar_short), 4 to stringResource(R.string.month_apr_short),
+                            5 to stringResource(R.string.month_may_short), 6 to stringResource(R.string.month_jun_short), 7 to stringResource(R.string.month_jul_short), 8 to stringResource(R.string.month_aug_short),
+                            9 to stringResource(R.string.month_sep_short), 10 to stringResource(R.string.month_oct_short), 11 to stringResource(R.string.month_nov_short), 12 to stringResource(R.string.month_dec_short)
                         ).forEach { (month, name) ->
                             FilterChip(
                                 selected = selectedMonth == month,
@@ -305,7 +307,7 @@ fun TransactionFilterSheet(
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SemanticColors.PrimaryIndigo)
             ) {
-                Text("Apply Filters", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.filter_apply), style = MaterialTheme.typography.titleMedium)
             }
         }
     }
@@ -324,6 +326,28 @@ private fun FilterSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         content()
+    }
+}
+
+@Composable
+private fun getTransactionTypeLabel(type: TransactionType): String {
+    return when (type) {
+        TransactionType.PURCHASE -> stringResource(R.string.transaction_type_purchase)
+        TransactionType.DEPOSIT -> stringResource(R.string.transaction_type_deposit)
+        TransactionType.WITHDRAWAL -> stringResource(R.string.transaction_type_withdrawal)
+        TransactionType.TRANSFER -> stringResource(R.string.transaction_type_transfer)
+        TransactionType.UNKNOWN -> stringResource(R.string.transaction_type_unknown)
+    }
+}
+
+@Composable
+private fun getOwnershipLabelRes(ownership: VMOwnershipFilter): Int {
+    return when (ownership) {
+        VMOwnershipFilter.ALL -> R.string.transactions_ownership_all
+        VMOwnershipFilter.MINE -> R.string.transactions_ownership_mine
+        VMOwnershipFilter.NOT_MINE -> R.string.transactions_ownership_not_mine
+        VMOwnershipFilter.SHARED -> R.string.transactions_ownership_shared
+        VMOwnershipFilter.TRANSFER -> R.string.transactions_ownership_transfers
     }
 }
 
@@ -360,14 +384,14 @@ private fun CategorySelectCard(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.TopEnd
             ) {
-                if (isSelected) {
-                    Icon(
-                        Icons.Rounded.Check,
-                        contentDescription = "Selected",
-                        tint = categoryColor,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
+            if (isSelected) {
+                Icon(
+                    Icons.Rounded.Check,
+                    contentDescription = stringResource(R.string.filter_selected_cd),
+                    tint = categoryColor,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
             }
             Text(icon, style = MaterialTheme.typography.headlineMedium)
             Spacer(modifier = Modifier.height(8.dp))

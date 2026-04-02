@@ -24,9 +24,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
@@ -36,6 +38,7 @@ import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.budgetScale
+import androidx.compose.ui.platform.LocalContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -58,13 +61,13 @@ fun BudgetScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "Budgets",
+                        stringResource(R.string.budget_title),
                         color = SemanticColors.TextPrimary
                     ) 
                 },
                 actions = {
                     IconButton(onClick = { showAddDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Budget")
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.budget_add_cd))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -161,19 +164,20 @@ fun BudgetSummaryCard(budgets: List<BudgetStatus>) {
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceAround
         ) {
-            SummaryItem("On Track", onTrack, SemanticColors.SuccessGreen)
-            SummaryItem("Warning", warning, SemanticColors.WarningOrange)
-            SummaryItem("Exceeded", exceeded, SemanticColors.DangerRed)
+            SummaryItem(stringResource(R.string.budget_summary_on_track), onTrack, SemanticColors.SuccessGreen)
+            SummaryItem(stringResource(R.string.budget_summary_warning), warning, SemanticColors.WarningOrange)
+            SummaryItem(stringResource(R.string.budget_summary_exceeded), exceeded, SemanticColors.DangerRed)
         }
     }
 }
 
 @Composable
 fun SummaryItem(label: String, count: Int, color: Color) {
+    val summaryCd = stringResource(R.string.budget_summary_cd_format, count, label)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.semantics {
-            contentDescription = "$count budgets $label"
+            contentDescription = summaryCd
         }
     ) {
         Text(
@@ -195,6 +199,10 @@ fun BudgetCard(
     onDelete: (Budget) -> Unit,
     onViewForecast: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val budgetActiveString = stringResource(R.string.budget_status_active)
+    val budgetInactiveString = stringResource(R.string.budget_status_inactive)
+    
     // Remember expensive calculations
     val progressColor = remember(status.healthStatus) {
         when (status.healthStatus) {
@@ -206,13 +214,16 @@ fun BudgetCard(
     }
 
     val cardDescription = remember(status.spentAmount, status.budget.amount, status.healthStatus) {
-        buildString {
-            append("${status.category?.name ?: "Overall Budget"} budget, ")
-            append("${if (status.budget.isActive) "active" else "inactive"}, ")
-            append("€${"%.2f".format(status.spentAmount)} spent of €${"%.2f".format(status.budget.amount)} limit, ")
-            append("${(status.percentUsed * 100).toInt()}% used, ")
-            append("Status: ${status.healthStatus.name.lowercase().replaceFirstChar { it.titlecase() }}")
-        }
+        val statusText = if (status.budget.isActive) budgetActiveString else budgetInactiveString
+        context.getString(
+            R.string.budget_cd_format,
+            status.category?.name ?: "Overall Budget",
+            statusText,
+            status.spentAmount,
+            status.budget.amount,
+            (status.percentUsed * 100).toInt(),
+            status.healthStatus.name.lowercase().replaceFirstChar { it.titlecase() }
+        )
     }
     
     val formattedDate = remember(status.budget.startDate) {
@@ -222,6 +233,8 @@ fun BudgetCard(
     val formattedPeriod = remember(status.budget.period) {
         status.budget.period.name.lowercase().replaceFirstChar { it.titlecase(java.util.Locale.getDefault()) }
     }
+
+    val periodDateText = stringResource(R.string.budget_period_date_format, formattedPeriod, formattedDate)
 
     Card(
         modifier = Modifier
@@ -233,15 +246,16 @@ fun BudgetCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Replace emoji with Material icon
                 if (status.category?.icon != null) {
+                    val categoryIconDesc = stringResource(R.string.budget_category_icon_cd, status.category.name)
                     Text(
                         status.category.icon,
                         fontSize = 24.sp,
-                        modifier = Modifier.semantics { contentDescription = "${status.category.name} category icon" }
+                        modifier = Modifier.semantics { contentDescription = categoryIconDesc }
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Default.AccountBalanceWallet,
-                        contentDescription = "Budget icon",
+                        contentDescription = stringResource(R.string.budget_icon_cd),
                         modifier = Modifier.size(24.dp),
                         tint = SemanticColors.PrimaryIndigo
                     )
@@ -254,17 +268,24 @@ fun BudgetCard(
                         fontSize = 18.sp
                     )
                     Text(
-                        "$formattedPeriod • Starts $formattedDate",
+                        periodDateText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                val toggleText = if (status.budget.isActive) 
+                    stringResource(R.string.budget_toggle_enabled) 
+                else 
+                    stringResource(R.string.budget_toggle_disabled)
+                val toggleCd = stringResource(R.string.budget_toggle_cd_format, toggleText)
                 Switch(
                     checked = status.budget.isActive,
                     onCheckedChange = onToggle,
                     modifier = Modifier
                         .budgetScale(0.8f)
-                        .semantics { contentDescription = "Budget ${if (status.budget.isActive) "enabled" else "disabled"}, double tap to toggle" }
+                        .semantics { 
+                            contentDescription = toggleCd
+                        }
                 )
             }
 
@@ -272,12 +293,12 @@ fun BudgetCard(
 
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    "€${"%.2f".format(status.spentAmount)} spent",
+                    text = stringResource(R.string.budget_spent_format, status.spentAmount),
                     fontWeight = FontWeight.Medium,
                     fontSize = 14.sp
                 )
                 Text(
-                    "€${"%.2f".format(status.budget.amount)} limit",
+                    text = stringResource(R.string.budget_limit_format, status.budget.amount),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -293,7 +314,7 @@ fun BudgetCard(
 
             if (status.percentUsed > 1f) {
                 Text(
-                    "€${"%.2f".format(status.spentAmount - status.budget.amount)} over budget",
+                    text = stringResource(R.string.budget_over_format, status.spentAmount - status.budget.amount),
                     color = SemanticColors.DangerRed,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -301,7 +322,7 @@ fun BudgetCard(
                 )
             } else {
                 Text(
-                    "€${"%.2f".format(status.remainingAmount)} remaining",
+                    text = stringResource(R.string.budget_remaining_format, status.remainingAmount),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary,
                     modifier = Modifier.padding(top = 4.dp)
@@ -326,7 +347,7 @@ fun BudgetCard(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "View AI Forecast",
+                        stringResource(R.string.budget_view_ai_forecast),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Medium
                     )
@@ -344,9 +365,13 @@ fun SuggestionsBanner(
 ) {
     var currentIndex by remember { mutableIntStateOf(0) }
     val suggestion = suggestions.getOrNull(currentIndex) ?: return
+    val context = LocalContext.current
 
-    val bannerDescription = "Smart budget suggestion for ${suggestion.categoryName}: " +
-            "Suggested monthly budget of €${"%.0f".format(suggestion.suggestedAmount)}"
+    val bannerDescription = stringResource(
+        R.string.budget_suggestion_cd_format,
+        suggestion.categoryName,
+        suggestion.suggestedAmount
+    )
 
     Card(
         modifier = Modifier
@@ -358,25 +383,37 @@ fun SuggestionsBanner(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Default.Warning,
-                    contentDescription = "Suggestion",
+                    contentDescription = stringResource(R.string.budget_suggestion_icon_cd),
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("Smart Suggestion", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    stringResource(R.string.budget_suggestion_title),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "You spend a lot on ${suggestion.categoryName}. How about a monthly budget of €${"%.0f".format(suggestion.suggestedAmount)}?",
+                text = stringResource(
+                    R.string.budget_suggestion_message_format,
+                    suggestion.categoryName,
+                    suggestion.suggestedAmount
+                ),
                 style = MaterialTheme.typography.bodyMedium
             )
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                val skipCd = stringResource(R.string.budget_suggestion_skip_cd)
                 TextButton(
                     onClick = { if (currentIndex < suggestions.size - 1) currentIndex++ else currentIndex = 0 },
-                    modifier = Modifier.semantics { contentDescription = "Skip this suggestion" }
+                    modifier = Modifier.semantics { 
+                        contentDescription = skipCd
+                    }
                 ) {
-                    Text("Skip")
+                    Text(stringResource(R.string.budget_suggestion_skip))
                 }
+                val createCd = stringResource(R.string.budget_suggestion_create_cd_format, suggestion.categoryName)
                 Button(
                     onClick = {
                         onAdd(Budget(
@@ -386,9 +423,11 @@ fun SuggestionsBanner(
                             startDate = System.currentTimeMillis()
                         ))
                     },
-                    modifier = Modifier.semantics { contentDescription = "Create budget for ${suggestion.categoryName}" }
+                    modifier = Modifier.semantics { 
+                        contentDescription = createCd
+                    }
                 ) {
-                    Text("Create Budget")
+                    Text(stringResource(R.string.budget_suggestion_create))
                 }
             }
         }
@@ -397,26 +436,31 @@ fun SuggestionsBanner(
 
 @Composable
 fun EmptyBudgetsState(onAdd: () -> Unit) {
+    val emptyCd = stringResource(R.string.budget_empty_cd)
+    val setFirstCd = stringResource(R.string.budget_set_first_cd)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(48.dp)
-            .semantics { contentDescription = "No budgets set yet. Track your spending by category to save more money." },
+            .semantics { contentDescription = emptyCd },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("No budgets set yet", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Track your spending by category to save more money.",
+            stringResource(R.string.budget_empty_title),
+            style = MaterialTheme.typography.titleMedium
+        )
+        Text(
+            stringResource(R.string.budget_empty_subtitle),
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(vertical = 8.dp)
         )
         Button(
             onClick = onAdd,
-            modifier = Modifier.semantics { contentDescription = "Set your first budget" }
+            modifier = Modifier.semantics { contentDescription = setFirstCd }
         ) {
-            Text("Set Your First Budget")
+            Text(stringResource(R.string.home_set_first_budget))
         }
     }
 }
@@ -435,7 +479,7 @@ fun AddEditBudgetDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initialBudget == null) "Create Budget" else "Edit Budget") },
+        title = { Text(if (initialBudget == null) stringResource(R.string.budget_dialog_create_title) else stringResource(R.string.budget_dialog_edit_title)) },
         text = {
             Column(
                 modifier = Modifier
@@ -451,25 +495,25 @@ fun AddEditBudgetDialog(
                             amount = newValue
                         }
                     },
-                    label = { Text("Budget Amount (€)") },
+                    label = { Text(stringResource(R.string.budget_amount_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     isError = amount.isNotEmpty() && (amount.toDoubleOrNull() ?: 0.0) <= 0,
                     supportingText = { 
                         if (amount.isNotEmpty() && (amount.toDoubleOrNull() ?: 0.0) <= 0) {
-                            Text("Enter a valid amount greater than 0")
+                            Text(stringResource(R.string.budget_error_invalid_amount))
                         }
                     },
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
                 )
 
-                Text("Category", style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.budget_category_label), style = MaterialTheme.typography.labelMedium)
                 CategorySelector(
                     categories = categories,
                     selectedId = selectedCategory,
                     onSelect = { selectedCategory = it }
                 )
 
-                Text("Period", style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.budget_period_label), style = MaterialTheme.typography.labelMedium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     BudgetPeriod.values().forEach { p ->
                         FilterChip(
@@ -482,7 +526,7 @@ fun AddEditBudgetDialog(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = rollover, onCheckedChange = { rollover = it })
-                    Text("Rollover unspent amount", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.budget_rollover_label), style = MaterialTheme.typography.bodyMedium)
                 }
             }
         },
@@ -508,11 +552,11 @@ fun AddEditBudgetDialog(
                     }
                 }
             ) {
-                Text("Save")
+                Text(stringResource(R.string.action_save))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
@@ -532,7 +576,7 @@ fun CategorySelector(
         FilterChip(
             selected = selectedId == null,
             onClick = { onSelect(null) },
-            label = { Text("Overall") }
+            label = { Text(stringResource(R.string.budget_overall_category)) }
         )
         categories.forEach { category ->
             FilterChip(

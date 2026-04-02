@@ -17,9 +17,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -51,12 +55,12 @@ fun ReceiptAssistCard(
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "AI Receipt Assist",
+                    text = stringResource(R.string.ai_receipt_assist_title),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Review suggestions before saving. They only update the local draft.",
+                    text = stringResource(R.string.ai_receipt_assist_subtitle),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -68,7 +72,7 @@ fun ReceiptAssistCard(
                     )
                     if (it.contains("google-ai-studio") && it.contains("gemini-2.5-flash")) {
                         Text(
-                            text = "Cloud receipt assist may also use the saved receipt image when that opt-in is enabled.",
+                            text = stringResource(R.string.ai_receipt_assist_cloud_hint),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -78,7 +82,7 @@ fun ReceiptAssistCard(
 
             suggestion.merchant?.let { merchant ->
                 SuggestionRow(
-                    label = "Merchant",
+                    label = stringResource(R.string.label_merchant),
                     value = merchant.value,
                     rationale = merchant.rationale,
                     onApply = onApplyMerchant
@@ -87,7 +91,7 @@ fun ReceiptAssistCard(
 
             suggestion.total?.let { total ->
                 SuggestionRow(
-                    label = "Total",
+                    label = stringResource(R.string.label_total),
                     value = String.format(Locale.US, "%.2f", total.value),
                     rationale = total.rationale,
                     onApply = onApplyTotal
@@ -95,9 +99,11 @@ fun ReceiptAssistCard(
             }
 
             suggestion.date?.let { date ->
+                val context = LocalContext.current
+                val dateFormat = remember { SimpleDateFormat(context.getString(R.string.receipt_date_format), Locale.getDefault()) }
                 SuggestionRow(
-                    label = "Date",
-                    value = DATE_FORMAT.format(Date(date.value)),
+                    label = stringResource(R.string.label_date),
+                    value = dateFormat.format(Date(date.value)),
                     rationale = date.rationale,
                     onApply = onApplyDate
                 )
@@ -108,7 +114,7 @@ fun ReceiptAssistCard(
                     onClick = {},
                     enabled = false,
                     label = {
-                        Text("Tax hint: ${String.format(Locale.US, "%.2f", tax.value)}")
+                        Text(stringResource(R.string.ai_receipt_tax_hint_format, tax.value))
                     },
                     colors = AssistChipDefaults.assistChipColors(
                         disabledContainerColor = MaterialTheme.colorScheme.surface,
@@ -120,13 +126,13 @@ fun ReceiptAssistCard(
             if (suggestion.notes.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "AI notes",
+                        text = stringResource(R.string.ai_notes_label),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Medium
                     )
                     suggestion.notes.forEach { note ->
                         Text(
-                            text = "- $note",
+                            text = stringResource(R.string.ai_note_bullet_format, note),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -136,10 +142,10 @@ fun ReceiptAssistCard(
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onApplyAll) {
-                    Text("Apply all")
+                    Text(stringResource(R.string.ai_receipt_apply_all))
                 }
                 OutlinedButton(onClick = onDismiss) {
-                    Text("Dismiss")
+                    Text(stringResource(R.string.action_dismiss))
                 }
             }
         }
@@ -177,10 +183,8 @@ private fun SuggestionRow(
             }
             Spacer(modifier = Modifier.width(8.dp))
             OutlinedButton(onClick = onApply) {
-                Text("Apply")
+                Text(stringResource(R.string.ai_receipt_apply))
             }
         }
     }
 }
-
-private val DATE_FORMAT = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())

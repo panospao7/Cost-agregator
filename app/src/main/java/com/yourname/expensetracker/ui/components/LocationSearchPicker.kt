@@ -229,7 +229,7 @@ fun LocationSearchPicker(
             if (useGoogle) {
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "uses API quota",
+                    text = stringResource(R.string.location_google_quota_hint),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -316,7 +316,7 @@ fun LocationSearchPicker(
             onClick = { showMap = !showMap },
             modifier = Modifier.padding(top = 2.dp)
         ) {
-            Text(if (showMap) "Hide map" else "Show map")
+            Text(if (showMap) stringResource(R.string.location_hide_map) else stringResource(R.string.location_show_map))
         }
 
         if (showMap) {
@@ -363,7 +363,7 @@ fun LocationSearchPicker(
             )
             // B5: interaction hint below map
             Text(
-                text = "Tap a marker to select · Long-press to drop a pin",
+                text = stringResource(R.string.location_map_interaction_hint),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -386,7 +386,7 @@ fun LocationSearchPicker(
                 ) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Text(
-                        text = "Resolving address…",
+                        text = stringResource(R.string.location_resolving_address),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -410,7 +410,7 @@ fun LocationSearchPicker(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "Pinned location",
+                            text = stringResource(R.string.location_pinned_location),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -473,7 +473,7 @@ fun LocationSearchPicker(
             onClick = { showAdvanced = !showAdvanced },
             modifier = Modifier.padding(top = 4.dp)
         ) {
-            Text(if (showAdvanced) "Hide manual coordinates" else "Enter coordinates manually")
+            Text(if (showAdvanced) stringResource(R.string.location_advanced_hide) else stringResource(R.string.location_advanced_show))
         }
 
         if (showAdvanced) {

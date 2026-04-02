@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 /**
  * Donut chart visualizing category breakdown as proportional arcs.
@@ -101,7 +103,7 @@ fun CategoryDonutChart(
                 // Center label
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "Total",
+                        text = stringResource(R.string.chart_total),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.TextSecondary
                     )

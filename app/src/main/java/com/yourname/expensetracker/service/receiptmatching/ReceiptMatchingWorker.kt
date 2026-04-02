@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
@@ -50,8 +51,8 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                         // HIGH FIX: Use NotificationIdGenerator instead of toInt()
                         notificationService.sendBudgetAlert(
                             notificationId = com.yourname.expensetracker.domain.util.NotificationIdGenerator.forReceipt(receipt.id),
-                            title = "✅ Receipt Auto-Matched",
-                            message = "Receipt from ${receipt.parsedMerchant ?: "Unknown"} matched to transaction automatically"
+                            title = applicationContext.getString(R.string.receipt_matching_auto_matched_title),
+                            message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
                         )
                     }
                     is MatchResult.Suggested -> {

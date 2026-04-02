@@ -15,16 +15,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.budget.BudgetRecommendation
 import com.yourname.expensetracker.domain.budget.RecommendationPriority
+import com.yourname.expensetracker.domain.model.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.NumberFormat
 import java.util.Locale
@@ -49,7 +52,7 @@ fun BudgetForecastingScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "Budget Forecast",
+                        stringResource(R.string.budget_forecast_title),
                         color = SemanticColors.TextPrimary,
                         fontWeight = FontWeight.Bold
                     ) 
@@ -58,7 +61,7 @@ fun BudgetForecastingScreen(
                     IconButton(onClick = onNavigateBack) {
                         Icon(
                             Icons.Default.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.action_back),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -67,7 +70,7 @@ fun BudgetForecastingScreen(
                     IconButton(onClick = { viewModel.refreshForecast() }) {
                         Icon(
                             Icons.Default.Refresh,
-                            contentDescription = "Refresh Forecast",
+                            contentDescription = stringResource(R.string.budget_forecast_refresh_cd),
                             tint = SemanticColors.TextPrimary
                         )
                     }
@@ -147,7 +150,7 @@ private fun ForecastContent(
         if (recommendations.isNotEmpty()) {
             item {
                 Text(
-                    text = "AI Recommendations",
+                    text = stringResource(R.string.budget_forecast_ai_recommendations),
                     style = MaterialTheme.typography.titleMedium,
                     color = SemanticColors.TextPrimary,
                     fontWeight = FontWeight.Bold,
@@ -164,22 +167,23 @@ private fun ForecastContent(
 
 @Composable
 private fun RiskLevelCard(forecast: BudgetForecast) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val (riskColor, riskEmoji, riskTitle, riskDescription) = when (forecast.riskLevel) {
         ForecastRiskLevel.LOW -> Quadruple(
-            Color(0xFF4CAF50), "✅", "On Track", 
-            "You're predicted to stay well under budget"
+            Color(0xFF4CAF50), "✅", context.getString(R.string.budget_forecast_risk_on_track), 
+            context.getString(R.string.budget_forecast_desc_on_track)
         )
         ForecastRiskLevel.MEDIUM -> Quadruple(
-            Color(0xFFFF9800), "⚠️", "Caution", 
-            "You might come close to your budget limit"
+            Color(0xFFFF9800), "⚠️", context.getString(R.string.budget_forecast_risk_caution), 
+            context.getString(R.string.budget_forecast_desc_caution)
         )
         ForecastRiskLevel.HIGH -> Quadruple(
-            Color(0xFFF44336), "🔴", "High Risk", 
-            "High risk of exceeding your budget"
+            Color(0xFFF44336), "🔴", context.getString(R.string.budget_forecast_risk_high), 
+            context.getString(R.string.budget_forecast_desc_high)
         )
         ForecastRiskLevel.CRITICAL -> Quadruple(
-            Color(0xFFB71C1C), "🚨", "Critical", 
-            "Very likely to exceed your budget"
+            Color(0xFFB71C1C), "🚨", context.getString(R.string.budget_forecast_risk_critical), 
+            context.getString(R.string.budget_forecast_desc_critical)
         )
     }
     
@@ -216,7 +220,7 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 Text(
-                    text = "Overspend Probability: ${(forecast.overspendProbability * 100).toInt()}%",
+                    text = stringResource(R.string.budget_forecast_overspend_probability_format, (forecast.overspendProbability * 100).toInt()),
                     style = MaterialTheme.typography.bodyLarge,
                     color = riskColor,
                     fontWeight = FontWeight.SemiBold
@@ -243,7 +247,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
                 .padding(20.dp)
         ) {
             Text(
-                text = "Budget Forecast",
+                text = stringResource(R.string.budget_forecast_card_title),
                 style = MaterialTheme.typography.titleMedium,
                 color = SemanticColors.TextPrimary,
                 fontWeight = FontWeight.Bold
@@ -253,7 +257,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
             
             // Budget Amount
             DetailRow(
-                label = "Budget Limit",
+                label = stringResource(R.string.budget_forecast_limit_label),
                 value = currencyFormatter.format(budget.amount),
                 icon = Icons.Default.AccountBalanceWallet
             )
@@ -262,7 +266,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
             
             // Predicted Spending
             DetailRow(
-                label = "Predicted Spending",
+                label = stringResource(R.string.budget_forecast_predicted_spending),
                 value = currencyFormatter.format(forecast.predictedSpending),
                 icon = Icons.Default.TrendingUp,
                 valueColor = if (forecast.predictedSpending > budget.amount) 
@@ -273,7 +277,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
             
             // Predicted Remaining
             DetailRow(
-                label = "Predicted Remaining",
+                label = stringResource(R.string.budget_forecast_predicted_remaining),
                 value = currencyFormatter.format(forecast.predictedRemaining),
                 icon = if (forecast.predictedRemaining >= 0) 
                     Icons.Default.Savings else Icons.Default.Warning,
@@ -341,7 +345,7 @@ private fun ConfidenceCard(forecast: BudgetForecast) {
                 .padding(20.dp)
         ) {
             Text(
-                text = "AI Confidence",
+                text = stringResource(R.string.budget_forecast_ai_confidence),
                 style = MaterialTheme.typography.titleMedium,
                 color = SemanticColors.TextPrimary,
                 fontWeight = FontWeight.Bold
@@ -378,9 +382,9 @@ private fun ConfidenceCard(forecast: BudgetForecast) {
                 )
                 
                 val confidenceText = when {
-                    forecast.confidenceScore >= 0.8 -> "High Confidence"
-                    forecast.confidenceScore >= 0.6 -> "Medium Confidence"
-                    else -> "Low Confidence"
+                    forecast.confidenceScore >= 0.8 -> stringResource(R.string.budget_forecast_confidence_high)
+                    forecast.confidenceScore >= 0.6 -> stringResource(R.string.budget_forecast_confidence_medium)
+                    else -> stringResource(R.string.budget_forecast_confidence_low)
                 }
                 
                 Text(
@@ -394,7 +398,7 @@ private fun ConfidenceCard(forecast: BudgetForecast) {
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 Text(
-                    text = "Keep tracking expenses for more accurate predictions",
+                    text = stringResource(R.string.budget_forecast_tracking_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextSecondary,
                     textAlign = TextAlign.Center,
@@ -448,7 +452,7 @@ private fun RecommendationCard(recommendation: BudgetRecommendation) {
                 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = recommendation.title,
+                        text = recommendation.title.asString(),
                         style = MaterialTheme.typography.titleSmall,
                         color = SemanticColors.TextPrimary,
                         fontWeight = FontWeight.SemiBold
@@ -476,7 +480,7 @@ private fun RecommendationCard(recommendation: BudgetRecommendation) {
                 val currencyFormatter = NumberFormat.getCurrencyInstance(Locale.getDefault())
                 
                 Text(
-                    text = "Potential Savings: ${currencyFormatter.format(savings)}",
+                    text = stringResource(R.string.budget_forecast_potential_savings_format, currencyFormatter.format(savings)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color(0xFF4CAF50),
                     fontWeight = FontWeight.SemiBold
@@ -487,7 +491,7 @@ private fun RecommendationCard(recommendation: BudgetRecommendation) {
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 Text(
-                    text = "Suggested Actions:",
+                    text = stringResource(R.string.budget_forecast_suggested_actions),
                     style = MaterialTheme.typography.labelMedium,
                     color = SemanticColors.TextPrimary,
                     fontWeight = FontWeight.Medium
@@ -550,7 +554,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
                 containerColor = SemanticColors.PrimaryIndigo
             )
         ) {
-            Text("Try Again")
+            Text(stringResource(R.string.action_retry))
         }
     }
 }
@@ -574,7 +578,7 @@ private fun EmptyState() {
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "No forecast available",
+            text = stringResource(R.string.budget_forecast_empty_title),
             style = MaterialTheme.typography.bodyLarge,
             color = SemanticColors.TextSecondary
         )

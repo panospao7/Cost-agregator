@@ -59,6 +59,8 @@ import coil.compose.AsyncImage
 import java.io.File
 import com.yourname.expensetracker.ui.screens.debug.DebugViewerScreen
 import com.yourname.expensetracker.domain.util.AmountUtils
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -119,7 +121,7 @@ fun ReviewScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        "REVIEW QUEUE ($pendingCount)", 
+                        stringResource(R.string.review_queue_title_format, pendingCount), 
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 2.sp,
@@ -133,18 +135,20 @@ fun ReviewScreen(
                 actions = {
                     // Debug viewer button (show when debug data is available)
                     if (debugData != null) {
+                        val viewDebugCd = stringResource(R.string.review_view_debug_cd)
                         IconButton(
                             onClick = { showDebugViewer = true },
-                            modifier = Modifier.semantics { contentDescription = "View debug data" }
+                            modifier = Modifier.semantics { contentDescription = viewDebugCd }
                         ) {
                             Icon(Icons.Rounded.BugReport, contentDescription = null)
                         }
                     }
                     
+                    val debugMenuCd = stringResource(R.string.review_debug_menu_cd)
                     Box {
                         IconButton(
                             onClick = { showDebugMenu = !showDebugMenu },
-                            modifier = Modifier.semantics { contentDescription = "Debug options menu" }
+                            modifier = Modifier.semantics { contentDescription = debugMenuCd }
                         ) {
                             Icon(Icons.Rounded.MoreVert, contentDescription = null)
                         }
@@ -152,41 +156,46 @@ fun ReviewScreen(
                             expanded = showDebugMenu,
                             onDismissRequest = { showDebugMenu = false }
                         ) {
+                            val massInsertCd = stringResource(R.string.review_mass_insert_cd)
                             DropdownMenuItem(
-                                text = { Text("Mass Insert (Batch)") },
+                                text = { Text(stringResource(R.string.review_mass_insert)) },
                                 onClick = {
                                     showDebugMenu = false
                                     batchLauncher.launch(arrayOf("image/*", "application/pdf"))
                                 },
                                 leadingIcon = { Icon(Icons.Rounded.Layers, contentDescription = null) },
-                                modifier = Modifier.semantics { contentDescription = "Mass insert batch processing" }
+                                modifier = Modifier.semantics { contentDescription = massInsertCd }
                             )
+                            val importStatementCd = stringResource(R.string.review_import_statement_cd)
                             DropdownMenuItem(
-                                text = { Text("Import Bank Statement") },
+                                text = { Text(stringResource(R.string.review_import_bank_statement)) },
                                 onClick = {
                                     showDebugMenu = false
                                     statementLauncher.launch(arrayOf("image/*", "application/pdf"))
                                 },
                                 leadingIcon = { Icon(Icons.Rounded.ReceiptLong, contentDescription = null) },
-                                modifier = Modifier.semantics { contentDescription = "Import bank statement" }
+                                modifier = Modifier.semantics { contentDescription = importStatementCd }
                             )
                             HorizontalDivider()
+                            val exportParserCd = stringResource(R.string.review_export_parser_cd)
+                            val copiedToast = stringResource(R.string.review_copied_toast)
                             DropdownMenuItem(
-                                text = { Text("Export Parser Data") },
+                                text = { Text(stringResource(R.string.review_export_parser_data)) },
                                 onClick = {
                                     showDebugMenu = false
                                     coroutineScope.launch {
                                         val data = viewModel.getDebugExportData()
                                         clipboardManager.setText(AnnotatedString(data))
-                                        snackbarHostState.showSnackbar("Parser info copied to clipboard")
+                                        snackbarHostState.showSnackbar(copiedToast)
                                     }
                                 },
                                 leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
-                                modifier = Modifier.semantics { contentDescription = "Export parser data to clipboard" }
+                                modifier = Modifier.semantics { contentDescription = exportParserCd }
                             )
                             HorizontalDivider()
+                            val clearDebugCd = stringResource(R.string.review_clear_debug_cd)
                             DropdownMenuItem(
-                                text = { Text("Clear Debug Data") },
+                                text = { Text(stringResource(R.string.review_clear_debug_data)) },
                                 onClick = {
                                     showDebugMenu = false
                                     viewModel.clearDebugData()
@@ -196,10 +205,11 @@ fun ReviewScreen(
                                     textColor = MaterialTheme.colorScheme.error,
                                     leadingIconColor = MaterialTheme.colorScheme.error
                                 ),
-                                modifier = Modifier.semantics { contentDescription = "Clear debug data" }
+                                modifier = Modifier.semantics { contentDescription = clearDebugCd }
                             )
+                            val clearScannedCd = stringResource(R.string.review_clear_scanned_cd)
                             DropdownMenuItem(
-                                text = { Text("Clear Scanned Data") },
+                                text = { Text(stringResource(R.string.review_clear_scanned_data)) },
                                 onClick = {
                                     showDebugMenu = false
                                     viewModel.clearScannedData()
@@ -209,10 +219,10 @@ fun ReviewScreen(
                                     textColor = MaterialTheme.colorScheme.error,
                                     leadingIconColor = MaterialTheme.colorScheme.error
                                 ),
-                                modifier = Modifier.semantics { contentDescription = "Clear scanned data" }
+                                modifier = Modifier.semantics { contentDescription = clearScannedCd }
                             )
                             DropdownMenuItem(
-                                text = { Text("Clear Review Queue") },
+                                text = { Text(stringResource(R.string.review_clear_queue)) },
                                 onClick = {
                                     showDebugMenu = false
                                     viewModel.rejectAll()
@@ -230,11 +240,12 @@ fun ReviewScreen(
         }
     ) { padding ->
         if (pendingReviews.isEmpty()) {
+            val emptyCd = stringResource(R.string.review_empty_cd)
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .semantics { contentDescription = "All caught up! No transactions need your review." },
+                    .semantics { contentDescription = emptyCd },
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -246,11 +257,11 @@ fun ReviewScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        "All caught up!",
+                        stringResource(R.string.review_empty_title),
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        "No transactions need your review",
+                        stringResource(R.string.review_empty_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -266,7 +277,7 @@ fun ReviewScreen(
             ) {
                 item {
                     Text(
-                        "Swipe right to approve, left to reject",
+                        stringResource(R.string.review_swipe_hint),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 4.dp)
@@ -295,6 +306,9 @@ fun ReviewScreen(
                             }
                         }
                     )
+
+                    val noReceiptDebugMsg = stringResource(R.string.review_no_receipt_debug)
+                    val loadingText = stringResource(R.string.label_loading)
 
                     SwipeToDismissBox(
                         state = dismissState,
@@ -338,12 +352,12 @@ fun ReviewScreen(
                                 onDebug = {
                                     item.receipt?.let { receipt ->
                                         coroutineScope.launch {
-                                            debugInfoDialogText = "Loading..."
+                                            debugInfoDialogText = loadingText
                                             debugInfoDialogText = viewModel.getReceiptDebugInfo(receipt.id)
                                         }
                                     } ?: run {
                                         coroutineScope.launch {
-                                            snackbarHostState.showSnackbar("No automated receipt info available. Showing categorization debug instead.")
+                                            snackbarHostState.showSnackbar(noReceiptDebugMsg)
                                         }
                                     }
                                     debugReview = item.review
@@ -431,17 +445,17 @@ fun ReviewScreen(
         quickApprovePreview?.let { preview ->
             AlertDialog(
                 onDismissRequest = viewModel::dismissQuickApprovePreview,
-                title = { Text("Approve with suggested category?") },
+                title = { Text(stringResource(R.string.review_approve_suggested_category_title)) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            "This keeps the current merchant and amount, applies only the suggested category, and still goes through the normal approval path.",
+                            stringResource(R.string.review_approve_suggested_category_description),
                             style = MaterialTheme.typography.bodySmall
                         )
                         HorizontalDivider()
-                        Text("Merchant: ${preview.merchant}", style = MaterialTheme.typography.bodySmall)
-                        Text("Amount: ${AmountUtils.formatAmount(preview.amount)}", style = MaterialTheme.typography.bodySmall)
-                        Text("Category: ${preview.categoryName}", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.review_merchant_label, preview.merchant), style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.review_amount_label, AmountUtils.formatAmount(preview.amount)), style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.review_category_label, preview.categoryName), style = MaterialTheme.typography.bodySmall)
                         preview.diagnostics.forEach { diagnostics ->
                             Text(
                                 diagnostics,
@@ -453,12 +467,12 @@ fun ReviewScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = viewModel::confirmQuickApprove) {
-                        Text("Approve review")
+                        Text(stringResource(R.string.review_approve_review_button))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = viewModel::dismissQuickApprovePreview) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.cancel_button))
                     }
                 }
             )
@@ -488,9 +502,10 @@ fun ReviewScreen(
         }
 
         debugInfoDialogText?.let { info ->
+            val copiedToast = stringResource(R.string.review_copied_toast)
             AlertDialog(
                 onDismissRequest = { debugInfoDialogText = null },
-                title = { Text("Receipt Debug Info") },
+                title = { Text(stringResource(R.string.review_receipt_debug_info_title)) },
                 text = {
                     Column(
                         modifier = Modifier
@@ -509,16 +524,16 @@ fun ReviewScreen(
                         onClick = {
                             clipboardManager.setText(AnnotatedString(info))
                             coroutineScope.launch {
-                                snackbarHostState.showSnackbar("Copied to clipboard")
+                                snackbarHostState.showSnackbar(copiedToast)
                             }
                         }
                     ) {
-                        Text("Copy")
+                        Text(stringResource(R.string.review_copy_button))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { debugInfoDialogText = null }) {
-                        Text("Close")
+                        Text(stringResource(R.string.review_close_button))
                     }
                 }
             )
@@ -538,7 +553,7 @@ fun ReviewScreen(
                     CircularProgressIndicator(color = SemanticColors.PrimaryLight)
                     Spacer(modifier = Modifier.height(24.dp))
                     Text(
-                        "PROCESSING BATCH...",
+                        stringResource(R.string.review_processing_batch),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
@@ -626,7 +641,7 @@ fun ReviewCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = review.packageName.split(".").lastOrNull()?.uppercase() ?: "SYSTEM",
+                    text = review.packageName.split(".").lastOrNull()?.uppercase() ?: stringResource(R.string.review_system),
                     style = MaterialTheme.typography.labelSmall,
                     letterSpacing = 1.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
@@ -641,7 +656,7 @@ fun ReviewCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "${(review.confidence * 100).toInt()}% CONFIDENCE",
+                            text = stringResource(R.string.review_confidence_format, (review.confidence * 100).toInt()),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = confidenceColor,
@@ -664,7 +679,7 @@ fun ReviewCard(
                     ) {
                         AsyncImage(
                             model = File(item.receipt.imagePath),
-                            contentDescription = "Receipt Thumbnail",
+                            contentDescription = stringResource(R.string.review_receipt_thumbnail_cd),
                             modifier = Modifier.fillMaxSize(),
                             contentScale = androidx.compose.ui.layout.ContentScale.Crop
                         )
@@ -788,7 +803,7 @@ fun ReviewCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "RAW SOURCE EVIDENCE (TAP FOR DEBUG)",
+                        stringResource(R.string.review_raw_evidence_label),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = SemanticColors.TextSecondary,
@@ -805,7 +820,7 @@ fun ReviewCard(
                 AnimatedVisibility(visible = showTrustSignal) {
                     Column(modifier = Modifier.padding(top = 16.dp)) {
                         Text(
-                            text = review.notificationText ?: "No raw data captured.",
+                            text = review.notificationText ?: stringResource(R.string.review_no_raw_data),
                             style = MaterialTheme.typography.bodySmall,
                             color = SemanticColors.TextPrimary,
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
@@ -849,6 +864,7 @@ fun ReviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                val editCd = stringResource(R.string.review_edit_cd)
                 OutlinedIconButton(
                     onClick = {
                         haptic(HapticType.Heavy)
@@ -857,7 +873,7 @@ fun ReviewCard(
                     modifier = Modifier.size(48.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Icon(Icons.Rounded.Edit, "Edit", modifier = Modifier.size(20.dp))
+                    Icon(Icons.Rounded.Edit, editCd, modifier = Modifier.size(20.dp))
                 }
 
                 Button(
@@ -872,7 +888,7 @@ fun ReviewCard(
                         contentColor = MaterialTheme.colorScheme.onErrorContainer
                     )
                 ) {
-                    Text("Reject", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.review_reject_button), fontWeight = FontWeight.Bold)
                 }
 
                 Button(
@@ -887,7 +903,7 @@ fun ReviewCard(
                         contentColor = Color.White
                     )
                 ) {
-                    Text("Approve", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.review_approve_button), fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -929,7 +945,7 @@ private fun AiExplanationSection(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        "Explain with AI",
+                        stringResource(R.string.review_explain_ai_button),
                         style = MaterialTheme.typography.labelMedium,
                         color = SemanticColors.PrimaryIndigo
                     )
@@ -955,7 +971,7 @@ private fun AiExplanationSection(
                     color = SemanticColors.PrimaryIndigo
                 )
                 Text(
-                    "Generating explanation…",
+                    stringResource(R.string.review_generating_explanation),
                     style = MaterialTheme.typography.labelSmall,
                     color = SemanticColors.PrimaryIndigo
                 )
@@ -990,7 +1006,7 @@ private fun AiExplanationSection(
                         tint = SemanticColors.PrimaryIndigo
                     )
                     Text(
-                        "AI EXPLANATION",
+                        stringResource(R.string.review_ai_explanation_title),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = SemanticColors.PrimaryIndigo,
@@ -1042,14 +1058,14 @@ private fun AiExplanationSection(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    "AI explanation unavailable",
+                    stringResource(R.string.review_ai_explanation_unavailable),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                     modifier = Modifier.weight(1f)
                 )
                 TextButton(onClick = onRequest) {
                     Text(
-                        "Retry",
+                        stringResource(R.string.review_retry_button),
                         style = MaterialTheme.typography.labelSmall,
                         color = SemanticColors.PrimaryIndigo
                     )
@@ -1081,14 +1097,14 @@ private fun ReviewCaptureAssistSection(
             when (val receiptState = state.receiptSuggestion) {
                 is AiLoadState.Idle, is AiLoadState.Disabled -> {
                     OutlinedButton(onClick = onRequestReceiptAssist, modifier = Modifier.fillMaxWidth()) {
-                        Text("Try AI receipt assist")
+                        Text(stringResource(R.string.review_try_receipt_assist))
                     }
                     state.receiptMessage?.let { message ->
                         AssistInfoRow(message = message)
                     }
                 }
                 is AiLoadState.Loading -> {
-                    AssistLoadingRow("Reviewing receipt OCR and photo...")
+                    AssistLoadingRow(stringResource(R.string.review_reviewing_receipt))
                 }
                 is AiLoadState.Ready -> {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1119,11 +1135,11 @@ private fun ReviewCaptureAssistSection(
         when (val categoryState = state.categorySuggestion) {
             is AiLoadState.Idle -> {
                 OutlinedButton(onClick = onRequestCategoryAssist, modifier = Modifier.fillMaxWidth()) {
-                    Text("Suggest category with AI")
+                    Text(stringResource(R.string.review_suggest_category))
                 }
             }
             is AiLoadState.Loading -> {
-                AssistLoadingRow("Checking category fallback...")
+                AssistLoadingRow(stringResource(R.string.review_checking_category))
             }
             is AiLoadState.Ready -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1138,11 +1154,11 @@ private fun ReviewCaptureAssistSection(
                             onClick = onRequestQuickApprove,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Quick approve with suggested category")
+                            Text(stringResource(R.string.review_quick_approve_category))
                         }
                     } else if (reviewQuickApproveEnabled && quickApproveBlockedByDuplicate) {
                         AssistInfoRow(
-                            message = "Quick approve is paused because this looks like a likely duplicate. Review it manually before approving."
+                            message = stringResource(R.string.review_quick_approve_blocked)
                         )
                     }
                 }
@@ -1160,11 +1176,11 @@ private fun ReviewCaptureAssistSection(
         when (val dedupeState = state.dedupeSuggestion) {
             is AiLoadState.Idle -> {
                 OutlinedButton(onClick = onRequestDedupeAssist, modifier = Modifier.fillMaxWidth()) {
-                    Text("Check duplicates with AI")
+                    Text(stringResource(R.string.review_check_duplicates))
                 }
             }
             is AiLoadState.Loading -> {
-                AssistLoadingRow("Checking possible duplicates...")
+                AssistLoadingRow(stringResource(R.string.review_checking_duplicates))
             }
             is AiLoadState.Ready -> {
                 DedupeAssistCard(
@@ -1266,9 +1282,9 @@ private fun AssistErrorRow(
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = onRetry) {
-                Text("Retry", color = SemanticColors.PrimaryIndigo)
-            }
+                TextButton(onClick = onRetry) {
+                    Text(stringResource(R.string.review_retry_button), color = SemanticColors.PrimaryIndigo)
+                }
         }
         diagnostics?.let {
             Text(
@@ -1340,14 +1356,14 @@ fun EditReviewDialog(
         ) {
             // Title
             Text(
-                "Fix Extraction Details",
+                stringResource(R.string.review_fix_extraction_title),
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
             // Transaction Type Selector
             Text(
-                "Transaction Type",
+                stringResource(R.string.review_transaction_type_label),
                 style = MaterialTheme.typography.labelMedium
             )
             
@@ -1400,7 +1416,7 @@ fun EditReviewDialog(
             OutlinedTextField(
                 value = merchant,
                 onValueChange = { merchant = it },
-                label = { Text("Merchant Name") },
+                label = { Text(stringResource(R.string.review_merchant_name_label)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
@@ -1409,7 +1425,7 @@ fun EditReviewDialog(
             OutlinedTextField(
                 value = amount,
                 onValueChange = { amount = it },
-                label = { Text("Amount (€)") },
+                label = { Text(stringResource(R.string.review_amount_euro_label)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
@@ -1423,21 +1439,21 @@ fun EditReviewDialog(
 
             if (initialReceiptPrefill != null || receipt != null) {
                 val aiHints = buildList {
-                    if (initialReceiptPrefill?.merchant != null) add("merchant")
-                    if (initialReceiptPrefill?.amount != null) add("amount")
-                    if (initialReceiptPrefill?.date != null) add("date")
+                    if (initialReceiptPrefill?.merchant != null) add(stringResource(R.string.receipt_merchant_label).lowercase())
+                    if (initialReceiptPrefill?.amount != null) add(stringResource(R.string.receipt_total_amount_label).lowercase())
+                    if (initialReceiptPrefill?.date != null) add(stringResource(R.string.date_label))
                 }
                 AssistInfoRow(
                     message = if (aiHints.isNotEmpty()) {
-                        "AI prefilled ${aiHints.joinToString(", ")} from this receipt. Review before approving."
+                        stringResource(R.string.review_ai_prefilled_format, aiHints.joinToString(", "))
                     } else {
-                        "This review has a linked scanned receipt, so AI receipt assist can help prefill edits."
+                        stringResource(R.string.review_receipt_assist_hint)
                     }
                 )
             }
 
             Text(
-                "Assign Category",
+                stringResource(R.string.review_assign_category),
                 style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier.padding(top = 4.dp)
             )
@@ -1492,7 +1508,7 @@ fun EditReviewDialog(
                     onCheckedChange = { applyToAll = it }
                 )
                 Text(
-                    text = "Apply to all past transactions for $merchant",
+                    text = stringResource(R.string.review_apply_all_format, merchant),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(start = 4.dp)
                 )
@@ -1511,7 +1527,7 @@ fun EditReviewDialog(
                     colors = CheckboxDefaults.colors(checkedColor = SemanticColors.SuccessGreen)
                 )
                 Text(
-                    text = "Approve all identical pending transactions",
+                    text = stringResource(R.string.review_approve_all_identical),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(start = 4.dp),
                     color = SemanticColors.SuccessGreen,
@@ -1527,11 +1543,15 @@ fun EditReviewDialog(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Location",
+                    stringResource(R.string.review_location_label),
                     style = MaterialTheme.typography.labelMedium
                 )
                 TextButton(onClick = { showLocationPicker = !showLocationPicker }) {
-                    Text(if (showLocationPicker) "Hide" else if (locationLat != null) "Edit" else "Add")
+                    Text(
+                        if (showLocationPicker) stringResource(R.string.review_hide_button)
+                        else if (locationLat != null) stringResource(R.string.review_edit_button)
+                        else stringResource(R.string.review_add_button)
+                    )
                 }
             }
             if (locationLat != null && locationLon != null && !showLocationPicker) {
@@ -1583,7 +1603,7 @@ fun EditReviewDialog(
                     haptic(HapticType.Standard)
                     onDismiss()
                 }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.cancel_button))
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
@@ -1607,7 +1627,7 @@ fun EditReviewDialog(
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Confirm Fix")
+                    Text(stringResource(R.string.review_confirm_fix_button))
                 }
             }
         }

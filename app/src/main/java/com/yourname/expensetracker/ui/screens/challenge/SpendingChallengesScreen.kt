@@ -11,9 +11,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.challenge.NoSpendStatus
 import java.text.NumberFormat
 import java.util.Locale
@@ -30,15 +32,15 @@ fun SpendingChallengesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Spending Challenges") },
+                title = { Text(stringResource(R.string.challenges_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = onCreateChallenge) {
-                        Icon(Icons.Default.Add, "Create Challenge")
+                        Icon(Icons.Default.Add, stringResource(R.string.challenges_create_cd))
                     }
                 }
             )
@@ -57,7 +59,7 @@ fun SpendingChallengesScreen(
             
             item {
                 Text(
-                    text = "Active Challenges",
+                    text = stringResource(R.string.challenges_active_section),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -101,8 +103,10 @@ private fun NoSpendStreakCard(status: NoSpendStatus?) {
                     modifier = Modifier.size(32.dp)
                 )
                 
+                val streakDays = status?.currentStreakDays ?: 0
+                val suffix = if (streakDays == 1) stringResource(R.string.challenges_streak_suffix_single) else stringResource(R.string.challenges_streak_suffix_plural)
                 Text(
-                    text = "${status?.currentStreakDays ?: 0} Day${if ((status?.currentStreakDays ?: 0) == 1) "" else "s"} Streak",
+                    text = stringResource(R.string.challenges_streak_format, streakDays, suffix),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = if (status?.hasNoSpendToday == true)
@@ -116,7 +120,7 @@ private fun NoSpendStreakCard(status: NoSpendStatus?) {
             
             if (status?.hasNoSpendToday == true) {
                 Text(
-                    text = "🔥 No spending today! Keep it up!",
+                    text = stringResource(R.string.challenges_no_spend_today),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.tertiary
                 )
@@ -124,7 +128,7 @@ private fun NoSpendStreakCard(status: NoSpendStatus?) {
                 status.savedToday?.let { saved ->
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Saved today: ${currencyFormat.format(saved)}",
+                        text = stringResource(R.string.challenges_saved_today_format, currencyFormat.format(saved)),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onTertiaryContainer
                     )
@@ -142,7 +146,7 @@ private fun NoSpendStreakCard(status: NoSpendStatus?) {
                             tint = MaterialTheme.colorScheme.tertiary
                         )
                         Text(
-                            text = "7-Day Streak Achievement!",
+                            text = stringResource(R.string.challenges_7day_achievement),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.tertiary
@@ -151,7 +155,7 @@ private fun NoSpendStreakCard(status: NoSpendStatus?) {
                 }
             } else {
                 Text(
-                    text = "Start a no-spend streak today!",
+                    text = stringResource(R.string.challenges_start_streak),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

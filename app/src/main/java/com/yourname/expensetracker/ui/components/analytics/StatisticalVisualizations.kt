@@ -280,7 +280,7 @@ fun CategoryPercentileBadge(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         ) {
             Text(
-                text = "P25: €${String.format("%.0f", percentile25)} · P75: €${String.format("%.0f", percentile75)}",
+                text = stringResource(R.string.analytics_percentile_p25_p75_format, percentile25, percentile75),
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant

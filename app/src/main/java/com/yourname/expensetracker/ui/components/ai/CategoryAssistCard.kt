@@ -17,6 +17,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 
 @Composable
@@ -41,7 +43,7 @@ fun CategoryAssistCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "AI Category Suggestion",
+                text = stringResource(R.string.ai_category_title),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -69,14 +71,14 @@ fun CategoryAssistCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(onClick = onApply) {
-                    Text("Apply in editor")
+                    Text(stringResource(R.string.ai_category_apply_editor))
                 }
                 OutlinedButton(onClick = onDismiss) {
-                    Text("Dismiss")
+                    Text(stringResource(R.string.action_dismiss))
                 }
                 suggestion.confidence?.let {
                     Text(
-                        text = "${(it * 100).toInt()}%",
+                        text = stringResource(R.string.ai_category_confidence_format, (it * 100).toInt()),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.width(40.dp)

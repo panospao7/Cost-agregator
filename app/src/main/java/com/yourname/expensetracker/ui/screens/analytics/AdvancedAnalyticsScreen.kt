@@ -16,6 +16,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AnalyticsDashboardData
 import com.yourname.expensetracker.domain.analytics.DashboardInsight
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.model.asString
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -31,10 +34,10 @@ fun AdvancedAnalyticsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Advanced Analytics") },
+                title = { Text(stringResource(R.string.advanced_analytics_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
                     }
                 }
             )
@@ -64,7 +67,7 @@ fun AdvancedAnalyticsScreen(
                         if (data.insights.isNotEmpty()) {
                             item {
                                 Text(
-                                    text = "Insights",
+                                    text = stringResource(R.string.analytics_insights),
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -78,7 +81,7 @@ fun AdvancedAnalyticsScreen(
                         if (data.topCategories.isNotEmpty()) {
                             item {
                                 Text(
-                                    text = "Top Categories",
+                                    text = stringResource(R.string.analytics_top_categories),
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -108,7 +111,7 @@ private fun CashflowOverviewCard(data: AnalyticsDashboardData) {
                 .padding(20.dp)
         ) {
             Text(
-                text = "Cashflow Overview",
+                text = stringResource(R.string.analytics_cashflow_overview),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -120,17 +123,17 @@ private fun CashflowOverviewCard(data: AnalyticsDashboardData) {
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 CashflowItem(
-                    label = "Income",
+                    label = stringResource(R.string.analytics_income),
                     value = currencyFormat.format(data.totalIncome),
                     color = MaterialTheme.colorScheme.tertiary
                 )
                 CashflowItem(
-                    label = "Spent",
+                    label = stringResource(R.string.analytics_spent),
                     value = currencyFormat.format(data.totalSpent),
                     color = MaterialTheme.colorScheme.error
                 )
                 CashflowItem(
-                    label = "Net",
+                    label = stringResource(R.string.analytics_net),
                     value = currencyFormat.format(data.netCashflow),
                     color = if (data.netCashflow >= 0) 
                         MaterialTheme.colorScheme.tertiary 
@@ -194,7 +197,7 @@ private fun InsightCard(insight: DashboardInsight) {
             
             Column {
                 Text(
-                    text = insight.title,
+                    text = insight.title.asString(),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -228,7 +231,7 @@ private fun CategoryCard(category: com.yourname.expensetracker.domain.analytics.
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "${String.format("%.1f", category.percentage)}% of total",
+                    text = stringResource(R.string.analytics_percent_of_total_format, String.format("%.1f", category.percentage)),
                     style = MaterialTheme.typography.bodySmall
                 )
             }

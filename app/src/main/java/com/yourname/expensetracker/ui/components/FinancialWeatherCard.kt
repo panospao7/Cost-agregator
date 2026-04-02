@@ -22,10 +22,13 @@ import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.UpcomingItem
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
+import com.yourname.expensetracker.domain.model.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.ui.res.stringResource
+import com.yourname.expensetracker.R
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Repeat
@@ -125,13 +128,13 @@ fun FinancialWeatherCard(
                 Spacer(modifier = Modifier.width(16.dp))
 
                 Column {
-                    Text(
-                        text = "FINANCIAL WEATHER",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = SemanticColors.TextSecondary,
-                        letterSpacing = 1.sp
-                    )
+                Text(
+                    text = stringResource(R.string.financial_weather_title),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextSecondary,
+                    letterSpacing = 1.sp
+                )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = headline.uppercase(),
@@ -212,13 +215,13 @@ fun FinancialWeatherCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "UPCOMING (NEXT 30 DAYS)",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = SemanticColors.TextSecondary,
-                        letterSpacing = 0.5.sp
-                    )
+                Text(
+                    text = stringResource(R.string.financial_upcoming),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SemanticColors.TextSecondary,
+                    letterSpacing = 0.5.sp
+                )
                     
                     Row {
                         TextButton(
@@ -411,7 +414,7 @@ fun DetailSection(section: com.yourname.expensetracker.domain.model.NarrativeSec
             }
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = section.title.uppercase(),
+                text = section.title.asString().uppercase(),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = SemanticColors.TextSecondary,

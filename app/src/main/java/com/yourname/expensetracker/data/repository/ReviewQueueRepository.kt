@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.data.repository
 
+import android.content.Context
 import androidx.room.withTransaction
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
@@ -22,6 +24,7 @@ import timber.log.Timber
 
 @Singleton
 class ReviewQueueRepository @Inject constructor(
+    private val context: Context,
     private val database: AppDatabase,
     private val pendingReviewDao: PendingReviewDao,
     private val rawNotificationDao: RawNotificationDao,
@@ -62,11 +65,11 @@ class ReviewQueueRepository @Inject constructor(
         finalLongitude: Double? = null,
         finalAddress: String? = null
     ): Result<Long> {
-        val review = pendingReviewDao.getById(reviewId) ?: return Result.Error(message = "Review not found")
+        val review = pendingReviewDao.getById(reviewId) ?: return Result.Error(message = context.getString(R.string.debug_error_review_not_found))
 
         // Atomically check and update status to prevent double-processing
         val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING")
-        if (rowsUpdated == 0) return Result.Error(message = "Review already processed")
+        if (rowsUpdated == 0) return Result.Error(message = context.getString(R.string.debug_error_review_already_processed))
 
         val amount: Double = finalAmount ?: review.suggestedAmount
         val merchant: String = finalMerchant ?: review.suggestedMerchant
@@ -74,7 +77,7 @@ class ReviewQueueRepository @Inject constructor(
 
         if (amount > 1000000.0) {
             pendingReviewDao.updateStatus(reviewId, "PENDING")
-            return Result.Error(message = "Amount exceeds limit")
+            return Result.Error(message = context.getString(R.string.debug_error_amount_exceeds_limit))
         }
 
         val type: TransactionType = finalType ?: try {

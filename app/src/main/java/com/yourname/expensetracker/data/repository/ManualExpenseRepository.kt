@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.data.repository
 
+import android.content.Context
 import androidx.room.*
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
@@ -28,6 +30,7 @@ import javax.inject.Singleton
 
 @Singleton
 class ManualExpenseRepository @Inject constructor(
+    private val context: Context,
     private val database: AppDatabase,
     private val expenseDao: com.yourname.expensetracker.data.database.dao.ExpenseDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
@@ -74,10 +77,10 @@ class ManualExpenseRepository @Inject constructor(
         locationSource: String? = null
     ): Result<Long> {
         if (amount <= 0) {
-            return Result.Error(message = "Amount must be greater than zero")
+            return Result.Error(message = context.getString(R.string.debug_error_amount_greater_than_zero))
         }
         if (amount > 1000000.0) {
-            return Result.Error(message = "Amount exceeds limit")
+            return Result.Error(message = context.getString(R.string.debug_error_amount_exceeds_limit))
         }
 
         var insertedExpenseForHook: Expense? = null
