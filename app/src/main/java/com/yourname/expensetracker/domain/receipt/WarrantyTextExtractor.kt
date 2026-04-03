@@ -177,9 +177,14 @@ class WarrantyTextExtractor {
                 
                 // Determine if this is years or months based on the matched text
                 val matchedText = matcher.group(0)?.uppercase(Locale.getDefault()) ?: ""
+                val unitRegex = Regex("""(\d+)\s*([YM])""", RegexOption.IGNORE_CASE)
+                val unitMatch = unitRegex.find(matchedText)
+                val explicitUnit = unitMatch?.groupValues?.getOrNull(2)?.uppercase(Locale.getDefault())
+
                 return when {
-                    matchedText.contains("YEAR") || matchedText.contains("YR") || 
-                    matchedText.contains("Y") && !matchedText.contains("MONTH") -> value * 12
+                    explicitUnit == "M" -> value
+                    explicitUnit == "Y" -> value * 12
+                    matchedText.contains("YEAR") || matchedText.contains("YR") -> value * 12
                     matchedText.contains("MONTH") || matchedText.contains("MO") -> value
                     else -> value // Assume months if unclear
                 }

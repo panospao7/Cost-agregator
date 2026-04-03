@@ -231,9 +231,12 @@ class BudgetViewModel @Inject constructor(
         viewModelScope.launch {
             _autopilotLoading.value = true
             try {
-                // Find the budget by category ID
+                // Find the exact budget targeted by the recommendation
                 val budget = budgetRepository.getActiveBudgets()
-                    .find { it.categoryId == recommendation.categoryId || it.id == recommendation.categoryId }
+                    .find { it.id == recommendation.budgetId }
+                    ?: budgetRepository.getActiveBudgets().find {
+                        recommendation.categoryId != null && it.categoryId == recommendation.categoryId
+                    }
                 
                 if (budget != null) {
                     val updatedBudget = budget.copy(amount = recommendation.recommendedBudget)
@@ -246,7 +249,7 @@ class BudgetViewModel @Inject constructor(
                             if (current != null) {
                                 _autopilotRecommendations.value = current.copy(
                                     categoryRecommendations = current.categoryRecommendations.filter { 
-                                        it.categoryId != recommendation.categoryId 
+                                        it.budgetId != recommendation.budgetId
                                     }
                                 )
                             }
@@ -276,7 +279,8 @@ class BudgetViewModel @Inject constructor(
                 var successCount = 0
                 for (rec in recommendations) {
                     val budget = activeBudgets.find { 
-                        it.categoryId == rec.categoryId || it.id == rec.categoryId 
+                        it.id == rec.budgetId ||
+                            (rec.categoryId != null && it.categoryId == rec.categoryId)
                     }
                     
                     if (budget != null) {

@@ -66,6 +66,7 @@ import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagemen
 import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import com.yourname.expensetracker.ui.navigation.NavigationController
 import com.yourname.expensetracker.ui.navigation.ProvideNavigationController
@@ -88,6 +89,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var aiEngagementRepository: AiEngagementRepository
 
+    @Inject
+    lateinit var actionRegistry: ContextualActionRegistry
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -101,7 +105,7 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        MainScreen(mainViewModel)
+                        MainScreen(mainViewModel, actionRegistry)
                     }
                 }
             }
@@ -148,7 +152,10 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(mainViewModel: MainViewModel) {
+fun MainScreen(
+    mainViewModel: MainViewModel,
+    actionRegistry: ContextualActionRegistry
+) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
@@ -395,12 +402,14 @@ fun MainScreen(mainViewModel: MainViewModel) {
                 }
                 is NavigationDestination.CarbonFootprint -> {
                     CarbonFootprintScreen(
-                        onNavigateBack = { navigation.navigateBack() }
+                        onNavigateBack = { navigation.navigateBack() },
+                        actionRegistry = actionRegistry
                     )
                 }
                 is NavigationDestination.WarrantyTracker -> {
                     WarrantyTrackerScreen(
-                        onNavigateBack = { navigation.navigateBack() }
+                        onNavigateBack = { navigation.navigateBack() },
+                        actionRegistry = actionRegistry
                     )
                 }
                 is NavigationDestination.PriceProtection -> {
@@ -471,7 +480,8 @@ fun MainScreen(mainViewModel: MainViewModel) {
                 }
                 is NavigationDestination.LifestyleInflation -> {
                     LifestyleInflationScreen(
-                        onNavigateBack = { navigation.navigateBack() }
+                        onNavigateBack = { navigation.navigateBack() },
+                        actionRegistry = actionRegistry
                     )
                 }
                 is NavigationDestination.SplitTemplates -> {
@@ -513,7 +523,8 @@ fun MainScreen(mainViewModel: MainViewModel) {
                 }
                 is NavigationDestination.SubscriptionManagement -> {
                     SubscriptionManagementScreen(
-                        onNavigateBack = { navigation.navigateBack() }
+                        onNavigateBack = { navigation.navigateBack() },
+                        actionRegistry = actionRegistry
                     )
                 }
                 is NavigationDestination.TaxConfiguration -> {

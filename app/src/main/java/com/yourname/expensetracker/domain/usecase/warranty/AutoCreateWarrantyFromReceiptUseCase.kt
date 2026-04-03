@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.receipt.WarrantyExtractionData
 import com.yourname.expensetracker.domain.receipt.WarrantyTextExtractor
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
+import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -77,8 +78,13 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
                 }
                 extractionData.confidence >= MINIMUM_CONFIDENCE_THRESHOLD -> {
                     // Medium confidence - flag for review
-                    Timber.tag(TAG).d("Low confidence extraction (${extractionData.confidence}%) for receipt $receiptId, flagging for review")
-                    WarrantyCreationResult.LowConfidence(extractionData)
+                    Timber.tag(TAG).d("Low confidence extraction (${extractionData.confidence}%) for receipt $receiptId, creating review draft")
+                    val persistResult = createReviewDraftWarranty(receiptId, extractionData)
+                    when (persistResult) {
+                        is WarrantyCreationResult.AlreadyExists,
+                        is WarrantyCreationResult.Failure -> persistResult
+                        else -> WarrantyCreationResult.LowConfidence(extractionData)
+                    }
                 }
                 else -> {
                     // Too low confidence - don't create
@@ -130,12 +136,7 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         }
 
         // Map warranty type string to enum
-        val warrantyType = when (data.warrantyType?.uppercase()) {
-            "EXTENDED" -> WarrantyType.EXTENDED
-            "STORE" -> WarrantyType.STORE
-            "THIRD_PARTY" -> WarrantyType.THIRD_PARTY
-            else -> WarrantyType.MANUFACTURER
-        }
+        val warrantyType = mapWarrantyType(data.warrantyType)
 
         val now = timeProvider.now()
 
@@ -153,7 +154,7 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             supportEmail = data.supportEmail,
             warrantyDocumentUrl = null, // Could be extracted from receipt images in future
             notes = if (autoDetect) "Auto-detected from receipt" else null,
-            status = WarrantyStatus.ACTIVE,
+            status = if (needsReview) WarrantyStatus.PENDING_REVIEW else WarrantyStatus.ACTIVE,
             claimedAt = null,
             createdAt = now,
             updatedAt = now,
@@ -164,7 +165,16 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             needsReview = needsReview
         )
 
-        val warrantyId = warrantyTrackerRepository.addWarranty(warranty)
+        val warrantyId = warrantyTrackerRepository.addWarrantyIgnoreConflicts(warranty)
+
+        if (warrantyId <= 0) {
+            val existing = warrantyTrackerRepository.getWarrantyByReceiptId(receiptId)
+            if (existing != null) {
+                Timber.tag(TAG).d("Warranty insert ignored (duplicate) for receipt $receiptId")
+                return WarrantyCreationResult.AlreadyExists(existing.id)
+            }
+            return WarrantyCreationResult.Failure("Failed to persist warranty")
+        }
         
         Timber.tag(TAG).i(
             "Created warranty $warrantyId for receipt $receiptId " +
@@ -178,4 +188,71 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
      * Get the warranty text extractor for external use (e.g., preview before creation).
      */
     fun getExtractor(): WarrantyTextExtractor = warrantyTextExtractor
+
+    /**
+     * Persist a low-confidence draft so the review workflow is populated.
+     */
+    private suspend fun createReviewDraftWarranty(
+        receiptId: Long,
+        data: WarrantyExtractionData
+    ): WarrantyCreationResult {
+        val now = timeProvider.now()
+
+        val purchaseDate = data.purchaseDate ?: now
+        val durationMonths = data.warrantyDurationMonths ?: 12
+        val warrantyEndDate = data.warrantyEndDate ?: Calendar.getInstance().apply {
+            timeInMillis = purchaseDate
+            add(Calendar.MONTH, durationMonths)
+        }.timeInMillis
+
+        val draftWarranty = Warranty(
+            id = 0,
+            receiptId = receiptId,
+            expenseId = null,
+            productName = data.productName?.takeIf { it.isNotBlank() } ?: "Unknown Product",
+            merchantName = data.merchantName?.takeIf { it.isNotBlank() } ?: "Unknown Merchant",
+            purchaseDate = purchaseDate,
+            warrantyDurationMonths = durationMonths,
+            warrantyEndDate = warrantyEndDate,
+            warrantyType = mapWarrantyType(data.warrantyType),
+            supportPhone = data.supportPhone,
+            supportEmail = data.supportEmail,
+            warrantyDocumentUrl = null,
+            notes = "Auto-detected from receipt (needs review)",
+            status = WarrantyStatus.PENDING_REVIEW,
+            claimedAt = null,
+            createdAt = now,
+            updatedAt = now,
+            autoDetected = true,
+            extractionConfidence = data.confidence,
+            extractionSource = "ocr",
+            needsReview = true
+        )
+
+        val insertedId = warrantyTrackerRepository.addWarrantyIgnoreConflicts(draftWarranty)
+        if (insertedId <= 0) {
+            val existing = warrantyTrackerRepository.getWarrantyByReceiptId(receiptId)
+            return if (existing != null) {
+                WarrantyCreationResult.AlreadyExists(existing.id)
+            } else {
+                WarrantyCreationResult.Failure("Failed to persist review draft")
+            }
+        }
+
+        Timber.tag(TAG).i(
+            "Created low-confidence review draft $insertedId for receipt $receiptId " +
+            "(confidence=${data.confidence}%)"
+        )
+
+        return WarrantyCreationResult.Success(insertedId, data.confidence)
+    }
+
+    private fun mapWarrantyType(rawType: String?): WarrantyType {
+        return when (rawType?.uppercase()) {
+            "EXTENDED" -> WarrantyType.EXTENDED
+            "STORE" -> WarrantyType.STORE
+            "THIRD_PARTY" -> WarrantyType.THIRD_PARTY
+            else -> WarrantyType.MANUFACTURER
+        }
+    }
 }

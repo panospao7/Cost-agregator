@@ -280,6 +280,7 @@ class AssistantViewModel @Inject constructor(
     }
 
     fun clearSession() {
+        cancelCurrentQuery()
         viewModelScope.launch {
             _uiState.value.currentSessionId?.let { sessionId ->
                 aiChatRepository.clearSession(sessionId)
@@ -295,6 +296,7 @@ class AssistantViewModel @Inject constructor(
     }
 
     fun clearAllHistory() {
+        cancelCurrentQuery()
         viewModelScope.launch {
             aiChatRepository.clearAllHistory()
             clearSession()

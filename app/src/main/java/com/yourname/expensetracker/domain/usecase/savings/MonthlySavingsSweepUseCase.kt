@@ -25,7 +25,7 @@ import javax.inject.Singleton
  * ```
  * safeSweep = max(0, underspend - riskBuffer)
  * where:
- * - underspend = sum(budgetAmount - actualSpend) for all categories
+ * - underspend = overall remaining (if overall budget exists) OR sum of category remaining
  * - riskBuffer = MC uncertainty buffer (p75 - p50)
  * ```
  */
@@ -85,8 +85,9 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         monthStart.set(Calendar.SECOND, 0)
         monthStart.set(Calendar.MILLISECOND, 0)
 
-        val monthEnd = monthStart.clone() as Calendar
-        monthEnd.add(Calendar.MONTH, 1)
+        val nextMonthStart = monthStart.clone() as Calendar
+        nextMonthStart.add(Calendar.MONTH, 1)
+        val monthEndInclusive = nextMonthStart.timeInMillis - 1L
 
         // Get budget statuses and calculate underspend
         val budgetStatuses = budgetRepository.getBudgetStatuses().first()
@@ -123,7 +124,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
 
         // Get active goals
         val goals = savingsGoalRepository.getAllGoals().first()
-            .filter { it.currentAmount < it.targetAmount } // Only incomplete goals
+            .filter { it.targetAmount > 0.0 && it.currentAmount < it.targetAmount } // Only valid, incomplete goals
 
         if (goals.isEmpty()) {
             Timber.d("No active savings goals, skipping sweep")
@@ -153,7 +154,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             safeSweepAmount = safeSweepAmount,
             goalAllocations = allocations,
             computedAt = now,
-            monthEnd = monthEnd.timeInMillis,
+            monthEnd = monthEndInclusive,
             confidence = confidence
         )
     }
@@ -165,7 +166,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     private fun isWithinSweepWindow(calendar: Calendar): Boolean {
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-        return dayOfMonth >= (daysInMonth - DAYS_BEFORE_MONTH_END)
+        return dayOfMonth >= (daysInMonth - DAYS_BEFORE_MONTH_END + 1)
     }
 
     /**
@@ -175,17 +176,18 @@ class MonthlySavingsSweepUseCase @Inject constructor(
      * @return Triple of (underspend, totalBudgeted, totalSpent)
      */
     private fun calculateUnderspend(budgetStatuses: List<BudgetStatus>): Triple<Double, Double, Double> {
-        var underspend = 0.0
-        var totalBudgeted = 0.0
-        var totalSpent = 0.0
-
-        for (status in budgetStatuses) {
-            totalBudgeted += status.budget.amount
-            totalSpent += status.spentAmount
-            if (status.remainingAmount > 0) {
-                underspend += status.remainingAmount
-            }
+        val overallBudget = budgetStatuses.firstOrNull { it.budget.categoryId == null }
+        val selectedStatuses = if (overallBudget != null) {
+            listOf(overallBudget)
+        } else {
+            budgetStatuses.filter { it.budget.categoryId != null }
         }
+
+        val underspend = selectedStatuses.sumOf { status ->
+            status.remainingAmount.coerceAtLeast(0.0)
+        }
+        val totalBudgeted = selectedStatuses.sumOf { it.budget.amount }
+        val totalSpent = selectedStatuses.sumOf { it.spentAmount }
 
         return Triple(underspend, totalBudgeted, totalSpent)
     }

@@ -55,6 +55,8 @@ class WarrantyTrackerRepository @Inject constructor(
         warrantyDao.getWarrantyByReceiptId(receiptId)
     
     suspend fun addWarranty(warranty: Warranty): Long = warrantyDao.insertWarranty(warranty)
+
+    suspend fun addWarrantyIgnoreConflicts(warranty: Warranty): Long = warrantyDao.insertWarrantyIgnore(warranty)
     
     suspend fun updateWarranty(warranty: Warranty) = warrantyDao.updateWarranty(warranty)
     

@@ -21,4 +21,8 @@ class SavingsGoalRepository @Inject constructor(
     suspend fun deleteGoal(goal: SavingsGoal) {
         savingsGoalDao.deleteGoal(goal)
     }
+
+    suspend fun updateGoalAmount(goalId: Long, amount: Double) {
+        savingsGoalDao.updateGoalAmount(goalId, amount)
+    }
 }

@@ -2,6 +2,9 @@ package com.yourname.expensetracker.ui.components.emptystate
 
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -14,7 +17,9 @@ import javax.inject.Singleton
 @Singleton
 class ContextualActionRegistry @Inject constructor() {
     private val actions = mutableMapOf<String, List<EmptyStateAction>>()
-    private val completedActions = mutableMapOf<String, MutableSet<String>>()
+    private val completedActionsMap = mutableMapOf<String, Set<String>>()
+    private val _completedActions = MutableStateFlow<Set<String>>(emptySet())
+    val completedActions: StateFlow<Set<String>> = _completedActions.asStateFlow()
 
     /**
      * Register actions for a specific screen.
@@ -40,7 +45,7 @@ class ContextualActionRegistry @Inject constructor() {
     ): List<EmptyStateAction> {
         val allActions = actions[screenKey] ?: emptyList()
         return if (excludeCompleted) {
-            val completed = completedActions[screenKey] ?: emptySet()
+            val completed = completedActionsMap[screenKey] ?: emptySet()
             allActions.filter { it.id !in completed }
         } else {
             allActions
@@ -54,7 +59,9 @@ class ContextualActionRegistry @Inject constructor() {
      * @param actionId Unique identifier for the action
      */
     fun markCompleted(screenKey: String, actionId: String) {
-        completedActions.getOrPut(screenKey) { mutableSetOf() }.add(actionId)
+        val updatedForScreen = (completedActionsMap[screenKey] ?: emptySet()) + actionId
+        completedActionsMap[screenKey] = updatedForScreen
+        _completedActions.value = _completedActions.value + "$screenKey:$actionId"
     }
 
     /**
@@ -65,7 +72,7 @@ class ContextualActionRegistry @Inject constructor() {
      * @return True if the action has been marked as completed
      */
     fun isCompleted(screenKey: String, actionId: String): Boolean {
-        return completedActions[screenKey]?.contains(actionId) ?: false
+        return completedActionsMap[screenKey]?.contains(actionId) ?: false
     }
 
     /**
@@ -74,7 +81,8 @@ class ContextualActionRegistry @Inject constructor() {
      * @param screenKey Unique identifier for the screen
      */
     fun clearCompleted(screenKey: String) {
-        completedActions.remove(screenKey)
+        completedActionsMap.remove(screenKey)
+        _completedActions.value = _completedActions.value.filterNot { it.startsWith("$screenKey:") }.toSet()
     }
 
     /**
@@ -82,7 +90,8 @@ class ContextualActionRegistry @Inject constructor() {
      */
     fun clearAll() {
         actions.clear()
-        completedActions.clear()
+        completedActionsMap.clear()
+        _completedActions.value = emptySet()
     }
 
     /**
@@ -103,7 +112,7 @@ class ContextualActionRegistry @Inject constructor() {
      */
     fun getRemainingActionCount(screenKey: String): Int {
         val allActions = actions[screenKey] ?: return 0
-        val completed = completedActions[screenKey] ?: emptySet()
+        val completed = completedActionsMap[screenKey] ?: emptySet()
         return allActions.count { it.id !in completed }
     }
 }

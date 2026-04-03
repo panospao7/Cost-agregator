@@ -59,7 +59,7 @@ import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
         StressForecastSnapshot::class,
         EmailReceiptSource::class
     ],
-    version = 65,
+    version = 67,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -2907,6 +2907,84 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources (emailMessageId)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources (provider, parsedAt)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources (fingerprint)")
+            }
+        }
+
+        // Migration 65 -> 66: Allow nullable imagePath for email-ingested receipts
+        val MIGRATION_65_66 = object : androidx.room.migration.Migration(65, 66) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    database.execSQL("""
+                        CREATE TABLE scanned_receipts_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            imagePath TEXT,
+                            rawOcrText TEXT NOT NULL,
+                            parsedTotal REAL,
+                            parsedMerchant TEXT,
+                            parsedDate INTEGER,
+                            parsedItems TEXT,
+                            parsedTaxAmount REAL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            confidence REAL NOT NULL,
+                            expenseId INTEGER,
+                            matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED',
+                            matchConfidence REAL,
+                            suggestedExpenseId INTEGER,
+                            createdAt INTEGER NOT NULL,
+                            itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING',
+                            FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+
+                    database.execSQL("""
+                        INSERT INTO scanned_receipts_new
+                        SELECT id, imagePath, rawOcrText, parsedTotal, parsedMerchant,
+                               parsedDate, parsedItems, parsedTaxAmount, currency,
+                               confidence, expenseId, matchStatus, matchConfidence,
+                               suggestedExpenseId, createdAt, itemCategorizationStatus
+                        FROM scanned_receipts
+                    """.trimIndent())
+
+                    database.execSQL("DROP TABLE scanned_receipts")
+                    database.execSQL("ALTER TABLE scanned_receipts_new RENAME TO scanned_receipts")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Migration 66 -> 67: F1 warranty de-duplication hardening
+        // Enforce one warranty per receipt to avoid check-then-insert races.
+        val MIGRATION_66_67 = object : androidx.room.migration.Migration(66, 67) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // Keep only the most recently inserted warranty per receiptId.
+                    database.execSQL(
+                        """
+                        DELETE FROM warranties
+                        WHERE id NOT IN (
+                            SELECT MAX(id)
+                            FROM warranties
+                            GROUP BY receiptId
+                        )
+                        """.trimIndent()
+                    )
+
+                    // Replace legacy non-unique index with unique index.
+                    database.execSQL("DROP INDEX IF EXISTS index_warranties_receiptId")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_warranties_receiptId ON warranties (receiptId)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
             }
         }
     }

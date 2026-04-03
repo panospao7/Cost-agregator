@@ -12,7 +12,6 @@ import timber.log.Timber
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.exp
 import java.util.Random
 
 /**
@@ -246,35 +245,45 @@ class FinancialStressForecastEngine @Inject constructor(
             it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine 
         }
         
-        // Calculate daily discretionary spending (excluding recurring patterns)
-        val dailySpending = purchases.map { it.effectiveAmount }.sorted()
+        // Build empirical distribution of daily discretionary totals
+        val dailyTotals = purchases
+            .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+            .mapValues { (_, txns) -> txns.sumOf { it.effectiveAmount } }
+            .values
+            .filter { it > 0.0 }
         
         // If insufficient data, return conservative estimates
-        if (dailySpending.isEmpty()) {
+        if (dailyTotals.isEmpty()) {
+            val random = Random(SEED)
+            val fallbackTotals = DoubleArray(NUM_SIMULATIONS) {
+                (daysAhead * 20.0 + random.nextGaussian() * 5.0).coerceAtLeast(0.0)
+            }
+            fallbackTotals.sort()
+
             return MonteCarloHorizonResult(
-                percentile10 = 0.0,
-                percentile25 = 0.0,
-                percentile50 = 0.0,
-                percentile75 = 0.0,
-                percentile90 = daysAhead * 20.0, // Conservative: €20/day
-                simulatedTotals = DoubleArray(NUM_SIMULATIONS) { daysAhead * 20.0 }.toList()
+                percentile10 = percentile(fallbackTotals, 0.10),
+                percentile25 = percentile(fallbackTotals, 0.25),
+                percentile50 = percentile(fallbackTotals, 0.50),
+                percentile75 = percentile(fallbackTotals, 0.75),
+                percentile90 = percentile(fallbackTotals, 0.90),
+                simulatedTotals = fallbackTotals.toList()
             )
         }
-        
-        val dailyMean = dailySpending.average()
-        val dailyStdDev = calculateStdDev(dailySpending)
-        
+
         // Run simulations
         val random = Random(SEED)
         val simulatedTotals = DoubleArray(NUM_SIMULATIONS)
-        
+
         for (i in 0 until NUM_SIMULATIONS) {
             var total = 0.0
             for (day in 0 until daysAhead) {
-                // Sample from log-normal distribution
-                val z = random.nextGaussian()
-                val sample = exp(dailyMean + dailyStdDev * z)
-                total += sample.coerceAtLeast(0.0)
+                // Bootstrap from empirical daily totals
+                val sampledDaily = if (dailyTotals.isNotEmpty()) {
+                    dailyTotals[random.nextInt(dailyTotals.size)]
+                } else {
+                    0.0
+                }
+                total += sampledDaily
             }
             simulatedTotals[i] = total
         }

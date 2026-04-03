@@ -34,6 +34,9 @@ interface WarrantyDao {
     @Insert
     suspend fun insertWarranty(warranty: Warranty): Long
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertWarrantyIgnore(warranty: Warranty): Long
+
     @Update
     suspend fun updateWarranty(warranty: Warranty)
 

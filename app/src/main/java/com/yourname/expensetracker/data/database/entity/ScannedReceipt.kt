@@ -40,7 +40,7 @@ enum class MatchStatus {
 )
 data class ScannedReceipt(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val imagePath: String,
+    val imagePath: String?,
     val rawOcrText: String,
     val parsedTotal: Double?,
     val parsedMerchant: String?,

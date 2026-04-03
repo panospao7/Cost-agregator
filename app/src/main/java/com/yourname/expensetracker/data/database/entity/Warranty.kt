@@ -23,7 +23,7 @@ import androidx.room.PrimaryKey
         )
     ],
     indices = [
-        Index(value = ["receiptId"]),
+        Index(value = ["receiptId"], unique = true),
         Index(value = ["expenseId"]),
         Index(value = ["warrantyEndDate"]),
         Index(value = ["status"])
@@ -64,6 +64,7 @@ enum class WarrantyType {
 
 enum class WarrantyStatus {
     ACTIVE,
+    PENDING_REVIEW,
     EXPIRED,
     CLAIMED,
     TRANSFERRED

@@ -243,7 +243,7 @@ class ReceiptScanViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         step = ScanStep.REVIEW,
-                        imageUri = Uri.fromFile(java.io.File(receipt.imagePath)),
+                        imageUri = receipt.imagePath?.let { Uri.fromFile(java.io.File(it)) } ?: uri,
                         parsedReceipt = parsed,
                         receiptId = receipt.id,
                         rawOcrText = receipt.rawOcrText,

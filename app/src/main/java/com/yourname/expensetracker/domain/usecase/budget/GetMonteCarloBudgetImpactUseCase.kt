@@ -53,15 +53,8 @@ class GetMonteCarloBudgetImpactUseCase @Inject constructor() {
         // Compute tail risk: P(overrun) = 1 - probabilityUnderBudget
         val probabilityOfOverrun = 1.0 - probabilityUnderBudget
 
-        // Calculate overrun as percentage of budget
-        val overrunPercentage = if (budgetAmount > 0) {
-            (expectedOverrun / budgetAmount) * 100.0
-        } else {
-            0.0
-        }
-
         // Determine risk tier based on overrun magnitude and probability
-        val riskTier = determineRiskTier(expectedOverrun, overrunPercentage, probabilityOfOverrun)
+        val riskTier = determineRiskTier(expectedOverrun, budgetAmount, probabilityOfOverrun)
 
         // Generate display message based on risk tier and formatted overrun
         val formattedOverrun = MonteCarloBudgetImpact.formatCurrency(expectedOverrun)
@@ -91,26 +84,18 @@ class GetMonteCarloBudgetImpactUseCase @Inject constructor() {
      */
     private fun determineRiskTier(
         expectedOverrun: Double,
-        overrunPercentage: Double,
+        budgetAmount: Double,
         probabilityOfOverrun: Double
     ): RiskTier {
-        // No overrun - always LOW risk
-        if (expectedOverrun <= 0) {
-            return RiskTier.LOW
-        }
+        val overrunPercent = if (budgetAmount > 0) expectedOverrun / budgetAmount else 0.0
 
         return when {
-            // CRITICAL: overrun >= 30% of budget OR P(overrun) >= 75%
-            overrunPercentage >= 30.0 || probabilityOfOverrun >= 0.75 -> RiskTier.CRITICAL
+            overrunPercent >= 0.30 || probabilityOfOverrun >= 0.75 -> RiskTier.CRITICAL
 
-            // HIGH: overrun < 30% of budget OR P(overrun) < 75%
-            // (implied by not being CRITICAL, but we check the positive condition for clarity)
-            overrunPercentage >= 15.0 || probabilityOfOverrun >= 0.50 -> RiskTier.HIGH
+            overrunPercent >= 0.15 || probabilityOfOverrun >= 0.50 -> RiskTier.HIGH
 
-            // MEDIUM: overrun < 15% of budget AND P(overrun) < 50%
-            overrunPercentage >= 5.0 || probabilityOfOverrun >= 0.25 -> RiskTier.MEDIUM
+            overrunPercent >= 0.05 || probabilityOfOverrun >= 0.25 -> RiskTier.MEDIUM
 
-            // LOW: overrun < 5% of budget AND P(overrun) < 25%
             else -> RiskTier.LOW
         }
     }

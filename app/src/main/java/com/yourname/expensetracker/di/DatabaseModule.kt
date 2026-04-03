@@ -87,7 +87,9 @@ object DatabaseModule {
             AppDatabase.MIGRATION_61_62,
             AppDatabase.MIGRATION_62_63,
             AppDatabase.MIGRATION_63_64,
-            AppDatabase.MIGRATION_64_65
+            AppDatabase.MIGRATION_64_65,
+            AppDatabase.MIGRATION_65_66,
+            AppDatabase.MIGRATION_66_67
         )
             // ISSUE-1: Never destructively wipe user data on migration failures.
             // Old schemas must be migrated explicitly or handled through backup/recovery UX.

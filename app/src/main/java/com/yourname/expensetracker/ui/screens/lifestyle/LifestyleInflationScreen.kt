@@ -39,10 +39,11 @@ fun LifestyleInflationScreen(
     onNavigateBack: () -> Unit,
     onNavigateToSavings: () -> Unit = {},
     viewModel: LifestyleInflationViewModel = hiltViewModel(),
-    actionRegistry: ContextualActionRegistry = ContextualActionRegistry()
+    actionRegistry: ContextualActionRegistry
 ) {
     val report by viewModel.report.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val completedActionKeys by actionRegistry.completedActions.collectAsState()
     var selectedPeriod by rememberSaveable { mutableStateOf(12) }
     
     LaunchedEffect(selectedPeriod) {
@@ -163,7 +164,7 @@ fun LifestyleInflationScreen(
                 }
             } ?: run {
                 // Enhanced empty state with contextual actions
-                val emptyStateActions by remember {
+                val emptyStateActions by remember(completedActionKeys) {
                     derivedStateOf {
                         actionRegistry.getActions(EmptyStateScreenKeys.LIFESTYLE)
                     }

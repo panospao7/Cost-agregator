@@ -223,6 +223,16 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit OFFSET :offset")
     suspend fun getExpensesBetween(startDate: Long, endDate: Long, limit: Int = 2000, offset: Int = 0): List<Expense>
 
+    @Query("""
+        SELECT * FROM expenses
+        WHERE categoryId = :categoryId
+        AND date >= :startDate AND date < :endDate
+        AND transactionType = 'PURCHASE'
+        AND isNotMine = 0
+        ORDER BY date ASC
+    """)
+    suspend fun getExpensesByCategory(categoryId: Long, startDate: Long, endDate: Long): List<Expense>
+
     @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit OFFSET :offset")
     suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String, limit: Int = 2000, offset: Int = 0): List<Expense>
 

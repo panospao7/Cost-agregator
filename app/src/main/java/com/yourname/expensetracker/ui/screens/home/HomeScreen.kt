@@ -710,10 +710,6 @@ fun HomeScreen(
                                     }
                                 )
                             }
-                            is DashboardWidget.FinancialHealthScoreV2Widget -> {
-                                // Handled below - Health Score V2 widget
-                                Box(modifier = Modifier.fillMaxWidth())
-                            }
                             is DashboardWidget.SavingsSweepPrompt -> {
                                 // Savings Sweep Prompt widget - handled elsewhere
                                 Box(modifier = Modifier.fillMaxWidth())

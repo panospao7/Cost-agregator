@@ -12,10 +12,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Calculates effective budget spend excluding reimbursable shared expenses.
+ * Calculates effective budget spend on an accrual basis.
  *
- * Formula: budgetEffectiveSpend = personalSpend + netSharedLiability
- * where netSharedLiability = sum(myShareOfSharedExpenses) - sum(receivedReimbursements)
+ * Formula: budgetEffectiveSpend = personalSpend + sharedLiability
+ * where sharedLiability = sum(myShareOfSharedExpenses)
+ *
+ * Note: reimbursements are cash-flow events and are intentionally excluded from budget spend.
  */
 @Singleton
 class SharedExpenseBudgetOffsetEngine @Inject constructor(
@@ -25,7 +27,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
     /**
-     * Calculate the effective budget spend for a period, excluding reimbursable shared expenses.
+     * Calculate the effective budget spend for a period on an accrual basis.
      *
      * @param periodStart Start of the period (inclusive) in milliseconds
      * @param periodEnd End of the period (exclusive) in milliseconds
@@ -40,8 +42,11 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         userId: String = "default"
     ): BudgetSpendBreakdown = withContext(Dispatchers.IO) {
         try {
+            val allPeriodExpenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
+            val expenseCategoryMap = allPeriodExpenses.associateBy { it.id }
+
             // Get personal (non-shared) expenses for the period
-            val personalExpenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
+            val personalExpenses = allPeriodExpenses
                 .filter { expense ->
                     // Filter out shared expenses linked to group expenses
                     !expense.isSharedExpense &&
@@ -57,11 +62,9 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
 
             var totalSharedSpend = 0.0
             var totalReimbursed = 0.0
-            var netSharedLiability = 0.0
 
             // Process each group
             for (groupAggregate in activeGroups) {
-                val group = groupAggregate.group
                 val members = groupAggregate.members
                 val expenses = groupAggregate.expenses
 
@@ -73,8 +76,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                 val periodExpenses = expenses.filter {
                     it.date >= periodStart && it.date < periodEnd &&
                     (categoryId == null || it.expenseId?.let { expId ->
-                        expenseRepository.getExpensesBetween(periodStart, periodEnd)
-                            .find { e -> e.id == expId }?.categoryId
+                        expenseCategoryMap[expId]?.categoryId
                     } == categoryId)
                 }
 
@@ -83,22 +85,16 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                     val myShare = calculateMyShare(groupExpense, members, currentUserMember.id)
                     totalSharedSpend += myShare
 
-                    // Calculate reimbursed amount for this expense
-                    val reimbursedAmount = if (groupExpense.isReimbursable) {
-                        calculateReimbursedAmount(groupExpense, currentUserMember.id)
-                    } else {
-                        0.0
+                    // Track reimbursements for informational breakdown only (not budget offset)
+                    if (groupExpense.isReimbursable && groupExpense.paidById == currentUserMember.id) {
+                        totalReimbursed += groupExpense.reimbursedAmount.coerceAtLeast(0.0)
                     }
-                    totalReimbursed += reimbursedAmount
-
-                    // Net liability = my share - what I've been reimbursed
-                    val netLiability = myShare - reimbursedAmount
-                    netSharedLiability += netLiability
                 }
             }
 
-            // Effective budget spend includes personal spend + net shared liability
-            val effectiveBudgetSpend = totalPersonalSpend + netSharedLiability
+            // Accrual accounting for budgets: count what the user owes (their share), not cash reimbursements.
+            val netSharedLiability = totalSharedSpend
+            val effectiveBudgetSpend = totalPersonalSpend + totalSharedSpend
 
             BudgetSpendBreakdown(
                 totalPersonalSpend = totalPersonalSpend,
@@ -147,27 +143,6 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
     }
 
     /**
-     * Calculate the reimbursed amount for the current user on a specific expense.
-     * For now, uses the stored reimbursedAmount field.
-     * In the future, this could track individual reimbursements from other members.
-     */
-    private fun calculateReimbursedAmount(
-        expense: GroupExpense,
-        currentUserMemberId: Long
-    ): Double {
-        // If this is the payer, they've been "reimbursed" by not having to pay their share
-        // If this is another member, check the reimbursed amount
-        return if (expense.paidById == currentUserMemberId) {
-            // Payer gets "reimbursed" by the difference between total and their share
-            val myShare = expense.myShareAmount ?: (expense.totalAmount / 2.0) // Default to 50% if not set
-            expense.totalAmount - myShare
-        } else {
-            // Non-payer uses the stored reimbursed amount
-            expense.reimbursedAmount
-        }
-    }
-
-    /**
      * Parse custom splits JSON string.
      * Format: "memberId:amount,memberId:amount"
      */
@@ -211,8 +186,8 @@ data class BudgetSpendBreakdown(
     val totalPersonalSpend: Double,      // Non-shared expenses
     val totalSharedSpend: Double,      // Sum of my shares in all shared expenses
     val totalReimbursed: Double,       // Sum of received reimbursements
-    val netSharedLiability: Double,      // What I actually owe (sharedSpend - reimbursed)
-    val effectiveBudgetSpend: Double     // Personal + netSharedLiability (what counts against budget)
+    val netSharedLiability: Double,      // Accrual liability used for budgeting (equals sharedSpend)
+    val effectiveBudgetSpend: Double     // Personal + sharedSpend (what counts against budget)
 ) {
     /**
      * Returns the amount pending reimbursement (positive = I'm owed money, negative = I owe money)

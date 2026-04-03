@@ -199,6 +199,8 @@ class NotificationProcessingPipeline @Inject constructor(
 
         val correctedMerchant = merchantNormalizer.normalize(parsed.merchant).canonical.normalizedName
 
+        var anomalyCandidate: com.yourname.expensetracker.data.database.model.ExpenseWithCategory? = null
+
         database.withTransaction {
             val rawId = dao.insertOrIgnore(notification)
             if (rawId == -1L) return@withTransaction
@@ -208,7 +210,9 @@ class NotificationProcessingPipeline @Inject constructor(
             when (routingResult.decision) {
                 RoutingDecision.AUTO_ACCEPT -> handleAutoAccept(
                     notification, rawId, parsed, correctedMerchant, fullNotificationText, routingResult
-                )
+                ).also { expenseWithCategory ->
+                    anomalyCandidate = expenseWithCategory
+                }
                 RoutingDecision.NEEDS_REVIEW -> handleNeedsReview(
                     notification, rawId, parsed, correctedMerchant, fullNotificationText, routingResult
                 )
@@ -220,6 +224,10 @@ class NotificationProcessingPipeline @Inject constructor(
 
             confidenceRouter.invalidateSourceStatsCache(notification.packageName)
             confidenceRouter.invalidateMerchantCache(correctedMerchant)
+        }
+
+        anomalyCandidate?.let { expenseWithCategory ->
+            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
         }
     }
 
@@ -309,7 +317,7 @@ class NotificationProcessingPipeline @Inject constructor(
         correctedMerchant: String,
         fullText: String,
         routingResult: com.yourname.expensetracker.domain.intelligence.RoutingResult
-    ) {
+    ): com.yourname.expensetracker.data.database.model.ExpenseWithCategory? {
         val isDuplicate = expenseDao.isDuplicate(
             amount = parsed.amount,
             merchant = correctedMerchant,
@@ -320,7 +328,7 @@ class NotificationProcessingPipeline @Inject constructor(
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
             classifier.train(fullText, isTransaction = true)
-            return
+            return null
         }
 
         val classification = hybridClassifier.classify(
@@ -382,13 +390,12 @@ class NotificationProcessingPipeline @Inject constructor(
             }
             budgetMonitor.checkBudgets()
 
-            // Check for anomalies and alert
+            // Prepare anomaly payload; caller runs alerting post-transaction
             val enrichedExpense = expense.copy(id = expenseId)
             val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
                 expense = enrichedExpense,
                 category = categoryId?.let { database.categoryDao().getById(it) }
             )
-            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
 
             classifier.train(fullText, isTransaction = true)
 
@@ -426,10 +433,13 @@ class NotificationProcessingPipeline @Inject constructor(
                     Timber.w(e, "Subscription detection failed for merchant: $correctedMerchant")
                 }
             }
+
+            return expenseWithCategory
         } else {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
             classifier.train(fullText, isTransaction = true)
+            return null
         }
     }
 

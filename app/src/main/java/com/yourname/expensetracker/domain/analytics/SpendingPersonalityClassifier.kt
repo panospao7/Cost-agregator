@@ -396,6 +396,7 @@ class SpendingPersonalityClassifier @Inject constructor(
         
         // Lower variance in features = higher confidence
         val featureValues = featureScores.values.toList()
+        if (featureValues.isEmpty()) return 0.0
         val featureMean = featureValues.average()
         val featureVariance = featureValues.sumOf { (it - featureMean) * (it - featureMean) } / featureValues.size
         val featureConfidence = (1.0 - featureVariance).coerceIn(0.0, 1.0)

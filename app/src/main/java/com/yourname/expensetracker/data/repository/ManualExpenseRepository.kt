@@ -98,6 +98,7 @@ class ManualExpenseRepository @Inject constructor(
         }
 
         var insertedExpenseForHook: Expense? = null
+        var insertedCategoryIdForAnomaly: Long? = null
 
         val result = database.withTransaction {
             // 1. Normalize merchant name
@@ -145,28 +146,26 @@ class ManualExpenseRepository @Inject constructor(
             }
 
             insertedExpenseForHook = expense.copy(id = id)
+            insertedCategoryIdForAnomaly = finalCategoryId
 
             // 4. Check budgets
             budgetMonitor.checkBudgets()
 
-            // 5. Check for anomalies and alert
-            insertedExpenseForHook?.let { expense ->
-                val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-                    expense = expense,
-                    category = finalCategoryId?.let { 
-                        database.categoryDao().getById(it) 
-                    }
-                )
-                anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
-            }
-
-            // 6. Learn the merchant→category mapping
+            // 5. Learn the merchant→category mapping
             finalCategoryId?.let { merchantCategoryRepository.learnPattern(normalizedMerchant, it) }
 
             Result.Success(id)
         }
 
         if (result is Result.Success) {
+            insertedExpenseForHook?.let { insertedExpense ->
+                val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+                    expense = insertedExpense,
+                    category = insertedCategoryIdForAnomaly?.let { database.categoryDao().getById(it) }
+                )
+                anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+            }
+
             // Non-blocking recommendation generation (fire-and-forget)
             asyncScope.launch {
                 recommendationSemaphore.withPermit {

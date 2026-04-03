@@ -39,16 +39,14 @@ fun WarrantyTrackerScreen(
     onNavigateBack: () -> Unit,
     onNavigateToScanReceipt: () -> Unit = {},
     viewModel: WarrantyTrackerViewModel = hiltViewModel(),
-    actionRegistry: ContextualActionRegistry = androidx.compose.ui.platform.LocalContext.current.let {
-        // Get from DI in real implementation - using default for preview
-        ContextualActionRegistry()
-    }
+    actionRegistry: ContextualActionRegistry
 ) {
     val state by viewModel.state.collectAsState()
+    val completedActionKeys by actionRegistry.completedActions.collectAsState()
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
 
     // Get contextual actions for empty state
-    val emptyStateActions by remember {
+    val emptyStateActions by remember(completedActionKeys) {
         derivedStateOf {
             actionRegistry.getActions(EmptyStateScreenKeys.WARRANTY)
         }

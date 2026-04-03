@@ -28,11 +28,11 @@ class ReceiptAssistInputBuilder @Inject constructor(
         
         // For image-aware AI, we always include the image path
         // The AI service will decide whether to use vision API based on this
-        val hasValidImage = receipt.imagePath.isNotBlank()
+        val hasValidImage = !receipt.imagePath.isNullOrBlank()
         
         // Get image mime type if we have a valid image
         val imageMimeType = if (hasValidImage) {
-            receipt.imagePath.toImageMimeType()
+            receipt.imagePath?.toImageMimeType()
         } else null
 
         // Sanitize OCR text for privacy if needed
@@ -45,7 +45,7 @@ class ReceiptAssistInputBuilder @Inject constructor(
         return ReceiptAssistInput(
             receiptId = receipt.id,
             // NEW: Always include image path if available (primary analysis source)
-            imagePath = receipt.imagePath.takeIf { it.isNotBlank() },
+            imagePath = receipt.imagePath?.takeIf { it.isNotBlank() },
             imageMimeType = imageMimeType,
             // NEW: Flag to indicate AI should use vision analysis
             isImageAnalysisMode = isImageAnalysisMode,

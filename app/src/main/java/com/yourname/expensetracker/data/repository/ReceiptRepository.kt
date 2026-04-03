@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
@@ -117,7 +118,21 @@ class ReceiptRepository @Inject constructor(
             // F1: Trigger warranty extraction after receipt is saved
             try {
                 val warrantyResult = warrantyUseCase.execute(receiptId, ocrResult.fullText)
-                Timber.d("Warranty extraction result for receipt $receiptId: $warrantyResult")
+                when (warrantyResult) {
+                    is WarrantyCreationResult.Success -> {
+                        Timber.d("Warranty created for receipt $receiptId with confidence ${warrantyResult.confidence}%")
+                    }
+                    is WarrantyCreationResult.LowConfidence -> {
+                        // Low-confidence extractions are persisted as needsReview drafts in the use case.
+                        Timber.d("Warranty review draft persisted for receipt $receiptId (confidence ${warrantyResult.extractedData.confidence}%)")
+                    }
+                    is WarrantyCreationResult.AlreadyExists -> {
+                        Timber.d("Warranty already exists for receipt $receiptId (id=${warrantyResult.existingWarrantyId})")
+                    }
+                    is WarrantyCreationResult.Failure -> {
+                        Timber.d("Warranty extraction skipped for receipt $receiptId: ${warrantyResult.error}")
+                    }
+                }
             } catch (e: Exception) {
                 Timber.e(e, "Warranty extraction failed for receipt $receiptId")
                 // Don't fail the whole process if warranty extraction fails
@@ -319,7 +334,7 @@ class ReceiptRepository @Inject constructor(
     }
 
     suspend fun deleteReceipt(receipt: ScannedReceipt) {
-        ocrService.deleteImage(receipt.imagePath)
+        receipt.imagePath?.let { ocrService.deleteImage(it) }
         scannedReceiptDao.delete(receipt)
     }
 
@@ -522,7 +537,9 @@ class ReceiptRepository @Inject constructor(
 
     suspend fun clearAllScannedReceipts() {
         val receipts = scannedReceiptDao.getAll()
-        receipts.forEach { ocrService.deleteImage(it.imagePath) }
+        receipts.forEach { receipt ->
+            receipt.imagePath?.let { path -> ocrService.deleteImage(path) }
+        }
         scannedReceiptDao.deleteAll()
     }
 

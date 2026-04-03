@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.database.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Update
 import com.yourname.expensetracker.data.database.entity.HealthScoreHistory
 import kotlinx.coroutines.flow.Flow
 
@@ -17,6 +18,12 @@ interface HealthScoreHistoryDao {
      */
     @Insert
     suspend fun insert(history: HealthScoreHistory): Long
+
+    /**
+     * Update an existing health score history record.
+     */
+    @Update
+    suspend fun update(history: HealthScoreHistory)
     
     /**
      * Get the most recent health score records, ordered by calculation time descending.

@@ -4,7 +4,9 @@ import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 
 /**
  * AI-powered budget autopilot engine.
@@ -120,7 +122,8 @@ class BudgetAutopilotEngine @Inject constructor(
             
             categoryRecommendations.add(
                 CategoryBudgetRecommendation(
-                    categoryId = budget.id,
+                    budgetId = budget.id,
+                    categoryId = budget.categoryId,
                     categoryName = category?.name ?: "Overall Budget",
                     currentBudget = budget.amount,
                     recommendedBudget = recommendedBudget,
@@ -159,8 +162,8 @@ class BudgetAutopilotEngine @Inject constructor(
         expenses: List<com.yourname.expensetracker.data.database.entity.Expense>
     ): List<Double> {
         val threeMonthsAgo = timeProvider.now() - (90L * 24 * 60 * 60 * 1000)
-        
-        return expenses
+
+        val filteredExpenses = expenses
             .filter { expense ->
                 // Filter by category if budget is category-specific
                 val categoryMatch = budget.categoryId == null || expense.categoryId == budget.categoryId
@@ -174,7 +177,26 @@ class BudgetAutopilotEngine @Inject constructor(
                 
                 categoryMatch && isPurchase && isMine && inRange
             }
-            .map { it.effectiveAmount }
+
+        if (filteredExpenses.isEmpty()) return emptyList()
+
+        // Aggregate spend by month (chronological), then operate on monthly totals.
+        val monthlyTotals = filteredExpenses
+            .sortedBy { it.date }
+            .groupBy { getMonthKey(it.date) }
+            .toSortedMap()
+            .mapValues { (_, txns) -> txns.sumOf { it.effectiveAmount } }
+
+        return monthlyTotals.values.toList()
+    }
+
+    private fun getMonthKey(timestamp: Long): String {
+        val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            timeInMillis = timestamp
+        }
+        val year = calendar.get(Calendar.YEAR)
+        val month = calendar.get(Calendar.MONTH) + 1
+        return String.format(Locale.US, "%04d-%02d", year, month)
     }
     
     /**
@@ -182,20 +204,26 @@ class BudgetAutopilotEngine @Inject constructor(
      */
     private fun calculateTrend(historicalSpend: List<Double>): Double {
         if (historicalSpend.size < 2) return 0.0
-        
-        // Group by month (approximate)
-        val months = 3.0 // We query last 3 months
+
         val avgSpend = historicalSpend.average()
         
         if (avgSpend <= 0) return 0.0
         
-        // Simple trend: compare first half to second half
-        val midPoint = historicalSpend.size / 2
-        val firstHalf = historicalSpend.take(midPoint).average()
-        val secondHalf = historicalSpend.drop(midPoint).average()
+        // Input is monthly totals in chronological order.
+        val sorted = historicalSpend
+        val firstHalf = sorted.take(sorted.size / 2)
+        val secondHalf = sorted.drop(sorted.size / 2)
+
+        if (firstHalf.isEmpty() || secondHalf.isEmpty()) return 0.0
+
+        val firstHalfAvg = firstHalf.average()
+        val secondHalfAvg = secondHalf.average()
+
+        // Normalize by number of month-buckets in each half.
+        val periodsPerHalf = (sorted.size / 2.0).coerceAtLeast(1.0)
         
-        return if (firstHalf > 0) {
-            ((secondHalf - firstHalf) / firstHalf) / (months / 2)
+        return if (firstHalfAvg > 0) {
+            ((secondHalfAvg - firstHalfAvg) / firstHalfAvg) / periodsPerHalf
         } else 0.0
     }
     
@@ -314,7 +342,8 @@ data class BudgetAutopilotRecommendations(
  * Single category budget recommendation.
  */
 data class CategoryBudgetRecommendation(
-    val categoryId: Long,
+    val budgetId: Long,
+    val categoryId: Long?,
     val categoryName: String,
     val currentBudget: Double,
     val recommendedBudget: Double,

@@ -670,7 +670,7 @@ fun ReviewCard(
 
             Row(modifier = Modifier.fillMaxWidth()) {
                 // Receipt Thumbnail if available
-                if (item.receipt != null) {
+                if (item.receipt?.imagePath != null) {
                     Card(
                         modifier = Modifier
                             .size(100.dp)
@@ -678,7 +678,7 @@ fun ReviewCard(
                         border = BorderStroke(1.dp, SemanticColors.GlassBorder)
                     ) {
                         AsyncImage(
-                            model = File(item.receipt.imagePath),
+                            model = item.receipt.imagePath?.let { File(it) },
                             contentDescription = stringResource(R.string.review_receipt_thumbnail_cd),
                             modifier = Modifier.fillMaxSize(),
                             contentScale = androidx.compose.ui.layout.ContentScale.Crop

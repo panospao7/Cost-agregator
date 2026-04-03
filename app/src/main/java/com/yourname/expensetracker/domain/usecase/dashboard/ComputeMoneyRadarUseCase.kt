@@ -236,6 +236,8 @@ class ComputeMoneyRadarUseCase @Inject constructor(
      */
     private suspend fun getBudgetRisk(): BudgetRiskInfo? {
         return try {
+            val now = timeProvider.now()
+
             // Get monthly budget
             val budgetStatuses = budgetRepository.getBudgetStatuses().first()
             val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
@@ -246,17 +248,23 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             }
             
             // Get current month spending
-            val (monthStart, _) = TimePeriodUtils.getMonthRange(timeProvider.now())
+            val (monthStart, _) = TimePeriodUtils.getMonthRange(now)
             val expenses = expenseRepository.getExpensesSince(monthStart)
             
             val spentToDate = expenses
                 .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
                 .sumOf { it.effectiveAmount }
             
+            // Include known upcoming recurring obligations in next 7 days
+            val windowEnd = now + (BILL_WINDOW_DAYS * ONE_DAY_MS)
+            val upcomingRecurring = recurringExpenseEngine.getPatterns()
+                .filter { it.nextExpectedDate in now..windowEnd }
+                .sumOf { it.averageAmount }
+
             // Run Monte Carlo simulation
             val mcResult = monteCarloSimulator.simulate(
                 spentToDate = spentToDate,
-                knownUpcoming = 0.0, // Will be computed by simulator
+                knownUpcoming = upcomingRecurring,
                 budgetAmount = budgetAmount
             )
             

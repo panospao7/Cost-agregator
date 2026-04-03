@@ -42,10 +42,11 @@ fun CarbonFootprintScreen(
     onNavigateBack: () -> Unit,
     onViewOffsetOptions: () -> Unit = {},
     viewModel: CarbonFootprintViewModel = hiltViewModel(),
-    actionRegistry: ContextualActionRegistry = ContextualActionRegistry()
+    actionRegistry: ContextualActionRegistry
 ) {
     val report by viewModel.report.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val completedActionKeys by actionRegistry.completedActions.collectAsState()
     var selectedPeriod by rememberSaveable { mutableIntStateOf(30) }
     
     LaunchedEffect(selectedPeriod) {
@@ -170,7 +171,7 @@ fun CarbonFootprintScreen(
                 }
             } ?: run {
                 // Enhanced empty state with contextual actions
-                val emptyStateActions by remember {
+                val emptyStateActions by remember(completedActionKeys) {
                     derivedStateOf {
                         actionRegistry.getActions(EmptyStateScreenKeys.CARBON)
                     }

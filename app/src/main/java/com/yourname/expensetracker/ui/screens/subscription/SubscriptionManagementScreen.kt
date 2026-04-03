@@ -46,14 +46,15 @@ fun SubscriptionManagementScreen(
     onOpenNotificationSettings: () -> Unit = {},
     onOpenBankConnections: () -> Unit = {},
     viewModel: SubscriptionManagementViewModel = hiltViewModel(),
-    actionRegistry: ContextualActionRegistry = ContextualActionRegistry()
+    actionRegistry: ContextualActionRegistry
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val completedActionKeys by actionRegistry.completedActions.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf<SubscriptionInfo?>(null) }
     
     // Get contextual actions for empty state
-    val emptyStateActions by remember {
+    val emptyStateActions by remember(completedActionKeys) {
         derivedStateOf {
             actionRegistry.getActions(EmptyStateScreenKeys.SUBSCRIPTION)
         }

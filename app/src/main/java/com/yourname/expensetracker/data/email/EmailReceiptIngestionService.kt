@@ -1,11 +1,13 @@
 package com.yourname.expensetracker.data.email
 
-import android.net.Uri
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.email.provider.AmazonReceiptParser
 import com.yourname.expensetracker.data.email.provider.AppleReceiptParser
 import com.yourname.expensetracker.data.email.provider.ParsedEmailReceipt
@@ -14,10 +16,12 @@ import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -45,6 +49,7 @@ sealed class EmailReceiptResult {
 class EmailReceiptIngestionService @Inject constructor(
     private val receiptParser: ReceiptParser,
     private val processReceiptUseCase: ProcessReceiptUseCase,
+    private val expenseDao: ExpenseDao,
     private val emailReceiptDao: EmailReceiptDao,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val merchantNormalizer: MerchantNormalizer,
@@ -136,7 +141,7 @@ class EmailReceiptIngestionService @Inject constructor(
             } else null
 
             val scannedReceipt = ScannedReceipt(
-                imagePath = "", // No image for email receipts
+                imagePath = null, // No image for email receipts
                 rawOcrText = emailBody.take(5000), // Store snippet for reference
                 parsedTotal = parsedReceipt.amount,
                 parsedMerchant = normalizedMerchant,
@@ -170,9 +175,7 @@ class EmailReceiptIngestionService @Inject constructor(
             val expenseIds = createExpenseFromReceipt(
                 receiptId = receiptId,
                 merchant = normalizedMerchant,
-                amount = parsedReceipt.amount,
-                currency = parsedReceipt.currency,
-                date = parsedReceipt.date
+                receipt = parsedReceipt
             )
 
             Timber.i("Email receipt processed successfully: receiptId=$receiptId, expenseIds=$expenseIds, provider=$provider")
@@ -243,7 +246,7 @@ class EmailReceiptIngestionService @Inject constructor(
      */
     private fun createFingerprint(merchant: String, amount: Double, date: Long): String {
         // Round amount to 2 decimal places for consistent fingerprinting
-        val roundedAmount = "%.2f".format(amount)
+        val roundedAmount = String.format(Locale.US, "%.2f", amount)
         // Use date bucket (5 minute window) for deduplication
         val dateBucket = date / 300_000L // 5 minute buckets
         return "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
@@ -273,38 +276,49 @@ class EmailReceiptIngestionService @Inject constructor(
     private suspend fun createExpenseFromReceipt(
         receiptId: Long,
         merchant: String,
-        amount: Double,
-        currency: String,
-        date: Long
+        receipt: ParsedEmailReceipt
     ): List<Long> {
-        val expenseIds = mutableListOf<Long>()
-        
         try {
             // Use categorization engine to determine category
             val categoryResult = categorizationEngine.categorize(merchant)
-            
-            // Note: We can't directly create expenses here without the DAO,
-            // so we'll rely on the receipt matching system or external processing.
-            // The receipt is stored and will be matched via ReceiptTransactionMatcher.
-            
-            // Link receipt to expense if we have enough confidence
-            if (categoryResult.confidence > 0.7f) {
-                val existingReceipt = scannedReceiptDao.getById(receiptId)
-                existingReceipt?.let { receipt ->
-                    scannedReceiptDao.update(
-                        receipt.copy(
-                            matchStatus = MatchStatus.SUGGESTED,
-                            matchConfidence = categoryResult.confidence.toFloat()
-                        )
-                    )
-                }
+
+            val expense = Expense(
+                amount = receipt.amount,
+                currency = receipt.currency,
+                merchant = merchant,
+                merchantKey = MerchantKeyGenerator.generate(merchant),
+                transactionType = TransactionType.PURCHASE,
+                date = receipt.date,
+                categoryId = categoryResult.categoryId,
+                createdAt = timeProvider.now(),
+                notes = receipt.items
+                    .takeIf { it.isNotEmpty() }
+                    ?.joinToString(prefix = "Email receipt: ", separator = ", ") { it.description },
+                dedupeKey = Expense.generateDedupeKey(receipt.amount, merchant, receipt.date)
+            )
+
+            val expenseId = expenseDao.insertAtomic(expense)
+            if (expenseId <= 0) {
+                Timber.w("Failed to insert expense for email receipt: $receiptId")
+                return emptyList()
             }
-            
+
+            val existingReceipt = scannedReceiptDao.getById(receiptId)
+            existingReceipt?.let { scanned ->
+                scannedReceiptDao.update(
+                    scanned.copy(
+                        expenseId = expenseId,
+                        matchStatus = MatchStatus.AUTO_MATCHED,
+                        matchConfidence = categoryResult.confidence.toFloat()
+                    )
+                )
+            }
+
+            return listOf(expenseId)
         } catch (e: Exception) {
             Timber.w(e, "Error creating expense from email receipt: $receiptId")
+            return emptyList()
         }
-        
-        return expenseIds
     }
 
     /**

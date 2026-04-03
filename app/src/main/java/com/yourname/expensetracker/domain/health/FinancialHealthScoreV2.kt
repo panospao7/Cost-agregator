@@ -6,7 +6,6 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
-import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -80,10 +79,11 @@ class FinancialHealthScoreV2 @Inject constructor(
             
             // Get budget statuses
             val budgetStatuses = budgetRepository.getBudgetStatuses().first()
+            val savingsGoals = savingsGoalRepository.getAllGoals().first()
             
             // Calculate individual component scores
             val savingsRateScore = calculateSavingsRateScore(deposits, purchases)
-            val runwayScore = calculateRunwayScore(purchases, budgetStatuses)
+            val runwayScore = calculateRunwayScore(purchases, savingsGoals)
             val budgetAdherenceScore = calculateBudgetAdherenceScore(budgetStatuses)
             val billReliabilityScore = calculateBillReliabilityScore(expenses, periodStart, periodEnd)
             
@@ -222,24 +222,22 @@ class FinancialHealthScoreV2 @Inject constructor(
      */
     private fun calculateRunwayScore(
         purchases: List<com.yourname.expensetracker.data.database.entity.Expense>,
-        budgetStatuses: List<com.yourname.expensetracker.domain.budget.BudgetStatus>
+        savingsGoals: List<com.yourname.expensetracker.data.database.entity.SavingsGoal>
     ): Int {
         // Calculate monthly expenses from actual spending
         val monthlyExpenses = purchases.sumOf { it.effectiveAmount }
-        
-        // Calculate total budget as proxy for "available funds"
-        val totalBudget = budgetStatuses.sumOf { it.budget.amount }
-        
-        // If no budget or expenses, return neutral
-        if (totalBudget <= 0 || monthlyExpenses <= 0) {
+
+        // Use accumulated savings, not unspent monthly budget, for runway calculation.
+        val totalSavings = savingsGoals.sumOf { it.currentAmount }
+
+        // If no expenses, return neutral (insufficient spending baseline)
+        if (monthlyExpenses <= 0) {
             return 50
         }
-        
+
         // Calculate runway in months
-        // Use remaining amount across all budgets as "available buffer"
-        val totalRemaining = budgetStatuses.sumOf { it.remainingAmount }
         val runwayMonths = if (monthlyExpenses > 0) {
-            totalRemaining / monthlyExpenses
+            totalSavings / monthlyExpenses
         } else {
             RUNWAY_TARGET_MONTHS // If no expenses, assume perfect runway
         }
@@ -416,18 +414,35 @@ class FinancialHealthScoreV2 @Inject constructor(
         recommendation: String?
     ) {
         try {
-            val history = HealthScoreHistory(
-                overallScore = overallScore,
-                savingsRateScore = savingsRateScore,
-                runwayScore = runwayScore,
-                budgetAdherenceScore = budgetAdherenceScore,
-                billReliabilityScore = billReliabilityScore,
-                periodStart = periodStart,
-                periodEnd = periodEnd,
-                trend = trend.name,
-                recommendation = recommendation
-            )
-            healthScoreHistoryDao.insert(history)
+            val existing = healthScoreHistoryDao.getHistoryForPeriod(periodStart, periodEnd).firstOrNull()
+
+            if (existing != null) {
+                healthScoreHistoryDao.update(
+                    existing.copy(
+                        overallScore = overallScore,
+                        savingsRateScore = savingsRateScore,
+                        runwayScore = runwayScore,
+                        budgetAdherenceScore = budgetAdherenceScore,
+                        billReliabilityScore = billReliabilityScore,
+                        trend = trend.name,
+                        recommendation = recommendation,
+                        calculatedAt = timeProvider.now()
+                    )
+                )
+            } else {
+                val history = HealthScoreHistory(
+                    overallScore = overallScore,
+                    savingsRateScore = savingsRateScore,
+                    runwayScore = runwayScore,
+                    budgetAdherenceScore = budgetAdherenceScore,
+                    billReliabilityScore = billReliabilityScore,
+                    periodStart = periodStart,
+                    periodEnd = periodEnd,
+                    trend = trend.name,
+                    recommendation = recommendation
+                )
+                healthScoreHistoryDao.insert(history)
+            }
             
             // Clean up old records (keep last 90 days)
             val ninetyDaysAgo = timeProvider.now() - (90L * 24 * 60 * 60 * 1000)

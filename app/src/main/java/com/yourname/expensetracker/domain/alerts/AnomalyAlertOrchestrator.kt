@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.alerts
 
 import com.yourname.expensetracker.data.database.dao.AnomalyAlertDao
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.AnomalyAlert
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.analytics.AnomalyDetector
@@ -8,12 +9,8 @@ import com.yourname.expensetracker.domain.analytics.AnomalyMethod
 import com.yourname.expensetracker.domain.analytics.AnomalyTransaction
 import com.yourname.expensetracker.domain.analytics.MonthPeriod
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import com.yourname.expensetracker.di.IoDispatcher
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.Locale
 import javax.inject.Inject
@@ -32,21 +29,18 @@ import javax.inject.Singleton
 class AnomalyAlertOrchestrator @Inject constructor(
     private val anomalyDetector: AnomalyDetector,
     private val notificationService: NotificationService,
+    private val expenseDao: ExpenseDao,
     private val anomalyAlertDao: AnomalyAlertDao,
-    private val timeProvider: TimeProvider,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    private val timeProvider: TimeProvider
 ) {
-    private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(serviceJob + ioDispatcher)
-
     companion object {
         // Cooldown periods
         private const val MERCHANT_COOLDOWN_MS = 24 * 60 * 60 * 1000L // 24 hours
         private const val CATEGORY_COOLDOWN_MS = 12 * 60 * 60 * 1000L // 12 hours
+        private const val HISTORY_LOOKBACK_DAYS = 90
 
         // Severity threshold - only alert on HIGH confidence
         private const val MIN_SEVERITY = "HIGH"
-        private const val MIN_DEVIATION_MULTIPLIER = 4.0f
 
         // User feedback threshold - if user marked "looks_normal" 2+ times, reduce alerts
         private const val LOOKS_NORMAL_THRESHOLD = 2
@@ -72,78 +66,83 @@ class AnomalyAlertOrchestrator @Inject constructor(
             return
         }
 
-        serviceScope.launch {
-            try {
-                // Get all expenses for the current month for context
-                val now = timeProvider.now()
-                val currentMonth = getMonthPeriod(now)
+        try {
+            // Build a 90-day detection window so detector has enough samples
+            val now = timeProvider.now()
+            val lookbackStart = TimePeriodUtils.addDays(now, -HISTORY_LOOKBACK_DAYS)
+            val detectionPeriod = getDetectionPeriod(now, lookbackStart)
 
-                // Build a minimal list for detection - just this expense plus any needed history
-                val monthExpenses = listOf(expense.expense)
-                val categoryMap = expense.category?.let { mapOf(it.id to it) } ?: emptyMap()
-
-                // Run anomaly detection
-                val anomalies = anomalyDetector.detect(
-                    monthPeriod = currentMonth,
-                    categoryMap = categoryMap,
-                    allExpenses = monthExpenses
-                )
-
-                // Check if this expense was flagged
-                val expenseAnomalies = anomalies.filter { it.expense.id == expense.expense.id }
-
-                if (expenseAnomalies.isEmpty()) {
-                    Timber.d("No anomalies detected for expense ${expense.expense.id}")
-                    return@launch
-                }
-
-                // Check if we should alert
-                if (!shouldAlert(expense, expenseAnomalies)) {
-                    Timber.d("Alert suppressed for expense ${expense.expense.id} due to cooldown/deduplication")
-                    return@launch
-                }
-
-                // Determine severity
-                val severity = determineSeverity(expenseAnomalies)
-
-                // Only alert on HIGH severity
-                if (severity != MIN_SEVERITY) {
-                    Timber.d("Alert suppressed for expense ${expense.expense.id} - severity $severity below threshold")
-                    return@launch
-                }
-
-                // Build and send notification
-                val message = buildNotificationMessage(expense, expenseAnomalies)
-                val notificationId = ANOMALY_NOTIFICATION_BASE_ID + (expense.expense.id % 100000).toInt()
-
-                // Record the alert in database
-                val alert = AnomalyAlert(
-                    expenseId = expense.expense.id,
-                    merchant = expense.expense.merchant,
-                    category = expense.category?.name,
-                    amount = expense.expense.effectiveAmount,
-                    anomalyReason = buildAnomalyReason(expenseAnomalies),
-                    severity = severity,
-                    alertedAt = now
-                )
-
-                val alertId = anomalyAlertDao.insert(alert)
-                Timber.d("Created anomaly alert $alertId for expense ${expense.expense.id}")
-
-                // Send the notification
-                notificationService.sendAnomalyAlert(
-                    notificationId = notificationId,
-                    title = "Unusual Charge Detected",
-                    message = message,
-                    expenseId = expense.expense.id
-                )
-
-                Timber.i("Anomaly alert sent for ${expense.expense.merchant}: €${expense.expense.effectiveAmount}")
-
-            } catch (e: Exception) {
-                Timber.e(e, "Error checking anomaly alert for expense ${expense.expense.id}")
+            // Provide detector with 90-day category history + current expense context
+            val categoryId = expense.expense.categoryId
+            val historicalExpenses = if (categoryId != null) {
+                expenseDao.getExpensesByCategory(categoryId, lookbackStart, now)
+                    .filter { it.id != expense.expense.id }
+            } else {
+                emptyList()
             }
-        }.join()
+            val allExpenses = historicalExpenses + listOf(expense.expense)
+            val categoryMap = expense.category?.let { mapOf(it.id to it) } ?: emptyMap()
+
+            // Run anomaly detection
+            val anomalies = anomalyDetector.detect(
+                monthPeriod = detectionPeriod,
+                categoryMap = categoryMap,
+                allExpenses = allExpenses
+            )
+
+            // Check if this expense was flagged
+            val expenseAnomalies = anomalies.filter { it.expense.id == expense.expense.id }
+
+            if (expenseAnomalies.isEmpty()) {
+                Timber.d("No anomalies detected for expense ${expense.expense.id}")
+                return
+            }
+
+            // Check if we should alert
+            if (!shouldAlert(expense, expenseAnomalies)) {
+                Timber.d("Alert suppressed for expense ${expense.expense.id} due to cooldown/deduplication")
+                return
+            }
+
+            // Determine severity
+            val severity = determineSeverity(expenseAnomalies)
+
+            // Only alert on HIGH severity
+            if (severity != MIN_SEVERITY) {
+                Timber.d("Alert suppressed for expense ${expense.expense.id} - severity $severity below threshold")
+                return
+            }
+
+            // Build and send notification
+            val message = buildNotificationMessage(expense, expenseAnomalies)
+            val notificationId = ANOMALY_NOTIFICATION_BASE_ID + (expense.expense.id % 100000).toInt()
+
+            // Record the alert in database
+            val alert = AnomalyAlert(
+                expenseId = expense.expense.id,
+                merchant = expense.expense.merchant,
+                category = expense.category?.name,
+                amount = expense.expense.effectiveAmount,
+                anomalyReason = buildAnomalyReason(expenseAnomalies),
+                severity = severity,
+                alertedAt = now
+            )
+
+            val alertId = anomalyAlertDao.insert(alert)
+            Timber.d("Created anomaly alert $alertId for expense ${expense.expense.id}")
+
+            // Send the notification
+            notificationService.sendAnomalyAlert(
+                notificationId = notificationId,
+                title = "Unusual Charge Detected",
+                message = message,
+                expenseId = expense.expense.id
+            )
+
+            Timber.i("Anomaly alert sent for ${expense.expense.merchant}: €${expense.expense.effectiveAmount}")
+        } catch (e: Exception) {
+            Timber.e(e, "Error checking anomaly alert for expense ${expense.expense.id}")
+        }
     }
 
     /**
@@ -255,34 +254,21 @@ class AnomalyAlertOrchestrator @Inject constructor(
     }
 
     /**
-     * Helper to get the current month period.
+     * Detection period that spans historical lookback through now.
      */
-    private fun getMonthPeriod(timeMs: Long): MonthPeriod {
+    private fun getDetectionPeriod(now: Long, startMs: Long): MonthPeriod {
         val calendar = java.util.Calendar.getInstance().apply {
-            timeInMillis = timeMs
+            timeInMillis = now
         }
         val year = calendar.get(java.util.Calendar.YEAR)
         val month = calendar.get(java.util.Calendar.MONTH)
-
-        // Set to first day of month
-        calendar.set(java.util.Calendar.DAY_OF_MONTH, 1)
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        calendar.set(java.util.Calendar.MINUTE, 0)
-        calendar.set(java.util.Calendar.SECOND, 0)
-        calendar.set(java.util.Calendar.MILLISECOND, 0)
-        val startMs = calendar.timeInMillis
-
-        // Set to last day of month
-        calendar.add(java.util.Calendar.MONTH, 1)
-        val endMs = calendar.timeInMillis
-
-        return MonthPeriod(year, month, startMs, endMs)
+        return MonthPeriod(year, month, startMs, now + 1L)
     }
 
     /**
      * Cleanup method to clear the service scope.
      */
     fun cleanup() {
-        serviceJob.cancel()
+        // No-op: orchestration is now executed inline in caller coroutine.
     }
 }

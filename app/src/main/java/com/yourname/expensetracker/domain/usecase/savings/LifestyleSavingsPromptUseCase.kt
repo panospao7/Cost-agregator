@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.abs
 import kotlin.math.min
 
 @Singleton
@@ -71,12 +72,30 @@ class LifestyleSavingsPromptUseCase @Inject constructor(
         
         // Calculate suggested uplift
         val currentSavingsRate = report.monthlyData.lastOrNull()?.savingsRate ?: 0.0
-        val incomeGrowth = report.incomeGrowthRate.coerceAtLeast(0.0)
-        val spendingGrowth = report.spendingGrowthRate.coerceAtLeast(0.0)
+        val currentSavingsRatePercent = if (abs(currentSavingsRate) <= 1.0) {
+            currentSavingsRate * 100
+        } else {
+            currentSavingsRate
+        }
+
+        val (previousIncome, currentIncome) = report.monthlyData
+            .takeLast(2)
+            .let { months ->
+                when (months.size) {
+                    2 -> months[0].income to months[1].income
+                    1 -> months[0].income to months[0].income
+                    else -> 0.0 to 0.0
+                }
+            }
         
         // Formula: suggestedUplift = min(alpha * incomeGrowthDelta, cap)
-        val incomeGrowthDelta = (spendingGrowth - incomeGrowth).coerceAtLeast(0.0)
-        val maxCap = currentSavingsRate * MAX_SAVINGS_CAP_PERCENT
+        // Use income growth itself (not spending-income gap) to avoid suggesting savings from deficit pressure.
+        val incomeGrowthDelta = if (previousIncome > 0) {
+            ((currentIncome - previousIncome) / previousIncome).coerceAtLeast(0.0)
+        } else {
+            0.0
+        }
+        val maxCap = currentSavingsRatePercent * MAX_SAVINGS_CAP_PERCENT
         val suggestedUplift = min(ALPHA * incomeGrowthDelta * 100, maxCap) // Convert to percentage points
         
         // Calculate confidence score
@@ -106,7 +125,7 @@ class LifestyleSavingsPromptUseCase @Inject constructor(
             reason = reason,
             affectedCategories = affectedCategories,
             confidence = confidence,
-            currentSavingsRate = currentSavingsRate,
+            currentSavingsRate = currentSavingsRatePercent,
             incomeElasticity = report.incomeElasticity,
             goals = goals
         )

@@ -154,10 +154,13 @@ class SavingsGoalsViewModel @Inject constructor(
     fun acceptSweepRecommendation() {
         viewModelScope.launch {
             val recommendation = _state.value.sweepRecommendation ?: return@launch
+            val goals = savingsGoalRepository.getAllGoals().first()
             
             // Apply allocations to goals
             for (allocation in recommendation.goalAllocations) {
-                contributeToGoal(allocation.goalId, allocation.suggestedAllocation)
+                val goal = goals.find { it.id == allocation.goalId } ?: continue
+                val newAmount = goal.currentAmount + allocation.suggestedAllocation
+                savingsGoalRepository.updateGoalAmount(goal.id, newAmount)
             }
             
             // Clear the recommendation
@@ -208,11 +211,11 @@ class SavingsGoalsViewModel @Inject constructor(
         viewModelScope.launch {
             val goals = savingsGoalRepository.getAllGoals().first()
             val goal = goals.find { it.id == goalId } ?: return@launch
-            
-            val updatedGoal = goal.copy(
-                currentAmount = goal.currentAmount + amount
+
+            savingsGoalRepository.updateGoalAmount(
+                goalId = goal.id,
+                amount = goal.currentAmount + amount
             )
-            // Note: Would need update method in repository
             loadGamification()
         }
     }
