@@ -1,0 +1,30 @@
+{
+  "workflow_id": "wf-20260401-1300-smoke",
+  "title": "smoke",
+  "mode": "standard",
+  "status": "completed",
+  "current_phase": "completion",
+  "phases": {
+    "routing": "complete",
+    "planning": "done",
+    "coding": "done",
+    "review": "done",
+    "testing": "done",
+    "debugging": "pending",
+    "documentation": "done",
+    "completion": "done"
+  },
+  "retries": {
+    "review": 0,
+    "debug": 0
+  },
+  "artifacts": {
+    "plan": "",
+    "notes": ""
+  },
+  "timestamps": {
+    "created_at": "2026-04-01T13:00:00Z",
+    "updated_at": "2026-04-01T20:01:40.041Z"
+  },
+  "last_error": ""
+}

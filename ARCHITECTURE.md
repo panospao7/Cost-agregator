@@ -27,6 +27,12 @@ Use CODEBASE_SEGMENTS.md to find which segment contains the issue:
 - Segment 12 → DI
 - Segment 13 → Utilities
 - Segment 14 → Database
+- Segment 15 → Performance
+- Segment 16 → Configuration
+- Segment 17 → Location
+- Segment 18 → AI Follow-Through
+- Segment 19 → Totals Dashboard
+- Segment 20 → Groups (Shared Expense)
 
 **Step 2: Find Related Files**
 Check CODEBASE_SEGMENTS.md for files in that segment
@@ -1181,7 +1187,8 @@ expensetracker://map        → Tab 5
 | 16: Configuration | ~1 | AppConfig |
 | 17: Location | ~15 | CompositeGeocodingService, NominatimGeocodingService, LocationResolver, SpendingMapScreen |
 | 18: AI Follow-Through (Phase 4B) | ~25 | DashboardFollowThroughEngine, RecommendationRepository, RecommendationStateManager, RecommendationCard |
-| 19: Totals Dashboard (NEW) | ~10 | TotalsDashboardCard, PeriodGridView, PeriodBlock, TotalsAggregationEngine, PeriodNavigationBar, CategoryBreakdownSheet |
+| 19: Totals Dashboard | ~10 | TotalsDashboardCard, PeriodGridView, PeriodBlock, TotalsAggregationEngine, PeriodNavigationBar, CategoryBreakdownSheet |
+| 20: Groups (Shared Expense) | ~12 | SharedExpenseManager, SettlementCalculator, SharedExpenseGroupsScreen, GroupRepository (extracted in Phase 2) |
 
 ---
 

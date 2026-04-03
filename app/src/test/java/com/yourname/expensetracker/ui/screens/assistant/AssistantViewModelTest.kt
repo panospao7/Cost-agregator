@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.assistant
 
+import android.app.Application
 import app.cash.turbine.test
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
@@ -20,6 +21,7 @@ import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCas
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -40,6 +42,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class AssistantViewModelTest : ViewModelTestUtils() {
 
+    private lateinit var application: Application
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiChatRepository: AiChatRepository
     private lateinit var getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase
@@ -51,6 +54,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     @Before
     override fun setup() {
         super.setup()
+        application = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
         aiChatRepository = mockk(relaxed = true)
         getAiRuntimeStatusUseCase = mockk(relaxed = true)
@@ -69,6 +73,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns runtimeSummary()
 
         viewModel = AssistantViewModel(
+            application,
             aiSettingsRepository,
             aiChatRepository,
             getAiRuntimeStatusUseCase,
@@ -85,6 +90,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         )
 
         viewModel = AssistantViewModel(
+            application,
             aiSettingsRepository,
             aiChatRepository,
             getAiRuntimeStatusUseCase,
@@ -108,6 +114,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         )
 
         viewModel = AssistantViewModel(
+            application,
             aiSettingsRepository,
             aiChatRepository,
             getAiRuntimeStatusUseCase,
@@ -143,6 +150,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         )
 
         viewModel = AssistantViewModel(
+            application,
             aiSettingsRepository,
             aiChatRepository,
             getAiRuntimeStatusUseCase,
@@ -165,6 +173,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         )
 
         viewModel = AssistantViewModel(
+            application,
             aiSettingsRepository,
             aiChatRepository,
             getAiRuntimeStatusUseCase,
@@ -197,7 +206,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         )
         coEvery { interpretFinancialQueryUseCase(any(), any()) } returns FinancialQueryInterpretationResult.Structured(intent)
         coEvery { executeFinancialQueryUseCase(intent) } returns FinancialQueryResult.Summary(
-            title = "Total spending",
+            title = UiText.DynamicString("Total spending"),
             primaryText = "42.00 EUR"
         )
         every { mapFinancialQueryToNavigationUseCase(intent) } returns null
@@ -248,7 +257,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         )
         coEvery { interpretFinancialQueryUseCase(any(), any()) } returns FinancialQueryInterpretationResult.Structured(intent)
         coEvery { executeFinancialQueryUseCase(intent) } returns FinancialQueryResult.Summary(
-            title = "Total spending",
+            title = UiText.DynamicString("Total spending"),
             primaryText = "42.00 EUR"
         )
         every { mapFinancialQueryToNavigationUseCase(intent) } returns null
@@ -273,6 +282,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             )
         )
         viewModel = AssistantViewModel(
+            application,
             aiSettingsRepository,
             aiChatRepository,
             getAiRuntimeStatusUseCase,
@@ -291,7 +301,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         every { aiChatRepository.observeMessages(5L) } returns flowOf(emptyList())
         coEvery { interpretFinancialQueryUseCase(any(), any()) } returns FinancialQueryInterpretationResult.Structured(intent)
         coEvery { executeFinancialQueryUseCase(intent) } returns FinancialQueryResult.Summary(
-            title = "Total spending",
+            title = UiText.DynamicString("Total spending"),
             primaryText = "42.00 EUR"
         )
         every { mapFinancialQueryToNavigationUseCase(intent) } returns null

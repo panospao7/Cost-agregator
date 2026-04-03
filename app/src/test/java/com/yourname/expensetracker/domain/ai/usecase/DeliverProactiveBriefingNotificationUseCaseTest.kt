@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
+import android.content.Context
 import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -23,6 +24,7 @@ import org.junit.Test
 
 class DeliverProactiveBriefingNotificationUseCaseTest {
 
+    private lateinit var context: Context
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var aiEngagementRepository: AiEngagementRepository
@@ -32,12 +34,14 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
 
     @Before
     fun setup() {
+        context = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
         aiEngagementRepository = mockk(relaxed = true)
         notificationService = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
         useCase = DeliverProactiveBriefingNotificationUseCase(
+            context,
             aiSettingsRepository,
             aiArtifactRepository,
             aiEngagementRepository,

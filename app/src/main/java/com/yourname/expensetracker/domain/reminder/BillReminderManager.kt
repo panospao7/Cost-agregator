@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.reminder
 
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -42,7 +43,7 @@ class BillReminderManager @Inject constructor(
      */
     suspend fun getUpcomingReminders(daysAhead: Int = 14): List<BillReminder> = withContext(Dispatchers.IO) {
         val now = timeProvider.now()
-        val cutoff = now + (daysAhead * 24 * 60 * 60 * 1000L)
+        val cutoff = now + (daysAhead * TimePeriodUtils.DAY_IN_MILLIS)
         
         val recurring = recurringExpenseRepository.getAll()
         val reminders = mutableListOf<BillReminder>()
@@ -53,7 +54,7 @@ class BillReminderManager @Inject constructor(
             val nextDate = expense.nextDate
             if (nextDate > cutoff) continue
             
-            val daysUntil = ((nextDate - now) / (24 * 60 * 60 * 1000L)).toInt()
+            val daysUntil = TimePeriodUtils.daysBetween(now, nextDate)
             
             val urgency = when {
                 nextDate < now -> ReminderUrgency.CRITICAL
@@ -141,8 +142,8 @@ class BillReminderManager @Inject constructor(
         calendar.timeInMillis = currentDate
         
         when (frequency) {
-            "WEEKLY" -> calendar.add(Calendar.WEEK_OF_YEAR, 1)
-            "BIWEEKLY" -> calendar.add(Calendar.WEEK_OF_YEAR, 2)
+            "WEEKLY" -> return TimePeriodUtils.addDays(currentDate, 7)
+            "BIWEEKLY" -> return TimePeriodUtils.addDays(currentDate, 14)
             "MONTHLY" -> calendar.add(Calendar.MONTH, 1)
             "QUARTERLY" -> calendar.add(Calendar.MONTH, 3)
             "YEARLY" -> calendar.add(Calendar.YEAR, 1)

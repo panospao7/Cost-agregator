@@ -19,12 +19,13 @@ import com.yourname.expensetracker.domain.model.CategoryInfo
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.dashboard.DomainBlockStatus
+import com.yourname.expensetracker.domain.model.dashboard.DomainDayBudgetStatus
+import com.yourname.expensetracker.domain.model.dashboard.DomainExpenseSummary
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
-import com.yourname.expensetracker.ui.components.BlockStatus
-import com.yourname.expensetracker.ui.components.DayBudgetStatus
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -39,7 +40,7 @@ sealed class DashboardWidget {
     ) : DashboardWidget()
 
     data class BudgetBlockParty(
-        val days: List<DayBudgetStatus>
+        val days: List<DomainDayBudgetStatus>
     ) : DashboardWidget()
 
     data class SpendingPaceWidget(
@@ -190,7 +191,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val totalBudgetAmount = overallBudget?.budget?.amount ?: 0.0
 
         // ── Financial Runway ─────────────────────────────────────────────────
-        val currentDayIdx = ((now - monthStart) / 86_400_000L).toInt().coerceAtLeast(0)
+        val currentDayIdx = TimePeriodUtils.daysBetween(monthStart, now).coerceAtLeast(0)
 
         val currentPace = try {
             insightsEngine.getSpendingPaceSuspend(expenses)
@@ -211,7 +212,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val purchasesThisMonth = purchases.filter { it.date >= monthStart }
         val amountByDay = DoubleArray(currentDayIdx + 1)
         purchasesThisMonth.forEach { exp ->
-            val dayIndex = ((exp.date - monthStart) / 86_400_000L).toInt()
+            val dayIndex = TimePeriodUtils.daysBetween(monthStart, exp.date)
             if (dayIndex in amountByDay.indices) amountByDay[dayIndex] += exp.effectiveAmount
         }
         var runningTotal = 0.0
@@ -294,26 +295,34 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
 
         val blockPartyDays = domainBlocks.map { domain ->
-            DayBudgetStatus(
+            DomainDayBudgetStatus(
                 dayOfMonth = domain.dayOfMonth,
                 date = domain.date,
                 actualSpent = domain.actualSpent,
                 targetBudget = domain.targetBudget,
                 isToday = domain.isToday,
                 status = when (domain.status) {
-                    BlockPartyStatus.UNDER_BUDGET -> BlockStatus.UNDER_BUDGET
-                    BlockPartyStatus.OVER_BUDGET  -> BlockStatus.OVER_BUDGET
-                    BlockPartyStatus.FUTURE       -> BlockStatus.FUTURE
-                    BlockPartyStatus.TODAY        -> BlockStatus.TODAY
-                    BlockPartyStatus.BILL_DAY     -> BlockStatus.BILL_DAY
-                    BlockPartyStatus.NO_DATA      -> BlockStatus.NO_DATA
+                    BlockPartyStatus.UNDER_BUDGET -> DomainBlockStatus.UNDER_BUDGET
+                    BlockPartyStatus.OVER_BUDGET  -> DomainBlockStatus.OVER_BUDGET
+                    BlockPartyStatus.FUTURE       -> DomainBlockStatus.FUTURE
+                    BlockPartyStatus.TODAY        -> DomainBlockStatus.TODAY
+                    BlockPartyStatus.BILL_DAY     -> DomainBlockStatus.BILL_DAY
+                    BlockPartyStatus.NO_DATA      -> DomainBlockStatus.NO_DATA
                 },
                 baseTarget = domain.baseTarget,
                 recurringImpact = domain.recurringImpact,
                 plannedImpact = domain.plannedImpact,
                 recurringItems = domain.recurringItems,
                 plannedItems = domain.plannedItems,
-                topTransactions = domain.topTransactions
+                topTransactions = domain.topTransactions.map { expense ->
+                    DomainExpenseSummary(
+                        id = expense.id,
+                        amount = expense.effectiveAmount,
+                        description = expense.merchant,
+                        categoryName = expense.categoryId?.toString(),
+                        date = expense.date
+                    )
+                }
             )
         }
 
@@ -397,7 +406,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
             val daily = DoubleArray(daysInThisMonth)
             monthExpenses.forEach { exp ->
-                val dayIdx = ((exp.date - mStart) / 86_400_000L).toInt().coerceIn(0, daysInThisMonth - 1)
+                val dayIdx = TimePeriodUtils.daysBetween(mStart, exp.date).coerceIn(0, daysInThisMonth - 1)
                 daily[dayIdx] += exp.effectiveAmount
             }
             var running = 0.0
@@ -524,7 +533,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         startOfMonth: Long
     ): Triple<Int, Int, Int> {
         val now = calendar.timeInMillis
-        val oneDayMs = 24 * 60 * 60 * 1000L
+        val oneDayMs = TimePeriodUtils.DAY_IN_MILLIS
         
         // Get all expense dates
         val expenseDates = expenses
@@ -541,7 +550,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             val dayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(checkDate)
             val dayEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfDay(checkDate)
             
-            val hasExpense = expenseDates.any { it in dayStart..dayEnd }
+            val hasExpense = expenseDates.any { it >= dayStart && it < dayEnd }
             
             if (!hasExpense) {
                 currentStreak++
@@ -578,11 +587,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
         
         // Calculate days without spending this month
-        val endOfMonth = com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfMonth(now)
-        val totalDaysInMonth = ((endOfMonth - startOfMonth) / oneDayMs).toInt() + 1
+        val (_, endOfMonthExclusive) = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now)
+        val totalDaysInMonth = com.yourname.expensetracker.domain.util.TimePeriodUtils.getDaysInMonth(now)
         
         val expenseDaysThisMonth = expenseDates
-            .filter { it >= startOfMonth && it <= endOfMonth }
+            .filter { it >= startOfMonth && it < endOfMonthExclusive }
             .map { com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(it) }
             .distinct()
             .count()
@@ -600,7 +609,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         periodStart: Long,
         periodEnd: Long
     ): Int {
-        val periodExpenses = expenses.filter { it.date in periodStart..periodEnd }
+        val periodExpenses = expenses.filter { it.date >= periodStart && it.date < periodEnd }
         if (periodExpenses.isEmpty()) return 0
         
         // Get unique days with expenses in this period
@@ -620,7 +629,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             streak = 1
             
             // Check previous days
-            val oneDayMs = 24 * 60 * 60 * 1000
+            val oneDayMs = TimePeriodUtils.DAY_IN_MILLIS
             var checkDay = today - oneDayMs
             
             while (!expenseDays.contains(checkDay) && checkDay >= periodStart) {

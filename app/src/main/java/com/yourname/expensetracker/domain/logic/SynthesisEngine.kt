@@ -5,10 +5,12 @@ import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import java.time.Instant
 import java.util.*
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -98,30 +100,16 @@ class SynthesisEngine @Inject constructor(
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
         val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(1)
 
-        val endOfMonthCal = (calendar.clone() as Calendar).apply {
-            set(Calendar.DAY_OF_MONTH, daysInMonth)
-            set(Calendar.HOUR_OF_DAY, 23)
-            set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59)
-            set(Calendar.MILLISECOND, 999)
-        }
-        val endOfMonth = endOfMonthCal.timeInMillis
-
-        val startOfTodayCal = (calendar.clone() as Calendar).apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val startOfToday = startOfTodayCal.timeInMillis
+        val (_, endOfMonthExclusive) = TimePeriodUtils.getMonthRange(now)
+        val startOfToday = TimePeriodUtils.getStartOfDay(now)
 
         // 1. Calculate Committed (Highly likely/Automated/Must happen)
         val committedUpcomingBills = recurringPatterns.filter { 
-            it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth 
+            it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate < endOfMonthExclusive 
         }.sumOf { it.averageAmount }
         
         val committedPlanned = plannedExpenses.filter {
-            it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date <= endOfMonth
+            it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date < endOfMonthExclusive
         }.sumOf { it.amount }
 
         val totalCommitted = committedUpcomingBills + committedPlanned
@@ -129,11 +117,11 @@ class SynthesisEngine @Inject constructor(
         // 2. Calculate Likely (Probable behavior)
         // Fix: Confidence Interval Gap (0.89-0.90 was missing)
         val likelyUpcomingBills = recurringPatterns.filter { 
-            it.confidence >= 0.70f && it.confidence < 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate <= endOfMonth
+            it.confidence >= 0.70f && it.confidence < 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate < endOfMonthExclusive
         }.sumOf { it.averageAmount }
         
         val likelyPlanned = plannedExpenses.filter {
-            it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date <= endOfMonth
+            it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date < endOfMonthExclusive
         }.sumOf { it.amount } * LIKELY_EXPENSE_WEIGHT
         
         val monthlyRecurringTotal = recurringPatterns.sumOf { pattern ->
@@ -165,13 +153,13 @@ class SynthesisEngine @Inject constructor(
                  if (remaining <= 0) 0.0
                  else {
                      val targetDate = goal.targetDate
-                     if (targetDate == null || targetDate <= now) remaining // Due now or past due
-                     else {
-                         val msRemaining = targetDate - now
-                         val daysRemainingInGoal = (msRemaining / (24 * 60 * 60 * 1000.0)).coerceAtLeast(1.0)
-                         val targetMonthsRemaining = (daysRemainingInGoal / daysInMonth.toDouble()).coerceAtLeast(1.0)
-                         val remainingMonthly = remaining / targetMonthsRemaining
-                         // For this month specifically
+                      if (targetDate == null || targetDate <= now) remaining // Due now or past due
+                      else {
+                          val msRemaining = targetDate - now
+                          val daysRemainingInGoal = (msRemaining.toDouble() / TimeUnit.DAYS.toMillis(1).toDouble()).coerceAtLeast(1.0)
+                          val targetMonthsRemaining = (daysRemainingInGoal / daysInMonth.toDouble()).coerceAtLeast(1.0)
+                          val remainingMonthly = remaining / targetMonthsRemaining
+                          // For this month specifically
                          remainingMonthly
                      }
                  }
@@ -181,7 +169,7 @@ class SynthesisEngine @Inject constructor(
         val lastKnownTotal = pastSumDaily.lastOrNull() ?: 0.0
 
         // Collect planned expenses with their dates (MUST=100%, LIKELY=70%)
-        val plannedExpensesInRange = plannedExpenses.filter { it.date >= startOfToday && it.date <= endOfMonth }
+        val plannedExpensesInRange = plannedExpenses.filter { it.date >= startOfToday && it.date < endOfMonthExclusive }
         
         // Reuse single Calendar instance for grouping
         val dayCalendar = Calendar.getInstance()
@@ -288,15 +276,7 @@ class SynthesisEngine @Inject constructor(
         val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-        
-        calendar.set(Calendar.DAY_OF_MONTH, 1)
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        val startOfMonth = calendar.timeInMillis
-        calendar.set(Calendar.DAY_OF_MONTH, calendar.getActualMaximum(Calendar.DAY_OF_MONTH))
-        val endOfMonth = calendar.timeInMillis
+        val (startOfMonth, endOfMonthExclusive) = TimePeriodUtils.getMonthRange(timeProvider.now())
         
         val components = forecast.components
         
@@ -315,7 +295,7 @@ class SynthesisEngine @Inject constructor(
         
         // Filter planned expenses for this month only using timestamp range
         // MUST at 100%, LIKELY at 70%, OPTIONAL ignored
-        val thisMonthPlanned = components.plannedExpenses.filter { it.date in startOfMonth..endOfMonth }
+        val thisMonthPlanned = components.plannedExpenses.filter { it.date >= startOfMonth && it.date < endOfMonthExclusive }
         val totalMonthlyPlanned = thisMonthPlanned
             .filter { it.priority != PlannedExpensePriority.OPTIONAL }
             .sumOf { expense ->
@@ -335,9 +315,10 @@ class SynthesisEngine @Inject constructor(
 
         // Optimization: Group raw expenses by day once O(N) - use timestamp range filter
         // Pre-sort expenses by amount within each day for top 3 transactions
-        val expensesByDay = expenses.filter { it.date in startOfMonth..endOfMonth }
+        val dayBucketCalendar = Calendar.getInstance()
+        val expensesByDay = expenses.filter { it.date >= startOfMonth && it.date < endOfMonthExclusive }
             .groupBy { expense ->
-                ((expense.date - startOfMonth) / (24 * 60 * 60 * 1000)).toInt() + 1
+                dayBucketCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
             }
             .mapValues { (_, dayExpenses) -> 
                 dayExpenses.sortedByDescending { it.amount }
@@ -345,7 +326,7 @@ class SynthesisEngine @Inject constructor(
 
         // Optimization: Group planned expenses by day - use timestamp range filter
         val plannedByDay = thisMonthPlanned.groupBy { expense ->
-            ((expense.date - startOfMonth) / (24 * 60 * 60 * 1000)).toInt() + 1
+            dayBucketCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
         }
 
         val dateCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }

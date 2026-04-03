@@ -12,9 +12,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,9 +23,10 @@ class TotalsAggregationEngine @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
     companion object {
-        private val MONTH_FORMAT = SimpleDateFormat("MMM", Locale.getDefault())
-        private val DAY_FORMAT = SimpleDateFormat("EEE", Locale.getDefault())
-        private val MONTH_YEAR_FORMAT = SimpleDateFormat("MMM yyyy", Locale.getDefault())
+        // HIGH-01 FIX: Use DateTimeFormatter (thread-safe) instead of SimpleDateFormat
+        private val MONTH_FORMAT = DateTimeFormatter.ofPattern("MMM", Locale.getDefault())
+        private val DAY_FORMAT = DateTimeFormatter.ofPattern("EEE", Locale.getDefault())
+        private val MONTH_YEAR_FORMAT = DateTimeFormatter.ofPattern("MMM yyyy", Locale.getDefault())
     }
 
     suspend fun getMonthlyTotals(year: Int): List<PeriodTotal> = withContext(Dispatchers.IO) {
@@ -37,7 +36,9 @@ class TotalsAggregationEngine @Inject constructor(
             val average = getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
 
             monthlyTotals.map { monthly ->
-                val date = Date(monthly.startDate)
+                val date = java.time.Instant.ofEpochMilli(monthly.startDate)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate()
                 PeriodTotal(
                     periodLabel = MONTH_FORMAT.format(date),
                     periodKey = monthly.monthKey,
@@ -75,9 +76,11 @@ class TotalsAggregationEngine @Inject constructor(
                 
                 // Format label: W1, W2, etc. Partial weeks show date range
                 val weekLabel = if (isPartialWeek) {
-                    val dateFormat = SimpleDateFormat("d MMM", Locale.getDefault())
-                    val startStr = dateFormat.format(Date(maxOf(weekly.startDate, monthStartMs)))
-                    val endStr = dateFormat.format(Date(minOf(weekly.endDate, monthEndMs - 1)))
+                    val dateFormat = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
+                    val startStr = dateFormat.format(java.time.Instant.ofEpochMilli(maxOf(weekly.startDate, monthStartMs))
+                        .atZone(java.time.ZoneId.systemDefault()).toLocalDate())
+                    val endStr = dateFormat.format(java.time.Instant.ofEpochMilli(minOf(weekly.endDate, monthEndMs - 1))
+                        .atZone(java.time.ZoneId.systemDefault()).toLocalDate())
                     "W${index + 1} ($startStr-$endStr)"
                 } else {
                     "W${index + 1}"
@@ -107,7 +110,9 @@ class TotalsAggregationEngine @Inject constructor(
             val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
             dailyTotals.map { daily ->
-                val date = Date(daily.startDate)
+                val date = java.time.Instant.ofEpochMilli(daily.startDate)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate()
                 PeriodTotal(
                     periodLabel = DAY_FORMAT.format(date),
                     periodKey = daily.dayEpoch.toString(),
@@ -135,7 +140,9 @@ class TotalsAggregationEngine @Inject constructor(
             val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
             dailyTotals.map { daily ->
-                val date = Date(daily.startDate)
+                val date = java.time.Instant.ofEpochMilli(daily.startDate)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate()
                 PeriodTotal(
                     periodLabel = DAY_FORMAT.format(date),
                     periodKey = daily.dayEpoch.toString(),
@@ -156,8 +163,7 @@ class TotalsAggregationEngine @Inject constructor(
     suspend fun getYearlyTotals(): List<PeriodTotal> = withContext(Dispatchers.IO) {
         try {
             val now = timeProvider.now()
-            val cal = Calendar.getInstance().apply { timeInMillis = now }
-            val currentYear = cal.get(Calendar.YEAR)
+            val currentYear = TimePeriodUtils.getYear(now)
             
             // Get data for last 5 years
             val years = (currentYear - 4..currentYear).toList()
@@ -224,11 +230,10 @@ class TotalsAggregationEngine @Inject constructor(
     suspend fun getAverageForPeriodType(periodType: PeriodType, excludeCurrent: Boolean): Double = withContext(Dispatchers.IO) {
         try {
             val now = timeProvider.now()
-            val cal = Calendar.getInstance().apply { timeInMillis = now }
 
             when (periodType) {
                 PeriodType.YEAR -> {
-                    val currentYear = cal.get(Calendar.YEAR)
+                    val currentYear = TimePeriodUtils.getYear(now)
                     val (startMs, _) = getYearRange(currentYear)
                     val allMonths = expenseRepository.getMonthlyTotalsForPeriod(startMs, now)
                     if (excludeCurrent) {
@@ -238,8 +243,7 @@ class TotalsAggregationEngine @Inject constructor(
                     }
                 }
                 PeriodType.MONTH -> {
-                    cal.add(Calendar.MONTH, -12)
-                    val startMs = TimePeriodUtils.getStartOfMonth(cal.timeInMillis)
+                    val startMs = TimePeriodUtils.getStartOfMonth(TimePeriodUtils.addMonths(now, -12))
                     val months = expenseRepository.getMonthlyTotalsForPeriod(startMs, now)
                     if (excludeCurrent) {
                         months.dropLast(1).map { it.total }.average().takeIf { !it.isNaN() } ?: 0.0
@@ -248,8 +252,7 @@ class TotalsAggregationEngine @Inject constructor(
                     }
                 }
                 PeriodType.WEEK -> {
-                    cal.add(Calendar.WEEK_OF_YEAR, -8)
-                    val startMs = TimePeriodUtils.getStartOfWeek(cal.timeInMillis)
+                    val startMs = TimePeriodUtils.getStartOfWeek(TimePeriodUtils.addDays(now, -56))
                     val weeks = expenseRepository.getWeeklyTotalsForPeriod(startMs, now)
                     if (excludeCurrent) {
                         weeks.dropLast(1).map { it.total }.average().takeIf { !it.isNaN() } ?: 0.0
@@ -258,8 +261,7 @@ class TotalsAggregationEngine @Inject constructor(
                     }
                 }
                 PeriodType.DAY -> {
-                    cal.add(Calendar.DAY_OF_YEAR, -30)
-                    val startMs = TimePeriodUtils.getStartOfDay(cal.timeInMillis)
+                    val startMs = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(now, -30))
                     val avgDaily = expenseRepository.getAverageDailySpend(startMs, now)
                     avgDaily ?: 0.0
                 }
@@ -278,9 +280,9 @@ class TotalsAggregationEngine @Inject constructor(
         }
     }
 
-    private fun formatPeriodLabel(type: PeriodType, date: Date): String {
+    private fun formatPeriodLabel(type: PeriodType, date: java.time.LocalDate): String {
         return when (type) {
-            PeriodType.YEAR -> SimpleDateFormat("yyyy", Locale.getDefault()).format(date)
+            PeriodType.YEAR -> date.year.toString()
             PeriodType.MONTH -> MONTH_FORMAT.format(date)
             PeriodType.WEEK -> MONTH_YEAR_FORMAT.format(date)
             PeriodType.DAY -> DAY_FORMAT.format(date)
@@ -288,70 +290,28 @@ class TotalsAggregationEngine @Inject constructor(
     }
 
     private fun getYearRange(year: Int): Pair<Long, Long> {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, Calendar.JANUARY)
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val startMs = cal.timeInMillis
-
-        cal.set(Calendar.MONTH, Calendar.DECEMBER)
-        cal.set(Calendar.DAY_OF_MONTH, 31)
-        cal.set(Calendar.HOUR_OF_DAY, 23)
-        cal.set(Calendar.MINUTE, 59)
-        cal.set(Calendar.SECOND, 59)
-        cal.set(Calendar.MILLISECOND, 999)
-        val endMs = cal.timeInMillis
-
-        return startMs to endMs
+        val jan1 = java.time.LocalDate.of(year, 1, 1)
+            .atStartOfDay(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        return TimePeriodUtils.getYearRange(jan1)
     }
 
     private fun getMonthRange(year: Int, month: Int): Pair<Long, Long> {
-        // month is 1-indexed (1=January, 12=December), Calendar.MONTH is 0-indexed
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, month - 1)  // Convert 1-indexed to 0-indexed
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val startMs = cal.timeInMillis
-
-        cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
-        cal.set(Calendar.HOUR_OF_DAY, 23)
-        cal.set(Calendar.MINUTE, 59)
-        cal.set(Calendar.SECOND, 59)
-        cal.set(Calendar.MILLISECOND, 999)
-        val endMs = cal.timeInMillis
-
-        return startMs to endMs
+        val monthStart = java.time.LocalDate.of(year, month, 1)
+            .atStartOfDay(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        return TimePeriodUtils.getMonthRange(monthStart)
     }
 
     private fun getWeekRange(year: Int, weekOfYear: Int): Pair<Long, Long> {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.WEEK_OF_YEAR, weekOfYear)
-            set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val startMs = cal.timeInMillis
-
-        cal.add(Calendar.DAY_OF_WEEK, 6)
-        cal.set(Calendar.HOUR_OF_DAY, 23)
-        cal.set(Calendar.MINUTE, 59)
-        cal.set(Calendar.SECOND, 59)
-        cal.set(Calendar.MILLISECOND, 999)
-        val endMs = cal.timeInMillis
-
-        return startMs to endMs
+        val jan4 = java.time.LocalDate.of(year, 1, 4)
+            .atStartOfDay(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        val weekOneStart = TimePeriodUtils.getStartOfWeek(jan4)
+        val weekStart = TimePeriodUtils.addDays(weekOneStart, (weekOfYear - 1) * 7)
+        return weekStart to TimePeriodUtils.addDays(weekStart, 7)
     }
 }

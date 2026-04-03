@@ -19,16 +19,8 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Geocoding API keys — read from local.properties (not committed to VCS)
-        val localProps = com.android.build.gradle.internal.cxx.configure.gradleLocalProperties(
-            rootDir, providers
-        )
-        buildConfigField("String", "GEOAPIFY_API_KEY",
-            "\"${localProps.getProperty("geoapify.api.key", "")}\"")
-        buildConfigField("String", "GOOGLE_PLACES_API_KEY",
-            "\"${localProps.getProperty("google.places.api.key", "")}\"")
-        buildConfigField("String", "GEMINI_API_KEY",
-            "\"${localProps.getProperty("gemini.api.key", "")}\"")
+        // Geocoding API keys — removed from BuildConfig for security
+        // Keys are now stored in SecureKeyStorage (encrypted at rest)
     }
 
     buildTypes {
@@ -167,6 +159,8 @@ dependencies {
     testImplementation("app.cash.turbine:turbine:1.2.0")
     // Truth - readable assertions
     testImplementation("com.google.truth:truth:1.4.4")
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.ui.test.junit4)
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation("androidx.test:runner:1.5.2")

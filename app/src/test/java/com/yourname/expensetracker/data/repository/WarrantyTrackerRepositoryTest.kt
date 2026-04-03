@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionServi
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.*
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -18,6 +19,7 @@ class WarrantyTrackerRepositoryTest {
     private val returnWindowDao: ReturnWindowDao = mockk()
     private val receiptRepository: ReceiptRepository = mockk()
     private val cloudExtractionService: CloudWarrantyExtractionService = mockk()
+    private val timeProvider = FakeTimeProvider(1_700_000_000_000L)
 
     @Before
     fun setup() {
@@ -25,7 +27,8 @@ class WarrantyTrackerRepositoryTest {
             warrantyDao,
             returnWindowDao,
             receiptRepository,
-            cloudExtractionService
+            cloudExtractionService,
+            timeProvider
         )
     }
 
@@ -35,7 +38,7 @@ class WarrantyTrackerRepositoryTest {
             Warranty(id = 1, receiptId = 1, productName = "Laptop", merchantName = "Amazon", 
                 purchaseDate = 1000, warrantyDurationMonths = 12, warrantyEndDate = 2000)
         )
-        every { warrantyDao.getActiveWarranties() } returns flowOf(warranties)
+        every { warrantyDao.getActiveWarranties(any()) } returns flowOf(warranties)
 
         val result = repository.getActiveWarranties()
         
@@ -99,11 +102,11 @@ class WarrantyTrackerRepositoryTest {
 
     @Test
     fun `markWarrantyAsClaimed updates status`() = runTest {
-        coEvery { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED) } just Runs
+        coEvery { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED, any()) } just Runs
         
         repository.markWarrantyAsClaimed(1)
         
-        coVerify { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED) }
+        coVerify { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED, any()) }
     }
 
     @Test

@@ -50,4 +50,7 @@ interface GroupExpenseDao {
     
     @Query("SELECT COUNT(*) FROM group_expenses WHERE groupId = :groupId")
     suspend fun getExpenseCount(groupId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM group_expenses WHERE groupId = :groupId AND paidById = :memberId")
+    suspend fun countExpensesPaidByMember(groupId: Long, memberId: Long): Int
 }

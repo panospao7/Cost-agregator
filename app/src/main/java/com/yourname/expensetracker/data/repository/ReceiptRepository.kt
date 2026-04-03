@@ -33,11 +33,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
+import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 
 @Singleton
 class ReceiptRepository @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
@@ -242,7 +243,7 @@ class ReceiptRepository @Inject constructor(
             date = date,
             rawNotificationId = null,
             categoryId = finalCategoryId,
-            createdAt = System.currentTimeMillis(),
+            createdAt = timeProvider.now(),
             paymentMethod = paymentMethod,
             isManualEntry = true,
             notes = notes ?: "Scanned from receipt",

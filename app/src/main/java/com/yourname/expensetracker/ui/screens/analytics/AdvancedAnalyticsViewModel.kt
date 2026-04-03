@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AnalyticsDashboardData
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,7 +34,7 @@ class AdvancedAnalyticsViewModel @Inject constructor(
             _isLoading.value = true
             try {
                 val now = timeProvider.now()
-                val thirtyDaysAgo = now - (30L * 24 * 60 * 60 * 1000)
+                val thirtyDaysAgo = TimePeriodUtils.addDays(now, -30)
                 
                 val data = analyticsDashboard.generateDashboardData(thirtyDaysAgo, now)
                 _dashboardData.value = data

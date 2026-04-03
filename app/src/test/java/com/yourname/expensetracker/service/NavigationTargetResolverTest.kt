@@ -3,7 +3,7 @@ package com.yourname.expensetracker.service
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.OwnershipFilter
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
-import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Before
@@ -93,7 +93,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve maps TRANSACTION_LIST to ToTransactionList action`() {
-        val filter = TransactionFilter(categoryId = 123L)
+        val filter = DomainTransactionFilter(categoryId = 123L)
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -107,7 +107,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve deserializes filter JSON correctly for TRANSACTION_LIST`() {
-        val expectedFilter = TransactionFilter(
+        val expectedFilter = DomainTransactionFilter(
             categoryId = 123L,
             merchantName = "Test Merchant",
             transactionType = TransactionType.PURCHASE,
@@ -168,7 +168,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve maps CATEGORY_DETAIL to ToTransactionList action`() {
-        val filter = TransactionFilter(categoryId = 456L)
+        val filter = DomainTransactionFilter(categoryId = 456L)
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -184,7 +184,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve maps BUDGET_DETAIL to ToBudgetDetail action`() {
-        val filter = TransactionFilter(categoryId = 789L)
+        val filter = DomainTransactionFilter(categoryId = 789L)
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -198,7 +198,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve uses GENERAL category when categoryId is null for BUDGET_DETAIL`() {
-        every { filterSerializer.deserialize(any()) } returns TransactionFilter()
+        every { filterSerializer.deserialize(any()) } returns DomainTransactionFilter()
 
         val action = resolver.resolve(
             DashboardFollowThroughEngine.NAV_TARGET_BUDGET_DETAIL,
@@ -211,7 +211,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve handles zero categoryId for BUDGET_DETAIL`() {
-        val filter = TransactionFilter(categoryId = 0L)
+        val filter = DomainTransactionFilter(categoryId = 0L)
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -229,7 +229,7 @@ class NavigationTargetResolverTest {
     fun `resolve maps ANALYTICS to ToAnalytics action with week period`() {
         val startTime = System.currentTimeMillis()
         val endTime = startTime + (7L * 24 * 60 * 60 * 1000) // 7 days
-        val filter = TransactionFilter(dateRange = Pair(startTime, endTime))
+        val filter = DomainTransactionFilter(dateRange = Pair(startTime, endTime))
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -245,7 +245,7 @@ class NavigationTargetResolverTest {
     fun `resolve maps ANALYTICS to ToAnalytics action with month period`() {
         val startTime = System.currentTimeMillis()
         val endTime = startTime + (30L * 24 * 60 * 60 * 1000) // 30 days
-        val filter = TransactionFilter(dateRange = Pair(startTime, endTime))
+        val filter = DomainTransactionFilter(dateRange = Pair(startTime, endTime))
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -261,7 +261,7 @@ class NavigationTargetResolverTest {
     fun `resolve maps ANALYTICS to ToAnalytics action with custom period`() {
         val startTime = System.currentTimeMillis()
         val endTime = startTime + (90L * 24 * 60 * 60 * 1000) // 90 days
-        val filter = TransactionFilter(dateRange = Pair(startTime, endTime))
+        val filter = DomainTransactionFilter(dateRange = Pair(startTime, endTime))
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -275,7 +275,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve defaults to month period when no dateRange in ANALYTICS`() {
-        every { filterSerializer.deserialize(any()) } returns TransactionFilter()
+        every { filterSerializer.deserialize(any()) } returns DomainTransactionFilter()
 
         val action = resolver.resolve(
             DashboardFollowThroughEngine.NAV_TARGET_ANALYTICS,
@@ -290,7 +290,7 @@ class NavigationTargetResolverTest {
     fun `resolve handles 8 day range as month period (boundary)`() {
         val startTime = System.currentTimeMillis()
         val endTime = startTime + (9L * 24 * 60 * 60 * 1000) // 9 days
-        val filter = TransactionFilter(dateRange = Pair(startTime, endTime))
+        val filter = DomainTransactionFilter(dateRange = Pair(startTime, endTime))
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -306,7 +306,7 @@ class NavigationTargetResolverTest {
     fun `resolve handles 32 day range as custom period (boundary)`() {
         val startTime = System.currentTimeMillis()
         val endTime = startTime + (33L * 24 * 60 * 60 * 1000) // 33 days
-        val filter = TransactionFilter(dateRange = Pair(startTime, endTime))
+        val filter = DomainTransactionFilter(dateRange = Pair(startTime, endTime))
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -322,7 +322,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve maps MAP to ToMap action`() {
-        val filter = TransactionFilter(merchantName = "Test Location")
+        val filter = DomainTransactionFilter(merchantName = "Test Location")
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve("MAP", """{"merchantName":"Test Location"}""")
@@ -333,7 +333,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve handles MAP with null location`() {
-        every { filterSerializer.deserialize(any()) } returns TransactionFilter()
+        every { filterSerializer.deserialize(any()) } returns DomainTransactionFilter()
 
         val action = resolver.resolve("MAP", null)
 
@@ -368,7 +368,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve handles complex filter with multiple fields`() {
-        val filter = TransactionFilter(
+        val filter = DomainTransactionFilter(
             categoryId = 123L,
             merchantName = "Test",
             transactionType = TransactionType.PURCHASE,
@@ -397,7 +397,7 @@ class NavigationTargetResolverTest {
         // Edge case: end before start (should coerce to 0)
         val endTime = System.currentTimeMillis()
         val startTime = endTime + 1000000 // start after end
-        val filter = TransactionFilter(dateRange = Pair(startTime, endTime))
+        val filter = DomainTransactionFilter(dateRange = Pair(startTime, endTime))
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve(
@@ -412,7 +412,7 @@ class NavigationTargetResolverTest {
 
     @Test
     fun `resolve is case insensitive for target matching`() {
-        val filter = TransactionFilter(categoryId = 999L)
+        val filter = DomainTransactionFilter(categoryId = 999L)
         every { filterSerializer.deserialize(any()) } returns filter
 
         val action = resolver.resolve("transaction_list", """{"categoryId":999}""")

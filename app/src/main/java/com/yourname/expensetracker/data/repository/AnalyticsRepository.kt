@@ -71,25 +71,25 @@ class AnalyticsRepository @Inject constructor(
 
             // Generate Daily History (Trend)
             // Determine number of days to plot
-            val days = ((end - start) / 86400000L).toInt().coerceAtLeast(1)
+            val days = TimePeriodUtils.daysBetween(start, end).coerceAtLeast(1)
             val dailyHistory = DoubleArray(days)
             
             val startOfDay = TimePeriodUtils.getStartOfDay(start)
             
             currentPurchases.forEach { expense ->
-                val dayIndex = ((expense.date - startOfDay) / 86400000L).toInt()
+                val dayIndex = TimePeriodUtils.daysBetween(startOfDay, expense.date)
                 if (dayIndex in 0 until days) {
                     dailyHistory[dayIndex] += expense.effectiveAmount
                 }
             }
             
             // Previous History
-            val prevDays = ((previousEnd - previousStart) / 86400000L).toInt().coerceAtLeast(1)
+            val prevDays = TimePeriodUtils.daysBetween(previousStart, previousEnd).coerceAtLeast(1)
             val previousDailyHistory = DoubleArray(prevDays)
             val prevStartOfDay = TimePeriodUtils.getStartOfDay(previousStart)
             
             previousPurchases.forEach { expense ->
-                val dayIndex = ((expense.date - prevStartOfDay) / 86400000L).toInt()
+                val dayIndex = TimePeriodUtils.daysBetween(prevStartOfDay, expense.date)
                 if (dayIndex in 0 until prevDays) {
                     previousDailyHistory[dayIndex] += expense.effectiveAmount
                 }

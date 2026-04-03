@@ -4,19 +4,19 @@ import com.yourname.expensetracker.data.repository.OwnershipFilter
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
-import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import javax.inject.Inject
 
 class MapFinancialQueryToNavigationUseCase @Inject constructor() {
 
-    operator fun invoke(intent: FinancialQueryIntent): TransactionFilter? {
+    operator fun invoke(intent: FinancialQueryIntent): DomainTransactionFilter? {
         if (intent.metric != QueryMetric.LIST && intent.metric != QueryMetric.TOTAL && intent.metric != QueryMetric.COUNT && intent.metric != QueryMetric.AVERAGE && intent.metric != QueryMetric.MAX) {
             return null
         }
 
         val period = intent.filters.period
 
-        return TransactionFilter(
+        return DomainTransactionFilter(
             categoryId = intent.filters.categoryIds.singleOrNull(),
             merchantName = intent.filters.merchants.singleOrNull(),
             transactionType = intent.filters.transactionTypes.singleOrNull(),

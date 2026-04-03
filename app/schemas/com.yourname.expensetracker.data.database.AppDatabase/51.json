@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 51,
-    "identityHash": "1cf0e357c3ae2194e1522d8a0146674c",
+    "identityHash": "c98079b2f7a786a88e1f2abdfefce2e9",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -3437,7 +3437,7 @@
       },
       {
         "tableName": "group_expenses",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `groupId` INTEGER NOT NULL, `expenseId` INTEGER NOT NULL, `paidById` INTEGER NOT NULL, `date` INTEGER NOT NULL, `description` TEXT NOT NULL, `totalAmount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `splitType` TEXT NOT NULL DEFAULT 'EQUAL', `customSplitsJson` TEXT, FOREIGN KEY(`groupId`) REFERENCES `expense_groups`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`expenseId`) REFERENCES `expenses`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`paidById`) REFERENCES `group_members`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `groupId` INTEGER NOT NULL, `expenseId` INTEGER NOT NULL, `paidById` INTEGER NOT NULL, `date` INTEGER NOT NULL, `description` TEXT NOT NULL, `totalAmount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `splitType` TEXT NOT NULL DEFAULT 'EQUAL', `customSplitsJson` TEXT, FOREIGN KEY(`groupId`) REFERENCES `expense_groups`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`expenseId`) REFERENCES `expenses`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`paidById`) REFERENCES `group_members`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
         "fields": [
           {
             "fieldPath": "id",
@@ -3571,7 +3571,7 @@
           },
           {
             "table": "group_members",
-            "onDelete": "SET NULL",
+            "onDelete": "RESTRICT",
             "onUpdate": "NO ACTION",
             "columns": [
               "paidById"
@@ -4293,7 +4293,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '1cf0e357c3ae2194e1522d8a0146674c')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c98079b2f7a786a88e1f2abdfefce2e9')"
     ]
   }
 }

@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.RecommendationEntity
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.RecommendationDeduplicator
 import kotlinx.coroutines.CoroutineDispatcher
 import timber.log.Timber
@@ -27,6 +28,7 @@ import javax.inject.Singleton
 class RecommendationRepository @Inject constructor(
     private val dao: RecommendationDao,
     private val deduplicator: RecommendationDeduplicator,
+    private val timeProvider: TimeProvider,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     
@@ -125,7 +127,7 @@ class RecommendationRepository @Inject constructor(
     /**
      * Expire all old recommendations for a user.
      */
-    suspend fun expireOld(userId: String, beforeTimestamp: Long = System.currentTimeMillis()) {
+    suspend fun expireOld(userId: String, beforeTimestamp: Long = timeProvider.now()) {
         withContext(ioDispatcher) {
             dao.expireOld(userId, beforeTimestamp)
         }
@@ -135,7 +137,7 @@ class RecommendationRepository @Inject constructor(
      * Expire old recommendations for a user.
      * Alias kept to match follow-through infrastructure contract.
      */
-    suspend fun expireAll(userId: String, beforeTimestamp: Long = System.currentTimeMillis()) {
+    suspend fun expireAll(userId: String, beforeTimestamp: Long = timeProvider.now()) {
         expireOld(userId, beforeTimestamp)
     }
     

@@ -5,6 +5,7 @@ import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -25,6 +26,7 @@ import java.util.*
 class CashFlowCalendarViewModelTest {
 
     private val cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var viewModel: CashFlowCalendarViewModel
     private val testDispatcher = StandardTestDispatcher()
 
@@ -33,11 +35,13 @@ class CashFlowCalendarViewModelTest {
         Dispatchers.setMain(testDispatcher)
         
         // Mock default behavior
+        every { timeProvider.now() } returns System.currentTimeMillis()
+        
         coEvery { 
             cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) 
         } returns createMockCashFlows()
         
-        viewModel = CashFlowCalendarViewModel(cashFlowCalculator)
+        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider)
     }
 
     @After

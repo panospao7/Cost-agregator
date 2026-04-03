@@ -260,6 +260,10 @@ class DebugViewModel @Inject constructor(
     
     private val _databaseImportResult = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseImportResult?>(null)
     val databaseImportResult: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseImportResult?> = _databaseImportResult
+
+    // Emits after successful import so UI can force refresh/reload if needed
+    private val _databaseImportRefreshSignal = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val databaseImportRefreshSignal: SharedFlow<Long> = _databaseImportRefreshSignal
     
     private val _databaseStats = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?>(null)
     val databaseStats: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?> = _databaseStats
@@ -361,7 +365,12 @@ class DebugViewModel @Inject constructor(
                 val needsRestart = summary?.transactionCount == -1
                 when {
                     needsRestart -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart
-                    summary != null -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success(summary)
+                    summary != null -> {
+                        // Trigger immediate UI refresh hooks after successful import
+                        loadDatabaseStats()
+                        _databaseImportRefreshSignal.tryEmit(System.currentTimeMillis())
+                        com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success(summary)
+                    }
                     else -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error("Import succeeded but summary unavailable")
                 }
             } else {

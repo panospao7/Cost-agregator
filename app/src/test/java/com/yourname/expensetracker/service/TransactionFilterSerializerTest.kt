@@ -2,7 +2,7 @@ package com.yourname.expensetracker.service
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.OwnershipFilter
-import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.*
@@ -22,7 +22,7 @@ class TransactionFilterSerializerTest {
 
     @Test
     fun `serialize and deserialize round-trip preserves all fields`() {
-        val filter = TransactionFilter(
+        val filter = DomainTransactionFilter(
             categoryId = 123L,
             merchantName = "Test Merchant",
             transactionType = TransactionType.PURCHASE,
@@ -49,7 +49,7 @@ class TransactionFilterSerializerTest {
 
     @Test
     fun `serialize handles null fields gracefully`() {
-        val filter = TransactionFilter(
+        val filter = DomainTransactionFilter(
             categoryId = null,
             merchantName = null,
             transactionType = null,
@@ -76,7 +76,7 @@ class TransactionFilterSerializerTest {
 
     @Test
     fun `serialize includes version field`() {
-        val filter = TransactionFilter(categoryId = 123L)
+        val filter = DomainTransactionFilter(categoryId = 123L)
 
         val json = serializer.serialize(filter)
 
@@ -168,7 +168,7 @@ class TransactionFilterSerializerTest {
 
     @Test
     fun `isValid returns true for valid JSON`() {
-        val filter = TransactionFilter(categoryId = 123L)
+        val filter = DomainTransactionFilter(categoryId = 123L)
         val json = serializer.serialize(filter)
 
         assertTrue(serializer.isValid(json))

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -88,8 +89,8 @@ class SpendingThresholdCalculator @Inject constructor(
             }
             
             // Calculate from scratch
-            val startDate = now - (ANALYSIS_WINDOW_DAYS * 24 * 60 * 60 * 1000L)
-            val amounts = expenseDao.getAmountsForPercentileCalc(startDate, now)
+            val (startDate, endDate) = TimePeriodUtils.getLastNDaysRange(now, ANALYSIS_WINDOW_DAYS)
+            val amounts = expenseDao.getAmountsForPercentileCalc(startDate, endDate)
             
             if (amounts.isEmpty()) {
                 Timber.d("SpendingThresholdCalculator: No transactions for $userId in last $ANALYSIS_WINDOW_DAYS days")

@@ -21,7 +21,7 @@ interface SubscriptionUsageDao {
     @Query("SELECT COUNT(*) FROM subscription_usage WHERE subscriptionId = :subscriptionId AND usedAt >= :since")
     suspend fun getUsageCountSince(subscriptionId: Long, since: Long): Int
     
-    @Query("SELECT * FROM subscription_usage WHERE subscriptionId = :subscriptionId AND usedAt >= :startDate AND usedAt <= :endDate ORDER BY usedAt DESC")
+    @Query("SELECT * FROM subscription_usage WHERE subscriptionId = :subscriptionId AND usedAt >= :startDate AND usedAt < :endDate ORDER BY usedAt DESC")
     suspend fun getUsageBetween(subscriptionId: Long, startDate: Long, endDate: Long): List<SubscriptionUsage>
     
     @Query("SELECT * FROM subscription_usage WHERE usedAt >= :since ORDER BY usedAt DESC")

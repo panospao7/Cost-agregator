@@ -408,7 +408,8 @@ interface ExpenseDao {
 
     // Daily spending totals for a period (for pace calculation)
     @Query("""
-        SELECT (date / 86400000) as dayEpoch, MIN(date) as startDate, MAX(date) as endDate,
+        SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
+               MIN(date) as startDate, MAX(date) as endDate,
                SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                                                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                                                         ELSE amount END) as total, COUNT(*) as txCount
@@ -448,7 +449,7 @@ interface ExpenseDao {
     // Day-of-week spending pattern
     @Query("""
         SELECT 
-            CAST((((date + :timeZoneOffset) / 1000 + 259200) % 604800) / 86400 AS INTEGER) as dayOfWeek,
+            ((CAST(strftime('%w', date/1000, 'unixepoch', 'localtime') AS INTEGER) + 6) % 7) as dayOfWeek,
             SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                      WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                      ELSE amount END) as total,
@@ -461,7 +462,7 @@ interface ExpenseDao {
         GROUP BY dayOfWeek
         ORDER BY dayOfWeek ASC
     """)
-    suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long, timeZoneOffset: Int): List<DayOfWeekTotal>
+    suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long): List<DayOfWeekTotal>
 
     // === Deposit/Income Queries ===
 
@@ -475,7 +476,7 @@ interface ExpenseDao {
     suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double
 
     @Query("""
-        SELECT strftime('%Y-%m', date/1000, 'unixepoch') as month, 
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') as month, 
                SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
                         ELSE amount END) as total, COUNT(*) as count
@@ -657,7 +658,7 @@ interface ExpenseDao {
     // === Monthly/Weekly Totals Dashboard Queries ===
 
     @Query("""
-        SELECT strftime('%Y-%W', date/1000, 'unixepoch') as weekKey,
+        SELECT strftime('%Y-%W', date/1000, 'unixepoch', 'localtime') as weekKey,
                MIN(date) as startDate,
                MAX(date) as endDate,
                SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
@@ -674,7 +675,7 @@ interface ExpenseDao {
     suspend fun getWeeklyTotalsForPeriod(startMs: Long, endMs: Long): List<WeeklyTotal>
 
     @Query("""
-        SELECT strftime('%Y-%m', date/1000, 'unixepoch') as monthKey,
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') as monthKey,
                MIN(date) as startDate,
                MAX(date) as endDate,
                SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
@@ -691,7 +692,7 @@ interface ExpenseDao {
     suspend fun getMonthlyTotalsForPeriod(startMs: Long, endMs: Long): List<MonthlyTotal>
 
     @Query("""
-        SELECT (date / 86400000) as dayEpoch,
+        SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
                MIN(date) as startDate,
                MAX(date) as endDate,
                SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
@@ -716,7 +717,7 @@ interface ExpenseDao {
             WHERE transactionType = 'PURCHASE'
             AND date >= :startMs AND date < :endMs
             AND isNotMine = 0
-            GROUP BY date / 86400000
+            GROUP BY strftime('%Y-%m-%d', date/1000, 'unixepoch', 'localtime')
         )
     """)
     suspend fun getAverageDailySpend(startMs: Long, endMs: Long): Double?

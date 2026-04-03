@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.service
 
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
+import com.yourname.expensetracker.ui.mappers.toUi
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -76,7 +77,7 @@ class NavigationTargetResolverImpl @Inject constructor(
 
     private fun parseFilterOrDefault(filterJson: String?): TransactionFilter {
         if (filterJson.isNullOrBlank()) return TransactionFilter()
-        return filterSerializer.deserialize(filterJson) ?: TransactionFilter()
+        return filterSerializer.deserialize(filterJson)?.toUi() ?: TransactionFilter()
     }
 
     private fun derivePeriod(filter: TransactionFilter): String {

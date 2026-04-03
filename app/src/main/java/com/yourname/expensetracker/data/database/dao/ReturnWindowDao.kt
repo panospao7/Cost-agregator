@@ -14,16 +14,16 @@ interface ReturnWindowDao {
     fun getReturnWindowsByStatus(status: ReturnStatus): Flow<List<ReturnWindow>>
 
     @Query("SELECT * FROM return_windows WHERE returnDeadline > :currentTime AND status = 'RETURNABLE' ORDER BY returnDeadline ASC")
-    fun getActiveReturnWindows(currentTime: Long = System.currentTimeMillis()): Flow<List<ReturnWindow>>
+    fun getActiveReturnWindows(currentTime: Long): Flow<List<ReturnWindow>>
 
-    @Query("SELECT * FROM return_windows WHERE returnDeadline <= :futureTime AND returnDeadline > :currentTime AND status = 'RETURNABLE' ORDER BY returnDeadline ASC")
+    @Query("SELECT * FROM return_windows WHERE returnDeadline >= :currentTime AND returnDeadline < :futureTime AND status = 'RETURNABLE' ORDER BY returnDeadline ASC")
     suspend fun getReturnWindowsExpiringSoon(
         futureTime: Long,
-        currentTime: Long = System.currentTimeMillis()
+        currentTime: Long
     ): List<ReturnWindow>
 
     @Query("SELECT * FROM return_windows WHERE returnDeadline < :currentTime AND status = 'RETURNABLE'")
-    suspend fun getRecentlyExpiredReturnWindows(currentTime: Long = System.currentTimeMillis()): List<ReturnWindow>
+    suspend fun getRecentlyExpiredReturnWindows(currentTime: Long): List<ReturnWindow>
 
     @Query("SELECT * FROM return_windows WHERE receiptId = :receiptId")
     suspend fun getReturnWindowByReceiptId(receiptId: Long): ReturnWindow?
@@ -47,11 +47,11 @@ interface ReturnWindowDao {
     suspend fun markAsReturned(
         returnWindowId: Long,
         status: ReturnStatus = ReturnStatus.RETURNED,
-        returnedAt: Long = System.currentTimeMillis(),
+        returnedAt: Long,
         refundAmount: Double? = null,
-        updatedAt: Long = System.currentTimeMillis()
+        updatedAt: Long
     )
 
     @Query("SELECT COUNT(*) FROM return_windows WHERE status = 'RETURNABLE' AND returnDeadline > :currentTime")
-    suspend fun getActiveReturnWindowCount(currentTime: Long = System.currentTimeMillis()): Int
+    suspend fun getActiveReturnWindowCount(currentTime: Long): Int
 }

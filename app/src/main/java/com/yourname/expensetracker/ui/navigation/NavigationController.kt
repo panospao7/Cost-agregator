@@ -29,15 +29,25 @@ class NavigationController(
     private val _navigationEvents = MutableSharedFlow<NavigationEvent>(extraBufferCapacity = 1)
     val navigationEvents: SharedFlow<NavigationEvent> = _navigationEvents.asSharedFlow()
     
+    // Track the previous main tab to return to when navigating back from feature screens
+    var previousMainTab: Int? = null
+        private set
+    
     val destination: NavigationDestination
         get() = currentDestination.value
     
     /**
      * Navigate to a specific destination.
      * Saves current destination to back stack if it's a feature screen.
+     * Also saves the current main tab index when navigating away from a main tab.
      */
     fun navigateTo(destination: NavigationDestination) {
         val current = currentDestination.value
+        
+        // Save current main tab before navigating away from it
+        if (isMainTab(current)) {
+            previousMainTab = getCurrentTabIndex()
+        }
         
         // Only add to back stack if current is a feature (not main tabs)
         if (!isMainTab(current)) {
@@ -50,7 +60,7 @@ class NavigationController(
     
     /**
      * Navigate back to the previous destination.
-     * If no previous destination exists, navigates to Home.
+     * If no previous destination exists, navigates to the previous main tab or Home.
      */
     fun navigateBack(): Boolean {
         return if (backStack.isNotEmpty()) {
@@ -59,8 +69,9 @@ class NavigationController(
             _navigationEvents.tryEmit(NavigationEvent.NavigateBack)
             true
         } else {
-            // No back stack entry, go to Home
-            navigateHome()
+            // No back stack entry, go to previous main tab or Home
+            val targetTab = previousMainTab ?: 0
+            navigateToTab(targetTab)
             false
         }
     }
@@ -83,7 +94,7 @@ class NavigationController(
         currentDestination.value = when (tabIndex) {
             0 -> NavigationDestination.Home
             1 -> NavigationDestination.Transactions
-            2 -> NavigationDestination.Assistant
+            2 -> NavigationDestination.Review
             3 -> NavigationDestination.Budget
             4 -> NavigationDestination.Analytics
             5 -> NavigationDestination.SpendingMap
@@ -113,7 +124,7 @@ class NavigationController(
         return when (destination) {
             is NavigationDestination.Home,
             is NavigationDestination.Transactions,
-            is NavigationDestination.Assistant,
+            is NavigationDestination.Review,
             is NavigationDestination.Budget,
             is NavigationDestination.Analytics,
             is NavigationDestination.SpendingMap -> true
@@ -128,7 +139,7 @@ class NavigationController(
         return when (currentDestination.value) {
             is NavigationDestination.Home -> 0
             is NavigationDestination.Transactions -> 1
-            is NavigationDestination.Assistant -> 2
+            is NavigationDestination.Review -> 2
             is NavigationDestination.Budget -> 3
             is NavigationDestination.Analytics -> 4
             is NavigationDestination.SpendingMap -> 5

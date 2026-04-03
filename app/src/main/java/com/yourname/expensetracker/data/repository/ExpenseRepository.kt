@@ -112,7 +112,7 @@ class ExpenseRepository @Inject constructor(
             args.add(startDate)
         }
         if (endDate != null) {
-            whereClauses.add("e.date <= ?")
+            whereClauses.add("e.date < ?")
             args.add(endDate)
         }
 
@@ -393,8 +393,8 @@ class ExpenseRepository @Inject constructor(
     suspend fun getRecurringCandidates(): List<MerchantStats> =
         expenseDao.getRecurringCandidates()
 
-    suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long, timeZoneOffset: Int): List<DayOfWeekTotal> =
-        expenseDao.getDayOfWeekPattern(startMs, endMs, timeZoneOffset)
+    suspend fun getDayOfWeekPattern(startMs: Long, endMs: Long): List<DayOfWeekTotal> =
+        expenseDao.getDayOfWeekPattern(startMs, endMs)
 
     // === Deposit/Income Methods ===
 

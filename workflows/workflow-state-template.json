@@ -1,0 +1,19 @@
+{
+  "workflow_id": "",
+  "title": "",
+  "mode": "standard",
+  "status": "active",
+  "current_phase": "planning",
+  "timestamps": {
+    "created_at": "",
+    "updated_at": ""
+  },
+  "phases": [],
+  "tasks": [],
+  "metadata": {
+    "feature_description": "",
+    "review_gate": "required",
+    "test_gate": "required",
+    "security_gate": "optional"
+  }
+}

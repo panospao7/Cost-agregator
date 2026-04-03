@@ -4,10 +4,11 @@ import android.content.Context
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import javax.inject.Inject
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlin.random.Random
 
 class NotificationSeeder @Inject constructor(
-    private val context: Context
+    @ApplicationContext private val context: Context
 ) {
 
     val categories = mapOf(

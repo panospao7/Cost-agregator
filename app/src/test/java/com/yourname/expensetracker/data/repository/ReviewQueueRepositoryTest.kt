@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import android.content.Context
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
@@ -38,6 +39,7 @@ class ReviewQueueRepositoryTest {
     private val parserRegistry = mockk<AppParserRegistry>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
+    private val context = mockk<Context>(relaxed = true)
 
     private lateinit var repository: ReviewQueueRepository
 
@@ -52,21 +54,22 @@ class ReviewQueueRepositoryTest {
         every { timeProvider.now() } returns 1700000000000L
         
         repository = ReviewQueueRepository(
-            database,
-            pendingReviewDao,
-            rawNotificationDao,
-            expenseDao,
-            sourceStatsDao,
-            scannedReceiptDao,
-            userCorrectionDao,
-            merchantCategoryRepository,
-            merchantNormalizer,
-            hybridClassifier,
-            classifier,
-            budgetMonitor,
-            parserRegistry,
-            timeProvider,
-            confidenceRouter
+            context = context,
+            database = database,
+            pendingReviewDao = pendingReviewDao,
+            rawNotificationDao = rawNotificationDao,
+            expenseDao = expenseDao,
+            sourceStatsDao = sourceStatsDao,
+            scannedReceiptDao = scannedReceiptDao,
+            userCorrectionDao = userCorrectionDao,
+            merchantCategoryRepository = merchantCategoryRepository,
+            merchantNormalizer = merchantNormalizer,
+            hybridClassifier = hybridClassifier,
+            classifier = classifier,
+            budgetMonitor = budgetMonitor,
+            parserRegistry = parserRegistry,
+            timeProvider = timeProvider,
+            confidenceRouter = confidenceRouter
         )
     }
 

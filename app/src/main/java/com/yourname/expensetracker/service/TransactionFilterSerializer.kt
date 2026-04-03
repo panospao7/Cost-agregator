@@ -2,7 +2,7 @@ package com.yourname.expensetracker.service
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.OwnershipFilter
-import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -30,9 +30,9 @@ class TransactionFilterSerializer @Inject constructor() {
     }
     
     /**
-     * Serialize a TransactionFilter to JSON string.
+     * Serialize a DomainTransactionFilter to JSON string.
      */
-    fun serialize(filter: TransactionFilter): String {
+    fun serialize(filter: DomainTransactionFilter): String {
         return try {
             val json = JSONObject()
             json.put(KEY_VERSION, CURRENT_VERSION)
@@ -56,12 +56,12 @@ class TransactionFilterSerializer @Inject constructor() {
     }
     
     /**
-     * Deserialize a JSON string to TransactionFilter.
+     * Deserialize a JSON string to DomainTransactionFilter.
      * 
      * Handles missing fields gracefully by using null defaults.
      * Unknown fields are ignored for forward compatibility.
      */
-    fun deserialize(jsonString: String): TransactionFilter? {
+    fun deserialize(jsonString: String): DomainTransactionFilter? {
         return try {
             val json = JSONObject(jsonString)
             
@@ -72,9 +72,9 @@ class TransactionFilterSerializer @Inject constructor() {
                 json.getLong(KEY_CATEGORY_ID)
             } else null
             
-            val merchantName = json.optString(KEY_MERCHANT_NAME, null)
-            
-            val transactionType = json.optString(KEY_TRANSACTION_TYPE, null)?.let {
+            val merchantName = json.optString(KEY_MERCHANT_NAME).takeIf { it.isNotBlank() }
+
+            val transactionType = json.optString(KEY_TRANSACTION_TYPE).takeIf { it.isNotBlank() }?.let {
                 try {
                     TransactionType.valueOf(it)
                 } catch (e: IllegalArgumentException) {
@@ -89,7 +89,7 @@ class TransactionFilterSerializer @Inject constructor() {
                 )
             } else null
             
-            val ownership = json.optString(KEY_OWNERSHIP, null)?.let {
+            val ownership = json.optString(KEY_OWNERSHIP).takeIf { it.isNotBlank() }?.let {
                 try {
                     OwnershipFilter.valueOf(it)
                 } catch (e: IllegalArgumentException) {
@@ -105,7 +105,7 @@ class TransactionFilterSerializer @Inject constructor() {
                 json.getDouble(KEY_MAX_AMOUNT)
             } else null
             
-            TransactionFilter(
+            DomainTransactionFilter(
                 categoryId = categoryId,
                 merchantName = merchantName,
                 transactionType = transactionType,

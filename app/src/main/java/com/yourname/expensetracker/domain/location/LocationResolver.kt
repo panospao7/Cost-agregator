@@ -77,7 +77,8 @@ class LocationResolver @Inject constructor(
             deviceLon = deviceLocation?.second
         )
         if (correction != null) {
-            Log.d(TAG, "Correction hit for '$cacheKey'")
+            // HIGH-14 FIX: Anonymize merchant names in logs using hash
+            Log.d(TAG, "Correction hit for merchant hash: ${cacheKey.hashCode().toUInt().toString(16)}")
             return LocationResolutionResult.Resolved(
                 latitude = correction.correctedLatitude,
                 longitude = correction.correctedLongitude,
@@ -96,7 +97,8 @@ class LocationResolver @Inject constructor(
         val clusters = try {
             expenseRepository.getMerchantLocationClusters(cacheKey)
         } catch (e: Exception) {
-            Log.w(TAG, "Cluster query failed for '$cacheKey'", e)
+            // HIGH-14 FIX: Anonymize merchant names in logs
+            Log.w(TAG, "Cluster query failed for merchant hash: ${cacheKey.hashCode().toUInt().toString(16)}", e)
             emptyList()
         }
         val topCluster = clusters.firstOrNull { it.count >= 2 }
@@ -105,7 +107,8 @@ class LocationResolver @Inject constructor(
             if (!forceRefresh) {
                 val cachedForArea = locationRepository.getCachedLocationForArea(cacheKey, areaKey)
                 if (cachedForArea != null) {
-                    Log.d(TAG, "Area-cache hit for '$cacheKey' in area $areaKey")
+                    // HIGH-14 FIX: Anonymize merchant names in logs
+                    Log.d(TAG, "Area-cache hit for merchant hash: ${cacheKey.hashCode().toUInt().toString(16)} in area $areaKey")
                     return LocationResolutionResult.Resolved(
                         latitude = cachedForArea.latitude,
                         longitude = cachedForArea.longitude,
@@ -129,7 +132,8 @@ class LocationResolver @Inject constructor(
                 bounded = true
             )
             if (clusterResult != null) {
-                Log.d(TAG, "History-biased Nominatim resolved '$cacheKey' (cluster count=${topCluster.count})")
+                // HIGH-14 FIX: Anonymize merchant names in logs
+                Log.d(TAG, "History-biased Nominatim resolved merchant hash: ${cacheKey.hashCode().toUInt().toString(16)} (cluster count=${topCluster.count})")
                 val resolved = clusterResult.toResolved()
                 locationRepository.saveLocation(cacheKey, resolved, areaKey)
                 return resolved
@@ -140,7 +144,8 @@ class LocationResolver @Inject constructor(
         if (!forceRefresh) {
             val cached = locationRepository.getCachedLocation(cacheKey)
             if (cached != null) {
-                Log.d(TAG, "Cache hit for '$cacheKey'")
+                // HIGH-14 FIX: Anonymize merchant names in logs
+                Log.d(TAG, "Cache hit for merchant hash: ${cacheKey.hashCode().toUInt().toString(16)}")
                 return LocationResolutionResult.Resolved(
                     latitude = cached.latitude,
                     longitude = cached.longitude,
@@ -164,7 +169,8 @@ class LocationResolver @Inject constructor(
                 biasLon = deviceLocation.second
             )
             if (result != null) {
-                Log.d(TAG, "Nominatim GPS-bias resolved '$cacheKey'")
+                // HIGH-14 FIX: Anonymize merchant names in logs
+                Log.d(TAG, "Nominatim GPS-bias resolved merchant hash: ${cacheKey.hashCode().toUInt().toString(16)}")
                 val resolved = result.toResolved()
                 locationRepository.saveLocation(cacheKey, resolved)
                 return resolved
@@ -175,7 +181,8 @@ class LocationResolver @Inject constructor(
         val nameOnlyResult = geocodeWithRateLimit(latinName)
             ?: geocodeWithRateLimit(cleanedName)
         if (nameOnlyResult != null) {
-            Log.d(TAG, "Nominatim name-only resolved '$cacheKey'")
+            // HIGH-14 FIX: Anonymize merchant names in logs
+            Log.d(TAG, "Nominatim name-only resolved merchant hash: ${cacheKey.hashCode().toUInt().toString(16)}")
             val resolved = nameOnlyResult.toResolved()
             locationRepository.saveLocation(cacheKey, resolved)
             return resolved
@@ -190,7 +197,8 @@ class LocationResolver @Inject constructor(
                 radiusMetres = AppConfig.Location.OVERPASS_SEARCH_RADIUS_M
             ).filter { !isNullIsland(it.latitude, it.longitude) }
             if (pois.isNotEmpty()) {
-                Log.d(TAG, "Overpass found ${pois.size} candidates for '$cacheKey'")
+                // HIGH-14 FIX: Anonymize merchant names in logs
+                Log.d(TAG, "Overpass found ${pois.size} candidates for merchant hash: ${cacheKey.hashCode().toUInt().toString(16)}")
                 return if (pois.size == 1) {
                     // Single match — auto-resolve
                     val poi = pois.first()
@@ -211,7 +219,8 @@ class LocationResolver @Inject constructor(
         }
 
         // ── Step 8: Give up ───────────────────────────────────────────────────
-        Log.d(TAG, "Could not resolve location for '$cacheKey'")
+        // HIGH-14 FIX: Anonymize merchant names in logs
+        Log.d(TAG, "Could not resolve location for merchant hash: ${cacheKey.hashCode().toUInt().toString(16)}")
         return LocationResolutionResult.Unresolved
     }
 

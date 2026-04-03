@@ -195,8 +195,9 @@ abstract class AiModule {
 
         @Provides
         @Singleton
-        fun provideCloudReceiptItemCategorizationService(): 
-            CloudReceiptItemCategorizationService = CloudReceiptItemCategorizationService()
+        fun provideCloudReceiptItemCategorizationService(
+            secureKeyStorage: SecureKeyStorage
+        ): CloudReceiptItemCategorizationService = CloudReceiptItemCategorizationService(secureKeyStorage)
 
         @Provides
         @Singleton

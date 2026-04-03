@@ -121,7 +121,9 @@
     <string name="confirm_discard_message">You have unsaved changes. Discard them?</string>
     
     <!-- Common Errors -->
+    <string name="error">Error</string>
     <string name="error_generic">An error occurred</string>
+    <string name="dismiss_error">Dismiss error</string>
     <string name="error_network">Network error. Please check your connection.</string>
     <string name="error_invalid_input">Invalid input</string>
     <string name="error_required_field">This field is required</string>
@@ -136,6 +138,12 @@
     <string name="error_save_failed">Failed to save</string>
     <string name="error_delete_failed">Failed to delete</string>
     <string name="error_update_failed">Failed to update</string>
+    <string name="retry">Retry</string>
+    
+    <!-- Labels and Badges -->
+    <string name="label_close">Close</string>
+    <string name="label_approve_all">Approve All</string>
+    <string name="label_add_amount_format">Add €%s</string>
     
     <!-- Add Expense -->
     <string name="add_expense_title">Add Expense</string>

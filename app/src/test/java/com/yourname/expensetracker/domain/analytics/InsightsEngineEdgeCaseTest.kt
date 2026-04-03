@@ -50,7 +50,6 @@ class InsightsEngineEdgeCaseTest {
         coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
         coEvery { expenseRepository.getMerchantStats() } returns emptyList()
         coEvery { expenseRepository.getRecurringCandidates() } returns emptyList()
-        coEvery { expenseRepository.getDayOfWeekPattern(any(), any(), any()) } returns emptyList()
         coEvery { expenseRepository.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
         coEvery { expenseRepository.getLargestExpenseForPeriod(any(), any()) } returns null
     }

@@ -1,0 +1,76 @@
+{
+  "workflow_id": "wf-20260402-0100-ai-string-refactor",
+  "title": "Externalize strings in ui/components/ai",
+  "mode": "standard",
+  "status": "active",
+  "current_phase": "coding",
+  "timestamps": {
+    "created_at": "2026-04-02T10:00:00Z",
+    "updated_at": "2026-04-02T10:05:00Z"
+  },
+  "phases": {
+    "routing": "done",
+    "planning": "done",
+    "coding": "pending",
+    "review": "pending",
+    "testing": "pending",
+    "debugging": "pending",
+    "documentation": "pending",
+    "completion": "pending"
+  },
+  "tasks": [
+    {
+      "id": "task-1",
+      "description": "Externalize 1 string in AssistantResultCard.kt",
+      "status": "completed",
+      "file": "AssistantResultCard.kt",
+      "count": 1
+    },
+    {
+      "id": "task-2",
+      "description": "Verify CategoryAssistCard.kt is fully externalized",
+      "status": "completed",
+      "file": "CategoryAssistCard.kt",
+      "count": 0
+    },
+    {
+      "id": "task-3",
+      "description": "Verify DedupeAssistCard.kt is fully externalized",
+      "status": "completed",
+      "file": "DedupeAssistCard.kt",
+      "count": 0
+    },
+    {
+      "id": "task-4",
+      "description": "Externalize 1 string in ReceiptAssistCard.kt",
+      "status": "completed",
+      "file": "ReceiptAssistCard.kt",
+      "count": 1
+    },
+    {
+      "id": "task-5",
+      "description": "Externalize 1 string in ReceiptItemBreakdownCard.kt",
+      "status": "completed",
+      "file": "ReceiptItemBreakdownCard.kt",
+      "count": 1
+    }
+  ],
+  "metadata": {
+    "feature_description": "externalize strings in ui/components/ai",
+    "review_gate": "required",
+    "test_gate": "required",
+    "security_gate": "optional",
+    "parallel_suitable": true,
+    "files_affected": 5,
+    "total_strings_to_externalize": 3
+  },
+  "retries": {
+    "review": 0,
+    "debug": 0
+  },
+  "artifacts": {
+    "plan": "",
+    "notes": ""
+  },
+  "last_error": ""
+}

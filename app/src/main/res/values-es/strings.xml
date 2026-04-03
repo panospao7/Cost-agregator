@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Spanish (es) localization for ExpenseTracker
+    Top 100 most user-facing strings translated
+    This establishes the pattern for other languages
+-->
+<resources>
+    <!-- App Name -->
+    <string name="app_name">ExpenseTracker</string>
+
+    <!-- Common Actions (Top Priority) -->
+    <string name="action_save">Guardar</string>
+    <string name="action_cancel">Cancelar</string>
+    <string name="action_delete">Eliminar</string>
+    <string name="action_close">Cerrar</string>
+    <string name="action_back">Atrás</string>
+    <string name="action_add">Añadir</string>
+    <string name="action_edit">Editar</string>
+    <string name="action_create">Crear</string>
+    <string name="action_update">Actualizar</string>
+    <string name="action_retry">Reintentar</string>
+    <string name="action_ok">Aceptar</string>
+    <string name="action_confirm">Confirmar</string>
+    <string name="action_dismiss">Descartar</string>
+    <string name="action_search">Buscar</string>
+    <string name="action_filter">Filtrar</string>
+    <string name="action_sort">Ordenar</string>
+    <string name="action_settings">Configuración</string>
+    <string name="action_done">Hecho</string>
+    <string name="action_continue">Continuar</string>
+    <string name="action_skip">Omitir</string>
+    <string name="action_next">Siguiente</string>
+    <string name="action_previous">Anterior</string>
+
+    <!-- Navigation Labels (High Priority - User sees daily) -->
+    <string name="nav_home">Inicio</string>
+    <string name="nav_activity">Actividad</string>
+    <string name="nav_review">Revisar</string>
+    <string name="nav_plan">Planificar</string>
+    <string name="nav_analytics">Análisis</string>
+    <string name="nav_map">Mapa</string>
+    <string name="nav_features">Funciones</string>
+    <string name="nav_assistant">Asistente</string>
+
+    <!-- Common Labels (High Priority) -->
+    <string name="label_total">Total</string>
+    <string name="label_amount">Cantidad</string>
+    <string name="label_date">Fecha</string>
+    <string name="label_merchant">Comercio</string>
+    <string name="label_category">Categoría</string>
+    <string name="label_description">Descripción</string>
+    <string name="label_notes">Notas</string>
+    <string name="label_currency">Moneda</string>
+    <string name="label_frequency">Frecuencia</string>
+    <string name="label_period">Período</string>
+    <string name="label_status">Estado</string>
+    <string name="label_type">Tipo</string>
+    <string name="label_name">Nombre</string>
+    <string name="label_optional">(Opcional)</string>
+    <string name="label_required">Requerido</string>
+    <string name="label_from">Desde</string>
+    <string name="label_to">Hasta</string>
+    <string name="label_start_date">Fecha de inicio</string>
+    <string name="label_end_date">Fecha de fin</string>
+    <string name="label_date_range">Rango de fechas</string>
+    <string name="label_active">Activo</string>
+    <string name="label_inactive">Inactivo</string>
+    <string name="label_loading">Cargando…</string>
+    <string name="label_error">Error</string>
+    <string name="label_success">Éxito</string>
+    <string name="label_warning">Advertencia</string>
+    <string name="label_info">Información</string>
+    <string name="label_new">Nuevo</string>
+    <string name="label_none">Ninguno</string>
+
+    <!-- Legacy/Common Input Labels -->
+    <string name="amount_label">Cantidad (€)</string>
+    <string name="amount_placeholder">0.00</string>
+    <string name="merchant_label">Comercio / Lugar</string>
+    <string name="merchant_placeholder">ej. Sklavenitis, Starbucks...</string>
+    <string name="payment_method_label">Método de pago</string>
+    <string name="payment_method_card">💳 Tarjeta</string>
+    <string name="payment_method_cash">💵 Efectivo</string>
+    <string name="payment_method_transfer">🏦 Transferencia</string>
+    <string name="category_label">Categoría</string>
+    <string name="date_label">Fecha</string>
+    <string name="notes_label">Notas</string>
+    <string name="notes_placeholder">Notas opcionales</string>
+    <string name="ok_button">Aceptar</string>
+    <string name="cancel_button">Cancelar</string>
+    <string name="save_button">Guardar</string>
+    <string name="error_merchant_required">El nombre del comercio es obligatorio</string>
+    <string name="error_unknown">Error desconocido</string>
+
+    <!-- Common Errors (High Priority) -->
+    <string name="error_generic">Ha ocurrido un error</string>
+    <string name="error_network">Error de red. Por favor, comprueba tu conexión.</string>
+    <string name="error_invalid_input">Entrada inválida</string>
+    <string name="error_required_field">Este campo es obligatorio</string>
+    <string name="error_invalid_amount">Introduce una cantidad válida</string>
+    <string name="error_amount_too_large">La cantidad excede el límite</string>
+    <string name="error_invalid_date">Fecha inválida</string>
+    <string name="error_duplicate">Entrada duplicada detectada</string>
+    <string name="error_not_found">No encontrado</string>
+    <string name="error_unauthorized">Acceso no autorizado</string>
+    <string name="error_offline">Estás sin conexión</string>
+    <string name="error_load_failed">Error al cargar datos</string>
+    <string name="error_save_failed">Error al guardar</string>
+    <string name="error_delete_failed">Error al eliminar</string>
+    <string name="error_update_failed">Error al actualizar</string>
+
+    <!-- Add Expense (High Priority Screen) -->
+    <string name="add_expense_title">Añadir Gasto</string>
+    <string name="add_expense_scan_receipt">Escanear Recibo</string>
+    <string name="add_expense_manual">Añadir Manual</string>
+
+    <!-- Home Screen / Dashboard (User sees daily) -->
+    <string name="home_dashboard_title">PANEL</string>
+    <string name="home_edit_mode_exit">Salir del modo edición</string>
+    <string name="home_edit_mode_enter">Entrar en modo edición para personalizar el panel</string>
+    <string name="home_features">Funciones</string>
+    <string name="home_quick_settings_title">Ajustes Rápidos</string>
+    <string name="home_ai_settings">Configuración IA</string>
+    <string name="home_categories">Categorías</string>
+    <string name="home_debug_menu">Menú de Depuración</string>
+    <string name="home_no_budgets_title">Sin presupuestos establecidos</string>
+    <string name="home_set_first_budget">Establecer tu Primer Presupuesto</string>
+    <string name="home_create_budget_button">Crear Presupuesto</string>
+
+    <!-- Dashboard Widget Titles -->
+    <string name="widget_safe_to_spend">SEGURO PARA GASTAR</string>
+    <string name="widget_pace">RITMO</string>
+    <string name="widget_review">REVISAR</string>
+    <string name="widget_pending">PENDIENTE</string>
+    <string name="widget_period_summary">RESUMEN DEL PERÍODO</string>
+    <string name="widget_today">HOY</string>
+    <string name="widget_week">SEMANA</string>
+    <string name="widget_month">MES</string>
+    <string name="widget_budget_health">SALUD DEL PRESUPUESTO</string>
+    <string name="widget_all_budgets_on_track">TODOS LOS PRESUPUESTOS EN ORDEN</string>
+    <string name="widget_top_categories">PRINCIPALES CATEGORÍAS</string>
+    <string name="widget_recent_activity">ACTIVIDAD RECIENTE</string>
+    <string name="widget_days_remaining_format">%1$d DÍAS RESTANTES</string>
+
+    <!-- Transactions Screen (High Priority) -->
+    <string name="transactions_title">Transacciones</string>
+    <string name="no_transactions_title">No se encontraron transacciones</string>
+    <string name="no_transactions_subtitle">Los gastos analizados en este período aparecerán aquí</string>
+    <string name="delete_transaction_title">Eliminar Transacción</string>
+    <string name="delete_transaction_confirmation">¿Estás seguro de que quieres eliminar esta transacción de %1$s?</string>
+    <string name="delete_button">Eliminar</string>
+    <string name="select_category_title">Seleccionar Categoría</string>
+    <string name="uncategorized_label">Sin categoría</string>
+
+    <!-- Common Confirmations -->
+    <string name="confirm_delete_title">¿Eliminar?</string>
+    <string name="confirm_delete_message">¿Estás seguro de que quieres eliminar %1$s?</string>
+    <string name="confirm_discard_title">¿Descartar cambios?</string>
+    <string name="confirm_discard_message">Tienes cambios sin guardar. ¿Descartarlos?</string>
+
+    <!-- Budget-related strings (High Priority) -->
+    <string name="budget_block_party_title">FIESTA DEL PRESUPUESTO</string>
+    <string name="budget_target_breakdown">DESGLOSE DEL OBJETIVO</string>
+    <string name="budget_base_allowance">Asignación Base</string>
+    <string name="budget_total_target">Objetivo Total</string>
+    <string name="budget_what_happened">QUÉ PASÓ</string>
+    <string name="budget_total_spent">Total Gastado</string>
+    <string name="budget_no_transactions_found">No se encontraron transacciones específicas.</string>
+    <string name="budget_no_spending_recorded">Sin gastos registrados.</string>
+    <string name="budget_view_transactions">Ver Transacciones</string>
+
+    <!-- Features Menu -->
+    <string name="feature_savings_goals">Objetivos de Ahorro</string>
+    <string name="feature_savings_goals_desc">Establece y sigue objetivos de ahorro</string>
+    <string name="feature_carbon_footprint">Huella de Carbono</string>
+    <string name="feature_carbon_footprint_desc">Rastrea el impacto ambiental</string>
+    <string name="feature_warranty_tracker">Garantías</string>
+    <string name="feature_warranty_tracker_desc">Gestiona garantías de productos</string>
+    <string name="feature_price_protection">Protección de Precio</string>
+    <string name="feature_price_protection_desc">Monitorea bajadas de precio</string>
+    <string name="feature_bill_negotiation">Negociación de Facturas</string>
+    <string name="feature_bill_negotiation_desc">Obtén mejores tarifas</string>
+    <string name="feature_smart_search">Búsqueda Inteligente</string>
+    <string name="feature_smart_search_desc">Búsqueda en lenguaje natural</string>
+    <string name="feature_bank_connections">Conexiones Bancarias</string>
+    <string name="feature_bank_connections_desc">Conecta cuentas bancarias</string>
+    <string name="feature_bill_reminders">Recordatorios de Facturas</string>
+    <string name="feature_bill_reminders_desc">Nunca olvides un pago</string>
+    <string name="feature_spending_challenges">Desafíos de Gasto</string>
+    <string name="feature_spending_challenges_desc">Gamifica tus ahorros</string>
+    <string name="feature_advanced_analytics">Análisis Avanzado</string>
+    <string name="feature_advanced_analytics_desc">Análisis profundo de gastos</string>
+    <string name="feature_currency_management">Gestión de Monedas</string>
+    <string name="feature_currency_management_desc">Gestiona tipos de cambio</string>
+    <string name="feature_subscription_management">Gestión de Suscripciones</string>
+    <string name="feature_subscription_management_desc">Controla todas las suscripciones</string>
+    <string name="feature_tax_configuration">Configuración de Impuestos</string>
+    <string name="feature_tax_configuration_desc">Configuración y calculadora fiscal</string>
+    <string name="feature_export_options">Opciones de Exportación</string>
+    <string name="feature_export_options_desc">Exporta a CSV, Xero, QB</string>
+    <string name="feature_shared_groups">Grupos de Gastos Compartidos</string>
+    <string name="feature_shared_groups_desc">Divide gastos con otros</string>
+
+    <!-- Screen Titles -->
+    <string name="ai_settings_title">Configuración de IA</string>
+    <string name="screen_manage_categories">Gestionar Categorías</string>
+    <string name="analytics_screen_title">Informes Financieros</string>
+    <string name="recurring_screen_title">Gestionar Recurrentes</string>
+    <string name="groups_title">Grupos de Gastos Compartidos</string>
+    <string name="subscriptions_title">Gestión de Suscripciones</string>
+    <string name="tax_title">Configuración de Impuestos</string>
+    <string name="export_title">Opciones de Exportación</string>
+    <string name="carbon_title">Huella de Carbono</string>
+
+    <!-- Accessibility (Important for usability) -->
+    <string name="a11y_open_assistant">Abrir asistente</string>
+    <string name="a11y_open_features_menu">Abrir menú de funciones</string>
+    <string name="a11y_open_settings_menu">Abrir menú de configuración</string>
+    <string name="a11y_navigate_to_ai_settings">Ir a configuración de IA</string>
+    <string name="a11y_navigate_to_categories">Ir a gestión de categorías</string>
+    <string name="a11y_add_expense">Añadir gasto</string>
+    <string name="a11y_close">Cerrar</string>
+    <string name="a11y_clear">Limpiar</string>
+    <string name="a11y_selected">Seleccionado</string>
+    <string name="a11y_not_selected">No seleccionado</string>
+    <string name="a11y_expand">Expandir</string>
+    <string name="a11y_collapse">Colapsar</string>
+
+    <!-- Empty States -->
+    <string name="empty_title_generic">Nada aquí</string>
+    <string name="empty_message_generic">No hay nada que mostrar en este momento.</string>
+    <string name="empty_title_transactions">Sin Transacciones</string>
+    <string name="empty_message_transactions">Aún no has registrado gastos. ¡Empieza a rastrear tu dinero!</string>
+    <string name="empty_title_analytics">Sin Datos Aún</string>
+    <string name="empty_message_analytics">Añade algunas transacciones para ver tus análisis e informes.</string>
+    <string name="empty_groups_title">Sin Grupos de Gastos</string>
+    <string name="empty_groups_message">Crea un grupo para dividir gastos con amigos, familia o compañeros</string>
+    <string name="empty_recurring_title">Sin gastos recurrentes</string>
+    <string name="empty_recurring_message">Toca + para añadir alquiler, servicios u otros pagos recurrentes</string>
+
+    <!-- Status Messages -->
+    <string name="status_active">Activo</string>
+    <string name="status_inactive">Inactivo</string>
+    <string name="status_pending">Pendiente</string>
+    <string name="status_completed">Completado</string>
+
+    <!-- Remaining strings use default (English) until full translation is completed -->
+</resources>

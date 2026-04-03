@@ -83,7 +83,8 @@ private fun OwnershipFilter.toRepositoryOwnershipFilter(): com.yourname.expenset
 fun TransactionsScreen(
     viewModel: TransactionsViewModel = hiltViewModel(),
     initialFilter: TransactionFilter? = null,
-    onNavigateToAnalytics: () -> Unit = {}
+    onNavigateToAnalytics: () -> Unit = {},
+    onAddExpense: () -> Unit = {}
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val groupedTransactions by viewModel.groupedTransactions.collectAsState()
@@ -405,14 +406,14 @@ fun TransactionsScreen(
                             IconButton(
                                 onClick = { viewModel.clearFilter() },
                                 modifier = Modifier
-                                    .size(24.dp)
+                                    .size(48.dp)
                                     .semantics { contentDescription = clearFiltersCd }
                             ) {
                                 Icon(
                                     Icons.Rounded.Close,
                                     contentDescription = null,
                                     tint = SemanticColors.PrimaryIndigo,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
@@ -443,7 +444,7 @@ fun TransactionsScreen(
                     // Empty state with illustration
                     EmptyTransactionsState(
                         hasSearch = searchQuery.isNotBlank(),
-                        onAddClick = { /* Navigate to add expense */ }
+                        onAddClick = onAddExpense
                     )
                 }
                 else -> {
@@ -451,8 +452,8 @@ fun TransactionsScreen(
                     LazyColumn(
                         state = listState,
                         contentPadding = PaddingValues(
-                            start = 16.dp,
-                            end = 16.dp,
+                            start = 20.dp,
+                            end = 20.dp,
                             top = 8.dp,
                             bottom = 80.dp
                         ),
@@ -791,7 +792,7 @@ private fun DateHeader(
                 ) {
                     Text(
                         text = "€${String.format(java.util.Locale.getDefault(), "%.2f", kotlin.math.abs(totalAmount))}",
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (totalAmount < 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -820,6 +821,7 @@ private fun TransactionItem(
 ) {
     val expense = transaction.expense
     val category = transaction.category
+    var showActionMenu by remember { mutableStateOf(false) }
     
     // Pre-load string resources
     val uncategorizedLabel = stringResource(R.string.uncategorized_label)
@@ -846,6 +848,8 @@ private fun TransactionItem(
     val editLocationCd = stringResource(R.string.transactions_edit_location_cd)
     val addLocationCd = stringResource(R.string.transactions_add_location_cd)
     val deleteTransactionCd = stringResource(R.string.transactions_delete_transaction_cd)
+    val moreOptionsCd = stringResource(R.string.a11y_more_options)
+    val debugMenuLabel = stringResource(R.string.home_debug_menu)
     
     // Safe color parsing with fallback
     val categoryColor = remember(transaction.categoryColor) {
@@ -868,7 +872,7 @@ private fun TransactionItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
             .semantics {
                 contentDescription = accessibilityDescription
             },
@@ -938,7 +942,7 @@ private fun TransactionItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
-                            .weight(1f, fill = false)
+                            .weight(1f)
                             .clickable { onRename() }
                             .semantics { contentDescription = merchantRenameCd }
                     )
@@ -1000,7 +1004,10 @@ private fun TransactionItem(
                         text = category?.name ?: uncategorizedLabel,
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
+                            .weight(1f)
                             .clickable { onEditCategory() }
                             .semantics { contentDescription = if (category != null) categoryCdFormat else categoryUncategorizedCd }
                     )
@@ -1064,9 +1071,9 @@ private fun TransactionItem(
                 
 
                 
-                // Action buttons row
+                // Action buttons row (primary + overflow to preserve text space)
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(0.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     // Change type action
                     IconButton(
@@ -1075,90 +1082,121 @@ private fun TransactionItem(
                             .size(40.dp)
                             .semantics { contentDescription = changeTypeCd }
                     ) {
-                        val (typeIcon, typeDesc) = when (expense.transactionType) {
-                            TransactionType.PURCHASE -> Icons.Rounded.ShoppingCart to typePurchase
-                            TransactionType.DEPOSIT -> Icons.Rounded.ArrowCircleDown to typeDeposit
-                            TransactionType.WITHDRAWAL -> Icons.Rounded.ArrowCircleUp to typeWithdrawal
-                            TransactionType.TRANSFER -> Icons.Rounded.SyncAlt to typeTransfer
-                            else -> Icons.Rounded.HelpOutline to typeUnknown
+                        val typeIcon = when (expense.transactionType) {
+                            TransactionType.PURCHASE -> Icons.Rounded.ShoppingCart
+                            TransactionType.DEPOSIT -> Icons.Rounded.ArrowCircleDown
+                            TransactionType.WITHDRAWAL -> Icons.Rounded.ArrowCircleUp
+                            TransactionType.TRANSFER -> Icons.Rounded.SyncAlt
+                            else -> Icons.Rounded.HelpOutline
                         }
                         Icon(
                             imageVector = typeIcon,
                             contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(20.dp),
                             tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.6f)
                         )
                     }
 
-                    // Edit ownership/not-mine/shared action
-                    val (ownershipIcon, _) = remember(expense.isNotMine, expense.isSharedExpense, expense.transactionType, ownershipNotMine, ownershipShared, ownershipTransfer, ownershipSettings) {
-                        when {
-                            expense.isNotMine -> Icons.Rounded.Person to ownershipNotMine
-                            expense.isSharedExpense -> Icons.Rounded.People to ownershipShared
-                            expense.transactionType == TransactionType.TRANSFER -> Icons.Rounded.SyncAlt to ownershipTransfer
-                            else -> Icons.Rounded.Settings to ownershipSettings
+                    // Overflow menu for secondary actions
+                    Box {
+                        IconButton(
+                            onClick = { showActionMenu = true },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .semantics { contentDescription = moreOptionsCd }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MoreVert,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = SemanticColors.TextSecondary
+                            )
                         }
-                    }
-                    IconButton(
-                        onClick = onEditOwnership,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .semantics { contentDescription = editOwnershipCd }
-                    ) {
-                        Icon(
-                            imageVector = ownershipIcon,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.6f)
-                        )
-                    }
 
-                    // Recurring action
-                    IconButton(
-                        onClick = onMarkRecurring,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .semantics { contentDescription = markRecurringCd }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Repeat,
-                            contentDescription = null,
-                            tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.6f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                        DropdownMenu(
+                            expanded = showActionMenu,
+                            onDismissRequest = { showActionMenu = false }
+                        ) {
+                            val (ownershipIcon, _) = remember(expense.isNotMine, expense.isSharedExpense, expense.transactionType, ownershipNotMine, ownershipShared, ownershipTransfer, ownershipSettings) {
+                                when {
+                                    expense.isNotMine -> Icons.Rounded.Person to ownershipNotMine
+                                    expense.isSharedExpense -> Icons.Rounded.People to ownershipShared
+                                    expense.transactionType == TransactionType.TRANSFER -> Icons.Rounded.SyncAlt to ownershipTransfer
+                                    else -> Icons.Rounded.Settings to ownershipSettings
+                                }
+                            }
 
-                    // Location pin action
-                    IconButton(
-                        onClick = onEditLocation,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .semantics { contentDescription = if (expense.latitude != null) editLocationCd else addLocationCd }
-                    ) {
-                        Icon(
-                            imageVector = if (expense.latitude != null) Icons.Filled.LocationOn else Icons.Rounded.AddLocationAlt,
-                            contentDescription = null,
-                            tint = if (expense.latitude != null)
-                                SemanticColors.PrimaryIndigo.copy(alpha = 0.8f)
-                            else
-                                SemanticColors.TextMuted.copy(alpha = 0.5f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                            DropdownMenuItem(
+                                text = { Text(editOwnershipCd) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onEditOwnership()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = ownershipIcon,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
 
-                    // Delete action
-                    IconButton(
-                        onClick = onDelete,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .semantics { contentDescription = deleteTransactionCd }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Delete,
-                            contentDescription = null,
-                            tint = SemanticColors.DangerRed.copy(alpha = 0.6f),
-                            modifier = Modifier.size(18.dp)
-                        )
+                            DropdownMenuItem(
+                                text = { Text(markRecurringCd) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onMarkRecurring()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Repeat,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+
+                            DropdownMenuItem(
+                                text = { Text(if (expense.latitude != null) editLocationCd else addLocationCd) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onEditLocation()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (expense.latitude != null) Icons.Filled.LocationOn else Icons.Rounded.AddLocationAlt,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+
+                            DropdownMenuItem(
+                                text = { Text(debugMenuLabel) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onDebug()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.BugReport,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+
+                            DropdownMenuItem(
+                                text = { Text(deleteTransactionCd) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onDelete()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Delete,
+                                        contentDescription = null,
+                                        tint = SemanticColors.DangerRed.copy(alpha = 0.8f)
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }

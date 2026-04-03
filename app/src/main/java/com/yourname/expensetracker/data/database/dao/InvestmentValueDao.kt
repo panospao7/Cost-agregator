@@ -21,7 +21,7 @@ interface InvestmentValueDao {
     @Query("SELECT * FROM investment_values WHERE investmentId = :investmentId ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatestValue(investmentId: Long): InvestmentValue?
     
-    @Query("SELECT * FROM investment_values WHERE investmentId = :investmentId AND timestamp >= :startDate AND timestamp <= :endDate ORDER BY timestamp ASC")
+    @Query("SELECT * FROM investment_values WHERE investmentId = :investmentId AND timestamp >= :startDate AND timestamp < :endDate ORDER BY timestamp ASC")
     suspend fun getValuesBetween(investmentId: Long, startDate: Long, endDate: Long): List<InvestmentValue>
     
     @Query("DELETE FROM investment_values WHERE investmentId = :investmentId AND timestamp < :olderThan")

@@ -6,6 +6,8 @@ import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,7 +31,8 @@ data class ManualRecurringExpenseUiState(
 
 @HiltViewModel
 class ManualRecurringExpenseViewModel @Inject constructor(
-    private val dao: ManualRecurringExpenseDao
+    private val dao: ManualRecurringExpenseDao,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(ManualRecurringExpenseUiState())
@@ -53,7 +56,7 @@ class ManualRecurringExpenseViewModel @Inject constructor(
                 }
                 
                 // Count upcoming (next 7 days)
-                val oneWeekFromNow = System.currentTimeMillis() + (7 * 24 * 60 * 60 * 1000)
+                val oneWeekFromNow = timeProvider.now() + (7L * TimePeriodUtils.DAY_IN_MILLIS)
                 val upcomingCount = activeExpenses.count { it.nextDate <= oneWeekFromNow }
                 
                 _uiState.value = ManualRecurringExpenseUiState(

@@ -91,7 +91,8 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         for (expense in expenses) {
             when (expense.transactionType.name) {
                 "PURCHASE", "WITHDRAWAL" -> totalSpent += expense.amount
-                "DEPOSIT", "TRANSFER" -> if (expense.transferDirection?.name == "INCOMING") {
+                "DEPOSIT" -> totalIncome += expense.amount
+                "TRANSFER" -> if (expense.transferDirection?.name == "INCOMING") {
                     totalIncome += expense.amount
                 }
             }

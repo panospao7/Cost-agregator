@@ -46,7 +46,7 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         SplitTemplate::class,
         SplitItemAssignment::class
     ],
-            version = 51,
+            version = 52,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -2022,7 +2022,7 @@ abstract class AppDatabase : RoomDatabase() {
                         CREATE TABLE group_expenses_new (
                             id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                             groupId INTEGER NOT NULL,
-                            expenseId INTEGER NOT NULL,
+                            expenseId INTEGER,
                             paidById INTEGER NOT NULL,
                             date INTEGER NOT NULL,
                             description TEXT NOT NULL,
@@ -2337,6 +2337,56 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_locations_normalizedMerchantName_areaKey ON merchant_locations(normalizedMerchantName, areaKey)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt ON merchant_locations(lastResolvedAt)")
                     
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Migration 51 -> 52: Fix group_expenses payer FK contract.
+        // paidById is NOT NULL, so ON DELETE SET NULL is invalid for referential actions.
+        // Switch to ON DELETE RESTRICT to preserve financial records and block unsafe member deletes.
+        val MIGRATION_51_52 = object : androidx.room.migration.Migration(51, 52) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    database.execSQL("""
+                        CREATE TABLE group_expenses_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            groupId INTEGER NOT NULL,
+                            expenseId INTEGER,
+                            paidById INTEGER NOT NULL,
+                            date INTEGER NOT NULL,
+                            description TEXT NOT NULL,
+                            totalAmount REAL NOT NULL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            splitType TEXT NOT NULL DEFAULT 'EQUAL',
+                            customSplitsJson TEXT,
+                            FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE,
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE CASCADE,
+                            FOREIGN KEY (paidById) REFERENCES group_members(id) ON DELETE RESTRICT
+                        )
+                    """.trimIndent())
+
+                    database.execSQL("""
+                        INSERT INTO group_expenses_new (
+                            id, groupId, expenseId, paidById, date, description, totalAmount,
+                            currency, splitType, customSplitsJson
+                        )
+                        SELECT
+                            id, groupId, expenseId, paidById, date, description, totalAmount,
+                            currency, splitType, customSplitsJson
+                        FROM group_expenses
+                    """.trimIndent())
+
+                    database.execSQL("DROP TABLE group_expenses")
+                    database.execSQL("ALTER TABLE group_expenses_new RENAME TO group_expenses")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId ON group_expenses (groupId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_expenseId ON group_expenses (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_paidById ON group_expenses (paidById)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId_date ON group_expenses (groupId, date)")
+
                     database.setTransactionSuccessful()
                 } finally {
                     database.endTransaction()

@@ -81,15 +81,17 @@ class SmartSavingsEngine @Inject constructor(
     
     private suspend fun analyzeSpendingPace(): Double {
         val now = timeProvider.now()
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = now
+        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = now }
+        val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
         
         // Get current month's spending
-        val monthStart = calendar.apply {
+        val monthStart = (calendar.clone() as java.util.Calendar).apply {
             set(java.util.Calendar.DAY_OF_MONTH, 1)
             set(java.util.Calendar.HOUR_OF_DAY, 0)
             set(java.util.Calendar.MINUTE, 0)
             set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
         }.timeInMillis
         
         val expenses = expenseRepository.getExpensesBetween(monthStart, now)
@@ -98,10 +100,7 @@ class SmartSavingsEngine @Inject constructor(
             totalSpent += expense.amount
         }
         
-        // Calculate days elapsed and days remaining
-        val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
-        val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
-        val daysRemaining = daysInMonth - dayOfMonth
+        // Calculate days elapsed and month length
         
         // If spending slower than average pace, suggest saving the difference
         val averageDailySpending = totalSpent / dayOfMonth
@@ -133,6 +132,7 @@ class SmartSavingsEngine @Inject constructor(
             set(java.util.Calendar.HOUR_OF_DAY, 0)
             set(java.util.Calendar.MINUTE, 0)
             set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
         }.timeInMillis
         
         val expenses = expenseRepository.getExpensesBetween(monthStart, now)

@@ -206,7 +206,7 @@ data class RecurringCandidate(
 )
 
 enum class TimePeriod {
-    TODAY, WEEK, MONTH, YEAR, ALL
+    TODAY, WEEK, MONTH, QUARTER, YEAR, ALL
 }
 
 // === Feature 3: Year-over-Year Comparison Models ===

@@ -1,11 +1,13 @@
 package com.yourname.expensetracker.ui.navigation
 
-import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.data.database.entity.Expense
 
 /**
  * Sealed class representing all navigation destinations in the app.
- * Replaces the boolean flag system with a type-safe navigation state.
+ * Single source of truth for type-safe navigation.
+ * 
+ * All navigation flows use this sealed class - no more boolean flags or callbacks.
  */
 sealed class NavigationDestination {
     
@@ -14,10 +16,17 @@ sealed class NavigationDestination {
     data object Transactions : NavigationDestination()
     data object Analytics : NavigationDestination()
     data object Assistant : NavigationDestination()
+    data object Review : NavigationDestination()
+    data object Budget : NavigationDestination()
+    data object SpendingMap : NavigationDestination()
     
-    // Feature Screens
+    // Overlay Screens (previously boolean flags)
     data object AddExpense : NavigationDestination()
     data object ScanReceipt : NavigationDestination()
+    data object RecurringExpenses : NavigationDestination()
+    data object ManualRecurringExpense : NavigationDestination()
+    
+    // Feature Screens
     data object SavingsGoals : NavigationDestination()
     data object CarbonFootprint : NavigationDestination()
     data object WarrantyTracker : NavigationDestination()
@@ -41,12 +50,12 @@ sealed class NavigationDestination {
     data object SubscriptionManagement : NavigationDestination()
     data object TaxConfiguration : NavigationDestination()
     data object ExportOptions : NavigationDestination()
-    data object ManualRecurringExpense : NavigationDestination()
     data object SharedExpenseGroups : NavigationDestination()
-    data class BudgetForecasting(val budget: Budget? = null) : NavigationDestination()
-    data object Review : NavigationDestination()
-    data object SpendingMap : NavigationDestination()
-    data object Budget : NavigationDestination()
+    data class BudgetForecasting(val budget: BudgetEntity? = null) : NavigationDestination()
+    
+    // Settings / Management Screens (previously orphaned)
+    data object AiSettings : NavigationDestination()
+    data object CategoryManagement : NavigationDestination()
     
     companion object {
         /**
@@ -74,8 +83,12 @@ sealed class NavigationDestination {
             SubscriptionManagement,
             TaxConfiguration,
             ExportOptions,
+            RecurringExpenses,
             ManualRecurringExpense,
-            SharedExpenseGroups
+            SharedExpenseGroups,
+            // Settings / Management features (previously accessed only via Quick Settings)
+            AiSettings,
+            CategoryManagement
         )
     }
 }

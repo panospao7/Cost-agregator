@@ -31,6 +31,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardDat
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.NavigationAction
 import com.yourname.expensetracker.service.NavigationTargetResolver
@@ -46,7 +47,6 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
@@ -277,6 +277,24 @@ class HomeViewModel @Inject constructor(
 
     fun toggleEditMode() {
         isEditMode.value = !isEditMode.value
+    }
+
+    /**
+     * Reloads the dashboard data by re-triggering the data flows.
+     * Used for retry actions after errors.
+     */
+    fun reloadDashboard() {
+        viewModelScope.launch {
+            // Refresh recommendations
+            recommendationStateManager.refreshForUser(defaultRecommendationUserId)
+            // Reload category trends
+            loadCategoryTrends()
+            // Trigger a totals reload if we have drill-down state
+            if (_totalsDrillDownState.value.periodTotals.isNotEmpty()) {
+                val currentYear = TimePeriodUtils.getYear(timeProvider.now())
+                loadTotalsForYear(currentYear)
+            }
+        }
     }
 
     fun moveWidget(widgetId: String, moveUp: Boolean) {
@@ -525,8 +543,7 @@ class HomeViewModel @Inject constructor(
                             Triple(updatedMonths, parent, grandparent)
                         } else {
                             // Fallback: show all months of current year
-                            val cal = Calendar.getInstance()
-                            val currentYear = cal.get(Calendar.YEAR)
+                            val currentYear = TimePeriodUtils.getYear(timeProvider.now())
                             val months = totalsAggregationEngine.getMonthlyTotals(currentYear)
                             val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
                             val updatedMonths = months.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
@@ -588,8 +605,8 @@ class HomeViewModel @Inject constructor(
             Pair(parts[0].toInt(), parts[1].toInt())
         } else {
             // Fallback: return current year/week if parsing fails
-            val cal = Calendar.getInstance()
-            Pair(cal.get(Calendar.YEAR), cal.get(Calendar.WEEK_OF_YEAR))
+            val now = timeProvider.now()
+            Pair(TimePeriodUtils.getYear(now), TimePeriodUtils.getWeekOfYear(now))
         }
     }
 
@@ -645,16 +662,7 @@ class HomeViewModel @Inject constructor(
                     } else {
                         // Fallback to current month
                         val now = timeProvider.now()
-                        val cal = Calendar.getInstance().apply { timeInMillis = now }
-                        cal.set(Calendar.DAY_OF_MONTH, 1)
-                        cal.set(Calendar.HOUR_OF_DAY, 0)
-                        cal.set(Calendar.MINUTE, 0)
-                        cal.set(Calendar.SECOND, 0)
-                        cal.set(Calendar.MILLISECOND, 0)
-                        val startOfMonth = cal.timeInMillis
-                        
-                        cal.add(Calendar.MONTH, 1)
-                        val endOfMonth = cal.timeInMillis
+                        val (startOfMonth, endOfMonth) = TimePeriodUtils.getMonthRange(now)
                         
                         val monthLabel = java.text.SimpleDateFormat("MMM yyyy", java.util.Locale.getDefault()).format(Date(now))
                         Triple(startOfMonth, endOfMonth, monthLabel)

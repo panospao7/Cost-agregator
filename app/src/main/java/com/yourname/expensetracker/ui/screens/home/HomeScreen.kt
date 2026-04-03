@@ -8,8 +8,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
@@ -59,6 +61,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.widget.model.WidgetStyle
 import com.yourname.expensetracker.domain.widget.model.StyledWidgets
 import com.yourname.expensetracker.service.NavigationAction
+import com.yourname.expensetracker.ui.mappers.toUi
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import com.yourname.expensetracker.ui.navigation.FeatureConfig
 
@@ -178,10 +181,7 @@ fun HomeScreen(
                     type = ErrorType.UNKNOWN,
                     title = stringResource(R.string.home_error_loading_dashboard),
                     message = errorText,
-                    onRetry = { 
-                        viewModel.toggleEditMode()
-                        viewModel.toggleEditMode()
-                    },
+                    onRetry = { viewModel.reloadDashboard() },
                     modifier = Modifier.padding(padding)
                 )
             }
@@ -286,7 +286,7 @@ fun HomeScreen(
                                 
                                 if (widgetStyle == WidgetStyle.RETRO) {
                                     RetroBudgetBlockPartyCard(
-                                        days = widget.days,
+                                        days = widget.days.toUi(),
                                         modifier = Modifier.fillMaxWidth(),
                                         onNavigateToDay = { dateMs ->
                                             val cal = Calendar.getInstance().apply {
@@ -298,15 +298,15 @@ fun HomeScreen(
                                             }
                                             val startOfDay = cal.timeInMillis
                                             cal.add(Calendar.DAY_OF_MONTH, 1)
-                                            val endOfDay = cal.timeInMillis - 1
+                                            val nextDayStart = cal.timeInMillis
                                             onNavigateToTransactions(
-                                                TransactionFilter(dateRange = startOfDay to endOfDay)
+                                                TransactionFilter(dateRange = startOfDay to nextDayStart)
                                             )
                                         }
                                     )
                                 } else {
                                     BudgetBlockPartyCard(
-                                        days = widget.days,
+                                        days = widget.days.toUi(),
                                         modifier = Modifier.fillMaxWidth(),
                                         onNavigateToDay = { dateMs ->
                                             val cal = Calendar.getInstance().apply {
@@ -318,9 +318,9 @@ fun HomeScreen(
                                             }
                                             val startOfDay = cal.timeInMillis
                                             cal.add(Calendar.DAY_OF_MONTH, 1)
-                                            val endOfDay = cal.timeInMillis - 1
+                                            val nextDayStart = cal.timeInMillis
                                             onNavigateToTransactions(
-                                                TransactionFilter(dateRange = startOfDay to endOfDay)
+                                                TransactionFilter(dateRange = startOfDay to nextDayStart)
                                             )
                                         }
                                     )
@@ -690,23 +690,28 @@ fun HomeScreen(
             )
         }
 
-        if (showAiSettings) {
-            com.yourname.expensetracker.ui.screens.aisettings.AiSettingsScreen(
-                onDismiss = { showAiSettings = false }
-            )
-        }
+                if (showAiSettings) {
+                    // Navigate via NavigationDestination instead of direct overlay
+                    LaunchedEffect(Unit) {
+                        showAiSettings = false
+                        onNavigateToFeature(NavigationDestination.AiSettings)
+                    }
+                }
 
-        if (showCategories) {
-            com.yourname.expensetracker.ui.screens.categories.CategoryScreen(
-                onDismiss = { showCategories = false }
-            )
-        }
+                if (showCategories) {
+                    // Navigate via NavigationDestination instead of direct overlay
+                    LaunchedEffect(Unit) {
+                        showCategories = false
+                        onNavigateToFeature(NavigationDestination.CategoryManagement)
+                    }
+                }
 
-        if (showDebug) {
-            com.yourname.expensetracker.ui.screens.debug.DebugScreen(
-                onDismiss = { showDebug = false }
-            )
-        }
+                if (showDebug) {
+                    // Debug screen remains as dev-only overlay (expected behavior)
+                    com.yourname.expensetracker.ui.screens.debug.DebugScreen(
+                        onDismiss = { showDebug = false }
+                    )
+                }
 
         if (showAddPlannedExpenseDialog) {
             AddPlannedExpenseDialog(
@@ -1269,7 +1274,12 @@ private fun FeaturesMenu(
                 )
                 
                 // Config-driven Feature Items - All 22 features from FeatureConfig
+                // Wrapped in a scrollable column with max height to prevent overflow
                 Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     FeatureConfig.allFeatures.forEach { feature ->
@@ -1350,13 +1360,13 @@ private fun FeatureItem(
                     if (isNew) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Badge(containerColor = Color(0xFF4CAF50)) {
-                            Text("NEW", fontSize = 10.sp)
+                            Text(stringResource(R.string.label_new), fontSize = 10.sp)
                         }
                     }
                     if (isBeta) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Badge(containerColor = Color(0xFFFF9800)) {
-                            Text("BETA", fontSize = 10.sp)
+                            Text(stringResource(R.string.label_beta), fontSize = 10.sp)
                         }
                     }
                 }

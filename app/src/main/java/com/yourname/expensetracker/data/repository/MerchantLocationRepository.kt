@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrecti
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.*
@@ -20,7 +21,8 @@ import kotlin.math.*
  */
 @Singleton
 class MerchantLocationRepository @Inject constructor(
-    private val dao: MerchantLocationDao
+    private val dao: MerchantLocationDao,
+    private val timeProvider: TimeProvider
 ) {
 
     // ── Cache lookups ─────────────────────────────────────────────────────────
@@ -29,7 +31,7 @@ class MerchantLocationRepository @Inject constructor(
         val key = normalizeKey(merchantName)
         val cached = dao.getByNormalizedName(key) ?: return null
         // Evict if stale
-        if (System.currentTimeMillis() - cached.lastResolvedAt > AppConfig.Location.CACHE_TTL_MS) {
+        if (timeProvider.now() - cached.lastResolvedAt > AppConfig.Location.CACHE_TTL_MS) {
             return null
         }
         dao.incrementHitCount(key)
@@ -42,7 +44,7 @@ class MerchantLocationRepository @Inject constructor(
     suspend fun getCachedLocationForArea(merchantName: String, areaKey: String): MerchantLocation? {
         val key = normalizeKey(merchantName)
         val cached = dao.getByNormalizedNameAndArea(key, areaKey) ?: return null
-        if (System.currentTimeMillis() - cached.lastResolvedAt > AppConfig.Location.CACHE_TTL_MS) {
+        if (timeProvider.now() - cached.lastResolvedAt > AppConfig.Location.CACHE_TTL_MS) {
             return null
         }
         dao.incrementHitCountForArea(key, areaKey)
@@ -81,7 +83,7 @@ class MerchantLocationRepository @Inject constructor(
                 osmId = result.osmId,
                 displayAddress = result.displayAddress,
                 confidence = result.confidence,
-                lastResolvedAt = System.currentTimeMillis()
+                lastResolvedAt = timeProvider.now()
             )
         )
     }
@@ -132,7 +134,7 @@ class MerchantLocationRepository @Inject constructor(
                 osmId = correction.osmId,
                 displayAddress = correction.displayAddress,
                 confidence = 1.0f,
-                lastResolvedAt = System.currentTimeMillis()
+                lastResolvedAt = timeProvider.now()
             )
         )
     }
@@ -140,7 +142,7 @@ class MerchantLocationRepository @Inject constructor(
     // ── Maintenance ───────────────────────────────────────────────────────────
 
     suspend fun evictStaleCache() {
-        val cutoff = System.currentTimeMillis() - AppConfig.Location.CACHE_TTL_MS
+        val cutoff = timeProvider.now() - AppConfig.Location.CACHE_TTL_MS
         dao.deleteStaleEntries(cutoff)
     }
 

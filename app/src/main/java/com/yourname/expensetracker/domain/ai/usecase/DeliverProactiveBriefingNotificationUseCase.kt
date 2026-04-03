@@ -11,9 +11,10 @@ import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.service.NotificationService
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
+import dagger.hilt.android.qualifiers.ApplicationContext
 
 class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiEngagementRepository: AiEngagementRepository,

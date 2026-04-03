@@ -29,12 +29,12 @@ import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.ui.components.AppNavigationBar
 import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
 import com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
-import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
 import com.yourname.expensetracker.ui.screens.bank.BankConnectionsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetForecastingScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
@@ -59,6 +59,7 @@ import com.yourname.expensetracker.ui.screens.warranty.WarrantyTrackerScreen
 import com.yourname.expensetracker.ui.screens.currency.CurrencyManagementScreen
 import com.yourname.expensetracker.ui.screens.export.ExportOptionsScreen
 import com.yourname.expensetracker.ui.screens.groups.SharedExpenseGroupsScreen
+import com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen
 import com.yourname.expensetracker.ui.screens.recurringmanual.ManualRecurringExpenseScreen
 import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagementScreen
 import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
@@ -114,7 +115,7 @@ class MainActivity : ComponentActivity() {
         val data = intent?.data ?: return
         if (data.scheme == "expensetracker") {
             when (data.host) {
-                "dashboard" -> {
+                "home", "dashboard" -> {
                     mainViewModel.navigateToTab(0)
                     data.getQueryParameter("briefingKey")?.let { briefingKey ->
                         lifecycleScope.launch {
@@ -129,7 +130,10 @@ class MainActivity : ComponentActivity() {
                 "activity" -> mainViewModel.navigateToTab(1)
                 "review" -> mainViewModel.navigateToTab(2)
                 "plan" -> mainViewModel.navigateToTab(3)
-                "add" -> mainViewModel.navigateToTab(0)
+                "add" -> {
+                    mainViewModel.navigateToTab(0)
+                    mainViewModel.triggerAddExpense()
+                }
                 "analytics" -> mainViewModel.navigateToTab(4)
                 "map" -> mainViewModel.navigateToTab(5)
             }
@@ -140,7 +144,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(mainViewModel: MainViewModel) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     
@@ -151,10 +155,12 @@ fun MainScreen(mainViewModel: MainViewModel) {
     var showNotificationPermissionDialog by rememberSaveable { mutableStateOf(false) }
     var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
     
-    // Navigation Controller - Single source of truth for feature screens
+    // Navigation Controller - Single source of truth for ALL navigation
     val navigation = LocalNavigationController.current
     val currentDestination = navigation.destination
     
+    var isFabExpanded by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         mainViewModel.navigationRequest.collect { request ->
             when (request) {
@@ -164,6 +170,10 @@ fun MainScreen(mainViewModel: MainViewModel) {
                 is MainNavigationRequest.Transactions -> {
                     activeTransactionFilter = request.filter
                     navigation.navigateToTab(1)
+                }
+                is MainNavigationRequest.Destination -> {
+                    // All navigation now goes through NavigationDestination sealed class
+                    navigation.navigateTo(request.destination)
                 }
             }
         }
@@ -190,16 +200,6 @@ fun MainScreen(mainViewModel: MainViewModel) {
 
     val haptic = rememberHapticFeedback()
 
-    var showAddExpense by rememberSaveable { mutableStateOf(false) }
-    var showScanReceipt by rememberSaveable { mutableStateOf(false) }
-    var showRecurringExpenses by rememberSaveable { mutableStateOf(false) }
-    var showAssistant by rememberSaveable { mutableStateOf(false) }
-    var isFabExpanded by rememberSaveable { mutableStateOf(false) }
-    
-    // Budget Forecasting State (requires data parameter)
-    var showBudgetForecasting by rememberSaveable { mutableStateOf(false) }
-    var selectedBudgetForForecast by rememberSaveable { mutableStateOf<com.yourname.expensetracker.data.database.entity.Budget?>(null) }
-    
     // Sync: Keep selectedTab in sync with NavigationController
     LaunchedEffect(currentDestination) {
         navigation.getCurrentTabIndex()?.let { tabIndex ->
@@ -236,7 +236,7 @@ fun MainScreen(mainViewModel: MainViewModel) {
                 SmallFloatingActionButton(
                     onClick = {
                         haptic(HapticType.Standard)
-                        showAssistant = true
+                        navigation.navigateTo(NavigationDestination.Assistant)
                         isFabExpanded = false
                     },
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
@@ -251,11 +251,11 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     isExpanded = isFabExpanded,
                     onToggleExpand = { isFabExpanded = !isFabExpanded },
                     onAddExpense = {
-                        showAddExpense = true
+                        navigation.navigateTo(NavigationDestination.AddExpense)
                         isFabExpanded = false
                     },
                     onScanReceipt = {
-                        showScanReceipt = true
+                        navigation.navigateTo(NavigationDestination.ScanReceipt)
                         isFabExpanded = false
                     },
                     onApproveAll = { reviewViewModel.approveAll() }
@@ -276,7 +276,7 @@ fun MainScreen(mainViewModel: MainViewModel) {
                 when (targetTab) {
                     0 -> HomeScreen(
                         onNavigateToReview = { navigation.navigateToTab(2) },
-                        onNavigateToRecurring = { showRecurringExpenses = true },
+                        onNavigateToRecurring = { navigation.navigateTo(NavigationDestination.RecurringExpenses) },
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
                             navigation.navigateToTab(1)
@@ -289,13 +289,13 @@ fun MainScreen(mainViewModel: MainViewModel) {
                     )
                     1 -> TransactionsScreen(
                         onNavigateToAnalytics = { navigation.navigateToTab(4) },
+                        onAddExpense = { navigation.navigateTo(NavigationDestination.AddExpense) },
                         initialFilter = activeTransactionFilter
                     )
                     2 -> ReviewScreen()
                     3 -> BudgetScreen(
-                        onNavigateToForecast = { budget ->
-                            selectedBudgetForForecast = budget
-                            showBudgetForecasting = true
+                        onNavigateToForecast = { budget: BudgetEntity ->
+                            navigation.navigateTo(NavigationDestination.BudgetForecasting(budget))
                         }
                     )
                     4 -> com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen(
@@ -308,62 +308,77 @@ fun MainScreen(mainViewModel: MainViewModel) {
                 }
             }
 
-            if (showAddExpense) {
-                var initialAmount by remember { mutableStateOf<String?>(null) }
-                
-                LaunchedEffect(Unit) {
-                    val clipboardManager = ClipboardAmountParser.getClipboardManager(context)
-                    initialAmount = ClipboardAmountParser.parseAmountFromClipboard(clipboardManager)
-                }
-
-                com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
-                    onDismiss = { showAddExpense = false },
-                    initialAmount = initialAmount
-                )
-            }
-
-            if (showScanReceipt) {
-                com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen(
-                    onDismiss = { showScanReceipt = false }
-                )
-            }
-
-            if (showRecurringExpenses) {
-                com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen(
-                    onNavigateBack = { showRecurringExpenses = false },
-                    onNavigateToTransactions = { filter ->
-                        activeTransactionFilter = filter
-                        // Close recurring screen since it's an overlay
-                        showRecurringExpenses = false
-                        navigation.navigateToTab(1)
-                    }
-                )
-            }
-
-            if (showAssistant) {
-                AssistantSheet(
-                    onDismiss = { showAssistant = false },
-                    onOpenTransactions = { filter ->
-                        activeTransactionFilter = filter
-                        navigation.navigateToTab(1)
-                        showAssistant = false
-                    }
-                )
-            }
-            
-            // Feature Screens
-            if (showBudgetForecasting && selectedBudgetForForecast != null) {
-                BudgetForecastingScreen(
-                    budget = selectedBudgetForForecast!!,
-                    onNavigateBack = { 
-                        showBudgetForecasting = false
-                        selectedBudgetForForecast = null
-                    }
-                )
-            }
-            
-            // Feature Screens - Render based on NavigationDestination
+            // All screens rendered via NavigationDestination sealed class
             when (currentDestination) {
+                // Overlays that were previously boolean flags
+                is NavigationDestination.AddExpense -> {
+                    var initialAmount by remember { mutableStateOf<String?>(null) }
+                    
+                    LaunchedEffect(Unit) {
+                        val clipboardManager = ClipboardAmountParser.getClipboardManager(context)
+                        initialAmount = ClipboardAmountParser.parseAmountFromClipboard(clipboardManager)
+                    }
+
+                    com.yourname.expensetracker.ui.screens.addexpense.AddExpenseSheet(
+                        onDismiss = { navigation.navigateBack() },
+                        initialAmount = initialAmount
+                    )
+                }
+                is NavigationDestination.ScanReceipt -> {
+                    com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen(
+                        onDismiss = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.RecurringExpenses -> {
+                    RecurringExpensesScreen(
+                        onNavigateBack = { navigation.navigateBack() },
+                        onNavigateToTransactions = { filter ->
+                            activeTransactionFilter = filter
+                            navigation.navigateToTab(1)
+                        }
+                    )
+                }
+                is NavigationDestination.ManualRecurringExpense -> {
+                    ManualRecurringExpenseScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.Assistant -> {
+                    AssistantSheet(
+                        onDismiss = { navigation.navigateBack() },
+                        onOpenTransactions = { filter ->
+                            activeTransactionFilter = filter
+                            // Just navigate to transactions - assistant overlay will be closed naturally
+                            // when the user interacts with the transactions screen
+                            navigation.navigateToTab(1)
+                        }
+                    )
+                }
+                is NavigationDestination.BudgetForecasting -> {
+                    currentDestination.budget?.let { budget: BudgetEntity ->
+                        BudgetForecastingScreen(
+                            budget = budget,
+                            onNavigateBack = { navigation.navigateBack() }
+                        )
+                    } ?: run {
+                        // No budget provided, go back
+                        LaunchedEffect(Unit) { navigation.navigateBack() }
+                    }
+                }
+                
+                // Settings / Management Screens (previously orphaned, now in Features Menu)
+                is NavigationDestination.AiSettings -> {
+                    com.yourname.expensetracker.ui.screens.aisettings.AiSettingsScreen(
+                        onDismiss = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.CategoryManagement -> {
+                    com.yourname.expensetracker.ui.screens.categories.CategoryScreen(
+                        onDismiss = { navigation.navigateBack() }
+                    )
+                }
+                
+                // Feature Screens
                 is NavigationDestination.SavingsGoals -> {
                     SavingsGoalsScreen(
                         onNavigateBack = { navigation.navigateBack() }
@@ -502,17 +517,19 @@ fun MainScreen(mainViewModel: MainViewModel) {
                         onNavigateBack = { navigation.navigateBack() }
                     )
                 }
-                is NavigationDestination.ManualRecurringExpense -> {
-                    ManualRecurringExpenseScreen(
-                        onNavigateBack = { navigation.navigateBack() }
-                    )
-                }
                 is NavigationDestination.SharedExpenseGroups -> {
                     SharedExpenseGroupsScreen(
                         onNavigateBack = { navigation.navigateBack() }
                     )
                 }
-                else -> { /* Main tabs handled by AnimatedContent */ }
+                
+                // Main tabs handled by AnimatedContent above
+                is NavigationDestination.Home,
+                is NavigationDestination.Transactions,
+                is NavigationDestination.Review,
+                is NavigationDestination.Budget,
+                is NavigationDestination.Analytics,
+                is NavigationDestination.SpendingMap -> { /* Handled by AnimatedContent */ }
             }
         }
     }
@@ -563,13 +580,13 @@ fun SmartFAB(
         }
     }
     
-    val (icon, label) = when (selectedTab) {
-        2 -> Pair(Icons.Rounded.CheckCircle, "Approve All")
+    val (icon, labelRes) = when (selectedTab) {
+        2 -> Pair(Icons.Rounded.CheckCircle, R.string.label_approve_all)
         else -> {
             if (clipboardAmount != null) {
-                Pair(Icons.Rounded.ContentPaste, "Add €$clipboardAmount")
+                Pair(Icons.Rounded.ContentPaste, R.string.label_add_amount_format)
             } else {
-                Pair(Icons.Rounded.Add, "Add Expense")
+                Pair(Icons.Rounded.Add, R.string.add_expense_title)
             }
         }
     }
@@ -636,10 +653,21 @@ fun SmartFAB(
             icon = { 
                 Icon(
                     if (isExpanded && selectedTab != 2) Icons.Rounded.Close else icon, 
-                    contentDescription = label
+                    contentDescription = if (isExpanded && selectedTab != 2) stringResource(R.string.label_close) else stringResource(labelRes)
                 ) 
             },
-            text = { Text(if (isExpanded && selectedTab != 2) "Close" else label) },
+            text = { 
+                val amount = clipboardAmount
+                Text(
+                    if (isExpanded && selectedTab != 2) {
+                        stringResource(R.string.label_close)
+                    } else if (amount != null && selectedTab != 2) {
+                        stringResource(R.string.label_add_amount_format, amount)
+                    } else {
+                        stringResource(labelRes)
+                    }
+                ) 
+            },
             containerColor = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer
         )

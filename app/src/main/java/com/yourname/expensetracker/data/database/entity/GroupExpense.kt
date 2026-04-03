@@ -28,7 +28,7 @@ import androidx.room.PrimaryKey
             entity = GroupMember::class,
             parentColumns = ["id"],
             childColumns = ["paidById"],
-            onDelete = ForeignKey.SET_NULL
+            onDelete = ForeignKey.RESTRICT
         )
     ],
     indices = [
@@ -42,7 +42,7 @@ data class GroupExpense(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val groupId: Long,
-    val expenseId: Long,          // Link to actual expense
+    val expenseId: Long?,          // Link to actual expense (null for standalone group expenses)
     val paidById: Long,            // Who paid for this expense
     val date: Long,                // When the expense occurred
     val description: String,       // Description for the group context

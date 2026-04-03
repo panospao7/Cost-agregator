@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -13,7 +15,7 @@ import javax.inject.Inject
 data class CashFlowCalendarState(
     val dailyCashFlows: List<DailyCashFlow> = emptyList(),
     val isLoading: Boolean = false,
-    val currentMonth: Date = Date(),
+    val currentMonth: Date = Date(0L),
     val selectedDate: Date? = null,
     val viewMode: CalendarViewMode = CalendarViewMode.MONTH,
     val startingBalance: Double = 0.0,
@@ -26,10 +28,11 @@ enum class CalendarViewMode {
 
 @HiltViewModel
 class CashFlowCalendarViewModel @Inject constructor(
-    private val cashFlowCalculator: CashFlowCalculator
+    private val cashFlowCalculator: CashFlowCalculator,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(CashFlowCalendarState())
+    private val _state = MutableStateFlow(CashFlowCalendarState(currentMonth = Date(timeProvider.now())))
     val state: StateFlow<CashFlowCalendarState> = _state.asStateFlow()
 
     init {
@@ -38,15 +41,8 @@ class CashFlowCalendarViewModel @Inject constructor(
     }
 
     fun loadCurrentMonth() {
-        val calendar = Calendar.getInstance()
-        calendar.set(Calendar.DAY_OF_MONTH, 1)
-        val startDate = calendar.time
-        
-        calendar.add(Calendar.MONTH, 1)
-        calendar.add(Calendar.DAY_OF_MONTH, -1)
-        val endDate = calendar.time
-        
-        loadCashFlow(startDate, endDate)
+        val monthRange = TimePeriodUtils.getMonthRange(timeProvider.now())
+        loadCashFlow(Date(monthRange.first), Date(monthRange.second))
     }
 
     fun loadCashFlow(startDate: Date, endDate: Date) {
@@ -84,31 +80,13 @@ class CashFlowCalendarViewModel @Inject constructor(
     }
 
     fun navigateToPreviousMonth() {
-        val calendar = Calendar.getInstance()
-        calendar.time = _state.value.currentMonth
-        calendar.add(Calendar.MONTH, -1)
-        calendar.set(Calendar.DAY_OF_MONTH, 1)
-        val startDate = calendar.time
-        
-        calendar.add(Calendar.MONTH, 1)
-        calendar.add(Calendar.DAY_OF_MONTH, -1)
-        val endDate = calendar.time
-        
-        loadCashFlow(startDate, endDate)
+        val monthRange = TimePeriodUtils.getMonthRange(_state.value.currentMonth.time, -1)
+        loadCashFlow(Date(monthRange.first), Date(monthRange.second))
     }
 
     fun navigateToNextMonth() {
-        val calendar = Calendar.getInstance()
-        calendar.time = _state.value.currentMonth
-        calendar.add(Calendar.MONTH, 1)
-        calendar.set(Calendar.DAY_OF_MONTH, 1)
-        val startDate = calendar.time
-        
-        calendar.add(Calendar.MONTH, 1)
-        calendar.add(Calendar.DAY_OF_MONTH, -1)
-        val endDate = calendar.time
-        
-        loadCashFlow(startDate, endDate)
+        val monthRange = TimePeriodUtils.getMonthRange(_state.value.currentMonth.time, 1)
+        loadCashFlow(Date(monthRange.first), Date(monthRange.second))
     }
 
     private fun loadUpcomingBills() {

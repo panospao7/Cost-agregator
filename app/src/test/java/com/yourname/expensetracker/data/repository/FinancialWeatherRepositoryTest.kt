@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.*
 import org.junit.*
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import java.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FinancialWeatherRepositoryTest {
@@ -112,6 +114,122 @@ class FinancialWeatherRepositoryTest {
         assertEquals(30.0, pastSum[1], 0.01) // Day 1 (10 + 20)
         assertEquals(30.0, pastSum[2], 0.01) // Day 2 (no spending, cumulative stays same)
         assertEquals(35.0, pastSum[14], 0.01) // Day 14 (30 + 5)
+    }
+
+    @Test
+    fun `maps forecast components to weather state risk totals and upcoming items`() = runTest {
+        val now = 1705320000000L // Jan 15, 2024
+        every { timeProvider.now() } returns now
+
+        every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        coEvery { insightsEngine.getSpendingPaceSuspend(any()) } returns SpendingPace(
+            currentMonthSpent = 0.0,
+            daysElapsed = 15,
+            daysInMonth = 31,
+            projectedTotal = 0.0,
+            previousMonthTotal = null,
+            averageMonthlyTotal = null,
+            pacePercentage = 0f,
+            paceStatus = PaceStatus.NO_BASELINE
+        )
+
+        val recurring = listOf(
+            RecurringPattern(
+                merchantName = "Rent",
+                averageAmount = 600.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + 3 * 24 * 60 * 60 * 1000L,
+                confidence = 0.95f,
+                previousDates = emptyList()
+            )
+        )
+        val planned = listOf(
+            PlannedExpense(
+                id = 1,
+                description = "Laptop",
+                amount = 500.0,
+                date = now + 5 * 24 * 60 * 60 * 1000L,
+                categoryId = null,
+                isRecurring = false,
+                priority = PlannedExpensePriority.LIKELY
+            )
+        )
+        coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns recurring
+
+        every {
+            synthesisEngine.synthesize(any(), any(), any(), any(), any(), any())
+        } returns FinancialForecast(
+            horizon = ForecastHorizon.REST_OF_MONTH,
+            generatedAt = Instant.ofEpochMilli(now),
+            confidence = 0.8,
+            components = ForecastComponents(
+                recurringExpenses = recurring,
+                plannedExpenses = planned,
+                pastSpendingPoints = listOf(10.0, 20.0),
+                projectedSpendingPoints = listOf(25.0, 40.0),
+                totalCommitted = 600.0,
+                totalLikely = 350.0,
+                predictedDiscretionary = 150.0,
+                discretionaryBudget = 300.0,
+                riskLevel = RiskLevel.HIGH
+            ),
+            actionableInsights = emptyList()
+        )
+        every { narrativeGenerator.generate(any(), any()) } returns WeatherNarrative(
+            state = WeatherState.RAINY,
+            icon = "🌧️",
+            headline = "Rainy",
+            summary = "Careful"
+        )
+
+        val result = repository.getFinancialWeather().first()
+
+        assertEquals(WeatherState.RAINY, result.state)
+        assertEquals(70, result.riskLevel)
+        assertEquals(600.0, result.totalCommitted, 0.01)
+        assertEquals(350.0, result.totalLikely, 0.01)
+        assertEquals(150.0, result.predictedDiscretionary, 0.01)
+        assertEquals(listOf(10.0, 20.0), result.pastSpendingPoints)
+        assertEquals(listOf(25.0, 40.0), result.projectedSpendingPoints)
+        assertEquals(2, result.upcomingItems.size)
+    }
+
+    @Test
+    fun `no recurring patterns and no budget still returns sane defaults`() = runTest {
+        val now = 1705320000000L
+        every { timeProvider.now() } returns now
+        every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        coEvery { insightsEngine.getSpendingPaceSuspend(any()) } returns SpendingPace(
+            currentMonthSpent = 0.0,
+            daysElapsed = 1,
+            daysInMonth = 31,
+            projectedTotal = 0.0,
+            previousMonthTotal = null,
+            averageMonthlyTotal = null,
+            pacePercentage = 0f,
+            paceStatus = PaceStatus.NO_BASELINE
+        )
+        coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
+        every { synthesisEngine.synthesize(any(), any(), any(), any(), any(), any()) } returns createMockForecast()
+        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+
+        val result = repository.getFinancialWeather().first()
+        assertEquals(WeatherState.CLEAR_SKIES, result.state)
+        assertEquals(0.0, result.totalCommitted, 0.01)
+        assertEquals(0.0, result.totalLikely, 0.01)
+        assertTrue(result.upcomingItems.isEmpty())
+        assertEquals(0, result.totalRecurringCount)
     }
 
     private fun createExpense(amount: Double, date: Long, type: TransactionType): Expense {

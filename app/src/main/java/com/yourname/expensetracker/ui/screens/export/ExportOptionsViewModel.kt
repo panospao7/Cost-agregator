@@ -8,14 +8,16 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 
 /**
@@ -29,8 +31,8 @@ data class ExportOptionsUiState(
         ExportFormat("freshbooks", "FreshBooks", "FreshBooks CSV format")
     ),
     val selectedFormat: String = "csv",
-    val startDate: Long = getDefaultStartDate(),
-    val endDate: Long = System.currentTimeMillis(),
+    val startDate: Long = 0L,
+    val endDate: Long = 0L,
     val expenseCount: Int = 0,
     val isLoading: Boolean = false,
     val exportData: String? = null,
@@ -44,22 +46,23 @@ data class ExportFormat(
     val description: String
 )
 
-private fun getDefaultStartDate(): Long {
-    val cal = Calendar.getInstance()
-    cal.add(Calendar.MONTH, -1)
-    return cal.timeInMillis
-}
-
 @HiltViewModel
 class ExportOptionsViewModel @Inject constructor(
     private val expenseDao: ExpenseDao,
-    private val categoryDao: CategoryDao
+    private val categoryDao: CategoryDao,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(ExportOptionsUiState())
     val uiState: StateFlow<ExportOptionsUiState> = _uiState.asStateFlow()
     
     init {
+        val now = timeProvider.now()
+        val start = TimePeriodUtils.addMonths(now, -1)
+        _uiState.value = _uiState.value.copy(
+            startDate = start,
+            endDate = now
+        )
         loadExpenseCount()
     }
     
@@ -143,7 +146,8 @@ class ExportOptionsViewModel @Inject constructor(
         expenses: List<Expense>,
         categories: Map<Long, String>
     ): String {
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        val zoneId = ZoneId.systemDefault()
         
         return buildString {
             // Header
@@ -151,7 +155,7 @@ class ExportOptionsViewModel @Inject constructor(
             
             // Data rows
             expenses.forEach { expense ->
-                val date = dateFormat.format(java.util.Date(expense.date))
+                val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
                 val merchant = escapeCsv(expense.merchant)
                 val amount = expense.amount
                 val category = escapeCsv(categories[expense.categoryId] ?: "Uncategorized")

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "default_mode": "standard",
+  "state_dir": "./workflows",
+  "limits": {
+    "max_review_iterations": 2,
+    "max_debug_iterations": 2
+  },
+  "agents": {
+    "orchestrator": "opencode/qwen3.6-plus-free",
+    "planner": "fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo",
+    "coder": "fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo",
+    "reviewer": "github-copilot/gpt-5.3-codex",
+    "tester": "opencode/mimo-v2-pro-free",
+    "debugger": "github-copilot/gemini-3.1-pro-preview",
+    "documentor": "opencode/gpt-5-nano",
+    "swarm-coder": "fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo",
+    "planner-advanced": "github-copilot/gpt-5.3-codex"
+  },
+  "review_protocol": {
+    "required_format": "[ISSUE-N] [SEVERITY] problem - file - suggested fix",
+    "verdict_values": [
+      "PASS",
+      "FAIL"
+    ],
+    "if_any_issue_then_fail": true
+  }
+}

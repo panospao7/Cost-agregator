@@ -9,9 +9,13 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import java.time.Instant
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
@@ -33,15 +37,13 @@ class BudgetRepository @Inject constructor(
 
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
         // We fetch the last 25 months to cover yearly budgets + rollover (need 24 months for full yearly history)
-        val twentyFiveMonthsAgo = java.util.Calendar.getInstance().apply {
-            timeInMillis = timeProvider.now()
-            add(java.util.Calendar.MONTH, -25)
-        }.timeInMillis
+        val twentyFiveMonthsAgo = TimePeriodUtils.addMonths(timeProvider.now(), -25)
+        val endExclusive = TimePeriodUtils.getEndOfDay(timeProvider.now())
         
         return combine(
             budgetDao.getActiveBudgetsFlow(),
             categoryDao.getAllFlow(),
-            expenseDao.getExpensesBetweenFlow(twentyFiveMonthsAgo, timeProvider.now() + 86400000) // +1 day for safety
+            expenseDao.getExpensesBetweenFlow(twentyFiveMonthsAgo, endExclusive)
         ) { budgets, categories, allExpenses ->
             val purchases = allExpenses.filter { 
                 it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE &&
@@ -177,24 +179,29 @@ class BudgetRepository @Inject constructor(
         val categoriesWithBudget = activeBudgets.mapNotNull { it.categoryId }.toSet()
 
         val now = timeProvider.now()
+        val endExclusive = TimePeriodUtils.getEndOfDay(now)
         val oldestDate = expenseDao.getOldestExpenseDate() ?: now
         
         // Use up to 3 months of history, but at least 1 month if available
         // If data is less than 15 days, results might be unreliable, but we'll try to extrapolate conservatively
-        val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
+        val (threeMonthsAgo, _) = TimePeriodUtils.getLastNDaysRange(now, 90)
         val effectiveStart = maxOf(oldestDate, threeMonthsAgo)
-        
-        val daysDiff = ((now - effectiveStart) / (24 * 60 * 60 * 1000)).coerceAtLeast(1)
+
+        val zone = ZoneId.systemDefault()
+        val startDate = Instant.ofEpochMilli(effectiveStart).atZone(zone).toLocalDate()
+        val endDateExclusive = Instant.ofEpochMilli(endExclusive).atZone(zone).toLocalDate()
+        val daysDiff = ChronoUnit.DAYS.between(startDate, endDateExclusive).toInt().coerceAtLeast(1)
         
         // If we have very little data (e.g. < 7 days), skip suggestions to avoid noise (LOG-010)
         if (daysDiff < 7) return emptyList()
 
-        val monthsDivisor = daysDiff / 30.0
+        val daysInCurrentMonth = TimePeriodUtils.getDaysInMonth(now).coerceAtLeast(1)
+        val monthsDivisor = daysDiff.toDouble() / daysInCurrentMonth.toDouble()
         
         for (category in categories) {
             if (categoriesWithBudget.contains(category.id)) continue
 
-            val spent = expenseDao.getCategorySpentInPeriod(category.id, effectiveStart, now)
+            val spent = expenseDao.getCategorySpentInPeriod(category.id, effectiveStart, endExclusive)
             
             // Calculate monthly average
             val monthlyAvg = if (monthsDivisor > 0) spent / monthsDivisor else 0.0

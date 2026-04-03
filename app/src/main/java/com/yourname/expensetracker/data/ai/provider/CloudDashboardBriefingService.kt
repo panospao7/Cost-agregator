@@ -49,7 +49,8 @@ class CloudDashboardBriefingService @Inject constructor(
             return null
         }
         
-        Timber.d("CloudDashboardBriefingService: API key present (length=${apiKey.length})")
+        // HIGH-13 FIX: Remove API key length logging (information disclosure)
+        Timber.d("CloudDashboardBriefingService: API key configured: ${apiKey.isNotBlank()}")
 
         val requestBody = buildRequestBody(input)
         Timber.d("CloudDashboardBriefingService: Request body built, length=${requestBody.length}")

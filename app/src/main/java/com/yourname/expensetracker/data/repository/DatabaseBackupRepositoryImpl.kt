@@ -137,8 +137,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Timber.w("Failed to create safety backup, but proceeding with import")
             }
             
-            // Close database connections
-            database.close()
+            // Close database and clear connection pool before replacing files
+            runCatching { database.close() }
+                .onFailure { Timber.w(it, "Failed to close Room database before import") }
+            runCatching { database.openHelper.close() }
+                .onFailure { Timber.w(it, "Failed to close Room openHelper before import") }
             
             val dbFile = context.getDatabasePath(DATABASE_NAME)
             val dbWalFile = File(dbFile.parent, "$DATABASE_NAME-wal")
@@ -165,6 +168,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
                 
                 Timber.d("Database imported successfully from: ${sourceFile.absolutePath}")
+
+                // Force Room to re-open with a fresh connection after file replacement.
+                // This ensures migrations/checks run against the new file and stale handles are dropped.
+                database.openHelper.writableDatabase
+
+                // Broadcast table invalidations so active Flow observers refresh immediately.
+                refreshInvalidationTrackerSafely()
                 
                 // Verify import by reading directly from SQLite
                 val destSummary = verifyImportedDatabaseDirect()
@@ -177,8 +187,18 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     )
                 }
                 
-                Timber.d("Import verified: ${destSummary.transactionCount} transactions, ${destSummary.categoryCount} categories")
-                Result.success(destSummary)
+                // Verify Room can also read from the newly imported DB instance.
+                val roomSummary = verifyImportedDatabase()
+
+                val finalSummary = if (roomSummary.transactionCount == -1) {
+                    Timber.w("Direct verify passed, but Room verification failed. App restart may be required.")
+                    roomSummary
+                } else {
+                    roomSummary
+                }
+
+                Timber.d("Import verified: ${finalSummary.transactionCount} transactions, ${finalSummary.categoryCount} categories")
+                Result.success(finalSummary)
                 
             } finally {
                 // Cleanup temp file if still exists
@@ -333,6 +353,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     
     private suspend fun verifyImportedDatabase(): DatabaseImportSummary = withContext(Dispatchers.IO) {
         try {
+            // Reopen with a fresh connection and refresh invalidation state
+            database.openHelper.writableDatabase
+            refreshInvalidationTrackerSafely()
+
             // Reopen the database by accessing it (Room will auto-reopen)
             val expenseDao = database.expenseDao()
             val categoryDao = database.categoryDao()
@@ -364,6 +388,22 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 pendingReviewCount = 0,
                 budgetCount = 0
             )
+        }
+    }
+
+    private fun refreshInvalidationTrackerSafely() {
+        val tracker = database.invalidationTracker
+        val invoked = listOf("refresh", "refreshAsync", "refreshVersionsAsync").any { methodName ->
+            runCatching {
+                val method = tracker.javaClass.methods.firstOrNull { it.name == methodName && it.parameterCount == 0 }
+                    ?: return@runCatching false
+                method.invoke(tracker)
+                true
+            }.getOrDefault(false)
+        }
+
+        if (!invoked) {
+            Timber.w("Could not invoke Room invalidation refresh method")
         }
     }
     

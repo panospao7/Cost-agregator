@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -19,7 +20,8 @@ private val Context.currencyDataStore: DataStore<Preferences> by preferencesData
 
 @Singleton
 class CurrencySettingsRepositoryImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) : CurrencySettingsRepository {
     
     companion object {
@@ -55,7 +57,7 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
         val lastUpdate = lastRateUpdate().first()
         if (lastUpdate == 0L) return true // Never updated
         
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         return (now - lastUpdate) > thresholdMs
     }
     

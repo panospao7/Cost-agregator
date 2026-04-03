@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.price
 
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import java.time.Instant
@@ -11,14 +13,15 @@ import javax.inject.Singleton
 
 @Singleton
 class PriceProtectionTracker @Inject constructor(
-    private val receiptDao: ScannedReceiptDao
+    private val receiptDao: ScannedReceiptDao,
+    private val timeProvider: TimeProvider
 ) {
     
     // Track items eligible for price protection
     suspend fun getPriceProtectedItems(): List<PriceProtectedItem> {
-        val recentReceipts = receiptDao.getRecentReceipts(
-            System.currentTimeMillis() - (30 * 24 * 60 * 60 * 1000) // Last 30 days
-        )
+        val now = timeProvider.now()
+        val since = TimePeriodUtils.getLastNDaysRange(now, 30).first
+        val recentReceipts = receiptDao.getRecentReceipts(since)
         
         return recentReceipts.flatMap { receipt ->
             parsePriceProtectedItems(receipt) ?: emptyList()

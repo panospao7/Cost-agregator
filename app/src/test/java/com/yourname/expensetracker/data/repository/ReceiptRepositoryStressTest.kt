@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import android.content.Context
 import android.net.Uri
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -55,6 +56,7 @@ class ReceiptRepositoryStressTest {
     private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
     private val crossSourceDeduplication = mockk<CrossSourceDeduplication>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val context = mockk<Context>(relaxed = true)
 
     private lateinit var repository: ReceiptRepository
 
@@ -78,19 +80,20 @@ class ReceiptRepositoryStressTest {
         coEvery { merchantCategoryRepository.learnPattern(any(), any()) } returns Unit
 
         repository = ReceiptRepository(
-            scannedReceiptDao,
-            expenseDao,
-            merchantCategoryRepository,
-            pendingReviewDao,
-            ocrService,
-            receiptParser,
-            statementParser,
-            categorizationEngine,
-            merchantNormalizer,
-            hybridClassifier,
-            budgetMonitor,
-            crossSourceDeduplication,
-            timeProvider
+            context = context,
+            scannedReceiptDao = scannedReceiptDao,
+            expenseDao = expenseDao,
+            merchantCategoryRepository = merchantCategoryRepository,
+            pendingReviewDao = pendingReviewDao,
+            ocrService = ocrService,
+            receiptParser = receiptParser,
+            statementParser = statementParser,
+            categorizationEngine = categorizationEngine,
+            merchantNormalizer = merchantNormalizer,
+            hybridClassifier = hybridClassifier,
+            budgetMonitor = budgetMonitor,
+            crossSourceDeduplication = crossSourceDeduplication,
+            timeProvider = timeProvider
         )
     }
 

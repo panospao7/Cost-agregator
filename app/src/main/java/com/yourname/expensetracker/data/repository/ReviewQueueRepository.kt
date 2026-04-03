@@ -20,11 +20,12 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
+import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 
 @Singleton
 class ReviewQueueRepository @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
     private val database: AppDatabase,
     private val pendingReviewDao: PendingReviewDao,
     private val rawNotificationDao: RawNotificationDao,

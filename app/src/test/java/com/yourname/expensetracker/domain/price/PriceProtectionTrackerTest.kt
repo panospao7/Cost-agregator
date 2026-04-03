@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.price
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -19,11 +20,13 @@ import org.junit.Test
 class PriceProtectionTrackerTest {
 
     private val receiptDao = mockk<ScannedReceiptDao>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var tracker: PriceProtectionTracker
 
     @Before
     fun setup() {
-        tracker = PriceProtectionTracker(receiptDao)
+        every { timeProvider.now() } returns System.currentTimeMillis()
+        tracker = PriceProtectionTracker(receiptDao, timeProvider)
     }
 
     @Test

@@ -2,28 +2,23 @@ package com.yourname.expensetracker.ui.screens.groups
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
-import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
-import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
-import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
+import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
+import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.model.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -56,10 +51,9 @@ data class GroupExpenseWithDetails(
 
 @HiltViewModel
 class SharedExpenseGroupsViewModel @Inject constructor(
-    private val groupDao: ExpenseGroupDao,
-    private val memberDao: GroupMemberDao,
-    private val expenseDao: GroupExpenseDao,
-    private val coordinator: GroupTransactionCoordinator,
+    private val groupsRepository: GroupsRepository,
+    private val addGroupExpenseUseCase: AddGroupExpenseUseCase,
+    private val deleteGroupUseCase: DeleteGroupUseCase,
     private val manualExpenseRepository: ManualExpenseRepository
 ) : ViewModel() {
     
@@ -75,37 +69,26 @@ class SharedExpenseGroupsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true)
             
             try {
-                val allGroups = groupDao.getActiveFlow().first()
-                
-                val groupsWithDetails: List<GroupWithDetails> = coroutineScope {
-                    allGroups.map { group: ExpenseGroup ->
-                        async {
-                            val groupId = group.id
-                            val members = memberDao.getAllForGroupFlow(groupId).first()
-                            val expenses = expenseDao.getExpensesForGroup(groupId).first()
-                            
-                            val expensesWithDetails = expenses.map { expense ->
-                                val paidByMember = members.find { it.id == expense.paidById }
-                                GroupExpenseWithDetails(
-                                    expense = expense,
-                                    paidByName = paidByMember?.name ?: "Unknown",
-                                    splitAmounts = calculateSplitAmounts(expense, members)
-                                )
-                            }
-                            
-                            val totalSpent = expenses.sumOf { it.totalAmount }
-                            val memberBalances = calculateBalances(expenses, members)
-                            
-                            GroupWithDetails(
-                                group = group,
-                                members = members,
-                                expenses = expensesWithDetails,
-                                totalSpent = totalSpent,
-                                memberBalances = memberBalances
+                val groupsWithDetails: List<GroupWithDetails> = groupsRepository
+                    .getActiveGroupsWithDetails()
+                    .map { aggregate ->
+                        val expensesWithDetails = aggregate.expenses.map { expense ->
+                            val paidByMember = aggregate.members.find { it.id == expense.paidById }
+                            GroupExpenseWithDetails(
+                                expense = expense,
+                                paidByName = paidByMember?.name ?: "Unknown",
+                                splitAmounts = calculateSplitAmounts(expense, aggregate.members)
                             )
                         }
-                    }.awaitAll()
-                }
+
+                        GroupWithDetails(
+                            group = aggregate.group,
+                            members = aggregate.members,
+                            expenses = expensesWithDetails,
+                            totalSpent = aggregate.expenses.sumOf { it.totalAmount },
+                            memberBalances = calculateBalances(aggregate.expenses, aggregate.members)
+                        )
+                    }
                 
                 _uiState.value = GroupsUiState(
                     groups = groupsWithDetails,
@@ -137,22 +120,15 @@ class SharedExpenseGroupsViewModel @Inject constructor(
      */
     /**
      * Create a new group with the current user as the first member.
-     * Uses atomic transaction via GroupTransactionCoordinator.
      */
     fun createGroup(name: String, description: String?, currency: String) {
         viewModelScope.launch {
             try {
-                val currentUser = GroupMember(
-                    groupId = 0, // Will be set by coordinator
-                    name = "You",
-                    isCurrentUser = true
-                )
-                
-                when (val result = coordinator.createGroupWithMembers(
+                when (val result = groupsRepository.createGroup(
                     name = name,
                     description = description,
                     currency = currency,
-                    members = listOf(currentUser)
+                    currentUserName = "You"
                 )) {
                     is GroupCreationResult.Success -> {
                         loadGroups()
@@ -171,12 +147,12 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     }
     
     /**
-     * Add member to group using GroupTransactionCoordinator.
+     * Add member to group through repository abstraction.
      */
     fun addMember(groupId: Long, name: String, email: String?) {
         viewModelScope.launch {
             try {
-                val memberId = coordinator.addMemberToGroup(
+                val memberId = groupsRepository.addMember(
                     groupId = groupId,
                     name = name,
                     email = email,
@@ -214,9 +190,9 @@ class SharedExpenseGroupsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 // Step 1: Create system expense first
-                val group = groupDao.getById(groupId)
+                val group = groupsRepository.getGroupById(groupId)
                 val currency = group?.defaultCurrency ?: "EUR"
-                val payer = memberDao.getById(paidById)
+                val payer = groupsRepository.getMemberById(paidById)
                 
                 val expenseResult = manualExpenseRepository.addManualExpense(
                     merchant = description,
@@ -231,7 +207,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                 when (expenseResult) {
                     is Result.Success -> {
                         val systemExpenseId = expenseResult.data
-                        when (val linkResult = coordinator.addExpenseWithLink(
+                        when (val linkResult = addGroupExpenseUseCase(
                             groupId = groupId,
                             systemExpenseId = systemExpenseId,
                             description = description,
@@ -271,12 +247,12 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     }
     
     /**
-     * Delete (archive) a group using GroupTransactionCoordinator.
+     * Delete (archive) a group.
      */
     fun deleteGroup(groupId: Long) {
         viewModelScope.launch {
             try {
-                val success = coordinator.deleteGroup(groupId)
+                val success = deleteGroupUseCase(groupId)
                 if (success) {
                     loadGroups()
                     selectGroup(null)

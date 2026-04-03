@@ -1,0 +1,691 @@
+{
+  "workflow_id": "wf-20260402-0200-complete-string-externalization",
+  "title": "Complete string externalization - externalize 604 remaining hardcoded strings across 77 files",
+  "mode": "standard",
+  "status": "active",
+  "current_phase": "review",
+  "timestamps": {
+    "created_at": "2026-04-02T02:00:00Z",
+    "updated_at": "2026-04-02T12:00:00Z"
+  },
+  "phases": {
+    "routing": "done",
+    "planning": "done",
+    "coding": "done",
+    "review": "pending",
+    "testing": "pending",
+    "debugging": "pending",
+    "documentation": "pending",
+    "completion": "pending"
+  },
+  "tasks": [
+    {
+      "id": "task-1",
+      "description": "Externalize 41 strings in TransactionsScreen.kt",
+      "status": "pending",
+      "file": "TransactionsScreen.kt",
+      "count": 41
+    },
+    {
+      "id": "task-2",
+      "description": "Externalize 36 strings in ReceiptScanScreen.kt",
+      "status": "pending",
+      "file": "ReceiptScanScreen.kt",
+      "count": 36
+    },
+    {
+      "id": "task-3",
+      "description": "Externalize 33 strings in ReviewScreen.kt",
+      "status": "pending",
+      "file": "ReviewScreen.kt",
+      "count": 33
+    },
+    {
+      "id": "task-4",
+      "description": "Externalize 29 strings in CarbonFootprintScreen.kt",
+      "status": "pending",
+      "file": "CarbonFootprintScreen.kt",
+      "count": 29
+    },
+    {
+      "id": "task-5",
+      "description": "Externalize 25 strings in FeatureIntegration.kt",
+      "status": "pending",
+      "file": "FeatureIntegration.kt",
+      "count": 25
+    },
+    {
+      "id": "task-6",
+      "description": "Externalize 22 strings in BillNegotiationScreen.kt",
+      "status": "pending",
+      "file": "BillNegotiationScreen.kt",
+      "count": 22
+    },
+    {
+      "id": "task-7",
+      "description": "Externalize 20 strings in AnalyticsScreen.kt",
+      "status": "pending",
+      "file": "AnalyticsScreen.kt",
+      "count": 20
+    },
+    {
+      "id": "task-8",
+      "description": "Externalize 20 strings in LifestyleInflationScreen.kt",
+      "status": "pending",
+      "file": "LifestyleInflationScreen.kt",
+      "count": 20
+    },
+    {
+      "id": "task-9",
+      "description": "Externalize 18 strings in AiSettingsScreen.kt",
+      "status": "pending",
+      "file": "AiSettingsScreen.kt",
+      "count": 18
+    },
+    {
+      "id": "task-10",
+      "description": "Externalize 17 strings in BudgetScreen.kt",
+      "status": "pending",
+      "file": "BudgetScreen.kt",
+      "count": 17
+    },
+    {
+      "id": "task-11",
+      "description": "Externalize 15 strings in AddExpenseSheet.kt",
+      "status": "pending",
+      "file": "AddExpenseSheet.kt",
+      "count": 15
+    },
+    {
+      "id": "task-12",
+      "description": "Externalize 15 strings in VisualSplitEditorScreen.kt",
+      "status": "pending",
+      "file": "VisualSplitEditorScreen.kt",
+      "count": 15
+    },
+    {
+      "id": "task-13",
+      "description": "Externalize 15 strings in BudgetForecastingScreen.kt",
+      "status": "pending",
+      "file": "BudgetForecastingScreen.kt",
+      "count": 15
+    },
+    {
+      "id": "task-14",
+      "description": "Externalize 14 strings in DebugViewerScreen.kt",
+      "status": "pending",
+      "file": "DebugViewerScreen.kt",
+      "count": 14
+    },
+    {
+      "id": "task-15",
+      "description": "Externalize 13 strings in NaturalLanguageSearchScreen.kt",
+      "status": "pending",
+      "file": "NaturalLanguageSearchScreen.kt",
+      "count": 13
+    },
+    {
+      "id": "task-16",
+      "description": "Externalize 13 strings in RecurringExpensesScreen.kt",
+      "status": "pending",
+      "file": "RecurringExpensesScreen.kt",
+      "count": 13
+    },
+    {
+      "id": "task-17",
+      "description": "Externalize 12 strings in SpendingMapScreen.kt",
+      "status": "pending",
+      "file": "SpendingMapScreen.kt",
+      "count": 12
+    },
+    {
+      "id": "task-18",
+      "description": "Externalize 12 strings in DebugIssueDetector.kt",
+      "status": "pending",
+      "file": "DebugIssueDetector.kt",
+      "count": 12
+    },
+    {
+      "id": "task-19",
+      "description": "Externalize 12 strings in RetroTopCategoriesCard.kt",
+      "status": "pending",
+      "file": "RetroTopCategoriesCard.kt",
+      "count": 12
+    },
+    {
+      "id": "task-20",
+      "description": "Externalize 11 strings in RetroBudgetBlockPartyCard.kt",
+      "status": "pending",
+      "file": "RetroBudgetBlockPartyCard.kt",
+      "count": 11
+    },
+    {
+      "id": "task-21",
+      "description": "Externalize 10 strings in NoSpendStreakWidget.kt",
+      "status": "pending",
+      "file": "NoSpendStreakWidget.kt",
+      "count": 10
+    },
+    {
+      "id": "task-22",
+      "description": "Externalize 8 strings in PriceProtectionScreen.kt",
+      "status": "pending",
+      "file": "PriceProtectionScreen.kt",
+      "count": 8
+    },
+    {
+      "id": "task-23",
+      "description": "Externalize 7 strings in DebugScreen.kt",
+      "status": "pending",
+      "file": "DebugScreen.kt",
+      "count": 7
+    },
+    {
+      "id": "task-24",
+      "description": "Externalize 7 strings in SpendingChallengesScreen.kt",
+      "status": "pending",
+      "file": "SpendingChallengesScreen.kt",
+      "count": 7
+    },
+    {
+      "id": "task-25",
+      "description": "Externalize 7 strings in CarbonFootprintCalculator.kt",
+      "status": "pending",
+      "file": "CarbonFootprintCalculator.kt",
+      "count": 7
+    },
+    {
+      "id": "task-26",
+      "description": "Externalize 6 strings in BillRemindersScreen.kt",
+      "status": "pending",
+      "file": "BillRemindersScreen.kt",
+      "count": 6
+    },
+    {
+      "id": "task-27",
+      "description": "Externalize 6 strings in ExecuteFinancialQueryUseCase.kt",
+      "status": "pending",
+      "file": "ExecuteFinancialQueryUseCase.kt",
+      "count": 6
+    },
+    {
+      "id": "task-28",
+      "description": "Externalize 6 strings in BudgetRecommendationEngine.kt",
+      "status": "pending",
+      "file": "BudgetRecommendationEngine.kt",
+      "count": 6
+    },
+    {
+      "id": "task-29",
+      "description": "Externalize 6 strings in NotificationSeeder.kt",
+      "status": "pending",
+      "file": "NotificationSeeder.kt",
+      "count": 6
+    },
+    {
+      "id": "task-30",
+      "description": "Externalize 5 strings in NarrativeGenerator.kt",
+      "status": "pending",
+      "file": "NarrativeGenerator.kt",
+      "count": 5
+    },
+    {
+      "id": "task-31",
+      "description": "Externalize 5 strings in SavingsGamificationEngine.kt",
+      "status": "pending",
+      "file": "SavingsGamificationEngine.kt",
+      "count": 5
+    },
+    {
+      "id": "task-32",
+      "description": "Externalize 5 strings in TransactionFilterSheet.kt",
+      "status": "pending",
+      "file": "TransactionFilterSheet.kt",
+      "count": 5
+    },
+    {
+      "id": "task-33",
+      "description": "Externalize 5 strings in ReceiptItemBreakdownCard.kt",
+      "status": "pending",
+      "file": "ReceiptItemBreakdownCard.kt",
+      "count": 5
+    },
+    {
+      "id": "task-34",
+      "description": "Externalize 4 strings in LifestyleInflationDetector.kt",
+      "status": "pending",
+      "file": "LifestyleInflationDetector.kt",
+      "count": 4
+    },
+    {
+      "id": "task-35",
+      "description": "Externalize 4 strings in SubscriptionManagerEngine.kt",
+      "status": "pending",
+      "file": "SubscriptionManagerEngine.kt",
+      "count": 4
+    },
+    {
+      "id": "task-36",
+      "description": "Externalize 4 strings in WarrantyExpirationWorker.kt",
+      "status": "pending",
+      "file": "WarrantyExpirationWorker.kt",
+      "count": 4
+    },
+    {
+      "id": "task-37",
+      "description": "Externalize 4 strings in LocationSearchPicker.kt",
+      "status": "pending",
+      "file": "LocationSearchPicker.kt",
+      "count": 4
+    },
+    {
+      "id": "task-38",
+      "description": "Externalize 4 strings in FinancialWeatherCard.kt",
+      "status": "pending",
+      "file": "FinancialWeatherCard.kt",
+      "count": 4
+    },
+    {
+      "id": "task-39",
+      "description": "Externalize 4 strings in HealthScoreWidget.kt",
+      "status": "pending",
+      "file": "HealthScoreWidget.kt",
+      "count": 4
+    },
+    {
+      "id": "task-40",
+      "description": "Externalize 4 strings in StatisticalVisualizations.kt",
+      "status": "pending",
+      "file": "StatisticalVisualizations.kt",
+      "count": 4
+    },
+    {
+      "id": "task-41",
+      "description": "Externalize 4 strings in DebugViewModel.kt",
+      "status": "pending",
+      "file": "DebugViewModel.kt",
+      "count": 4
+    },
+    {
+      "id": "task-42",
+      "description": "Externalize 3 strings in ReviewQueueRepository.kt",
+      "status": "pending",
+      "file": "ReviewQueueRepository.kt",
+      "count": 3
+    },
+    {
+      "id": "task-43",
+      "description": "Externalize 3 strings in AdvancedAnalyticsDashboard.kt",
+      "status": "pending",
+      "file": "AdvancedAnalyticsDashboard.kt",
+      "count": 3
+    },
+    {
+      "id": "task-44",
+      "description": "Externalize 3 strings in BudgetBlockPartyCard.kt",
+      "status": "pending",
+      "file": "BudgetBlockPartyCard.kt",
+      "count": 3
+    },
+    {
+      "id": "task-45",
+      "description": "Externalize 3 strings in CategoryDonutChart.kt",
+      "status": "pending",
+      "file": "CategoryDonutChart.kt",
+      "count": 3
+    },
+    {
+      "id": "task-46",
+      "description": "Externalize 3 strings in FinancialRunwayCard.kt",
+      "status": "pending",
+      "file": "FinancialRunwayCard.kt",
+      "count": 3
+    },
+    {
+      "id": "task-47",
+      "description": "Externalize 3 strings in CategoryAssistCard.kt",
+      "status": "pending",
+      "file": "CategoryAssistCard.kt",
+      "count": 3
+    },
+    {
+      "id": "task-48",
+      "description": "Externalize 3 strings in ErrorState.kt",
+      "status": "pending",
+      "file": "ErrorState.kt",
+      "count": 3
+    },
+    {
+      "id": "task-49",
+      "description": "Externalize 3 strings in CurrencyManagementScreen.kt",
+      "status": "pending",
+      "file": "CurrencyManagementScreen.kt",
+      "count": 3
+    },
+    {
+      "id": "task-50",
+      "description": "Externalize 3 strings in TaxConfigurationScreen.kt",
+      "status": "pending",
+      "file": "TaxConfigurationScreen.kt",
+      "count": 3
+    },
+    {
+      "id": "task-51",
+      "description": "Externalize 3 strings in ReceiptScanViewModel.kt",
+      "status": "pending",
+      "file": "ReceiptScanViewModel.kt",
+      "count": 3
+    },
+    {
+      "id": "task-52",
+      "description": "Externalize 3 strings in ReviewViewModel.kt",
+      "status": "pending",
+      "file": "ReviewViewModel.kt",
+      "count": 3
+    },
+    {
+      "id": "task-53",
+      "description": "Externalize 2 strings in ManualExpenseRepository.kt",
+      "status": "pending",
+      "file": "ManualExpenseRepository.kt",
+      "count": 2
+    },
+    {
+      "id": "task-54",
+      "description": "Externalize 2 strings in DeliverProactiveBriefingNotificationUseCase.kt",
+      "status": "pending",
+      "file": "DeliverProactiveBriefingNotificationUseCase.kt",
+      "count": 2
+    },
+    {
+      "id": "task-55",
+      "description": "Externalize 2 strings in DedupeAssistCard.kt",
+      "status": "pending",
+      "file": "DedupeAssistCard.kt",
+      "count": 2
+    },
+    {
+      "id": "task-56",
+      "description": "Externalize 2 strings in EmptyState.kt",
+      "status": "pending",
+      "file": "EmptyState.kt",
+      "count": 2
+    },
+    {
+      "id": "task-57",
+      "description": "Externalize 2 strings in ReceiptMatchingWorker.kt",
+      "status": "pending",
+      "file": "ReceiptMatchingWorker.kt",
+      "count": 2
+    },
+    {
+      "id": "task-58",
+      "description": "Externalize 2 strings in SpendingPaceGauge.kt",
+      "status": "pending",
+      "file": "SpendingPaceGauge.kt",
+      "count": 2
+    },
+    {
+      "id": "task-59",
+      "description": "Externalize 1 string in AiRuntimeDiagnostics.kt",
+      "status": "pending",
+      "file": "AiRuntimeDiagnostics.kt",
+      "count": 1
+    },
+    {
+      "id": "task-60",
+      "description": "Externalize 1 string in MainActivity.kt",
+      "status": "pending",
+      "file": "MainActivity.kt",
+      "count": 1
+    },
+    {
+      "id": "task-61",
+      "description": "Externalize 1 string in BentoCard.kt",
+      "status": "pending",
+      "file": "BentoCard.kt",
+      "count": 1
+    },
+    {
+      "id": "task-62",
+      "description": "Externalize 1 string in LocationCorrectionSheet.kt",
+      "status": "pending",
+      "file": "LocationCorrectionSheet.kt",
+      "count": 1
+    },
+    {
+      "id": "task-63",
+      "description": "Externalize 1 string in NearbyShopSuggestionCard.kt",
+      "status": "pending",
+      "file": "NearbyShopSuggestionCard.kt",
+      "count": 1
+    },
+    {
+      "id": "task-64",
+      "description": "Externalize 1 string in PlaceInsightCard.kt",
+      "status": "pending",
+      "file": "PlaceInsightCard.kt",
+      "count": 1
+    },
+    {
+      "id": "task-65",
+      "description": "Externalize 1 string in AssistantResultCard.kt",
+      "status": "pending",
+      "file": "AssistantResultCard.kt",
+      "count": 1
+    },
+    {
+      "id": "task-66",
+      "description": "Externalize 1 string in NavigationController.kt",
+      "status": "pending",
+      "file": "NavigationController.kt",
+      "count": 1
+    },
+    {
+      "id": "task-67",
+      "description": "Externalize 1 string in AiSettingsViewModel.kt",
+      "status": "pending",
+      "file": "AiSettingsViewModel.kt",
+      "count": 1
+    },
+    {
+      "id": "task-68",
+      "description": "Externalize 1 string in BankConnectionsScreen.kt",
+      "status": "pending",
+      "file": "BankConnectionsScreen.kt",
+      "count": 1
+    },
+    {
+      "id": "task-69",
+      "description": "Externalize 1 string in CategorizationDebugScreen.kt",
+      "status": "pending",
+      "file": "CategorizationDebugScreen.kt",
+      "count": 1
+    },
+    {
+      "id": "task-70",
+      "description": "Externalize 1 string in ExportOptionsScreen.kt",
+      "status": "pending",
+      "file": "ExportOptionsScreen.kt",
+      "count": 1
+    },
+    {
+      "id": "task-71",
+      "description": "Externalize 1 string in ManualRecurringExpenseScreen.kt",
+      "status": "pending",
+      "file": "ManualRecurringExpenseScreen.kt",
+      "count": 1
+    },
+    {
+      "id": "task-72",
+      "description": "Externalize 1 string in ReceiptMatchingScreen.kt",
+      "status": "pending",
+      "file": "ReceiptMatchingScreen.kt",
+      "count": 1
+    },
+    {
+      "id": "task-73",
+      "description": "Externalize 1 string in SavingsGoalsScreen.kt",
+      "status": "pending",
+      "file": "SavingsGoalsScreen.kt",
+      "count": 1
+    },
+    {
+      "id": "task-74",
+      "description": "Externalize 1 string in SubscriptionManagementScreen.kt",
+      "status": "pending",
+      "file": "SubscriptionManagementScreen.kt",
+      "count": 1
+    },
+    {
+      "id": "task-75",
+      "description": "Externalize 7 strings in ReceiptAssistCard.kt",
+      "status": "pending",
+      "file": "ReceiptAssistCard.kt",
+      "count": 7
+    }
+  ],
+  "metadata": {
+    "feature_description": "Complete string externalization - externalize 604 remaining hardcoded strings across 77 files",
+    "review_gate": "required",
+    "test_gate": "required",
+    "security_gate": "optional",
+    "audit_findings": {
+      "total_hardcoded_strings": 604,
+      "files_affected": 77,
+      "files_already_externalized": 451,
+      "total_kotlin_files_scanned": 528
+    },
+    "implementation_plan": {
+      "phase_1_critical": {
+        "files": [
+          "TransactionsScreen.kt",
+          "ReceiptScanScreen.kt",
+          "ReviewScreen.kt",
+          "CarbonFootprintScreen.kt"
+        ],
+        "description": "Highest-impact user-facing screens with most hardcoded strings"
+      },
+      "phase_2_high": {
+        "files": [
+          "FeatureIntegration.kt",
+          "BillNegotiationScreen.kt",
+          "AnalyticsScreen.kt",
+          "LifestyleInflationScreen.kt",
+          "AiSettingsScreen.kt",
+          "BudgetScreen.kt"
+        ],
+        "description": "Core user-facing screens"
+      },
+      "phase_3_medium": {
+        "files": [
+          "AddExpenseSheet.kt",
+          "VisualSplitEditorScreen.kt",
+          "BudgetForecastingScreen.kt",
+          "NaturalLanguageSearchScreen.kt",
+          "RecurringExpensesScreen.kt",
+          "SpendingMapScreen.kt",
+          "SpendingChallengesScreen.kt"
+        ],
+        "description": "Secondary screens and components"
+      },
+      "phase_4_low": {
+        "files": [
+          "RetroTopCategoriesCard.kt",
+          "RetroBudgetBlockPartyCard.kt",
+          "FinancialWeatherCard.kt",
+          "FinancialRunwayCard.kt",
+          "CategoryDonutChart.kt",
+          "SpendingPaceGauge.kt",
+          "LocationSearchPicker.kt",
+          "LocationCorrectionSheet.kt",
+          "NearbyShopSuggestionCard.kt",
+          "PlaceInsightCard.kt",
+          "NoSpendStreakWidget.kt",
+          "HealthScoreWidget.kt",
+          "BudgetBlockPartyCard.kt"
+        ],
+        "description": "Remaining UI components and cards"
+      },
+      "phase_5_domain": {
+        "files": [
+          "ExecuteFinancialQueryUseCase.kt",
+          "BudgetRecommendationEngine.kt",
+          "CarbonFootprintCalculator.kt",
+          "LifestyleInflationDetector.kt",
+          "NarrativeGenerator.kt",
+          "SavingsGamificationEngine.kt",
+          "SubscriptionManagerEngine.kt",
+          "AdvancedAnalyticsDashboard.kt"
+        ],
+        "description": "Domain layer - use UiText for user-facing strings"
+      },
+      "phase_6_data_service": {
+        "files": [
+          "ManualExpenseRepository.kt",
+          "ReviewQueueRepository.kt",
+          "DeliverProactiveBriefingNotificationUseCase.kt",
+          "NotificationSeeder.kt",
+          "ReceiptMatchingWorker.kt",
+          "WarrantyExpirationWorker.kt"
+        ],
+        "description": "Data/service layer - error messages and notifications"
+      },
+      "phase_7_debug_misc": {
+        "files": [
+          "DebugScreen.kt",
+          "DebugViewerScreen.kt",
+          "DebugIssueDetector.kt",
+          "DebugViewModel.kt",
+          "CategorizationDebugScreen.kt",
+          "AiRuntimeDiagnostics.kt",
+          "BentoCard.kt",
+          "EmptyState.kt",
+          "ErrorState.kt",
+          "NavigationController.kt",
+          "MainActivity.kt"
+        ],
+        "description": "Debug screens, error states, and misc files"
+      }
+    },
+    "string_resource_sections_needed": [
+      "Transactions Screen",
+      "Receipt Scan",
+      "Review Queue",
+      "Carbon Footprint",
+      "Bill Negotiation",
+      "Analytics",
+      "Lifestyle Inflation",
+      "AI Settings",
+      "Budget Screen",
+      "Add Expense Sheet",
+      "Visual Split Editor",
+      "Budget Forecasting",
+      "Natural Language Search",
+      "Recurring Expenses",
+      "Spending Map",
+      "Spending Challenges",
+      "Financial Weather",
+      "Financial Runway",
+      "Retro Components",
+      "Spending Pace",
+      "Health Score",
+      "No-Spend Streak",
+      "Error States",
+      "Empty States",
+      "Debug Screens",
+      "Domain Layer Messages",
+      "Data Layer Messages",
+      "Notification Messages"
+    ]
+  },
+  "retries": {
+    "review": 0,
+    "debug": 0
+  },
+  "artifacts": {
+    "plan": "See conversation for full plan. 7 phases: 1) Critical screens (139 strings), 2) Core screens (102 strings), 3) Secondary screens (76 strings), 4) UI components (65 strings), 5) Domain layer with UiText (43 strings), 6) Data/service layer (27 strings), 7) Debug/misc (51 strings). Use stringResource(R.string.xxx) in Composables, UiText.from(R.string.xxx) in ViewModels/domain. Exceptions: currency formats and decorative chars. Compile after each batch.",
+    "notes": ""
+  },
+  "last_error": ""
+}

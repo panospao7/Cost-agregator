@@ -5,10 +5,12 @@ import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.DefaultDispatcher
 import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
+import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.TransactionFilterSerializer
-import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -33,6 +35,7 @@ import javax.inject.Singleton
 class DashboardFollowThroughEngine @Inject constructor(
     private val filterSerializer: TransactionFilterSerializer,
     private val thresholdCalculator: SpendingThresholdCalculator,
+    private val timeProvider: TimeProvider,
     @DefaultDispatcher private val defaultDispatcher: CoroutineDispatcher
 ) {
     
@@ -112,7 +115,7 @@ class DashboardFollowThroughEngine @Inject constructor(
         sourceArtifactId: String = ""
     ): DashboardFollowThroughRecommendation {
         return withContext(defaultDispatcher) {
-            val filter = TransactionFilter(
+            val filter = DomainTransactionFilter(
                 categoryId = categoryId,
                 dateRange = Pair(dateRangeStart, dateRangeEnd)
             )
@@ -142,7 +145,7 @@ class DashboardFollowThroughEngine @Inject constructor(
             ?: "Large transaction detected: ${transaction.merchant ?: "Unknown"} - €${String.format("%.2f", transaction.amount)}"
         
         // Filter: Show all transactions >= this amount in the same category
-        val filter = TransactionFilter(
+        val filter = DomainTransactionFilter(
             categoryId = transaction.categoryId,
             minAmount = transaction.amount,
             transactionType = transaction.transactionType
@@ -170,12 +173,12 @@ class DashboardFollowThroughEngine @Inject constructor(
             ?: "Review all transactions in this category"
         
         // Filter: Show all transactions in this category for the last 30 days
-        val nowMillis = System.currentTimeMillis()
-        val thirtyDaysAgo = nowMillis - (30L * 24 * 60 * 60 * 1000)
+        val nowMillis = timeProvider.now()
+        val (thirtyDaysAgo, rangeEnd) = TimePeriodUtils.getLastNDaysRange(nowMillis, 30)
         
-        val filter = TransactionFilter(
+        val filter = DomainTransactionFilter(
             categoryId = transaction.categoryId,
-            dateRange = Pair(thirtyDaysAgo, nowMillis),
+            dateRange = Pair(thirtyDaysAgo, rangeEnd),
             transactionType = TransactionType.PURCHASE
         )
         
@@ -202,7 +205,7 @@ class DashboardFollowThroughEngine @Inject constructor(
             ?: "Review all transactions from $merchantName"
         
         // Filter: Show all transactions from this merchant
-        val filter = TransactionFilter(
+        val filter = DomainTransactionFilter(
             merchantName = merchantName
         )
         
@@ -228,11 +231,11 @@ class DashboardFollowThroughEngine @Inject constructor(
             ?: "Review your recent spending this week"
         
         // Filter: Show all transactions from the last 7 days
-        val nowMillis = System.currentTimeMillis()
-        val sevenDaysAgo = nowMillis - (7L * 24 * 60 * 60 * 1000)
+        val nowMillis = timeProvider.now()
+        val (sevenDaysAgo, rangeEnd) = TimePeriodUtils.getLastNDaysRange(nowMillis, 7)
         
-        val filter = TransactionFilter(
-            dateRange = Pair(sevenDaysAgo, nowMillis),
+        val filter = DomainTransactionFilter(
+            dateRange = Pair(sevenDaysAgo, rangeEnd),
             transactionType = TransactionType.PURCHASE
         )
         

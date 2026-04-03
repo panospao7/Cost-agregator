@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,7 +25,8 @@ class RecurringExpenseEngine @Inject constructor(
      */
     suspend fun getPatterns(): List<RecurringPattern> {
         // Limit to last 12 months for performance - INS-009
-        val twelveMonthsAgo = timeProvider.now() - (365L * 24 * 60 * 60 * 1000)
+        val now = timeProvider.now()
+        val twelveMonthsAgo = TimePeriodUtils.addMonths(now, -12)
         val allExpenses = expenseRepository.getExpensesSince(twelveMonthsAgo)
         return getPatterns(allExpenses)
     }
@@ -86,21 +88,18 @@ class RecurringExpenseEngine @Inject constructor(
 
                 // Staleness check: drop patterns whose last occurrence is >6 months ago.
                 // This prevents cancelled/dormant subscriptions from appearing as active recurring items.
-                val sixMonthsAgo = timeProvider.now() - (180L * 24 * 60 * 60 * 1000)
+                val sixMonthsAgo = TimePeriodUtils.addMonths(timeProvider.now(), -6)
                 if (dates.isEmpty() || dates.last() < sixMonthsAgo) continue
 
                 // Predict next date
-                // Predict next date (LOG-021 Fix: Use Calendar for proper Month/Year addition)
-                val cal = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-                cal.timeInMillis = dates.last()
-                when (frequency) {
-                    RecurrenceFrequency.MONTHLY -> cal.add(java.util.Calendar.MONTH, 1)
-                    RecurrenceFrequency.QUARTERLY -> cal.add(java.util.Calendar.MONTH, 3)
-                    RecurrenceFrequency.SEMI_ANNUALLY -> cal.add(java.util.Calendar.MONTH, 6)
-                    RecurrenceFrequency.ANNUALLY -> cal.add(java.util.Calendar.YEAR, 1)
-                    else -> cal.add(java.util.Calendar.DAY_OF_YEAR, frequency.days)
+                val baseDate = dates.last()
+                val nextDate = when (frequency) {
+                    RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(baseDate, 1)
+                    RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(baseDate, 3)
+                    RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(baseDate, 6)
+                    RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(baseDate, 1)
+                    else -> TimePeriodUtils.addDays(baseDate, frequency.days)
                 }
-                val nextDate = cal.timeInMillis
 
                 detectedPatterns.add(
                     RecurringPattern(
@@ -156,27 +155,11 @@ class RecurringExpenseEngine @Inject constructor(
     private fun determineFrequency(intervalsMs: List<Long>, dates: List<Long>): Triple<RecurrenceFrequency, Double, Int> {
         if (intervalsMs.isEmpty()) return Triple(RecurrenceFrequency.IRREGULAR, 0.0, 0)
         
-        // Fix (BUG-003): Use Calendar for proper day interval calculation across DST
+        // Fix (BUG-003): Use calendar-day difference helper across DST boundaries
         val intervalsDays = mutableListOf<Int>()
-        val cal1 = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        val cal2 = java.util.Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        
+
         for (i in 0 until dates.size - 1) {
-            cal1.timeInMillis = dates[i]
-            cal2.timeInMillis = dates[i + 1]
-            
-            // Clear time fields for accurate day calculation (handles DST edge cases)
-            cal1.set(java.util.Calendar.HOUR_OF_DAY, 0)
-            cal1.set(java.util.Calendar.MINUTE, 0)
-            cal1.set(java.util.Calendar.SECOND, 0)
-            cal1.set(java.util.Calendar.MILLISECOND, 0)
-            
-            cal2.set(java.util.Calendar.HOUR_OF_DAY, 0)
-            cal2.set(java.util.Calendar.MINUTE, 0)
-            cal2.set(java.util.Calendar.SECOND, 0)
-            cal2.set(java.util.Calendar.MILLISECOND, 0)
-            
-            val diffDays = ((cal2.timeInMillis - cal1.timeInMillis) / 86400000.0).roundToInt()
+            val diffDays = TimePeriodUtils.daysBetween(dates[i], dates[i + 1])
             intervalsDays.add(diffDays)
         }
         

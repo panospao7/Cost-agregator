@@ -9,7 +9,7 @@ interface PlannedExpenseDao {
     @Query("SELECT * FROM planned_expenses ORDER BY date ASC")
     fun getAllPlannedExpenses(): Flow<List<PlannedExpense>>
 
-    @Query("SELECT * FROM planned_expenses WHERE date BETWEEN :startMs AND :endMs")
+    @Query("SELECT * FROM planned_expenses WHERE date >= :startMs AND date < :endMs")
     fun getPlannedExpensesForPeriod(startMs: Long, endMs: Long): Flow<List<PlannedExpense>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

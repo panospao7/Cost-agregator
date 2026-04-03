@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.ai.model.CategorizedReceiptItem
 import com.yourname.expensetracker.domain.ai.model.CategorySuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
@@ -20,7 +22,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class CloudReceiptItemCategorizationService @Inject constructor() : ReceiptItemCategorizationService {
+// CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
+class CloudReceiptItemCategorizationService @Inject constructor(
+    private val secureKeyStorage: SecureKeyStorage
+) : ReceiptItemCategorizationService {
     
     private val client = OkHttpClient.Builder()
         .connectTimeout(AppConfig.Ai.RECEIPT_ASSIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -29,14 +34,22 @@ class CloudReceiptItemCategorizationService @Inject constructor() : ReceiptItemC
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     
+    private val apiKey: String
+        get() = secureKeyStorage.getGeminiKey() ?: ""
+    
     override suspend fun categorizeItems(input: ReceiptItemCategorizationInput): ReceiptItemCategorizationResult? {
+        if (apiKey.isBlank()) {
+            Timber.d("CloudReceiptItemCategorizationService: Gemini API key missing, skipping.")
+            return null
+        }
+        
         return withContext(Dispatchers.IO) {
             try {
                 val prompt = buildPrompt(input)
                 val requestBody = buildRequestBody(prompt)
                 
                 val request = Request.Builder()
-                    .url("${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL}:generateContent?key=${getApiKey()}")
+                    .url("${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL}:generateContent?key=$apiKey")
                     .post(requestBody.toRequestBody(jsonMediaType))
                     .build()
                 
@@ -44,13 +57,13 @@ class CloudReceiptItemCategorizationService @Inject constructor() : ReceiptItemC
                 val body = response.body?.string()
                 
                 if (!response.isSuccessful || body == null) {
-                    Timber.e("Cloud AI request failed: ${response.code}")
+                    Timber.e("CloudReceiptItemCategorizationService: Cloud AI request failed: ${response.code}")
                     return@withContext null
                 }
                 
                 parseResponse(body, input)
             } catch (e: Exception) {
-                Timber.e(e, "Error calling cloud AI for receipt item categorization")
+                Timber.e(e, "CloudReceiptItemCategorizationService: Error calling cloud AI for receipt item categorization")
                 null
             }
         }
@@ -231,10 +244,5 @@ Output JSON format:
         }
         
         return text.substring(start, end)
-    }
-    
-    private fun getApiKey(): String {
-        // In production, this would come from secure storage
-        return System.getenv("GEMINI_API_KEY") ?: ""
     }
 }

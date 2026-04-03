@@ -26,16 +26,16 @@ interface MileageTrackingDao {
     @Query("SELECT * FROM mileage_tracking WHERE isBusinessTrip = 1 ORDER BY date DESC")
     fun getBusinessMileage(): Flow<List<MileageTracking>>
     
-    @Query("SELECT * FROM mileage_tracking WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    @Query("SELECT * FROM mileage_tracking WHERE date >= :startDate AND date < :endDate ORDER BY date DESC")
     suspend fun getMileageBetween(startDate: Long, endDate: Long): List<MileageTracking>
     
-    @Query("SELECT * FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    @Query("SELECT * FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date < :endDate ORDER BY date DESC")
     suspend fun getBusinessMileageBetween(startDate: Long, endDate: Long): List<MileageTracking>
     
-    @Query("SELECT SUM(distanceKm) FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date <= :endDate")
+    @Query("SELECT SUM(distanceKm) FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date < :endDate")
     suspend fun getTotalBusinessDistanceBetween(startDate: Long, endDate: Long): Double?
     
-    @Query("SELECT SUM(calculatedDeduction) FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date <= :endDate")
+    @Query("SELECT SUM(calculatedDeduction) FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date < :endDate")
     suspend fun getTotalDeductionBetween(startDate: Long, endDate: Long): Double?
     
     @Query("SELECT * FROM mileage_tracking WHERE linkedExpenseId = :expenseId")

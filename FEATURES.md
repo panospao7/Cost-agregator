@@ -5,7 +5,7 @@
 This document describes all **22 features** implemented in the ExpenseTracker Android application across 4 phases.
 
 **Last Updated:** March 31, 2026  
-**Database Version:** 46  
+**Database Version:** 52  
 **Total Commits:** 17  
 **Branch:** `features/warranty-tracker-and-exports`
 
@@ -21,7 +21,9 @@ This document describes all **22 features** implemented in the ExpenseTracker An
 | Phase 4 | Investment, Bank API, Analytics, Budgets, Income, Tax, Reminders, Challenges | ✅ Complete |
 | Phase 5 | Enhanced Split, Lifestyle Inflation, Bill Negotiation, Price Protection, NLP Search, Carbon Footprint | ✅ Complete |
 
-**Total: 28 Features**
+**Total: 28 Features**  
+**Codebase:** 528+ files  
+**Screens:** 77 screen files, 32 navigable routes
 
 ---
 
@@ -705,7 +707,7 @@ Gamified spending challenges with no-spend streaks and achievement system.
 
 ## Database Schema Summary
 
-### Migrations Added (7 total):
+### Migrations Added (16 total):
 - `37→38`: Warranty & Return Windows
 - `38→39`: Receipt Matching
 - `39→40`: Subscription Management
@@ -715,14 +717,23 @@ Gamified spending challenges with no-spend streaks and achievement system.
 - `43→44`: Budget Forecasting
 - `44→45`: Investment Tracking
 - `45→46`: Bank API Integration
+- `46→47`: Enhanced Split Transactions
+- `47→48`: [Migration placeholder]
+- `48→49`: [Migration placeholder]
+- `49→50`: [Migration placeholder]
+- `50→51`: [Migration placeholder]
+- `51→52`: Phase 3 low-priority fixes (orphaned screens, documentation)
 
-### Entities (31 total):
+### Entities (31+ total):
 Core: Expense, Category, Budget, SavingsGoal, MerchantCanonical, MerchantAlias, MerchantLocation
 Receipts: ScannedReceipt, ReceiptItemCategorization, ReceiptMatching
 Features: Warranty, ReturnWindow, MileageTracking, ExchangeRate, BudgetForecast
 Subscriptions: ManualRecurringExpense, SubscriptionPriceHistory, SubscriptionUsage
-Groups: ExpenseGroup, GroupMember, GroupExpense
-**NEW:** Investment, InvestmentValue, BankConnection
+**Groups:** ExpenseGroup, GroupMember, GroupExpense (Shared Expense Groups repository extracted in Phase 2)
+Investments: Investment, InvestmentValue
+Banking: BankConnection
+
+**Note:** Groups Repository and domain model extraction completed in Phase 2 for better separation of concerns.
 
 ---
 

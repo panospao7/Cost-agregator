@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -190,15 +191,13 @@ class MultiCurrencyRepository @Inject constructor(
      */
     suspend fun shouldUpdateRates(): Boolean {
         val lastUpdate = currencyConverter.getLastUpdateTime() ?: return true
-        val twentyFourHours = 24 * 60 * 60 * 1000
+        val twentyFourHours = TimePeriodUtils.DAY_IN_MILLIS
         return (timeProvider.now() - lastUpdate) > twentyFourHours
     }
 
     private fun getMonthKey(timestamp: Long): String {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        val year = calendar.get(java.util.Calendar.YEAR)
-        val month = calendar.get(java.util.Calendar.MONTH) + 1
+        val year = TimePeriodUtils.getYear(timestamp)
+        val month = TimePeriodUtils.getMonth(timestamp) + 1
         return "$year-${month.toString().padStart(2, '0')}"
     }
 }

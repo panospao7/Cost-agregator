@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.groups
 
-import com.yourname.expensetracker.data.database.GroupTransactionCoordinator
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
@@ -16,8 +15,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * CRITICAL FIX (CRITICAL-2): Now uses GroupTransactionCoordinator for atomic operations.
+ * HIGH-06 FIX: Uses unified GroupTransactionCoordinator interface.
+ * The interface is implemented in the data layer for atomic database operations.
  * All multi-table operations are wrapped in transactions to prevent data inconsistency.
+ * 
+ * CRITICAL-2: All operations go through the coordinator to ensure ACID compliance.
  */
 @Singleton
 class SharedExpenseManager @Inject constructor(

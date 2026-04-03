@@ -11,6 +11,8 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.rounded.Analytics
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Refresh
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -77,6 +79,15 @@ fun BudgetScreen(
             )
         }
     ) { padding ->
+        // Error banner - shows when ViewModel has an error
+        if (uiState.error != null) {
+            ErrorBanner(
+                message = uiState.error!!,
+                onDismiss = { viewModel.clearError() },
+                onRetry = { viewModel.refreshSuggestions() }
+            )
+        }
+        
         if (uiState.isLoading) {
             Column(
                 modifier = Modifier
@@ -146,6 +157,94 @@ fun BudgetScreen(
                 onConfirm = { viewModel.updateBudget(it) },
                 categories = categories
             )
+        }
+    }
+}
+
+/**
+ * Error banner component for displaying BudgetViewModel errors.
+ * Provides dismiss and retry actions.
+ */
+@Composable
+fun ErrorBanner(
+    message: String,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        color = SemanticColors.DangerRed.copy(alpha = 0.1f),
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, SemanticColors.DangerRed.copy(alpha = 0.3f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = SemanticColors.DangerRed
+                    )
+                    Text(
+                        text = stringResource(R.string.error),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.DangerRed
+                    )
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = stringResource(R.string.dismiss_error),
+                        tint = SemanticColors.TextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = SemanticColors.TextPrimary
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    onClick = onRetry,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = SemanticColors.DangerRed
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.retry))
+                }
+            }
         }
     }
 }

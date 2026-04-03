@@ -13,6 +13,8 @@ import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.TransactionFilterSerializer
 import io.mockk.mockk
+import io.mockk.every
+import io.mockk.coEvery
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -42,8 +44,9 @@ class DashboardFollowThroughEngineTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         serializer = TransactionFilterSerializer()
+        every { timeProvider.now() } returns System.currentTimeMillis()
         thresholdCalculator = SpendingThresholdCalculator(expenseDao, timeProvider, testDispatcher)
-        engine = DashboardFollowThroughEngine(serializer, thresholdCalculator, testDispatcher)
+        engine = DashboardFollowThroughEngine(serializer, thresholdCalculator, timeProvider, testDispatcher)
     }
 
     @Test
@@ -175,6 +178,24 @@ class DashboardFollowThroughEngineTest {
 
         val highPriorityRecs = recommendations.filter { it.priority == RecommendationPriority.HIGH }
         assertEquals(0, highPriorityRecs.size)
+    }
+
+    @Test
+    fun `adaptive threshold no transactions defaults to min 50 and blocks lower amount`() = runTest {
+        coEvery { expenseDao.getAmountsForPercentileCalc(any(), any()) } returns emptyList()
+        val recommendations = engine.generateRecommendations(createExpense(amount = 49.99), null, "u1")
+        assertTrue(recommendations.none { it.priority == RecommendationPriority.HIGH })
+    }
+
+    @Test
+    fun `very large transaction is detected as high amount with transaction list navigation`() = runTest {
+        coEvery { expenseDao.getAmountsForPercentileCalc(any(), any()) } returns listOf(10.0, 20.0, 30.0, 40.0, 50.0)
+        val recommendations = engine.generateRecommendations(createExpense(amount = 5000.0, categoryId = 2L), null, "u1")
+        val high = recommendations.first { it.priority == RecommendationPriority.HIGH }
+        assertEquals(DashboardFollowThroughEngine.NAV_TARGET_TRANSACTION_LIST, high.navigationTarget)
+        val filter = serializer.deserialize(high.filterCriteria)
+        assertNotNull(filter)
+        assertEquals(5000.0, filter.minAmount)
     }
 
     @Test

@@ -27,10 +27,11 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+import dagger.hilt.android.qualifiers.ApplicationContext
 
 @Singleton
 class ManualExpenseRepository @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
     private val database: AppDatabase,
     private val expenseDao: com.yourname.expensetracker.data.database.dao.ExpenseDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
@@ -106,7 +107,7 @@ class ManualExpenseRepository @Inject constructor(
                 date = date,
                 rawNotificationId = null,
                 categoryId = finalCategoryId,
-                createdAt = System.currentTimeMillis(),
+                createdAt = timeProvider.now(),
                 paymentMethod = paymentMethod,
                 isManualEntry = true,
                 notes = notes,

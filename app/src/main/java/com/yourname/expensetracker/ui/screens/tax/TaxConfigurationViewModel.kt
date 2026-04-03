@@ -8,6 +8,8 @@ import com.yourname.expensetracker.domain.tax.TaxConfiguration
 import com.yourname.expensetracker.domain.tax.TaxConfigurationFactory
 import com.yourname.expensetracker.domain.tax.TaxEstimator
 import com.yourname.expensetracker.domain.tax.TaxEstimate
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,7 +45,8 @@ data class CountryInfo(
 
 @HiltViewModel
 class TaxConfigurationViewModel @Inject constructor(
-    private val taxEstimator: TaxEstimator
+    private val taxEstimator: TaxEstimator,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(TaxConfigurationUiState())
@@ -98,8 +101,8 @@ class TaxConfigurationViewModel @Inject constructor(
     fun calculateSampleEstimate(annualIncome: Double) {
         viewModelScope.launch {
             try {
-                val now = System.currentTimeMillis()
-                val oneMonthAgo = now - (30L * 24 * 60 * 60 * 1000)
+                val now = timeProvider.now()
+                val oneMonthAgo = TimePeriodUtils.addDays(now, -30)
                 
                 // Use the same config as the UI for consistency
                 val config = TaxConfigurationFactory.getConfiguration(_uiState.value.selectedCountry)

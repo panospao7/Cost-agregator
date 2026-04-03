@@ -28,19 +28,9 @@ object SecurityModule {
     fun provideSecureKeyStorage(
         @ApplicationContext context: Context
     ): SecureKeyStorage {
-        val storage = SecureKeyStorage(context)
-        
-        // One-time migration from BuildConfig to secure storage
-        // This runs only once when storage is empty
-        storage.migrateFromBuildConfigIfNeeded(
-            geoapifyKey = if (BuildConfig.GEOAPIFY_API_KEY.isNotBlank()) 
-                BuildConfig.GEOAPIFY_API_KEY else null,
-            googlePlacesKey = if (BuildConfig.GOOGLE_PLACES_API_KEY.isNotBlank()) 
-                BuildConfig.GOOGLE_PLACES_API_KEY else null,
-            geminiKey = if (BuildConfig.GEMINI_API_KEY.isNotBlank()) 
-                BuildConfig.GEMINI_API_KEY else null
-        )
-        
-        return storage
+        // CRIT-05 FIX: API keys removed from BuildConfig
+        // Keys must now be configured via runtime secure storage
+        // Users should set keys through app settings or secure configuration
+        return SecureKeyStorage(context)
     }
 }

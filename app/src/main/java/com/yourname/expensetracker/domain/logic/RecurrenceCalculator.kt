@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.logic
 
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.util.Calendar
 
 /**
@@ -66,10 +67,10 @@ object RecurrenceCalculator {
         val calendar = Calendar.getInstance().apply {
             timeInMillis = currentDate
         }
-        
+
         when (frequency) {
-            RecurrenceFrequency.WEEKLY -> calendar.add(Calendar.WEEK_OF_YEAR, 1)
-            RecurrenceFrequency.BIWEEKLY -> calendar.add(Calendar.WEEK_OF_YEAR, 2)
+            RecurrenceFrequency.WEEKLY -> return TimePeriodUtils.addDays(currentDate, 7)
+            RecurrenceFrequency.BIWEEKLY -> return TimePeriodUtils.addDays(currentDate, 14)
             RecurrenceFrequency.MONTHLY -> calendar.add(Calendar.MONTH, 1)
             RecurrenceFrequency.QUARTERLY -> calendar.add(Calendar.MONTH, 3)
             RecurrenceFrequency.SEMI_ANNUALLY -> calendar.add(Calendar.MONTH, 6)
@@ -94,10 +95,10 @@ object RecurrenceCalculator {
         val calendar = Calendar.getInstance().apply {
             timeInMillis = currentDate
         }
-        
+
         when (frequency) {
-            RecurrenceFrequency.WEEKLY -> calendar.add(Calendar.WEEK_OF_YEAR, -1)
-            RecurrenceFrequency.BIWEEKLY -> calendar.add(Calendar.WEEK_OF_YEAR, -2)
+            RecurrenceFrequency.WEEKLY -> return TimePeriodUtils.addDays(currentDate, -7)
+            RecurrenceFrequency.BIWEEKLY -> return TimePeriodUtils.addDays(currentDate, -14)
             RecurrenceFrequency.MONTHLY -> calendar.add(Calendar.MONTH, -1)
             RecurrenceFrequency.QUARTERLY -> calendar.add(Calendar.MONTH, -3)
             RecurrenceFrequency.SEMI_ANNUALLY -> calendar.add(Calendar.MONTH, -6)
@@ -134,7 +135,7 @@ object RecurrenceCalculator {
         daysWithin: Int = 7, 
         referenceDate: Long = System.currentTimeMillis()
     ): Boolean {
-        val windowEnd = referenceDate + (daysWithin * 24 * 60 * 60 * 1000)
+        val windowEnd = referenceDate + (daysWithin * TimePeriodUtils.DAY_IN_MILLIS)
         return nextDueDate in referenceDate..windowEnd
     }
     

@@ -7,20 +7,28 @@ import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
+import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.domain.groups.GroupCreationResult
+import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as DomainCoordinator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * CRITICAL FIX (CRITICAL-2): Transaction coordinator for multi-DAO operations.
+ * HIGH-06 FIX: Single Coordinator Pattern Implementation
  * 
- * Room's @Transaction only works within a single DAO. This coordinator provides
- * atomic multi-DAO transactions using RoomDatabase.withTransaction.
+ * This class implements the domain GroupTransactionCoordinator interface.
+ * It provides atomic multi-DAO transactions using RoomDatabase.withTransaction.
  * 
- * Ensures ACID compliance across multiple tables:
+ * CRITICAL-2: Ensures ACID compliance across multiple tables:
  * - Atomicity: All operations succeed or all fail
  * - Consistency: Database remains in valid state
  * - Isolation: Concurrent transactions don't interfere
  * - Durability: Committed changes survive crashes
+ * 
+ * This is the SINGLE implementation of the GroupTransactionCoordinator contract.
  */
 @Singleton
 class GroupTransactionCoordinator @Inject constructor(
@@ -28,15 +36,225 @@ class GroupTransactionCoordinator @Inject constructor(
     private val groupDao: ExpenseGroupDao,
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao
-) {
+) : DomainCoordinator {
+    
+    // ==================== Interface Implementation ====================
+    
+    /**
+     * Create a new group with initial members atomically using DB transaction.
+     */
+    override suspend fun createGroupWithMembers(
+        name: String,
+        description: String?,
+        currency: String,
+        members: List<GroupMember>
+    ): GroupCreationResult = withContext(Dispatchers.IO) {
+        try {
+            val group = ExpenseGroup(
+                name = name,
+                description = description,
+                defaultCurrency = currency
+            )
+            
+            // Use atomic DB transaction - either all succeed or all fail
+            val groupId = database.withTransaction {
+                val newGroupId = groupDao.insert(group)
+                
+                // If this fails, group insertion rolls back
+                val membersWithGroupId = members.map { 
+                    it.copy(groupId = newGroupId) 
+                }
+                memberDao.insertAll(membersWithGroupId)
+                
+                newGroupId
+            }
+            
+            GroupCreationResult.Success(groupId)
+        } catch (e: Exception) {
+            GroupCreationResult.Error("Group creation failed: ${e.message}")
+        }
+    }
+    
+    /**
+     * Add a member to an existing group.
+     */
+    override suspend fun addMemberToGroup(
+        groupId: Long,
+        name: String,
+        email: String?,
+        isCurrentUser: Boolean
+    ): Long? = withContext(Dispatchers.IO) {
+        try {
+            // Verify group exists and is active
+            val group = groupDao.getById(groupId)
+            if (group == null || !group.isActive) {
+                return@withContext null
+            }
+            
+            val member = GroupMember(
+                groupId = groupId,
+                name = name,
+                email = email,
+                isCurrentUser = isCurrentUser
+            )
+            
+            memberDao.insert(member)
+        } catch (e: Exception) {
+            null
+        }
+    }
+    
+    /**
+     * Add an expense to a group.
+     * This creates the group expense record without linking to a system expense.
+     */
+    override suspend fun addExpenseToGroup(
+        groupId: Long,
+        description: String,
+        amount: Double,
+        paidById: Long,
+        splitType: SplitType,
+        date: Long
+    ): GroupExpenseCreationResult = withContext(Dispatchers.IO) {
+        try {
+            // Verify group exists and is active
+            val group = groupDao.getById(groupId)
+            if (group == null || !group.isActive) {
+                return@withContext GroupExpenseCreationResult.Error("Group not found or inactive")
+            }
+            
+            // Verify payer is a member of the group
+            val members = memberDao.getAllForGroup(groupId)
+            if (members.none { it.id == paidById }) {
+                return@withContext GroupExpenseCreationResult.Error("Payer is not a member of this group")
+            }
+            
+            // Create the group expense (without system link - expenseId is null for standalone)
+            val expense = GroupExpense(
+                groupId = groupId,
+                expenseId = null, // No linked expense - standalone group expense
+                description = description,
+                totalAmount = amount,
+                paidById = paidById,
+                date = date,
+                splitType = splitType
+            )
+            
+            val expenseId = groupExpenseDao.insert(expense)
+            
+            if (expenseId <= 0) {
+                return@withContext GroupExpenseCreationResult.Error("Failed to create expense")
+            }
+            
+            GroupExpenseCreationResult.Success(
+                groupExpenseId = expenseId,
+                expenseId = 0 // No linked expense
+            )
+        } catch (e: Exception) {
+            GroupExpenseCreationResult.Error("Failed to add expense: ${e.message}")
+        }
+    }
+    
+    /**
+     * Add an expense to a group and link it to a system expense.
+     * This is the proper way to create group expenses that appear in transaction history.
+     */
+    override suspend fun addExpenseWithLink(
+        groupId: Long,
+        systemExpenseId: Long,
+        description: String,
+        amount: Double,
+        paidById: Long,
+        splitType: SplitType,
+        date: Long
+    ): GroupExpenseCreationResult = withContext(Dispatchers.IO) {
+        try {
+            // Verify group exists and is active
+            val group = groupDao.getById(groupId)
+            if (group == null || !group.isActive) {
+                return@withContext GroupExpenseCreationResult.Error("Group not found or inactive")
+            }
+            
+            // Verify payer is a member
+            val members = memberDao.getAllForGroup(groupId)
+            if (members.none { it.id == paidById }) {
+                return@withContext GroupExpenseCreationResult.Error("Payer is not a member of this group")
+            }
+            
+            // Create the group expense with system link
+            val expense = GroupExpense(
+                groupId = groupId,
+                expenseId = systemExpenseId, // Link to system expense
+                description = description,
+                totalAmount = amount,
+                paidById = paidById,
+                date = date,
+                splitType = splitType
+            )
+            
+            val groupExpenseId = groupExpenseDao.insert(expense)
+            
+            if (groupExpenseId <= 0) {
+                return@withContext GroupExpenseCreationResult.Error("Failed to create group expense")
+            }
+            
+            GroupExpenseCreationResult.Success(
+                groupExpenseId = groupExpenseId,
+                expenseId = systemExpenseId
+            )
+        } catch (e: Exception) {
+            GroupExpenseCreationResult.Error("Failed to add expense: ${e.message}")
+        }
+    }
+    
+    /**
+     * Delete a group and all associated data (members, expenses).
+     * This is a soft delete - sets isActive = false.
+     */
+    override suspend fun deleteGroup(groupId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            groupDao.archiveGroup(groupId)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    /**
+     * Permanently delete a group and all associated data.
+     * WARNING: This cannot be undone.
+     */
+    override suspend fun permanentlyDeleteGroup(groupId: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Delete all expenses first
+            groupExpenseDao.deleteAllForGroup(groupId)
+            
+            // Delete all members
+            memberDao.deleteAllForGroup(groupId)
+            
+            // Finally delete the group
+            val group = groupDao.getById(groupId)
+            if (group != null) {
+                groupDao.delete(group)
+            }
+            
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    // ==================== Additional Atomic Operations ====================
+    // These methods may be used internally or for advanced use cases
     
     /**
      * Atomic group creation with members.
+     * Low-level version for direct entity-based operations.
      * 
      * CRITICAL: If member insertion fails, group insertion is rolled back.
      * Prevents orphaned groups.
      */
-    suspend fun createGroupWithMembersAtomic(
+    override suspend fun createGroupWithMembersAtomic(
         group: ExpenseGroup,
         members: List<GroupMember>
     ): Long {
@@ -56,6 +274,7 @@ class GroupTransactionCoordinator @Inject constructor(
     
     /**
      * Atomic expense addition to group with member updates.
+     * Used by SharedExpenseManager for direct entity-based operations.
      */
     suspend fun addExpenseToGroupAtomic(
         groupExpense: GroupExpense,

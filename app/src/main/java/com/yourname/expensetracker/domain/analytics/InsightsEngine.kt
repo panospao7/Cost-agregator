@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.dao.DayOfWeekTotal
 import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -9,9 +8,10 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import java.util.Calendar
+import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
@@ -70,8 +70,8 @@ class InsightsEngine @Inject constructor(
         }
         
         val threeMonthsAgo = getMonthPeriod(now, -2)
-        val dayOfWeekPatternDeferred = async { 
-            try { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs) } catch (e: Exception) { null }
+        val dayOfWeekPatternDeferred = async {
+            try { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs, allExpenses) } catch (e: Exception) { null }
         }
         val largestTransactionDeferred = async { 
             try { expenseRepository.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) } catch (e: Exception) { null }
@@ -95,8 +95,8 @@ class InsightsEngine @Inject constructor(
                     && !it.isNotMine
         }
         val avgTxSize = if (currentMonthPurchases.isNotEmpty())
-            currentMonthPurchases.map { it.amount }.average() else 0.0
-        val medianTxSize = calculateMedian(currentMonthPurchases.map { it.amount })
+            currentMonthPurchases.map { it.effectiveAmount }.average() else 0.0
+        val medianTxSize = calculateMedian(currentMonthPurchases.map { it.effectiveAmount })
 
         // How many months of data we have
         val totalMonthsOfData = countDistinctMonths(allExpenses)
@@ -227,18 +227,14 @@ class InsightsEngine @Inject constructor(
     
     fun getMonthPeriod(timeMs: Long, monthOffset: Int = 0): MonthPeriod {
         val range = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(timeMs, monthOffset)
+        val year = TimePeriodUtils.getYear(range.first)
+        val month = TimePeriodUtils.getMonth(range.first)
         
-        val cal = Calendar.getInstance().apply { timeInMillis = range.first }
-        val year = cal.get(Calendar.YEAR)
-        val month = cal.get(Calendar.MONTH)
-        
-        return MonthPeriod(year, month, range.first, range.second + 1)
+        return MonthPeriod(year, month, range.first, range.second)
     }
 
     private fun getPreviousMonthPeriod(current: MonthPeriod): MonthPeriod {
-        val cal = Calendar.getInstance().apply { timeInMillis = current.startMs }
-        cal.add(Calendar.MONTH, -1)
-        return getMonthPeriod(cal.timeInMillis)
+        return getMonthPeriod(TimePeriodUtils.addMonths(current.startMs, -1))
     }
 
     // === Monthly Comparison ===
@@ -350,11 +346,9 @@ class InsightsEngine @Inject constructor(
 
         // Group by categoryId -> month key -> sum
         val categoryMonthTotals = mutableMapOf<Long, MutableMap<String, Double>>()
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         for (expense in purchases) {
             val catId = expense.categoryId ?: continue
-            cal.timeInMillis = expense.date
-            val monthKey = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
+            val monthKey = String.format("%d-%02d", TimePeriodUtils.getYear(expense.date), TimePeriodUtils.getMonth(expense.date) + 1)
             categoryMonthTotals
                 .getOrPut(catId) { mutableMapOf() }
                 .merge(monthKey, expense.effectiveAmount) { a, b -> a + b }
@@ -375,13 +369,15 @@ class InsightsEngine @Inject constructor(
     ): List<MerchantInsight> {
         val stats = expenseRepository.getAllMerchantStats()
 
-        // For std deviation, compute from raw data grouped by merchant
-        val purchasesByMerchant = allExpenses
-            .filter { it.transactionType == TransactionType.PURCHASE }
-            .groupBy { it.merchant }
+        // For std deviation, compute from raw data grouped by canonical merchant key.
+        // DAO merchant stats alias merchantKey -> merchantName, so lookup must use the
+        // same canonical key to avoid key mismatches across raw merchant labels.
+        val purchasesByMerchantKey = allExpenses
+            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .groupBy { it.merchantKey }
 
         return stats.map { ms ->
-            val amounts = purchasesByMerchant[ms.merchantName]?.map { it.amount } ?: emptyList()
+            val amounts = purchasesByMerchantKey[ms.merchantName]?.map { it.amount } ?: emptyList()
             val stdDev = if (amounts.size >= 3) calculateStdDev(amounts) else null
 
             val isRecurring = ms.transactionCount >= 2 &&
@@ -417,9 +413,9 @@ class InsightsEngine @Inject constructor(
         val previousTotal = previousTotalDeferred.await()
         val previousCount = previousCountDeferred.await()
 
-        val cal = Calendar.getInstance().apply { timeInMillis = now }
-        val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
-        val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val dayOfMonth = TimePeriodUtils.getDayOfMonth(now).coerceAtLeast(0)
+        val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
+        val daysInPreviousMonth = TimePeriodUtils.getDaysInMonth(previousMonth.startMs)
 
         // Calculate average monthly total (excluding current month)
         val avgMonthly = calculateAverageMonthlySpend(allExpenses, currentMonth)
@@ -434,15 +430,34 @@ class InsightsEngine @Inject constructor(
             currentSpent
         }
 
-        // Pace percentage: how much of the baseline have we consumed
-        val baseline = avgMonthly ?: if (previousCount > 0) previousTotal else null
-        val pacePercentage = if (baseline != null && baseline > 0) {
-            val expectedAtThisPoint = baseline * dayOfMonth.coerceAtLeast(1) / daysInMonth
-            (currentSpent / expectedAtThisPoint * 100).toFloat()
+        // Canonical pace formula used across analytics engines:
+        // pace% = (currentDailyRate / baselineDailyRate) * 100
+        // currentDailyRate = currentSpent / daysElapsed
+        // baselineDailyRate = previousMonthTotal / daysInPreviousMonth
+        val currentDailyRate = if (dayOfMonth > 0) currentSpent / dayOfMonth else 0.0
+        val baselineDailyRate = if (previousCount > 0 && daysInPreviousMonth > 0) {
+            previousTotal / daysInPreviousMonth
+        } else {
+            0.0
+        }
+        val hasBaseline = baselineDailyRate > 0.0
+        val pacePercentage = if (hasBaseline) {
+            (currentDailyRate / baselineDailyRate * 100).toFloat()
         } else 0f
 
+        Timber.tag("InsightsEngine").d(
+            "Pace calculation: currentSpent=%.2f, daysElapsed=%d, currentDailyRate=%.4f, previousTotal=%.2f, daysInPreviousMonth=%d, baselineDailyRate=%.4f, pacePercentage=%.2f",
+            currentSpent,
+            dayOfMonth,
+            currentDailyRate,
+            previousTotal,
+            daysInPreviousMonth,
+            baselineDailyRate,
+            pacePercentage
+        )
+
         val paceStatus = when {
-            baseline == null || baseline == 0.0 -> PaceStatus.NO_BASELINE
+            !hasBaseline -> PaceStatus.NO_BASELINE
             pacePercentage < PACE_UNDER_THRESHOLD -> PaceStatus.UNDER_PACE
             pacePercentage > PACE_OVER_THRESHOLD -> PaceStatus.OVER_PACE
             else -> PaceStatus.ON_PACE
@@ -453,7 +468,7 @@ class InsightsEngine @Inject constructor(
             daysElapsed = dayOfMonth,
             daysInMonth = daysInMonth,
             projectedTotal = projectedTotal,
-            previousMonthTotal = if (previousCount > 0) previousTotal else null,
+            previousMonthTotal = if (hasBaseline) previousTotal else null,
             averageMonthlyTotal = avgMonthly,
             pacePercentage = pacePercentage,
             paceStatus = paceStatus
@@ -470,11 +485,9 @@ class InsightsEngine @Inject constructor(
         }
         if (purchases.isEmpty()) return null
 
-        val cal = Calendar.getInstance()
         val monthTotals = mutableMapOf<String, Double>()
         for (p in purchases) {
-            cal.timeInMillis = p.date
-            val key = String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
+            val key = String.format("%d-%02d", TimePeriodUtils.getYear(p.date), TimePeriodUtils.getMonth(p.date) + 1)
             monthTotals.merge(key, p.effectiveAmount) { a, b -> a + b }
         }
 
@@ -632,22 +645,35 @@ class InsightsEngine @Inject constructor(
 
     // === Day of Week Pattern ===
 
-    private suspend fun buildDayOfWeekPattern(
+    private fun buildDayOfWeekPattern(
         startMs: Long,
-        endMs: Long
+        endMs: Long,
+        allExpenses: List<Expense>
     ): List<DayOfWeekInsight> {
-        val timeZoneOffset = java.util.TimeZone.getDefault().getOffset(timeProvider.now())
-        val data = expenseRepository.getDayOfWeekPattern(startMs, endMs, timeZoneOffset)
+        val totalsByDay = DoubleArray(7)
+        val countsByDay = IntArray(7)
 
-        val dayMap: Map<Int, DayOfWeekTotal> = data.associateBy { it.dayOfWeek }
+        allExpenses.forEach { expense ->
+            if (expense.transactionType != TransactionType.PURCHASE || expense.isNotMine) return@forEach
+            if (expense.date < startMs || expense.date >= endMs) return@forEach
+
+            val dayOfWeek = TimePeriodUtils.getDayOfWeek(expense.date) // Sun=1..Sat=7
+            val dayIndex = (dayOfWeek + 5) % 7 // Mon=0..Sun=6
+            totalsByDay[dayIndex] += expense.effectiveAmount
+            countsByDay[dayIndex] += 1
+        }
+
+        if (countsByDay.sum() == 0) return emptyList()
+
         return (0..6).map { dayIndex: Int ->
-            val d: DayOfWeekTotal? = dayMap[dayIndex]
+            val total = totalsByDay[dayIndex]
+            val txCount = countsByDay[dayIndex]
             DayOfWeekInsight(
                 dayName = DAY_NAMES[dayIndex],
                 dayIndex = dayIndex,
-                totalSpent = d?.total ?: 0.0,
-                transactionCount = d?.txCount ?: 0,
-                avgPerTransaction = d?.avgAmount ?: 0.0
+                totalSpent = total,
+                transactionCount = txCount,
+                avgPerTransaction = if (txCount > 0) total / txCount else 0.0
             )
         }
     }
@@ -656,14 +682,12 @@ class InsightsEngine @Inject constructor(
     
     fun buildDailyTotals(expenses: List<Expense>, days: Int): Map<String, Double> {
         val now = timeProvider.now()
-        val cal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val result = LinkedHashMap<String, Double>()
 
         // Initialize all days with 0
         for (i in days - 1 downTo 0) {
-            cal.timeInMillis = now
-            cal.add(Calendar.DAY_OF_YEAR, -i)
-            val key = DateFormatterUtils.dateKey().format(cal.time)
+            val dayTs = TimePeriodUtils.addDays(now, -i)
+            val key = DateFormatterUtils.dateKey().format(Date(dayTs))
             result[key] = 0.0
         }
 
@@ -699,8 +723,7 @@ class InsightsEngine @Inject constructor(
     private fun countDistinctMonths(expenses: List<Expense>): Int {
         if (expenses.isEmpty()) return 0
         return expenses.map { expense ->
-            val cal = Calendar.getInstance().apply { timeInMillis = expense.date }
-            String.format("%d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
+            String.format("%d-%02d", TimePeriodUtils.getYear(expense.date), TimePeriodUtils.getMonth(expense.date) + 1)
         }.distinct().size
     }
 

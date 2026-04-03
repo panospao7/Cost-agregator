@@ -4,7 +4,12 @@ import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionServi
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -13,19 +18,38 @@ class WarrantyTrackerRepository @Inject constructor(
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
     private val receiptRepository: ReceiptRepository,
-    private val cloudExtractionService: CloudWarrantyExtractionService
+    private val cloudExtractionService: CloudWarrantyExtractionService,
+    private val timeProvider: TimeProvider
 ) {
+    private companion object {
+        private const val ACTIVE_ITEMS_REFRESH_INTERVAL_MS = 60 * 60 * 1000L // 1 hour
+    }
+
+    private fun activeItemsTickerFlow(intervalMs: Long = ACTIVE_ITEMS_REFRESH_INTERVAL_MS): Flow<Unit> = flow {
+        while (true) {
+            emit(Unit)
+            delay(intervalMs)
+        }
+    }
+
     // Warranty operations
     fun getAllWarranties(): Flow<List<Warranty>> = warrantyDao.getAllWarranties()
     
-    fun getActiveWarranties(): Flow<List<Warranty>> = warrantyDao.getActiveWarranties()
+    fun getActiveWarranties(): Flow<List<Warranty>> =
+        activeItemsTickerFlow().flatMapLatest {
+            warrantyDao.getActiveWarranties(timeProvider.now())
+        }
     
     fun getWarrantiesByStatus(status: WarrantyStatus): Flow<List<Warranty>> = 
         warrantyDao.getWarrantiesByStatus(status)
     
     suspend fun getWarrantiesExpiringSoon(days: Int): List<Warranty> {
-        val futureTime = System.currentTimeMillis() + (days * 24 * 60 * 60 * 1000)
-        return warrantyDao.getWarrantiesExpiringSoon(futureTime)
+        val currentStart = TimePeriodUtils.getStartOfDay(timeProvider.now())
+        val futureExclusive = TimePeriodUtils.addDays(currentStart, days.coerceAtLeast(0))
+        return warrantyDao.getWarrantiesExpiringSoon(
+            futureTime = futureExclusive,
+            currentTime = currentStart
+        )
     }
     
     suspend fun getWarrantyByReceiptId(receiptId: Long): Warranty? = 
@@ -38,20 +62,31 @@ class WarrantyTrackerRepository @Inject constructor(
     suspend fun deleteWarranty(warranty: Warranty) = warrantyDao.deleteWarranty(warranty)
     
     suspend fun markWarrantyAsClaimed(warrantyId: Long) = 
-        warrantyDao.updateWarrantyStatus(warrantyId, WarrantyStatus.CLAIMED)
-    
-    suspend fun getActiveWarrantyCount(): Int = warrantyDao.getActiveWarrantyCount()
+        warrantyDao.updateWarrantyStatus(
+            warrantyId = warrantyId,
+            status = WarrantyStatus.CLAIMED,
+            updatedAt = timeProvider.now()
+        )
+
+    suspend fun getActiveWarrantyCount(): Int = warrantyDao.getActiveWarrantyCount(timeProvider.now())
     
     suspend fun getTotalProtectedValue(): Double = warrantyDao.getTotalProtectedValue() ?: 0.0
     
     // Return window operations
     fun getAllReturnWindows(): Flow<List<ReturnWindow>> = returnWindowDao.getAllReturnWindows()
     
-    fun getActiveReturnWindows(): Flow<List<ReturnWindow>> = returnWindowDao.getActiveReturnWindows()
+    fun getActiveReturnWindows(): Flow<List<ReturnWindow>> =
+        activeItemsTickerFlow().flatMapLatest {
+            returnWindowDao.getActiveReturnWindows(timeProvider.now())
+        }
     
     suspend fun getReturnWindowsExpiringSoon(days: Int): List<ReturnWindow> {
-        val futureTime = System.currentTimeMillis() + (days * 24 * 60 * 60 * 1000)
-        return returnWindowDao.getReturnWindowsExpiringSoon(futureTime)
+        val currentStart = TimePeriodUtils.getStartOfDay(timeProvider.now())
+        val futureExclusive = TimePeriodUtils.addDays(currentStart, days.coerceAtLeast(0))
+        return returnWindowDao.getReturnWindowsExpiringSoon(
+            futureTime = futureExclusive,
+            currentTime = currentStart
+        )
     }
     
     suspend fun addReturnWindow(returnWindow: ReturnWindow): Long = 
@@ -63,7 +98,12 @@ class WarrantyTrackerRepository @Inject constructor(
     suspend fun markAsReturned(
         returnWindowId: Long, 
         refundAmount: Double? = null
-    ) = returnWindowDao.markAsReturned(returnWindowId, refundAmount = refundAmount)
+    ) = returnWindowDao.markAsReturned(
+        returnWindowId = returnWindowId,
+        returnedAt = timeProvider.now(),
+        refundAmount = refundAmount,
+        updatedAt = timeProvider.now()
+    )
     
     // AI extraction
     suspend fun extractWarrantyFromReceipt(receipt: ScannedReceipt): Warranty? {
@@ -82,7 +122,8 @@ class WarrantyTrackerRepository @Inject constructor(
         }
         
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
-        val returnDeadline = purchaseDate + (returnDays * 24 * 60 * 60 * 1000L)
+        val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
+        val returnDeadline = TimePeriodUtils.addDays(purchaseStart, returnDays)
         
         return ReturnWindow(
             receiptId = receipt.id,

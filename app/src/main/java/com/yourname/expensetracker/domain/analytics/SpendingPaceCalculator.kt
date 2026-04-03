@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 @Singleton
 class SpendingPaceCalculator @Inject constructor(
@@ -25,7 +26,7 @@ class SpendingPaceCalculator @Inject constructor(
         val now = timeProvider.now()
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
         val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
-        val currentDay = (((now - monthStart) / 86400000L).toInt() + 1).coerceAtLeast(1)
+        val currentDay = (TimePeriodUtils.daysBetween(monthStart, now) + 1).coerceAtLeast(1)
         
         val monthSpent = allExpenses
             .filter { 
@@ -36,47 +37,44 @@ class SpendingPaceCalculator @Inject constructor(
             .sumOf { it.effectiveAmount }
         
         val previousMonthSpent = allExpenses
-            .filter { 
-                it.date >= previousMonthStart && 
+            .filter {
+                it.date >= previousMonthStart &&
                 it.date < previousMonthEnd &&
-                it.transactionType == TransactionType.PURCHASE && 
-                !it.isNotMine 
+                it.transactionType == TransactionType.PURCHASE &&
+                !it.isNotMine
             }
             .sumOf { it.effectiveAmount }
-        
-        val previousMonthAvg = allExpenses
-            .filter { 
-                it.date >= previousMonthStart && 
-                it.date < previousMonthEnd &&
-                it.transactionType == TransactionType.PURCHASE && 
-                !it.isNotMine 
-            }
-            .groupBy { expense ->
-                val cal = java.util.Calendar.getInstance()
-                cal.timeInMillis = expense.date
-                cal.get(java.util.Calendar.DAY_OF_MONTH)
-            }
-            .values
-            .map { dayExpenses -> dayExpenses.sumOf { it.effectiveAmount } }
-            .average()
-            .takeIf { !it.isNaN() }
-        
+
         val projectedTotal = calculateProjectedTotal(monthSpent, currentDay, daysInMonth)
-        
-        // Compare daily spending rates, not partial vs full month totals
+
+        // Canonical pace formula used across analytics engines:
+        // pace% = (currentDailyRate / baselineDailyRate) * 100
+        // currentDailyRate = currentSpent / daysElapsed
+        // baselineDailyRate = previousMonthTotal / daysInPreviousMonth
         val currentDailyRate = if (currentDay > 0) monthSpent / currentDay else 0.0
         val previousMonthDays = TimePeriodUtils.getDaysInMonth(previousMonthStart)
-        val previousDailyRate = if (previousMonthDays > 0) previousMonthSpent / previousMonthDays else 0.0
-        
-        val pacePercentage = if (previousDailyRate > 0) {
-            (currentDailyRate / previousDailyRate * 100).toFloat()
-        } else if (previousMonthAvg != null && previousMonthAvg > 0) {
-            (currentDailyRate / previousMonthAvg * 100).toFloat()
+        val baselineDailyRate = if (previousMonthDays > 0) previousMonthSpent / previousMonthDays else 0.0
+
+        val hasBaseline = baselineDailyRate > 0.0
+        val pacePercentage = if (hasBaseline) {
+            (currentDailyRate / baselineDailyRate * 100).toFloat()
         } else {
-            100f
+            0f
         }
-        
+
+        Timber.tag("SpendingPaceCalculator").d(
+            "Pace calculation: monthSpent=%.2f, daysElapsed=%d, currentDailyRate=%.4f, previousMonthSpent=%.2f, previousMonthDays=%d, baselineDailyRate=%.4f, pacePercentage=%.2f",
+            monthSpent,
+            currentDay,
+            currentDailyRate,
+            previousMonthSpent,
+            previousMonthDays,
+            baselineDailyRate,
+            pacePercentage
+        )
+
         val paceStatus = when {
+            !hasBaseline -> PaceStatus.NO_BASELINE
             pacePercentage < PACE_UNDER_THRESHOLD -> PaceStatus.UNDER_PACE
             pacePercentage > PACE_OVER_THRESHOLD -> PaceStatus.OVER_PACE
             else -> PaceStatus.ON_PACE
@@ -87,8 +85,8 @@ class SpendingPaceCalculator @Inject constructor(
             daysElapsed = currentDay,
             daysInMonth = daysInMonth,
             projectedTotal = projectedTotal,
-            previousMonthTotal = previousMonthSpent,
-            averageMonthlyTotal = previousMonthSpent,
+            previousMonthTotal = if (hasBaseline) previousMonthSpent else null,
+            averageMonthlyTotal = null,
             pacePercentage = pacePercentage,
             paceStatus = paceStatus
         )

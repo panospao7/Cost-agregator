@@ -25,7 +25,7 @@ interface SubscriptionPriceHistoryDao {
         SELECT * FROM subscription_price_history 
         WHERE subscriptionId = :subscriptionId 
         AND recordedAt >= :startDate 
-        AND recordedAt <= :endDate 
+        AND recordedAt < :endDate 
         ORDER BY recordedAt DESC
     """)
     suspend fun getPriceHistoryBetween(subscriptionId: Long, startDate: Long, endDate: Long): List<SubscriptionPriceHistory>

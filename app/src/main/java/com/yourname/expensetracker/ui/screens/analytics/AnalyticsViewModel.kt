@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.location.LocationInsightsEngine
 import com.yourname.expensetracker.domain.location.PlaceInsight
 import com.yourname.expensetracker.domain.location.TravelDetectionEngine
 import com.yourname.expensetracker.domain.location.TravelInsight
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -22,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import java.util.*
 import javax.inject.Inject
 
@@ -128,8 +130,8 @@ class AnalyticsViewModel @Inject constructor(
         val previousEnd = currentStart
 
         // Current period expenses
-        val currentExpenses = purchases.filter { it.date in currentStart..currentEnd }
-        val previousExpenses = purchases.filter { it.date in previousStart..previousEnd }
+        val currentExpenses = purchases.filter { it.date >= currentStart && it.date < currentEnd }
+        val previousExpenses = purchases.filter { it.date >= previousStart && it.date < previousEnd }
 
         // Use Repository for Totals and Trends
         // We collect ONE item from the flow since we are in a triggered block
@@ -175,10 +177,11 @@ class AnalyticsViewModel @Inject constructor(
             TimePeriod.TODAY -> 1
             TimePeriod.WEEK -> 7
             TimePeriod.MONTH -> 30
+            TimePeriod.QUARTER -> 90
             TimePeriod.YEAR -> 365
             TimePeriod.ALL -> {
                 val oldest = purchases.minOfOrNull { it.date } ?: now
-                ((now - oldest) / 86_400_000L).toInt().coerceIn(7, 365)
+                TimePeriodUtils.daysBetween(oldest, now).coerceIn(7, 365)
             }
         }
         val dailyTotals = insightsEngine.buildDailyTotals(currentExpenses, chartDays)
@@ -255,17 +258,42 @@ class AnalyticsViewModel @Inject constructor(
         }
 
         // ── Advanced analytics (parallel) ────────────────────────────────────
+        // Keep ViewModel period range as single source of truth.
+        // MONTH/QUARTER/YEAR are rolling windows in this ViewModel, so pass CUSTOM
+        // to avoid engine calendar-period interpretation.
+
+        // === ANALYTICS DEBUG ===
+        val periodDays = ((currentEnd - currentStart) / (24 * 60 * 60 * 1000)).toInt().coerceAtLeast(1)
+        val dateFormatter = java.text.SimpleDateFormat("MMM dd, yyyy HH:mm", java.util.Locale.getDefault())
+        fun formatTimestamp(ms: Long): String = dateFormatter.format(java.util.Date(ms))
+
+        Timber.d("=== ANALYTICS DEBUG ===")
+        Timber.d("Period: $period")
+        Timber.d("Date Range: ${formatTimestamp(currentStart)} → ${formatTimestamp(currentEnd)}")
+        Timber.d("Period Days: $periodDays")
+        Timber.d("Transactions: ${currentExpenses.size}")
+        Timber.d("Total: €$currentTotal")
+        Timber.d("Daily Totals: $dailyTotals")
+        Timber.d("Average Daily: €${if (periodDays > 0) currentTotal / periodDays else 0.0} (€$currentTotal / $periodDays days)")
+        Timber.d("========================")
+        // === END DEBUG ===
+
         val advancedPeriod = timePeriodToAnalyticsPeriod(period)
         val advRange = if (advancedPeriod != null) {
             advancedAnalyticsEngine.getPeriodRange(advancedPeriod)
         } else {
-            // For TODAY or ALL (no AnalyticsPeriod equivalent), build a manual range
             PeriodRange(
-                period = AnalyticsPeriod.MONTH,
+                period = AnalyticsPeriod.CUSTOM,
                 startMs = currentStart,
                 endMs = currentEnd,
                 label = period.name,
-                comparisonRange = null
+                comparisonRange = PeriodRange(
+                    period = AnalyticsPeriod.CUSTOM,
+                    startMs = previousStart,
+                    endMs = previousEnd,
+                    label = "PREVIOUS_${period.name}",
+                    comparisonRange = null
+                )
             )
         }
 
@@ -289,13 +317,11 @@ class AnalyticsViewModel @Inject constructor(
         }
 
         // ── Day-of-week pattern (period-aware, computed from currentExpenses) ─
-        val cal2 = java.util.Calendar.getInstance()
         val dowNames = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
         val dowTotals = DoubleArray(7)
         val dowCounts = IntArray(7)
         currentExpenses.forEach { exp ->
-            cal2.timeInMillis = exp.date
-            val idx = when (cal2.get(java.util.Calendar.DAY_OF_WEEK)) {
+            val idx = when (TimePeriodUtils.getDayOfWeek(exp.date)) {
                 java.util.Calendar.MONDAY -> 0
                 java.util.Calendar.TUESDAY -> 1
                 java.util.Calendar.WEDNESDAY -> 2
@@ -321,8 +347,7 @@ class AnalyticsViewModel @Inject constructor(
         // ── Hour-of-day pattern (period-aware) ────────────────────────────────
         val hourTotals = DoubleArray(24)
         currentExpenses.forEach { exp ->
-            cal2.timeInMillis = exp.date
-            val hour = cal2.get(java.util.Calendar.HOUR_OF_DAY)
+            val hour = TimePeriodUtils.getHourOfDay(exp.date)
             hourTotals[hour] += exp.effectiveAmount
         }
         val hourOfDayPattern = (0..23)
@@ -383,10 +408,12 @@ class AnalyticsViewModel @Inject constructor(
 
     private fun timePeriodToAnalyticsPeriod(period: TimePeriod): AnalyticsPeriod? = when (period) {
         TimePeriod.WEEK -> AnalyticsPeriod.WEEK
-        TimePeriod.MONTH -> AnalyticsPeriod.MONTH
-        TimePeriod.YEAR -> AnalyticsPeriod.YEAR
-        TimePeriod.TODAY -> null  // No equivalent; caller uses raw range
-        TimePeriod.ALL -> null    // No equivalent; caller uses raw range
+        // MONTH/QUARTER/YEAR use rolling windows from getPeriodRange(), so use CUSTOM.
+        TimePeriod.MONTH,
+        TimePeriod.QUARTER,
+        TimePeriod.YEAR,
+        TimePeriod.TODAY,
+        TimePeriod.ALL -> null
     }
 
     private fun computeVelocityAnomalies(
@@ -394,18 +421,12 @@ class AnalyticsViewModel @Inject constructor(
     ): List<VelocityAnomaly> {
         if (currentExpenses.size < 5) return emptyList()
 
-        val cal = java.util.Calendar.getInstance()
         val dayFormat = java.text.SimpleDateFormat("EEE MMM dd", java.util.Locale.getDefault())
 
         // Group expenses by day key (year-month-day)
         val byDay = mutableMapOf<Long, MutableList<com.yourname.expensetracker.data.database.entity.Expense>>()
         currentExpenses.forEach { exp ->
-            cal.timeInMillis = exp.date
-            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-            cal.set(java.util.Calendar.MINUTE, 0)
-            cal.set(java.util.Calendar.SECOND, 0)
-            cal.set(java.util.Calendar.MILLISECOND, 0)
-            val dayMs = cal.timeInMillis
+            val dayMs = TimePeriodUtils.getStartOfDay(exp.date)
             byDay.getOrPut(dayMs) { mutableListOf() }.add(exp)
         }
 
@@ -446,22 +467,18 @@ class AnalyticsViewModel @Inject constructor(
         purchases: List<com.yourname.expensetracker.data.database.entity.Expense>,
         now: Long
     ): YearOverYearComparison? {
-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = now }
-        val currentYear = cal.get(java.util.Calendar.YEAR)
+        val currentYear = TimePeriodUtils.getYear(now)
         val priorYear = currentYear - 1
 
         val monthNames = arrayOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 
         fun monthTotals(year: Int): List<MonthlyYearTotal> {
-            val tempCal = java.util.Calendar.getInstance()
             return purchases
                 .filter { exp ->
-                    tempCal.timeInMillis = exp.date
-                    tempCal.get(java.util.Calendar.YEAR) == year
+                    TimePeriodUtils.getYear(exp.date) == year
                 }
                 .groupBy { exp ->
-                    tempCal.timeInMillis = exp.date
-                    tempCal.get(java.util.Calendar.MONTH)
+                    TimePeriodUtils.getMonth(exp.date)
                 }
                 .map { (month, exps) ->
                     MonthlyYearTotal(
@@ -515,22 +532,12 @@ class AnalyticsViewModel @Inject constructor(
         return when (period) {
             TimePeriod.TODAY -> {
                 val start = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
-                Pair(start, now)
+                Pair(start, com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfDay(now))
             }
             TimePeriod.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getWeekRange(now, 0).let { (start, end) -> start to end }
-            TimePeriod.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now, 0) // Current month
-            TimePeriod.YEAR -> {
-                 // Start of year logic wasn't in Utils yet, let's keep local or add to Utils.
-                 // Utils had getMonthRange.
-                 val cal = Calendar.getInstance()
-                 cal.timeInMillis = now
-                 cal.set(Calendar.DAY_OF_YEAR, 1)
-                 cal.set(Calendar.HOUR_OF_DAY, 0)
-                 cal.set(Calendar.MINUTE, 0)
-                 cal.set(Calendar.SECOND, 0)
-                 cal.set(Calendar.MILLISECOND, 0)
-                 Pair(cal.timeInMillis, now)
-            }
+            TimePeriod.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 30)
+            TimePeriod.QUARTER -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 90)
+            TimePeriod.YEAR -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 365)
             TimePeriod.ALL -> Pair(0L, now)
         }
     }
@@ -548,12 +555,10 @@ class AnalyticsViewModel @Inject constructor(
         if (deposits.isEmpty()) return null
 
         // Only keep the largest deposit per calendar month (likely salary)
-        val cal = java.util.Calendar.getInstance()
         val salaryEvents = deposits
             .groupBy { exp ->
-                cal.timeInMillis = exp.date
-                val y = cal.get(java.util.Calendar.YEAR)
-                val m = cal.get(java.util.Calendar.MONTH)
+                val y = TimePeriodUtils.getYear(exp.date)
+                val m = TimePeriodUtils.getMonth(exp.date)
                 y * 100 + m
             }
             .mapValues { (_, exps) -> exps.maxByOrNull { it.amount } }
@@ -562,7 +567,7 @@ class AnalyticsViewModel @Inject constructor(
 
         if (salaryEvents.size < 2) return null // Need at least 2 cycles for a pattern
 
-        val windowMs = 7L * 24 * 60 * 60 * 1000 // 7 days in ms
+        val windowMs = 7L * TimePeriodUtils.DAY_IN_MILLIS // 7 days in ms
         val purchases = allExpenses.filter {
             it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
         }
@@ -577,14 +582,14 @@ class AnalyticsViewModel @Inject constructor(
 
         val cycles = salaryEvents.map { salary ->
             val windowEnd = salary.date + windowMs
-            val after = purchases.filter { it.date in salary.date..windowEnd }
+            val after = purchases.filter { it.date >= salary.date && it.date < windowEnd }
             CycleData(salary.date, salary.amount, after)
         }
 
         // Average days from salary to first purchase
         val avgDaysToFirst = cycles
             .mapNotNull { c -> c.purchasesAfter.minOfOrNull { it.date }?.let { first ->
-                ((first - c.salaryDate) / 86_400_000.0).toFloat()
+                TimePeriodUtils.daysBetween(c.salaryDate, first).toFloat()
             }}
             .let { if (it.isEmpty()) 0f else it.average().toFloat() }
 
@@ -634,7 +639,7 @@ class AnalyticsViewModel @Inject constructor(
         if (currentExpenses.isEmpty()) return emptyList()
 
         val suspects = mutableListOf<SuspectTransaction>()
-        val windowMs = 24L * 60 * 60 * 1000 // 24-hour duplicate window
+        val windowMs = TimePeriodUtils.DAY_IN_MILLIS // 24-hour duplicate window
 
         // Average transaction amount for outlier detection
         val avgAmount = currentExpenses.map { it.amount }.average()

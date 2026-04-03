@@ -76,20 +76,34 @@ class XeroCSVExporter {
     }
     
     /**
-     * CRITICAL: Proper CSV field escaping (RFC 4180 compliant).
+     * HIGH-05 FIX: Proper CSV field escaping with formula injection prevention.
+     * - Trim whitespace first, then check first non-whitespace character
+     * - Prefix fields starting with =, +, -, @ with single quote (prevents formula execution)
      * - If field contains comma, quote, or newline: wrap in quotes
      * - If field contains quotes: double them (escape)
      */
     private fun escapeCsvField(field: String): String {
-        val needsQuoting = field.contains(",") || 
-                          field.contains("\"") || 
-                          field.contains("\n") ||
-                          field.contains("\r")
+        val trimmed = field.trim()
+        if (trimmed.isEmpty()) return field
         
-        return if (needsQuoting) {
-            "\"" + field.replace("\"", "\"\"") + "\""
+        // Formula injection prevention: check first non-whitespace character
+        val firstChar = trimmed.first()
+        val neutralizedField = if (firstChar == '=' || firstChar == '+' || 
+                                   firstChar == '-' || firstChar == '@') {
+            "'$field"
         } else {
             field
+        }
+        
+        val needsQuoting = neutralizedField.contains(",") || 
+                          neutralizedField.contains("\"") || 
+                          neutralizedField.contains("\n") ||
+                          neutralizedField.contains("\r")
+        
+        return if (needsQuoting) {
+            "\"" + neutralizedField.replace("\"", "\"\"") + "\""
+        } else {
+            neutralizedField
         }
     }
 }
@@ -117,19 +131,34 @@ class FreshBooksExporter {
     }
     
     /**
-     * CRITICAL: Proper CSV field escaping (RFC 4180 compliant).
-     * Shared implementation with XeroCSVExporter.
+     * HIGH-05 FIX: Proper CSV field escaping with formula injection prevention.
+     * - Trim whitespace first, then check first non-whitespace character
+     * - Prefix fields starting with =, +, -, @ with single quote (prevents formula execution)
+     * - If field contains comma, quote, or newline: wrap in quotes
+     * - If field contains quotes: double them (escape)
      */
     private fun escapeCsvField(field: String): String {
-        val needsQuoting = field.contains(",") || 
-                          field.contains("\"") || 
-                          field.contains("\n") ||
-                          field.contains("\r")
+        val trimmed = field.trim()
+        if (trimmed.isEmpty()) return field
         
-        return if (needsQuoting) {
-            "\"" + field.replace("\"", "\"\"") + "\""
+        // Formula injection prevention: check first non-whitespace character
+        val firstChar = trimmed.first()
+        val neutralizedField = if (firstChar == '=' || firstChar == '+' || 
+                                   firstChar == '-' || firstChar == '@') {
+            "'$field"
         } else {
             field
+        }
+        
+        val needsQuoting = neutralizedField.contains(",") || 
+                          neutralizedField.contains("\"") || 
+                          neutralizedField.contains("\n") ||
+                          neutralizedField.contains("\r")
+        
+        return if (needsQuoting) {
+            "\"" + neutralizedField.replace("\"", "\"\"") + "\""
+        } else {
+            neutralizedField
         }
     }
 }

@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.util
 
+import java.time.Instant
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.Calendar
 
 /**
@@ -7,6 +10,8 @@ import java.util.Calendar
  * Replaces manual Calendar manipulation to prevent timezone/boundary bugs.
  */
 object TimePeriodUtils {
+
+    const val DAY_IN_MILLIS: Long = 24L * 60L * 60L * 1000L
 
     /**
      * getStartOfDay - Returns the start of the day (00:00:00.000) for a given timestamp.
@@ -23,15 +28,12 @@ object TimePeriodUtils {
     }
 
     /**
-     * getEndOfDay - Returns the end of the day (23:59:59.999) for a given timestamp.
+     * getEndOfDay - Returns the start of the next day (exclusive upper bound).
      */
     fun getEndOfDay(timestamp: Long): Long {
         val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(Calendar.HOUR_OF_DAY, 23)
-        cal.set(Calendar.MINUTE, 59)
-        cal.set(Calendar.SECOND, 59)
-        cal.set(Calendar.MILLISECOND, 999)
+        cal.timeInMillis = getStartOfDay(timestamp)
+        cal.add(Calendar.DAY_OF_MONTH, 1)
         return cal.timeInMillis
     }
 
@@ -88,16 +90,12 @@ object TimePeriodUtils {
     }
 
     /**
-     * getEndOfMonth - Returns the end of the month (Last Day, 23:59:59.999) for a given timestamp.
+     * getEndOfMonth - Returns the start of the next month (exclusive upper bound).
      */
     fun getEndOfMonth(timestamp: Long): Long {
         val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
-        cal.set(Calendar.HOUR_OF_DAY, 23)
-        cal.set(Calendar.MINUTE, 59)
-        cal.set(Calendar.SECOND, 59)
-        cal.set(Calendar.MILLISECOND, 999)
+        cal.timeInMillis = getStartOfMonth(timestamp)
+        cal.add(Calendar.MONTH, 1)
         return cal.timeInMillis
     }
 
@@ -133,7 +131,7 @@ object TimePeriodUtils {
     }
     /**
      * getWeekRange - Returns a pair of (start, end) timestamps for the current calendar week.
-     * Week starts on Monday 00:00:00.000 and ends on Sunday 23:59:59.999.
+     * Week starts on Monday 00:00:00.000 and ends at next Monday 00:00:00.000 (exclusive).
      * @param timestamp Reference time to determine which week
      * @param weekOffset 0 for current week, -1 for previous week, etc.
      */
@@ -143,7 +141,7 @@ object TimePeriodUtils {
         cal.firstDayOfWeek = Calendar.MONDAY
         
         // Apply week offset
-        cal.add(Calendar.WEEK_OF_YEAR, weekOffset)
+        cal.add(Calendar.DAY_OF_MONTH, weekOffset * 7)
         
         // Calculate Monday of this week
         val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
@@ -157,19 +155,19 @@ object TimePeriodUtils {
         cal.set(Calendar.MILLISECOND, 0)
         val startMs = cal.timeInMillis
         
-        // End of week: Sunday 23:59:59.999
-        cal.add(Calendar.DAY_OF_MONTH, 6) // Sunday
-        cal.set(Calendar.HOUR_OF_DAY, 23)
-        cal.set(Calendar.MINUTE, 59)
-        cal.set(Calendar.SECOND, 59)
-        cal.set(Calendar.MILLISECOND, 999)
+        // End of week: next Monday 00:00:00.000 (exclusive)
+        cal.add(Calendar.DAY_OF_MONTH, 7)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
         val endMs = cal.timeInMillis
         
         return startMs to endMs
     }
 
     /**
-     * getEndOfWeek - Returns the end of the week (Sunday 23:59:59.999) for a given timestamp.
+     * getStartOfQuarter - Returns the start of the quarter containing the given timestamp.
      */
     fun getStartOfQuarter(timestamp: Long): Long {
         val cal = Calendar.getInstance()
@@ -186,14 +184,28 @@ object TimePeriodUtils {
     }
 
     /**
-     * getEndOfQuarter - Returns the end of the quarter
+     * getEndOfQuarter - Returns the start of the next quarter (exclusive upper bound).
      */
     fun getEndOfQuarter(timestamp: Long): Long {
         val cal = Calendar.getInstance()
         cal.timeInMillis = getStartOfQuarter(timestamp)
         cal.add(Calendar.MONTH, 3)
-        cal.add(Calendar.MILLISECOND, -1)
         return cal.timeInMillis
+    }
+
+    /**
+     * getQuarterRange - Returns a pair of (start, end) timestamps for a quarter relative to current time.
+     * @param timestamp Reference time
+     * @param quarterOffset 0 for current quarter, -1 for previous quarter, etc.
+     */
+    fun getQuarterRange(timestamp: Long, quarterOffset: Int = 0): Pair<Long, Long> {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.add(Calendar.MONTH, quarterOffset * 3)
+        
+        val start = getStartOfQuarter(cal.timeInMillis)
+        val end = getEndOfQuarter(cal.timeInMillis)
+        return start to end
     }
 
     /**
@@ -212,18 +224,28 @@ object TimePeriodUtils {
     }
 
     /**
-     * getEndOfYear - Returns the end of the year (Dec 31st)
+     * getEndOfYear - Returns the start of the next year (exclusive upper bound).
      */
     fun getEndOfYear(timestamp: Long): Long {
         val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(Calendar.MONTH, Calendar.DECEMBER)
-        cal.set(Calendar.DAY_OF_MONTH, 31)
-        cal.set(Calendar.HOUR_OF_DAY, 23)
-        cal.set(Calendar.MINUTE, 59)
-        cal.set(Calendar.SECOND, 59)
-        cal.set(Calendar.MILLISECOND, 999)
+        cal.timeInMillis = getStartOfYear(timestamp)
+        cal.add(Calendar.YEAR, 1)
         return cal.timeInMillis
+    }
+
+    /**
+     * getYearRange - Returns a pair of (start, end) timestamps for a year relative to current time.
+     * @param timestamp Reference time
+     * @param yearOffset 0 for current year, -1 for previous year, etc.
+     */
+    fun getYearRange(timestamp: Long, yearOffset: Int = 0): Pair<Long, Long> {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.add(Calendar.YEAR, yearOffset)
+        
+        val start = getStartOfYear(cal.timeInMillis)
+        val end = getEndOfYear(cal.timeInMillis)
+        return start to end
     }
 
     /**
@@ -277,5 +299,74 @@ object TimePeriodUtils {
         val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
         cal.add(Calendar.MONTH, months)
         return cal.timeInMillis
+    }
+
+    /**
+     * addDays - Adds specified days to a timestamp.
+     */
+    fun addDays(timestamp: Long, days: Int): Long {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        cal.add(Calendar.DAY_OF_MONTH, days)
+        return cal.timeInMillis
+    }
+
+    /**
+     * addYears - Adds specified years to a timestamp.
+     */
+    fun addYears(timestamp: Long, years: Int): Long {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        cal.add(Calendar.YEAR, years)
+        return cal.timeInMillis
+    }
+
+    /**
+     * getYear - Returns calendar year for a timestamp.
+     */
+    fun getYear(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return cal.get(Calendar.YEAR)
+    }
+
+    /**
+     * getMonth - Returns calendar month for a timestamp (0=Jan, 11=Dec).
+     */
+    fun getMonth(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return cal.get(Calendar.MONTH)
+    }
+
+    /**
+     * getWeekOfYear - Returns week of year for a timestamp.
+     */
+    fun getWeekOfYear(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return cal.get(Calendar.WEEK_OF_YEAR)
+    }
+
+    /**
+     * getDayOfWeek - Returns day of week (Calendar constants: SUNDAY=1..SATURDAY=7).
+     */
+    fun getDayOfWeek(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return cal.get(Calendar.DAY_OF_WEEK)
+    }
+
+    /**
+     * getHourOfDay - Returns hour of day (0-23) for a timestamp.
+     */
+    fun getHourOfDay(timestamp: Long): Int {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return cal.get(Calendar.HOUR_OF_DAY)
+    }
+
+    /**
+     * daysBetween - Calendar-day difference between two timestamps.
+     * Time-of-day and DST differences are ignored by converting to LocalDate.
+     */
+    fun daysBetween(startTimestamp: Long, endTimestamp: Long): Int {
+        val zone = ZoneId.systemDefault()
+        val startDate = Instant.ofEpochMilli(startTimestamp).atZone(zone).toLocalDate()
+        val endDate = Instant.ofEpochMilli(endTimestamp).atZone(zone).toLocalDate()
+        return ChronoUnit.DAYS.between(startDate, endDate).toInt()
     }
 }

@@ -8,7 +8,6 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.yourname.expensetracker.domain.service.NotificationService
-import com.yourname.expensetracker.ui.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -85,9 +84,7 @@ class AndroidNotificationService @Inject constructor(
             return
         }
 
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setClass(context, MainActivity::class.java)
-            data = android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
@@ -112,7 +109,7 @@ class AndroidNotificationService @Inject constructor(
     }
 
     private fun mainActivityIntent(): PendingIntent {
-        val intent = Intent(context, MainActivity::class.java).apply {
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://home")).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
         return PendingIntent.getActivity(

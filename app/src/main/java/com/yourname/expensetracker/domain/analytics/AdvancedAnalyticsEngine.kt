@@ -36,7 +36,6 @@ class AdvancedAnalyticsEngine @Inject constructor(
     companion object {
         private const val TAG = "AdvancedAnalytics"
         private val DAY_NAMES = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-        private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000L
     }
     
     // ============================================================
@@ -75,52 +74,48 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     private fun calculateWeekRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfWeek(referenceDate)
-        val end = start + (7 * MILLIS_PER_DAY)
+        val end = start + (7 * TimePeriodUtils.DAY_IN_MILLIS)
         
         return Triple(start, end, "${DateFormatterUtils.monthDayShort().format(Date(start))} - ${DateFormatterUtils.monthDayShort().format(Date(end - 1))}")
     }
     
     private fun calculateMonthRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfMonth(referenceDate)
-        val end = TimePeriodUtils.getEndOfMonth(start) + 1
+        val end = TimePeriodUtils.getEndOfMonth(start)
         
         return Triple(start, end, DateFormatterUtils.monthYear().format(Date(start)))
     }
     
     private fun calculateQuarterRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfQuarter(referenceDate)
-        val end = TimePeriodUtils.getEndOfQuarter(start) + 1
+        val end = TimePeriodUtils.getEndOfQuarter(start)
         
-        val cal = Calendar.getInstance().apply { timeInMillis = start }
-        val quarterNum = (cal.get(Calendar.MONTH) / 3) + 1
-        val year = cal.get(Calendar.YEAR)
+        val quarterNum = (TimePeriodUtils.getMonth(start) / 3) + 1
+        val year = TimePeriodUtils.getYear(start)
         
         return Triple(start, end, "Q$quarterNum $year")
     }
     
     private fun calculateYearRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfYear(referenceDate)
-        val end = TimePeriodUtils.getEndOfYear(start) + 1
+        val end = TimePeriodUtils.getEndOfYear(start)
         
-        val cal = Calendar.getInstance().apply { timeInMillis = start }
-        val year = cal.get(Calendar.YEAR)
+        val year = TimePeriodUtils.getYear(start)
         
         return Triple(start, end, year.toString())
     }
     
     private fun getPreviousPeriodRange(period: AnalyticsPeriod, currentStartMs: Long): PeriodRange? {
         return try {
-            val cal = Calendar.getInstance().apply { timeInMillis = currentStartMs }
-            
-            when (period) {
-                AnalyticsPeriod.WEEK -> cal.add(Calendar.DAY_OF_MONTH, -7)
-                AnalyticsPeriod.MONTH -> cal.add(Calendar.MONTH, -1)
-                AnalyticsPeriod.QUARTER -> cal.add(Calendar.MONTH, -3)
-                AnalyticsPeriod.YEAR -> cal.add(Calendar.YEAR, -1)
+            val previousRef = when (period) {
+                AnalyticsPeriod.WEEK -> TimePeriodUtils.addDays(currentStartMs, -7)
+                AnalyticsPeriod.MONTH -> TimePeriodUtils.addMonths(currentStartMs, -1)
+                AnalyticsPeriod.QUARTER -> TimePeriodUtils.addMonths(currentStartMs, -3)
+                AnalyticsPeriod.YEAR -> TimePeriodUtils.addYears(currentStartMs, -1)
                 AnalyticsPeriod.CUSTOM -> return null
             }
             
-            getPeriodRange(period, cal.timeInMillis, computeComparison = false)
+            getPeriodRange(period, previousRef, computeComparison = false)
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "Failed to calculate previous period")
             null
@@ -237,7 +232,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
         
         // Get historical data for price trends (6 months back)
-        val historicalStart = period.startMs - (180L * MILLIS_PER_DAY)
+        val historicalStart = period.startMs - (180L * TimePeriodUtils.DAY_IN_MILLIS)
         val historicalExpensesDeferred = async { 
             expenseRepository.getExpensesSince(historicalStart) 
         }
@@ -327,7 +322,6 @@ class AdvancedAnalyticsEngine @Inject constructor(
             return@coroutineScope createEmptyPatternAnalysis(period)
         }
         
-        val cal = Calendar.getInstance()
         val totalSpent = purchases.sumOf { it.effectiveAmount }
         
         // Use arrays for better performance
@@ -336,8 +330,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val timeSlotStats = mutableMapOf<TimeSlot, Double>()
         
         for (purchase in purchases) {
-            val dayIndex = calendarDayToIndex(purchase.date, cal)
-            val hour = cal.get(Calendar.HOUR_OF_DAY)
+            val dayIndex = calendarDayToIndex(purchase.date)
+            val hour = TimePeriodUtils.getHourOfDay(purchase.date)
             
             dayTotals[dayIndex] += purchase.effectiveAmount
             dayCounts[dayIndex]++
@@ -451,13 +445,30 @@ class AdvancedAnalyticsEngine @Inject constructor(
         )
         
         // Daily spending analysis
-        val cal = Calendar.getInstance()
         val dailyTotals = purchases.groupBy { expense ->
-            cal.timeInMillis = expense.date
-            "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH) + 1}-${cal.get(Calendar.DAY_OF_MONTH)}"
+            val dayStart = TimePeriodUtils.getStartOfDay(expense.date)
+            "${TimePeriodUtils.getYear(dayStart)}-${TimePeriodUtils.getMonth(dayStart) + 1}-${TimePeriodUtils.getDayOfMonth(dayStart)}"
         }.mapValues { it.value.sumOf { e -> e.effectiveAmount } }
         
-        val periodDays = ((period.endMs - period.startMs) / MILLIS_PER_DAY).toInt().coerceAtLeast(1)
+        val periodDays = ((period.endMs - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt().coerceAtLeast(1)
+        
+        // === ANALYTICS DEBUG ===
+        val totalAmount = purchases.sumOf { it.effectiveAmount }
+        val averageDailySpend = totalAmount / periodDays
+        fun formatTimestamp(ms: Long): String = java.time.Instant.ofEpochMilli(ms)
+            .atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm"))
+
+        Timber.d("=== STATISTICAL INSIGHTS DEBUG ===")
+        Timber.d("Period: ${period.period} (${period.label})")
+        Timber.d("Period Range: ${formatTimestamp(period.startMs)} → ${formatTimestamp(period.endMs)}")
+        Timber.d("Period Days: $periodDays")
+        Timber.d("Transactions: ${purchases.size}")
+        Timber.d("Total: €$totalAmount")
+        Timber.d("Daily Totals: $dailyTotals")
+        Timber.d("Average Daily: €$averageDailySpend (€$totalAmount / $periodDays days)")
+        Timber.d("========================")
+        // === END DEBUG ===
         
         StatisticalInsights(
             period = period,
@@ -471,7 +482,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             modeTransaction = findMode(amounts),
             largestTransaction = purchases.maxByOrNull { it.amount },
             smallestTransaction = purchases.minByOrNull { it.amount },
-            averageDailySpend = if (dailyTotals.isNotEmpty()) dailyTotals.values.average() else 0.0,
+            averageDailySpend = averageDailySpend,
             maxDailySpend = dailyTotals.values.maxOrNull() ?: 0.0,
             daysWithSpending = dailyTotals.size,
             daysWithoutSpending = (periodDays - dailyTotals.size).coerceAtLeast(0)
@@ -503,9 +514,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
     // PRIVATE HELPER METHODS
     // ============================================================
     
-    private fun calendarDayToIndex(timestamp: Long, cal: Calendar): Int {
-        cal.timeInMillis = timestamp
-        return when (cal.get(Calendar.DAY_OF_WEEK)) {
+    private fun calendarDayToIndex(timestamp: Long): Int {
+        return when (TimePeriodUtils.getDayOfWeek(timestamp)) {
             Calendar.MONDAY -> 0
             Calendar.TUESDAY -> 1
             Calendar.WEDNESDAY -> 2
@@ -579,14 +589,14 @@ class AdvancedAnalyticsEngine @Inject constructor(
         period: PeriodRange
     ): Map<Long?, List<Double>> {
         val periodDuration = period.endMs - period.startMs
-        val periodDays = (periodDuration / MILLIS_PER_DAY).toInt()
+        val periodDays = (periodDuration / TimePeriodUtils.DAY_IN_MILLIS).toInt()
         if (periodDays <= 0) return emptyMap()
         
         // Determine how many days to actually show
         // If the period is current, we only show up to today to avoid a long "future" flat line
         val now = timeProvider.now()
         val daysPassed = if (now in period.startMs until period.endMs) {
-            ((now - period.startMs) / MILLIS_PER_DAY).toInt()
+            ((now - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
         } else {
             periodDays
         }
@@ -594,7 +604,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val dailyByCategory = mutableMapOf<Long?, DoubleArray>()
         
         for (purchase in purchases) {
-            val dayIndex = ((purchase.date - period.startMs) / MILLIS_PER_DAY).toInt()
+            val dayIndex = ((purchase.date - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
             
             if (dayIndex in 0 until periodDays) {
                 val catArray = dailyByCategory.getOrPut(purchase.categoryId) { 
@@ -638,7 +648,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         var totalDays = 0L
         
         for (i in 1 until sorted.size) {
-            val diff = (sorted[i] - sorted[i-1]) / MILLIS_PER_DAY
+            val diff = (sorted[i] - sorted[i-1]) / TimePeriodUtils.DAY_IN_MILLIS
             totalDays += diff.coerceAtLeast(0)
         }
         
@@ -650,7 +660,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         period: PeriodRange,
         avgDaysBetween: Double?
     ): MerchantVisitFrequency {
-        val periodDays = ((period.endMs - period.startMs) / MILLIS_PER_DAY).toInt()
+        val periodDays = ((period.endMs - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
         
         return when {
             periodDays <= 0 -> MerchantVisitFrequency.RARE
@@ -748,11 +758,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
     private fun calculateStreakCount(historicalExpenses: List<Expense>): Int {
         if (historicalExpenses.isEmpty()) return 0
         
-        val cal = Calendar.getInstance()
         // Use zero-padded months for proper string sorting: "2024-01", "2024-02", etc.
         val months = historicalExpenses.map { expense ->
-            cal.timeInMillis = expense.date
-            "%d-%02d".format(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
+            "%d-%02d".format(TimePeriodUtils.getYear(expense.date), TimePeriodUtils.getMonth(expense.date))
         }.distinct().sorted()
         
         if (months.size < 2) return 1
@@ -779,11 +787,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
     
     private fun calculateSpendingByDayOfWeek(transactions: List<Expense>): Map<Int, Double> {
-        val cal = Calendar.getInstance()
         val result = mutableMapOf<Int, Double>()
         
         for (tx in transactions) {
-            result[calendarDayToIndex(tx.date, cal)] = (result[calendarDayToIndex(tx.date, cal)] ?: 0.0) + tx.effectiveAmount
+            val dayIndex = calendarDayToIndex(tx.date)
+            result[dayIndex] = (result[dayIndex] ?: 0.0) + tx.effectiveAmount
         }
         
         return result
@@ -793,7 +801,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         if (dates.isEmpty() || avgDaysBetween == null || avgDaysBetween <= 0) return null
         
         val lastVisit = dates.max()
-        return lastVisit + (avgDaysBetween * MILLIS_PER_DAY).toLong()
+        return lastVisit + (avgDaysBetween * TimePeriodUtils.DAY_IN_MILLIS).toLong()
     }
     
     private fun detectSpendingPatterns(
@@ -809,10 +817,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
         // Weekend Warrior pattern
         val weekendTotal = dayTotals[5] + dayTotals[6]
         if (weekendTotal / totalSpent > 0.5) {
-            val cal = Calendar.getInstance()
             val weekendMerchants = purchases.filter { tx ->
-                cal.timeInMillis = tx.date
-                val dow = cal.get(Calendar.DAY_OF_WEEK)
+                val dow = TimePeriodUtils.getDayOfWeek(tx.date)
                 dow == Calendar.SATURDAY || dow == Calendar.SUNDAY
             }.map { it.merchant }.distinct()
             

@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import java.util.*
@@ -55,23 +56,35 @@ class CashFlowCalculator @Inject constructor(
         val allExpensesFlow = expenseRepository.getAllExpenses().first()
         val recurringPatterns = recurringExpenseEngine.getPatterns(allExpensesFlow)
         
-        // Group historical expenses by day manually
-        val expensesByDay = mutableMapOf<Int, MutableList<Expense>>()
+        // Group historical expenses by day key (yyyy-MM-dd) to avoid cross-year collisions
+        val expensesByDay = mutableMapOf<String, MutableList<Expense>>()
         for (expense in historicalExpenses) {
             calendar.timeInMillis = expense.date
-            val dayOfYear = calendar.get(Calendar.DAY_OF_YEAR)
-            val list = expensesByDay.getOrPut(dayOfYear) { mutableListOf() }
+            val dayKey = String.format(
+                Locale.US,
+                "%04d-%02d-%02d",
+                calendar.get(Calendar.YEAR),
+                calendar.get(Calendar.MONTH) + 1,
+                calendar.get(Calendar.DAY_OF_MONTH)
+            )
+            val list = expensesByDay.getOrPut(dayKey) { mutableListOf() }
             list.add(expense)
         }
         
         // Process each day
         calendar.time = startDate
-        while (calendar.time.before(endDate) || calendar.time == endDate) {
+        while (calendar.time.before(endDate)) {
             val currentDay = calendar.time
-            val dayOfYear = calendar.get(Calendar.DAY_OF_YEAR)
+            val dayKey = String.format(
+                Locale.US,
+                "%04d-%02d-%02d",
+                calendar.get(Calendar.YEAR),
+                calendar.get(Calendar.MONTH) + 1,
+                calendar.get(Calendar.DAY_OF_MONTH)
+            )
             
             // Get day's expenses
-            val dayExpenses = expensesByDay[dayOfYear] ?: mutableListOf()
+            val dayExpenses = expensesByDay[dayKey] ?: mutableListOf()
             
             // Split into income and expenses manually
             val incomeList = mutableListOf<Expense>()
@@ -86,9 +99,11 @@ class CashFlowCalculator @Inject constructor(
             
             // Calculate predicted recurring for this day
             val predictedRecurringList = mutableListOf<RecurringPattern>()
+            val currentDayStart = TimePeriodUtils.getStartOfDay(currentDay.time)
+            val currentDayEnd = TimePeriodUtils.getEndOfDay(currentDay.time)
             for (pattern in recurringPatterns) {
-                if (pattern.nextExpectedDate >= (currentDay.time - 86400000) && 
-                    pattern.nextExpectedDate <= (currentDay.time + 86400000)) {
+                val expectedDayStart = TimePeriodUtils.getStartOfDay(pattern.nextExpectedDate)
+                if (expectedDayStart >= currentDayStart && expectedDayStart < currentDayEnd) {
                     predictedRecurringList.add(pattern)
                 }
             }
@@ -141,7 +156,8 @@ class CashFlowCalculator @Inject constructor(
         val patterns = recurringExpenseEngine.getPatterns(allExpenses)
         
         val now = timeProvider.now()
-        val future = now + (daysAhead * 24 * 60 * 60 * 1000L)
+        val futureDayStart = TimePeriodUtils.getLastNDaysRange(now, -daysAhead).first
+        val future = TimePeriodUtils.getEndOfDay(futureDayStart)
         
         val upcomingList = mutableListOf<RecurringPattern>()
         for (pattern in patterns) {

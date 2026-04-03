@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.GroupTransactionCoordinator
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
+import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as GroupTransactionCoordinatorInterface
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -72,7 +73,8 @@ object DatabaseModule {
             AppDatabase.MIGRATION_47_48,
             AppDatabase.MIGRATION_48_49,
             AppDatabase.MIGRATION_49_50,
-            AppDatabase.MIGRATION_50_51
+            AppDatabase.MIGRATION_50_51,
+            AppDatabase.MIGRATION_51_52
         )
             .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5)
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
@@ -80,8 +82,9 @@ object DatabaseModule {
     }
     
     /**
-     * CRITICAL FIX (CRITICAL-2): Provides atomic transaction coordinator.
+     * HIGH-06 FIX: Provides atomic transaction coordinator.
      * Ensures multi-DAO operations are ACID compliant.
+     * Returns the interface type, implemented by data layer class.
      */
     @Provides
     @Singleton
@@ -90,7 +93,7 @@ object DatabaseModule {
         groupDao: ExpenseGroupDao,
         memberDao: GroupMemberDao,
         groupExpenseDao: GroupExpenseDao
-    ): GroupTransactionCoordinator {
+    ): GroupTransactionCoordinatorInterface {
         return GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao)
     }
 }

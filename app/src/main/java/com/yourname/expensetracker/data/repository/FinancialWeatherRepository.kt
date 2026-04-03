@@ -24,7 +24,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import javax.inject.Inject
 import javax.inject.Singleton
-import java.util.Calendar
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import timber.log.Timber
 
 enum class WeatherState {
@@ -147,7 +147,7 @@ class FinancialWeatherRepository @Inject constructor(
         // 1. Calculate Past Daily Cumulative Spend
         val now = timeProvider.now()
         val monthStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfMonth(now)
-        val currentDay = ((now - monthStart) / 86400000L).toInt()
+        val currentDay = TimePeriodUtils.daysBetween(monthStart, now).coerceAtLeast(0)
 
         val purchases = expenses.filter { 
             it.transactionType == TransactionType.PURCHASE && 
@@ -159,7 +159,7 @@ class FinancialWeatherRepository @Inject constructor(
         val startOfDay = monthStart 
         
         purchases.forEach { expense ->
-             val dayIndex = ((expense.date - startOfDay) / 86400000L).toInt()
+             val dayIndex = TimePeriodUtils.daysBetween(startOfDay, expense.date)
              if (dayIndex in 0..currentDay) {
                  amountByDay[dayIndex] += expense.effectiveAmount
              }
@@ -235,14 +235,14 @@ class FinancialWeatherRepository @Inject constructor(
     ): List<UpcomingItem> {
         val now = timeProvider.now()
         val startOfToday = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
-        val horizon = startOfToday + (31 * 86_400_000L) // Show next 31 days
+        val horizon = TimePeriodUtils.addDays(startOfToday, 31) // Exclusive
         
         val items = mutableListOf<com.yourname.expensetracker.domain.model.UpcomingItem>()
         
-        recurring.filter { it.nextExpectedDate in startOfToday..horizon }
+        recurring.filter { it.nextExpectedDate >= startOfToday && it.nextExpectedDate < horizon }
             .forEach { items.add(UpcomingItem.Recurring(it)) }
             
-        planned.filter { it.date in startOfToday..horizon }
+        planned.filter { it.date >= startOfToday && it.date < horizon }
             .forEach { items.add(UpcomingItem.Planned(it)) }
             
         return items.sortedBy { it.date }

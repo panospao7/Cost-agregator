@@ -583,18 +583,12 @@ class TransactionsViewModel @Inject constructor(
         return when (tab) {
             TransactionTab.TODAY -> {
                 val startOfDay = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
-                Pair(startOfDay, now)
+                Pair(startOfDay, com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfDay(now))
             }
             TransactionTab.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getWeekRange(now, 0).let { (start, end) -> start to end }
-            TransactionTab.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now, 0)
-            TransactionTab.QUARTER -> {
-                val startOfQuarter = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfQuarter(now)
-                Pair(startOfQuarter, now)
-            }
-            TransactionTab.YEAR -> {
-                val startOfYear = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfYear(now)
-                Pair(startOfYear, now)
-            }
+            TransactionTab.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 30)
+            TransactionTab.QUARTER -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 90)
+            TransactionTab.YEAR -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 365)
             TransactionTab.ALL -> Pair(0L, now)
         }
     }

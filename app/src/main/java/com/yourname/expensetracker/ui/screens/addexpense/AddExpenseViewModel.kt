@@ -27,6 +27,8 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlinx.coroutines.isActive
 import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 
 data class AddExpenseState(
     val merchant: String = "",
@@ -34,7 +36,7 @@ data class AddExpenseState(
     val selectedCategoryId: Long? = null,
     val paymentMethod: PaymentMethod = PaymentMethod.CASH,
     val transactionType: TransactionType = TransactionType.PURCHASE,
-    val date: Long = System.currentTimeMillis(),
+    val date: Long = 0L,
     val notes: String = "",
     val showNotes: Boolean = false,
     val showTransactionType: Boolean = false,
@@ -68,7 +70,7 @@ class AddExpenseViewModel @Inject constructor(
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AddExpenseState(date = timeProvider.now()))
@@ -233,13 +235,7 @@ class AddExpenseViewModel @Inject constructor(
 
         // Reject future dates — allow up to end of today to accommodate timezone edge cases
         val endOfToday = run {
-            val cal = java.util.Calendar.getInstance()
-            cal.timeInMillis = timeProvider.now()
-            cal.set(java.util.Calendar.HOUR_OF_DAY, 23)
-            cal.set(java.util.Calendar.MINUTE, 59)
-            cal.set(java.util.Calendar.SECOND, 59)
-            cal.set(java.util.Calendar.MILLISECOND, 999)
-            cal.timeInMillis
+            TimePeriodUtils.getEndOfDay(timeProvider.now()) - 1
         }
         if (currentState.date > endOfToday) {
             _state.update { it.copy(saveResult = SaveResult.Error("Date cannot be in the future")) }
@@ -326,7 +322,7 @@ class AddExpenseViewModel @Inject constructor(
 
 
     fun reset() {
-        _state.value = AddExpenseState()
+        _state.value = AddExpenseState(date = timeProvider.now())
     }
 
     fun setInitialValues(amount: String? = null, merchant: String? = null) {

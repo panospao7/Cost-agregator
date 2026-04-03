@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.debug
 
+import android.content.Context
 import com.yourname.expensetracker.data.database.entity.BlockedPackage
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
@@ -43,6 +44,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class DebugViewModelStressTest : ViewModelTestUtils() {
 
+    private lateinit var context: Context
     private lateinit var repository: NotificationRepository
     private lateinit var reviewQueueRepository: ReviewQueueRepository
     private lateinit var expenseRepository: ExpenseRepository
@@ -61,6 +63,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
     override fun setup() {
         super.setup()
 
+        context = mockk(relaxed = true)
         repository = mockk(relaxed = true)
         reviewQueueRepository = mockk(relaxed = true)
         expenseRepository = mockk(relaxed = true)
@@ -125,6 +128,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         val databaseBackupRepository = mockk<com.yourname.expensetracker.domain.backup.DatabaseBackupRepository>(relaxed = true)
 
         viewModel = DebugViewModel(
+            context = context,
             repository = repository,
             reviewQueueRepository = reviewQueueRepository,
             expenseRepository = expenseRepository,

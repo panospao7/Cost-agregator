@@ -14,16 +14,16 @@ interface WarrantyDao {
     fun getWarrantiesByStatus(status: WarrantyStatus): Flow<List<Warranty>>
 
     @Query("SELECT * FROM warranties WHERE warrantyEndDate > :currentTime AND status = 'ACTIVE' ORDER BY warrantyEndDate ASC")
-    fun getActiveWarranties(currentTime: Long = System.currentTimeMillis()): Flow<List<Warranty>>
+    fun getActiveWarranties(currentTime: Long): Flow<List<Warranty>>
 
-    @Query("SELECT * FROM warranties WHERE warrantyEndDate <= :futureTime AND warrantyEndDate > :currentTime AND status = 'ACTIVE' ORDER BY warrantyEndDate ASC")
+    @Query("SELECT * FROM warranties WHERE warrantyEndDate >= :currentTime AND warrantyEndDate < :futureTime AND status = 'ACTIVE' ORDER BY warrantyEndDate ASC")
     suspend fun getWarrantiesExpiringSoon(
         futureTime: Long,
-        currentTime: Long = System.currentTimeMillis()
+        currentTime: Long
     ): List<Warranty>
 
     @Query("SELECT * FROM warranties WHERE warrantyEndDate < :currentTime AND status = 'ACTIVE'")
-    suspend fun getRecentlyExpiredWarranties(currentTime: Long = System.currentTimeMillis()): List<Warranty>
+    suspend fun getRecentlyExpiredWarranties(currentTime: Long): List<Warranty>
 
     @Query("SELECT * FROM warranties WHERE receiptId = :receiptId")
     suspend fun getWarrantyByReceiptId(receiptId: Long): Warranty?
@@ -47,11 +47,11 @@ interface WarrantyDao {
     suspend fun updateWarrantyStatus(
         warrantyId: Long,
         status: WarrantyStatus,
-        updatedAt: Long = System.currentTimeMillis()
+        updatedAt: Long
     )
 
     @Query("SELECT COUNT(*) FROM warranties WHERE status = 'ACTIVE' AND warrantyEndDate > :currentTime")
-    suspend fun getActiveWarrantyCount(currentTime: Long = System.currentTimeMillis()): Int
+    suspend fun getActiveWarrantyCount(currentTime: Long): Int
 
     @Query("SELECT SUM(CASE WHEN expenseId IS NOT NULL THEN (SELECT amount FROM expenses WHERE id = expenseId) ELSE 0 END) FROM warranties WHERE status = 'ACTIVE'")
     suspend fun getTotalProtectedValue(): Double?

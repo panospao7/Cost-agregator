@@ -215,10 +215,14 @@ class ReceiptOcrService @Inject constructor(
             
             return@withContext text
         } catch (e: Exception) {
-            Timber.w("PDF text extraction failed: ${e.message}")
+            // MED-01 FIX: Add logging instead of silent catch
+            Timber.e(e, "PDF text extraction failed for $pdfUri")
             return@withContext ""
         } finally {
-            try { document?.close() } catch (_: Exception) {}
+            // MED-01 FIX: Add logging to catch blocks
+            try { document?.close() } catch (e: Exception) { 
+                Timber.e(e, "Failed to close PDF document")
+            }
             if (tempFile.exists()) tempFile.delete()
         }
     }
@@ -270,27 +274,37 @@ class ReceiptOcrService @Inject constructor(
             pfd = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
             renderer = PdfRenderer(pfd)
             
+            // HIGH-04 FIX: Use try-finally for page resource safety
             val page = renderer.openPage(0)
-            val scale = 1024f / page.width
-            val bitmap = Bitmap.createBitmap(
-                1024,
-                (page.height * scale).toInt(),
-                Bitmap.Config.ARGB_8888
-            )
-            
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-            
-            val savedPath = saveReceiptImage(bitmap)
-            bitmap.recycle()
-            
-            return@withContext savedPath
+            var bitmap: Bitmap? = null
+            try {
+                val scale = 1024f / page.width
+                bitmap = Bitmap.createBitmap(
+                    1024,
+                    (page.height * scale).toInt(),
+                    Bitmap.Config.ARGB_8888
+                )
+                
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                
+                val savedPath = saveReceiptImage(bitmap)
+                return@withContext savedPath
+            } finally {
+                page.close()
+                bitmap?.recycle()
+            }
         } catch (e: Exception) {
-            Timber.w("Thumbnail rendering failed: ${e.message}")
+            // MED-01 FIX: Add logging to catch blocks  
+            Timber.e(e, "Thumbnail rendering failed for PDF: $pdfUri")
             return@withContext ""
         } finally {
-            try { renderer?.close() } catch (_: Exception) {}
-            try { pfd?.close() } catch (_: Exception) {}
+            // MED-01 FIX: Add logging to catch blocks
+            try { renderer?.close() } catch (e: Exception) { 
+                Timber.e(e, "Failed to close PDF renderer during thumbnail")
+            }
+            try { pfd?.close() } catch (e: Exception) { 
+                Timber.e(e, "Failed to close ParcelFileDescriptor during thumbnail")
+            }
             if (tempFile.exists()) tempFile.delete()
         }
     }
@@ -325,49 +339,52 @@ class ReceiptOcrService @Inject constructor(
             var verticalOffset = 0
             
             for (i in 0 until pagesToProcess) {
+                // HIGH-04 FIX: Wrap openPage in try-finally for resource safety
                 val page = renderer.openPage(i)
-                
-                // Render page to high-quality Bitmap (OCR prefers ~200-300 DPI equivalent)
-                // 1024 width is our standard for OCR in loadAndCorrectBitmap
-                val scale = 1024f / page.width
-                val bitmapWidth = 1024
-                val bitmapHeight = (page.height * scale).toInt()
-                
-                val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                
                 try {
-                    // Save first page as JPG for UI preview/record
-                    if (i == 0) {
-                        savedThumbnailPath = saveReceiptImage(bitmap)
-                    }
+                    // Render page to high-quality Bitmap (OCR prefers ~200-300 DPI equivalent)
+                    // 1024 width is our standard for OCR in loadAndCorrectBitmap
+                    val scale = 1024f / page.width
+                    val bitmapWidth = 1024
+                    val bitmapHeight = (page.height * scale).toInt()
                     
-                    // Run OCR on this page
-                    val inputImage = InputImage.fromBitmap(bitmap, 0)
-                    val visionText = recognizeText(inputImage)
+                    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     
-                    // Add full text
-                    allFullText.append(visionText.text).append("\n\n")
-                    
-                    // Add blocks with offset (Virtual Long Page strategy)
-                    visionText.textBlocks.forEach { block ->
-                        allBlocks.add(
-                            TextBlock(
-                                text = block.text,
-                                confidence = block.lines.firstOrNull()?.confidence,
-                                left = block.boundingBox?.left ?: 0,
-                                top = (block.boundingBox?.top ?: 0) + verticalOffset,
-                                right = block.boundingBox?.right ?: 0,
-                                bottom = (block.boundingBox?.bottom ?: 0) + verticalOffset
+                    try {
+                        // Save first page as JPG for UI preview/record
+                        if (i == 0) {
+                            savedThumbnailPath = saveReceiptImage(bitmap)
+                        }
+                        
+                        // Run OCR on this page
+                        val inputImage = InputImage.fromBitmap(bitmap, 0)
+                        val visionText = recognizeText(inputImage)
+                        
+                        // Add full text
+                        allFullText.append(visionText.text).append("\n\n")
+                        
+                        // Add blocks with offset (Virtual Long Page strategy)
+                        visionText.textBlocks.forEach { block ->
+                            allBlocks.add(
+                                TextBlock(
+                                    text = block.text,
+                                    confidence = block.lines.firstOrNull()?.confidence,
+                                    left = block.boundingBox?.left ?: 0,
+                                    top = (block.boundingBox?.top ?: 0) + verticalOffset,
+                                    right = block.boundingBox?.right ?: 0,
+                                    bottom = (block.boundingBox?.bottom ?: 0) + verticalOffset
+                                )
                             )
-                        )
+                        }
+                        
+                        verticalOffset += bitmapHeight
+                        
+                    } finally {
+                        bitmap.recycle() // CRITICAL: Release memory immediately
                     }
-                    
-                    verticalOffset += bitmapHeight
-                    
                 } finally {
-                    bitmap.recycle() // CRITICAL: Release memory immediately
-                    page.close()
+                    page.close() // HIGH-04 FIX: Always close page even if bitmap/render fails
                 }
             }
             
@@ -381,8 +398,13 @@ class ReceiptOcrService @Inject constructor(
             Timber.e(e, "PDF processing failed for $pdfUri")
             throw IllegalStateException("Failed to scan PDF: ${e.message}", e)
         } finally {
-            try { renderer?.close() } catch (_: Exception) {}
-            try { pfd?.close() } catch (_: Exception) {}
+            // MED-01 FIX: Add logging to catch blocks
+            try { renderer?.close() } catch (e: Exception) { 
+                Timber.e(e, "Failed to close PDF renderer in processPdfWithOcr")
+            }
+            try { pfd?.close() } catch (e: Exception) { 
+                Timber.e(e, "Failed to close ParcelFileDescriptor in processPdfWithOcr")
+            }
             if (tempFile.exists()) tempFile.delete()
         }
     }
@@ -548,7 +570,9 @@ class ReceiptOcrService @Inject constructor(
     fun deleteImage(path: String) {
         try {
             File(path).delete()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // MED-01 FIX: Add logging to catch blocks
+            Timber.w(e, "Failed to delete receipt image at path: $path")
         }
     }
 

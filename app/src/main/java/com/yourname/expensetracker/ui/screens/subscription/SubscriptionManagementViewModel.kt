@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -56,7 +58,8 @@ data class PriceChangeInfo(
 class SubscriptionManagementViewModel @Inject constructor(
     private val subscriptionDao: ManualRecurringExpenseDao,
     private val priceHistoryDao: SubscriptionPriceHistoryDao,
-    private val usageDao: SubscriptionUsageDao
+    private val usageDao: SubscriptionUsageDao,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(SubscriptionManagementUiState())
@@ -130,16 +133,16 @@ class SubscriptionManagementViewModel @Inject constructor(
         
         // Calculate appropriate lookback window based on subscription frequency
         val lookbackWindowMs = when (subscription.frequency) {
-            RecurrenceFrequency.WEEKLY -> 7L * 24 * 60 * 60 * 1000      // 1 week
-            RecurrenceFrequency.BIWEEKLY -> 14L * 24 * 60 * 60 * 1000  // 2 weeks
-            RecurrenceFrequency.MONTHLY -> 30L * 24 * 60 * 60 * 1000     // 1 month
-            RecurrenceFrequency.QUARTERLY -> 90L * 24 * 60 * 60 * 1000   // 3 months
-            RecurrenceFrequency.SEMI_ANNUALLY -> 180L * 24 * 60 * 60 * 1000 // 6 months
-            RecurrenceFrequency.ANNUALLY -> 365L * 24 * 60 * 60 * 1000   // 1 year
-            RecurrenceFrequency.IRREGULAR -> 30L * 24 * 60 * 60 * 1000    // Default to 1 month
+            RecurrenceFrequency.WEEKLY -> 7L * TimePeriodUtils.DAY_IN_MILLIS      // 1 week
+            RecurrenceFrequency.BIWEEKLY -> 14L * TimePeriodUtils.DAY_IN_MILLIS  // 2 weeks
+            RecurrenceFrequency.MONTHLY -> 30L * TimePeriodUtils.DAY_IN_MILLIS     // 1 month
+            RecurrenceFrequency.QUARTERLY -> 90L * TimePeriodUtils.DAY_IN_MILLIS   // 3 months
+            RecurrenceFrequency.SEMI_ANNUALLY -> 180L * TimePeriodUtils.DAY_IN_MILLIS // 6 months
+            RecurrenceFrequency.ANNUALLY -> 365L * TimePeriodUtils.DAY_IN_MILLIS   // 1 year
+            RecurrenceFrequency.IRREGULAR -> 30L * TimePeriodUtils.DAY_IN_MILLIS    // Default to 1 month
         }
-        
-        val windowStart = System.currentTimeMillis() - lookbackWindowMs
+
+        val windowStart = timeProvider.now() - lookbackWindowMs
         val usageCount = usageDao.getUsageCountSince(subscriptionId, windowStart)
         
         // Calculate cost per use with frequency context
@@ -189,7 +192,7 @@ class SubscriptionManagementViewModel @Inject constructor(
             try {
                 val usage = com.yourname.expensetracker.data.database.entity.SubscriptionUsage(
                     subscriptionId = subscriptionId,
-                    usedAt = System.currentTimeMillis()
+                    usedAt = timeProvider.now()
                 )
                 usageDao.insert(usage)
                 
