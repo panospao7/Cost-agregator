@@ -5,9 +5,11 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
+import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
@@ -20,12 +22,14 @@ import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+import com.yourname.expensetracker.domain.subscription.NotificationSubscriptionDetector
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.junit.Test
 import org.junit.Assert.assertFalse
@@ -38,12 +42,14 @@ class NotificationProcessingPipelineReliabilityTest {
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
     private val sourceStatsDao = mockk<SourceStatsDao>(relaxed = true)
+    private val subscriptionCandidateDao = mockk<SubscriptionCandidateDao>(relaxed = true)
     private val parserRegistry = mockk<AppParserRegistry>(relaxed = true)
     private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private val hybridClassifier = mockk<HybridExpenseClassifier>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
     private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
+    private val anomalyAlertOrchestrator = mockk<AnomalyAlertOrchestrator>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val directionDetector = mockk<TransferDirectionDetector>(relaxed = true)
     private val analytics = mockk<TransferDirectionAnalytics>(relaxed = true)
@@ -52,7 +58,9 @@ class NotificationProcessingPipelineReliabilityTest {
     private val generateTransactionInsightUseCase = mockk<GenerateTransactionInsightUseCase>(relaxed = true)
     private val dashboardFollowThroughEngine = mockk<DashboardFollowThroughEngine>(relaxed = true)
     private val recommendationRepository = mockk<RecommendationRepository>(relaxed = true)
+    private val subscriptionDetector = mockk<NotificationSubscriptionDetector>(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
+    private val applicationScope = TestScope(testDispatcher)
 
     private val pipeline = NotificationProcessingPipeline(
         database = database,
@@ -60,12 +68,14 @@ class NotificationProcessingPipelineReliabilityTest {
         expenseDao = expenseDao,
         pendingReviewDao = pendingReviewDao,
         sourceStatsDao = sourceStatsDao,
+        subscriptionCandidateDao = subscriptionCandidateDao,
         parserRegistry = parserRegistry,
         confidenceRouter = confidenceRouter,
         merchantNormalizer = merchantNormalizer,
         hybridClassifier = hybridClassifier,
         classifier = classifier,
         budgetMonitor = budgetMonitor,
+        anomalyAlertOrchestrator = anomalyAlertOrchestrator,
         timeProvider = timeProvider,
         directionDetector = directionDetector,
         analytics = analytics,
@@ -74,7 +84,8 @@ class NotificationProcessingPipelineReliabilityTest {
         generateTransactionInsightUseCase = generateTransactionInsightUseCase,
         dashboardFollowThroughEngine = dashboardFollowThroughEngine,
         recommendationRepository = recommendationRepository,
-        ioDispatcher = testDispatcher
+        subscriptionDetector = subscriptionDetector,
+        applicationScope = applicationScope
     )
 
     @Test

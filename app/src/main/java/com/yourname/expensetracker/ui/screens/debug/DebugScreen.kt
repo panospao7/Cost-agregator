@@ -40,10 +40,7 @@ import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.R
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,6 +50,7 @@ fun DebugScreen(
     viewModel: DebugViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val notifications by viewModel.filteredNotifications.collectAsState()
     val count by viewModel.notificationCount.collectAsState()
     val packages by viewModel.packages.collectAsState()
@@ -973,6 +971,7 @@ fun MlStatsSection(
 @Composable
 private fun DatabaseManagementSection(viewModel: DebugViewModel) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val databaseStats by viewModel.databaseStats.collectAsState()
     val exportResult by viewModel.databaseExportResult.collectAsState()
     val importResult by viewModel.databaseImportResult.collectAsState()
@@ -987,12 +986,20 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
         when (exportResult) {
             is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success -> {
                 val path = (exportResult as com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success).filePath
-                android.widget.Toast.makeText(context, "✅ Exported to: $path", android.widget.Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(
+                    context,
+                    context.getString(R.string.debug_toast_export_success, path),
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
                 viewModel.clearExportResult()
             }
             is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error -> {
                 val message = (exportResult as com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error).message
-                android.widget.Toast.makeText(context, "❌ Export failed: $message", android.widget.Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(
+                    context,
+                    context.getString(R.string.debug_toast_export_failed, message),
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
                 viewModel.clearExportResult()
             }
             else -> {}
@@ -1116,7 +1123,7 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Text("Export", fontSize = 12.sp)
+                        Text(stringResource(R.string.debug_export), fontSize = 12.sp)
                     }
                 }
                 
@@ -1212,28 +1219,26 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
                 }
                 
                 csvContent?.let { content ->
-                    CoroutineScope(Dispatchers.IO).launch {
+                    scope.launch {
                         val importer = com.yourname.expensetracker.util.CsvExpenseImporter(context)
                         val result = importer.importFromContent(content) { progress, total ->
                             // Could update UI with progress here
                         }
-                        
-                        withContext(Dispatchers.Main) {
-                            when (result) {
-                                is com.yourname.expensetracker.util.CsvExpenseImporter.ImportResult.Success -> {
-                                    android.widget.Toast.makeText(
-                                        context, 
-                                        "✅ Imported ${result.imported} expenses (${result.errors} errors)", 
-                                        android.widget.Toast.LENGTH_LONG
-                                    ).show()
-                                }
-                                is com.yourname.expensetracker.util.CsvExpenseImporter.ImportResult.Error -> {
-                                    android.widget.Toast.makeText(
-                                        context, 
-                                        "❌ Import failed: ${result.message}", 
-                                        android.widget.Toast.LENGTH_LONG
-                                    ).show()
-                                }
+
+                        when (result) {
+                            is com.yourname.expensetracker.util.CsvExpenseImporter.ImportResult.Success -> {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(R.string.debug_import_success_format, result.imported, result.errors),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                            is com.yourname.expensetracker.util.CsvExpenseImporter.ImportResult.Error -> {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(R.string.debug_import_failed_format, result.message),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
                             }
                         }
                     }
@@ -1404,7 +1409,7 @@ private fun CsvImportDialog(
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(
-                                "Selected:",
+                                stringResource(R.string.debug_dialog_selected),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

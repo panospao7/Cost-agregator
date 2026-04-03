@@ -25,6 +25,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 data class BudgetVsActualItem(
@@ -64,6 +65,8 @@ data class AnalyticsState(
     val locationInsights: List<PlaceInsight> = emptyList(),
     val areaSpending: List<AreaSpending> = emptyList(),
     val travelInsight: TravelInsight? = null,
+    // F13: Spending Personality Profile
+    val personalityProfile: SpendingPersonalityProfile? = null,
     val isLoading: Boolean = true
 )
 
@@ -80,26 +83,58 @@ class AnalyticsViewModel @Inject constructor(
     private val locationInsightsEngine: LocationInsightsEngine,
     private val areaSpendingEngine: AreaSpendingEngine,
     private val travelDetectionEngine: TravelDetectionEngine,
+    private val spendingPersonalityClassifier: SpendingPersonalityClassifier,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
+
+    private data class PeriodCacheKey(
+        val period: TimePeriod,
+        val startMs: Long,
+        val endMs: Long,
+        val categoriesHash: Int
+    )
+
+    private data class AdvResult(
+        val cats: List<EnhancedCategoryAnalytics>,
+        val merchs: List<EnhancedMerchantAnalytics>,
+        val patterns: SpendingPatternAnalysis?,
+        val stats: StatisticalInsights?
+    )
+
+    private val analyticsCache = ConcurrentHashMap<PeriodCacheKey, AnalyticsState>()
+    private val advancedCache = ConcurrentHashMap<PeriodCacheKey, AdvResult>()
 
     private val _selectedPeriod = MutableStateFlow(TimePeriod.MONTH)
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val state: StateFlow<AnalyticsState> = combine(
-        expenseRepository.getAllExpenses().catch { emit(emptyList()) },
         categoryRepository.allCategories.catch { emit(emptyList()) },
-        _selectedPeriod
-    ) { expenses, categories, period ->
-        Triple(expenses, categories, period)
+        _selectedPeriod,
+        expenseRepository.getTotalSpent().map { it ?: 0.0 }
+    ) { categories, period, _ ->
+        Pair(categories, period)
     }
     .debounce(300)
-    .flatMapLatest { (expenses, categories, period) ->
+    .flatMapLatest { (categories, period) ->
         flow {
             emit(AnalyticsState(isLoading = true, selectedPeriod = period))
-            // Filter out isNotMine expenses from analytics
-            val filteredExpenses = expenses.filter { !it.isNotMine }
-            val result = computeAnalyticsInternal(filteredExpenses, categories, period)
+            val now = timeProvider.now()
+            val (currentStart, currentEnd) = getPeriodRange(period, now)
+            val cacheKey = PeriodCacheKey(
+                period = period,
+                startMs = currentStart,
+                endMs = currentEnd,
+                categoriesHash = categories.hashCode()
+            )
+
+            val cached = analyticsCache[cacheKey]
+            if (cached != null) {
+                emit(cached.copy(isLoading = false, selectedPeriod = period))
+                return@flow
+            }
+
+            val result = computeAnalyticsInternal(categories, period, currentStart, currentEnd, now, cacheKey)
+            analyticsCache[cacheKey] = result
             emit(result)
         }
     }
@@ -115,23 +150,36 @@ class AnalyticsViewModel @Inject constructor(
     }
 
     private suspend fun computeAnalyticsInternal(
-        allExpenses: List<Expense>,
         categories: List<Category>,
-        period: TimePeriod
+        period: TimePeriod,
+        currentStart: Long,
+        currentEnd: Long,
+        now: Long,
+        cacheKey: PeriodCacheKey
     ): AnalyticsState {
-        val purchases = allExpenses.filter { it.transactionType == TransactionType.PURCHASE }
-        val now = timeProvider.now()
+        val purchases = expenseRepository.getExpensesBetween(currentStart, currentEnd)
+            .asSequence()
+            .filter { it.transactionType == TransactionType.PURCHASE }
+            .toList()
+
+        val fullWindowStart = when (period) {
+            TimePeriod.ALL -> 0L
+            else -> TimePeriodUtils.getLastNDaysRange(now, 365).first
+        }
+        val allExpenses = expenseRepository.getExpensesBetween(fullWindowStart, currentEnd)
+
         val categoryMap = categories.associateBy { it.id }
 
-        // Calculate date ranges
-        val (currentStart, currentEnd) = getPeriodRange(period, now)
         val periodLength = currentEnd - currentStart
         val previousStart = currentStart - periodLength
         val previousEnd = currentStart
 
-        // Current period expenses
-        val currentExpenses = purchases.filter { it.date >= currentStart && it.date < currentEnd }
-        val previousExpenses = purchases.filter { it.date >= previousStart && it.date < previousEnd }
+        // Current/previous period expenses
+        val currentExpenses = purchases
+        val previousExpenses = expenseRepository.getExpensesBetween(previousStart, previousEnd)
+            .asSequence()
+            .filter { it.transactionType == TransactionType.PURCHASE }
+            .toList()
 
         // Use Repository for Totals and Trends
         // We collect ONE item from the flow since we are in a triggered block
@@ -297,13 +345,7 @@ class AnalyticsViewModel @Inject constructor(
             )
         }
 
-        data class AdvResult(
-            val cats: List<EnhancedCategoryAnalytics>,
-            val merchs: List<EnhancedMerchantAnalytics>,
-            val patterns: SpendingPatternAnalysis?,
-            val stats: StatisticalInsights?
-        )
-        val advResult = coroutineScope {
+        val advResult = advancedCache[cacheKey] ?: coroutineScope {
             val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(advRange) }
             val merchDeferred = async { advancedAnalyticsEngine.getMerchantAnalytics(advRange, limit = 15) }
             val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(advRange) }
@@ -313,7 +355,7 @@ class AnalyticsViewModel @Inject constructor(
                 merchs = try { merchDeferred.await() } catch (_: Exception) { emptyList() },
                 patterns = try { patternsDeferred.await() } catch (_: Exception) { null },
                 stats = try { statsDeferred.await() } catch (_: Exception) { null }
-            )
+            ).also { advancedCache[cacheKey] = it }
         }
 
         // ── Day-of-week pattern (period-aware, computed from currentExpenses) ─
@@ -375,6 +417,13 @@ class AnalyticsViewModel @Inject constructor(
         val areaSpending = areaSpendingEngine.compute(purchases)
         val travelInsight = travelDetectionEngine.compute(purchases)
 
+        // ── F13: Spending Personality Profile ────────────────────────────────
+        val personalityProfile = try {
+            spendingPersonalityClassifier.classify()
+        } catch (e: Exception) {
+            null
+        }
+
         return AnalyticsState(
             selectedPeriod = period,
             currentTotal = currentTotal,
@@ -401,6 +450,7 @@ class AnalyticsViewModel @Inject constructor(
             locationInsights = locationInsights,
             areaSpending = areaSpending,
             travelInsight = travelInsight,
+            personalityProfile = personalityProfile,
             isLoading = false
         )
     }

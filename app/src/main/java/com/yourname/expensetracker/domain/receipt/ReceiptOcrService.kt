@@ -8,6 +8,7 @@ import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
@@ -31,7 +32,9 @@ import kotlin.coroutines.resumeWithException
 data class OcrResult(
     val fullText: String,
     val blocks: List<TextBlock>,
-    val savedImagePath: String
+    val savedImagePath: String,
+    // F1: Warranty extraction result
+    val warrantyExtractionResult: com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult? = null
 )
 
 data class TextBlock(
@@ -44,11 +47,10 @@ data class TextBlock(
 )
 
 /**
- * CRITICAL FIX (CRITICAL-3): Added Mutex for thread-safe bitmap processing.
- * 
- * Prevents concurrent access issues and use-after-free during batch processing.
- * As a Singleton, this service could be called from multiple coroutines simultaneously.
- * The mutex ensures bitmap lifecycle operations are serialized per critical section.
+ * OCR service for images and PDFs.
+ *
+ * Throughput optimization: only serializes access to the shared ML recognizer.
+ * Decode/rotate/save steps are allowed to run in parallel for batch imports.
  */
 @Singleton
 class ReceiptOcrService @Inject constructor(
@@ -60,13 +62,24 @@ class ReceiptOcrService @Inject constructor(
     }
     
     /**
-     * CRITICAL: Mutex to prevent concurrent bitmap operations.
-     * Ensures thread-safe access during multi-receipt batch processing.
+     * Serialize recognizer usage only (shared native ML resources).
      */
-    private val bitmapMutex = Mutex()
+    private val recognizerMutex = Mutex()
     
-    // Reverting to DEFAULT_OPTIONS as Builder might not be available in current dependency version
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    // Lazily recreated so resources can be released safely via close().
+    @Volatile
+    private var recognizer: TextRecognizer? = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+    private fun getRecognizer(): TextRecognizer {
+        val existing = recognizer
+        if (existing != null) return existing
+
+        return synchronized(this) {
+            recognizer ?: TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS).also {
+                recognizer = it
+            }
+        }
+    }
 
     companion object {
         private val ALLOWED_IMAGE_TYPES = setOf(
@@ -114,11 +127,8 @@ class ReceiptOcrService @Inject constructor(
     /**
      * Process an image URI and return OCR results.
      * Also saves a compressed copy of the image for future reference.
-     * 
-     * CRITICAL FIX (CRITICAL-3): Wrapped in mutex for thread-safe bitmap processing.
-     * Prevents concurrent access and use-after-free during batch operations.
      */
-    suspend fun processImage(imageUri: Uri): OcrResult = bitmapMutex.withLock {
+    suspend fun processImage(imageUri: Uri): OcrResult {
         // 1. Load and prepare the image (throws if fail)
         val bitmap = loadAndCorrectBitmap(imageUri) ?: throw IllegalStateException("Failed to load and correct image: $imageUri")
 
@@ -412,15 +422,17 @@ class ReceiptOcrService @Inject constructor(
     private suspend fun recognizeText(
         image: InputImage
     ): com.google.mlkit.vision.text.Text {
-        return kotlinx.coroutines.withTimeout(15000) { // Fix 4.17: 15s timeout
-            suspendCancellableCoroutine { continuation ->
-                recognizer.process(image)
-                    .addOnSuccessListener { text ->
-                        continuation.resume(text)
-                    }
-                    .addOnFailureListener { e ->
-                        continuation.resumeWithException(e)
-                    }
+        return recognizerMutex.withLock {
+            kotlinx.coroutines.withTimeout(15000) { // Fix 4.17: 15s timeout
+                suspendCancellableCoroutine { continuation ->
+                    getRecognizer().process(image)
+                        .addOnSuccessListener { text ->
+                            continuation.resume(text)
+                        }
+                        .addOnFailureListener { e ->
+                            continuation.resumeWithException(e)
+                        }
+                }
             }
         }
     }
@@ -573,6 +585,18 @@ class ReceiptOcrService @Inject constructor(
         } catch (e: Exception) {
             // MED-01 FIX: Add logging to catch blocks
             Timber.w(e, "Failed to delete receipt image at path: $path")
+        }
+    }
+
+    /**
+     * Release ML Kit recognizer resources.
+     *
+     * Safe to call multiple times; a new recognizer will be created lazily on next OCR request.
+     */
+    fun close() {
+        synchronized(this) {
+            recognizer?.close()
+            recognizer = null
         }
     }
 

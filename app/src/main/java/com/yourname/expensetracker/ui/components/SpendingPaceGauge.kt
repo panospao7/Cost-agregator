@@ -21,6 +21,8 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.yourname.expensetracker.R
 
 @Composable
@@ -51,8 +53,14 @@ fun SpendingPaceGauge(
         PaceStatus.NO_BASELINE -> "Calculating..."
     }
 
+    val gaugeSummary = remember(pace.pacePercentage, pace.daysElapsed, pace.daysInMonth, statusLabel) {
+        "Spending pace ${pace.pacePercentage.toInt()} percent, $statusLabel, day ${pace.daysElapsed} of ${pace.daysInMonth}."
+    }
+
     Column(
-        modifier = modifier,
+        modifier = modifier.semantics(mergeDescendants = true) {
+            contentDescription = gaugeSummary
+        },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(

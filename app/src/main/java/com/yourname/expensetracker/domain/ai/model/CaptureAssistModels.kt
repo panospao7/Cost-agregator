@@ -43,6 +43,21 @@ data class ReceiptAssistSuggestion(
     val notes: List<String> = emptyList()
 )
 
+sealed interface AiServiceResult<out T> {
+    data class Success<T>(val value: T) : AiServiceResult<T>
+    data class Failure(val error: AiServiceError) : AiServiceResult<Nothing>
+}
+
+sealed interface AiServiceError {
+    data object Timeout : AiServiceError
+    data object Offline : AiServiceError
+    data class HttpError(val code: Int, val message: String? = null) : AiServiceError
+    data object SslError : AiServiceError
+    data class ParseError(val message: String? = null) : AiServiceError
+    data class Disabled(val reason: String) : AiServiceError
+    data class Unknown(val message: String? = null) : AiServiceError
+}
+
 sealed interface ReceiptAssistGenerationResult {
     data class Success(
         val suggestion: ReceiptAssistSuggestion,

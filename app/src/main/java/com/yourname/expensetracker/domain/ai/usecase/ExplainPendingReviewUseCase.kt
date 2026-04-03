@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
@@ -96,23 +98,25 @@ class ExplainPendingReviewUseCase @Inject constructor(
 
         // ── 5b. Generate ─────────────────────────────────────────────────────
         try {
-            val explanation = reviewExplanationService.generate(input)
+            val serviceResult = reviewExplanationService.generate(input)
 
-            val finalEntity = if (explanation != null) {
-                baseEntity.copy(
-                    status          = AiArtifactStatus.READY,
-                    summaryText     = explanation.headline,
-                    explanationText = explanation.body.withRouteDiagnostics(routeDecision),
-                    updatedAt       = timeProvider.now()
-                )
-            } else {
-                // No-op provider or provider declined — mark failed so we don't retry
-                // until the user explicitly requests again.
-                baseEntity.copy(
-                    status       = AiArtifactStatus.FAILED,
-                    errorMessage = failureMessage(routeDecision.reason, routeDecision),
-                    updatedAt    = timeProvider.now()
-                )
+            val finalEntity = when (serviceResult) {
+                is AiServiceResult.Success -> {
+                    val explanation = serviceResult.value
+                    baseEntity.copy(
+                        status          = AiArtifactStatus.READY,
+                        summaryText     = explanation.headline,
+                        explanationText = explanation.body.withRouteDiagnostics(routeDecision),
+                        updatedAt       = timeProvider.now()
+                    )
+                }
+                is AiServiceResult.Failure -> {
+                    baseEntity.copy(
+                        status       = AiArtifactStatus.FAILED,
+                        errorMessage = failureMessage(serviceResult.error.toReadableMessage(), routeDecision),
+                        updatedAt    = timeProvider.now()
+                    )
+                }
             }
 
             aiArtifactRepository.upsert(finalEntity)
@@ -129,6 +133,16 @@ class ExplainPendingReviewUseCase @Inject constructor(
             )
         }
     }
+}
+
+private fun AiServiceError.toReadableMessage(): String = when (this) {
+    AiServiceError.Timeout -> "Review explanation timed out"
+    AiServiceError.Offline -> "No network connection"
+    AiServiceError.SslError -> "Secure connection failed"
+    is AiServiceError.HttpError -> "HTTP $code"
+    is AiServiceError.ParseError -> message ?: "Response parse error"
+    is AiServiceError.Disabled -> reason
+    is AiServiceError.Unknown -> message ?: "Unknown service error"
 }
 
 private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String {

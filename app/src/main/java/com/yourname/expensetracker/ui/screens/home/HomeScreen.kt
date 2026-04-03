@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -120,7 +121,8 @@ fun HomeScreen(
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 2.sp,
-                            color = SemanticColors.TextPrimary
+                            color = SemanticColors.TextPrimary,
+                            modifier = Modifier.semantics { heading() }
                         )
                     }
                 },
@@ -494,7 +496,13 @@ fun HomeScreen(
                                 if (widgetStyle == WidgetStyle.RETRO) {
                                     // Get recent transactions for this month to show in category dialog
                                     val monthRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis())
-                                    val recentExpenses = remember { state.widgets.filterIsInstance<DashboardWidget.RecentTransactions>().firstOrNull()?.expenses ?: emptyList() }
+                                    val recentExpenses = remember(state.widgets) {
+                                        state.widgets
+                                            .filterIsInstance<DashboardWidget.RecentTransactions>()
+                                            .firstOrNull()
+                                            ?.expenses
+                                            ?: emptyList()
+                                    }
                                     
                                     RetroTopCategoriesCard(
                                         categories = widget.categories,
@@ -540,7 +548,7 @@ fun HomeScreen(
                                         color = SemanticColors.TextSecondary
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
-                                    widget.expenses.forEach { expense ->
+                                    widget.expenses.take(5).forEach { expense ->
                                         RecentExpenseRow(
                                             expense = expense,
                                             categoryColor = expense.categoryId?.let { categoryMap[it] }
@@ -640,6 +648,79 @@ fun HomeScreen(
                                     isExpanded = isExpanded,
                                     onToggleExpand = { isExpanded = !isExpanded }
                                 )
+                            }
+                            is DashboardWidget.FinancialHealthScoreV2Widget -> {
+                                var isExpanded by remember { mutableStateOf(false) }
+                                com.yourname.expensetracker.ui.components.health.FinancialHealthScoreV2Widget(
+                                    healthScore = widget.healthScore,
+                                    isExpanded = isExpanded,
+                                    onToggleExpand = { isExpanded = !isExpanded }
+                                )
+                            }
+                            is DashboardWidget.LifestyleSavingsPrompt -> {
+                                LifestyleSavingsPromptCard(
+                                    inflationRate = widget.inflationRate,
+                                    suggestedUplift = widget.suggestedUplift,
+                                    reason = widget.reason,
+                                    hasExistingGoals = widget.hasExistingGoals,
+                                    onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
+                                )
+                            }
+                            is DashboardWidget.MoneyRadar -> {
+                                com.yourname.expensetracker.ui.components.dashboard.MoneyRadarWidget(
+                                    data = widget.data,
+                                    onActionClick = { action ->
+                                        when (action) {
+                                            is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ViewBills -> {
+                                                onNavigateToRecurring()
+                                            }
+                                            is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ReviewAnomalies -> {
+                                                onNavigateToTransactions(
+                                                    TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis()))
+                                                )
+                                            }
+                                            is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.AdjustBudget -> {
+                                                if (action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.CRITICAL ||
+                                                    action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.HIGH) {
+                                                    onNavigateToAnalytics()
+                                                }
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                            is DashboardWidget.FinancialStressForecast -> {
+                                FinancialStressForecastCard(
+                                    result = widget.result,
+                                    onActionClick = { recommendation ->
+                                        // Navigate based on recommendation type
+                                        when {
+                                            recommendation.contains("subscriptions", ignoreCase = true) -> {
+                                                onNavigateToRecurring()
+                                            }
+                                            recommendation.contains("spending", ignoreCase = true) -> {
+                                                onNavigateToTransactions(
+                                                    TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis()))
+                                                )
+                                            }
+                                            recommendation.contains("emergency", ignoreCase = true) -> {
+                                                onNavigateToFeature(NavigationDestination.SavingsGoals)
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                            is DashboardWidget.FinancialHealthScoreV2Widget -> {
+                                // Handled below - Health Score V2 widget
+                                Box(modifier = Modifier.fillMaxWidth())
+                            }
+                            is DashboardWidget.SavingsSweepPrompt -> {
+                                // Savings Sweep Prompt widget - handled elsewhere
+                                Box(modifier = Modifier.fillMaxWidth())
+                            }
+                            else -> {
+                                // Fallback for any unhandled widget types
+                                Box(modifier = Modifier.fillMaxWidth())
                             }
                         }
                     }
@@ -1270,7 +1351,9 @@ private fun FeaturesMenu(
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = SemanticColors.TextPrimary,
-                    modifier = Modifier.padding(bottom = 20.dp)
+                    modifier = Modifier
+                        .padding(bottom = 20.dp)
+                        .semantics { heading() }
                 )
                 
                 // Config-driven Feature Items - All 22 features from FeatureConfig
@@ -1360,13 +1443,21 @@ private fun FeatureItem(
                     if (isNew) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Badge(containerColor = Color(0xFF4CAF50)) {
-                            Text(stringResource(R.string.label_new), fontSize = 10.sp)
+                            Text(
+                                stringResource(R.string.label_new),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticColors.TextPrimary
+                            )
                         }
                     }
                     if (isBeta) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Badge(containerColor = Color(0xFFFF9800)) {
-                            Text(stringResource(R.string.label_beta), fontSize = 10.sp)
+                            Text(
+                                stringResource(R.string.label_beta),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticColors.TextPrimary
+                            )
                         }
                     }
                 }
@@ -1382,6 +1473,79 @@ private fun FeatureItem(
                 contentDescription = null,
                 tint = SemanticColors.TextSecondary
             )
+        }
+    }
+}
+
+@Composable
+private fun LifestyleSavingsPromptCard(
+    inflationRate: Double,
+    suggestedUplift: Double,
+    reason: String,
+    hasExistingGoals: Boolean,
+    onAction: () -> Unit
+) {
+    val numberFormat = java.text.NumberFormat.getPercentInstance(java.util.Locale.getDefault()).apply {
+        maximumFractionDigits = 1
+    }
+    
+    BentoCard(
+        containerColor = SemanticColors.WarningOrange.copy(alpha = 0.1f),
+        border = BorderStroke(1.dp, SemanticColors.WarningOrange.copy(alpha = 0.3f))
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    color = SemanticColors.WarningOrange.copy(alpha = 0.2f)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("📈", fontSize = 20.sp)
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "Lifestyle Inflation Detected",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SemanticColors.TextPrimary
+                    )
+                    Text(
+                        text = "Inflation rate: ${numberFormat.format(inflationRate)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.WarningOrange
+                    )
+                }
+            }
+            
+            Text(
+                text = reason,
+                style = MaterialTheme.typography.bodyMedium,
+                color = SemanticColors.TextPrimary
+            )
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Suggested boost: +${String.format("%.1f", suggestedUplift)}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = SemanticColors.TextSecondary
+                )
+                
+                Button(
+                    onClick = onAction,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SemanticColors.WarningOrange
+                    )
+                ) {
+                    Text(if (hasExistingGoals) "Adjust Goals" else "Set Goals")
+                }
+            }
         }
     }
 }

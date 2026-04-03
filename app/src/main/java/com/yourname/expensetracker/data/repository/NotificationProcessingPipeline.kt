@@ -6,36 +6,42 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
+import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.di.ApplicationScope
+import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
+import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
-import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
-import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+import com.yourname.expensetracker.domain.subscription.NotificationSubscriptionDetector
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import kotlin.math.abs
 import javax.inject.Inject
@@ -50,7 +56,9 @@ import javax.inject.Singleton
  *  - Route through the confidence system
  *  - Classify merchants and transfer directions
  *  - Write the result (expense / pending review / rejected) inside a DB transaction
+ *  - Trigger subscription detection after successful transaction processing
  */
+
 @Singleton
 class NotificationProcessingPipeline @Inject constructor(
     private val database: AppDatabase,
@@ -58,12 +66,14 @@ class NotificationProcessingPipeline @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val pendingReviewDao: PendingReviewDao,
     private val sourceStatsDao: SourceStatsDao,
+    private val subscriptionCandidateDao: SubscriptionCandidateDao,
     private val parserRegistry: AppParserRegistry,
     private val confidenceRouter: ConfidenceRouter,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val classifier: TransactionClassifier,
     private val budgetMonitor: BudgetMonitor,
+    private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val timeProvider: TimeProvider,
     private val directionDetector: TransferDirectionDetector,
     private val analytics: TransferDirectionAnalytics,
@@ -72,33 +82,55 @@ class NotificationProcessingPipeline @Inject constructor(
     private val generateTransactionInsightUseCase: GenerateTransactionInsightUseCase,
     private val dashboardFollowThroughEngine: DashboardFollowThroughEngine,
     private val recommendationRepository: RecommendationRepository,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    private val subscriptionDetector: NotificationSubscriptionDetector,
+    @ApplicationScope private val applicationScope: CoroutineScope
 ) {
-    private val processMutex = Mutex()
-    private val asyncScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    sealed interface ProcessingResult {
+        data class Success(val packageName: String) : ProcessingResult
+        data class Rejected(val packageName: String, val reason: String) : ProcessingResult
+        data class Error(val packageName: String, val error: Throwable) : ProcessingResult
+    }
 
-    suspend fun process(notification: RawNotification) {
+    private val processMutex = Mutex()
+    /**
+     * App-scoped background enrichment for recommendations.
+     * Ownership is the application lifecycle (not per-screen/request).
+     */
+    private val asyncScope: CoroutineScope = applicationScope
+    private val recommendationSemaphore = Semaphore(MAX_CONCURRENT_RECOMMENDATION_JOBS)
+
+    suspend fun process(notification: RawNotification): ProcessingResult {
         processMutex.withLock {
             try {
                 processInternal(notification, initializeClassifier = true)
+                return ProcessingResult.Success(notification.packageName)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error processing notification: ${notification.packageName}")
+                return ProcessingResult.Error(notification.packageName, e)
             }
         }
     }
 
-    suspend fun processBatch(notifications: List<RawNotification>) {
-        if (notifications.isEmpty()) return
+    suspend fun processBatch(notifications: List<RawNotification>): List<ProcessingResult> {
+        if (notifications.isEmpty()) return emptyList()
+        val results = mutableListOf<ProcessingResult>()
         processMutex.withLock {
             classifier.initialize()
             notifications.forEach { notification ->
                 try {
                     processInternal(notification, initializeClassifier = false)
+                    results += ProcessingResult.Success(notification.packageName)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Timber.e(e, "Error processing notification in batch: ${notification.packageName}")
+                    results += ProcessingResult.Error(notification.packageName, e)
                 }
             }
         }
+        return results
     }
 
     private suspend fun processInternal(notification: RawNotification, initializeClassifier: Boolean) {
@@ -199,6 +231,10 @@ class NotificationProcessingPipeline @Inject constructor(
 
     internal companion object {
         private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
+        private const val RECOMMENDATION_JOB_TIMEOUT_MS = 3_000L
+        private const val SUBSCRIPTION_DETECTION_TIMEOUT_MS = 5_000L
+        private const val MAX_CONCURRENT_RECOMMENDATION_JOBS = 2
+        private const val SUBSCRIPTION_LOOKBACK_DAYS = 120
         private val CURRENCY_HINT_REGEX = Regex("""(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)""", RegexOption.IGNORE_CASE)
         private val TRANSACTION_HINT_REGEX = Regex(
             """(paid|payment|purchase|transaction|transfer|sent|received|χρεωση|πληρωμη|αγορα|καταθεση|πιστωση)""",
@@ -345,26 +381,49 @@ class NotificationProcessingPipeline @Inject constructor(
                 else analytics.recordUnknownDirection()
             }
             budgetMonitor.checkBudgets()
+
+            // Check for anomalies and alert
+            val enrichedExpense = expense.copy(id = expenseId)
+            val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+                expense = enrichedExpense,
+                category = categoryId?.let { database.categoryDao().getById(it) }
+            )
+            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+
             classifier.train(fullText, isTransaction = true)
 
             // Non-blocking recommendation generation (fire-and-forget)
             asyncScope.launch {
-                try {
-                    val aiSettings = aiSettingsRepository.settings().first()
-                    if (aiSettings.aiEnabled) {
-                        // Generate AI insight for the transaction (with 3s timeout)
-                        val aiArtifact = generateTransactionInsightUseCase(expense.copy(id = expenseId))
-                        
-                        // Generate recommendations (with or without AI text)
-                        val recommendations = dashboardFollowThroughEngine.generateRecommendations(
-                            transaction = expense.copy(id = expenseId),
-                            aiArtifact = aiArtifact,
-                            userId = DEFAULT_RECOMMENDATION_USER_ID
-                        )
-                        recommendationRepository.saveAll(recommendations)
+                recommendationSemaphore.withPermit {
+                    try {
+                        withTimeoutOrNull(RECOMMENDATION_JOB_TIMEOUT_MS) {
+                            val aiSettings = aiSettingsRepository.settings().first()
+                            if (aiSettings.aiEnabled) {
+                                val enrichedExpense = expense.copy(id = expenseId)
+                                val aiArtifact = generateTransactionInsightUseCase(enrichedExpense)
+
+                                val recommendations = dashboardFollowThroughEngine.generateRecommendations(
+                                    transaction = enrichedExpense,
+                                    aiArtifact = aiArtifact,
+                                    userId = DEFAULT_RECOMMENDATION_USER_ID
+                                )
+                                recommendationRepository.saveAll(recommendations)
+                            }
+                        } ?: Timber.w("Recommendation generation timed out after ${RECOMMENDATION_JOB_TIMEOUT_MS}ms")
+                    } catch (_: Exception) {
+                        // Best-effort only.
                     }
-                } catch (_: Exception) {
-                    // Best-effort only.
+                }
+            }
+
+            // Non-blocking subscription detection (fire-and-forget)
+            asyncScope.launch {
+                try {
+                    withTimeoutOrNull(SUBSCRIPTION_DETECTION_TIMEOUT_MS) {
+                        detectAndSaveSubscriptionCandidate(correctedMerchant, categoryId)
+                    } ?: Timber.w("Subscription detection timed out after ${SUBSCRIPTION_DETECTION_TIMEOUT_MS}ms")
+                } catch (e: Exception) {
+                    Timber.w(e, "Subscription detection failed for merchant: $correctedMerchant")
                 }
             }
         } else {
@@ -457,6 +516,54 @@ class NotificationProcessingPipeline @Inject constructor(
         if (parsed.type == TransactionType.TRANSFER || parsed.type == TransactionType.DEPOSIT) {
             if (direction != null) analytics.recordAutoDetection(direction, accountName, wasCorrect = true)
             else analytics.recordUnknownDirection()
+        }
+    }
+
+    /**
+     * Detects subscription candidates for a merchant based on recent transactions.
+     * Fetches the last SUBSCRIPTION_LOOKBACK_DAYS of transaction history for the merchant
+     * and runs pattern detection. If a subscription is detected, saves it to the database.
+     */
+    private suspend fun detectAndSaveSubscriptionCandidate(merchant: String, categoryId: Long?) {
+        try {
+            // Skip if this merchant already has a pending candidate
+            if (subscriptionCandidateDao.hasPendingCandidate(merchant)) {
+                Timber.d("Skipping subscription detection for $merchant: already has pending candidate")
+                return
+            }
+
+            // Fetch recent transactions for this merchant
+            val since = timeProvider.now() - (SUBSCRIPTION_LOOKBACK_DAYS * TimePeriodUtils.DAY_IN_MILLIS)
+            val recentExpenses = expenseDao.getRecentExpensesForMerchant(merchant, since)
+
+            if (recentExpenses.size < NotificationSubscriptionDetector.MIN_TRANSACTIONS) {
+                Timber.d("Not enough transactions for $merchant: ${recentExpenses.size}")
+                return
+            }
+
+            // Convert to ExpenseWithCategory for the detector
+            val expensesWithCategory = recentExpenses.map { expense ->
+                com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+                    expense = expense,
+                    category = categoryId?.let { database.categoryDao().getById(it) }
+                )
+            }
+
+            // Run subscription detection
+            val candidates = subscriptionDetector.detectSubscriptions(expensesWithCategory)
+
+            // Save high-confidence candidates (avoid duplicates for same merchant)
+            candidates.firstOrNull()?.let { candidate ->
+                // Double-check no pending candidate exists for this canonical merchant
+                if (!subscriptionCandidateDao.hasPendingCandidate(candidate.canonicalMerchant)) {
+                    val entity = subscriptionDetector.toEntity(candidate)
+                    subscriptionCandidateDao.insert(entity)
+                    Timber.i("Saved subscription candidate for ${candidate.canonicalMerchant} " +
+                            "(${candidate.detectedInterval}, confidence=${"%.2f".format(candidate.confidence)})")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Error detecting subscription candidate for: $merchant")
         }
     }
 

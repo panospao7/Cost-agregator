@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
@@ -20,7 +21,7 @@ class HybridDashboardBriefingService @Inject constructor(
     private val noOpDashboardBriefingService: NoOpDashboardBriefingService
 ) : DashboardBriefingService {
 
-    override suspend fun generate(input: DashboardBriefingInput): DashboardBriefing? {
+    override suspend fun generate(input: DashboardBriefingInput): AiServiceResult<DashboardBriefing> {
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.DASHBOARD_BRIEFING, settings).route) {
             AiRoute.CLOUD -> cloudDashboardBriefingService.generate(input)

@@ -11,7 +11,17 @@ data class BudgetStatus(
     val percentUsed: Float,
     val healthStatus: BudgetHealthStatus,
     val periodStart: Long,
-    val periodEnd: Long
+    val periodEnd: Long,
+    val adjustedSpendBreakdown: AdjustedSpendBreakdown? = null  // F11: Shared Expenses Budget Offset
+)
+
+data class AdjustedSpendBreakdown(
+    val personalSpend: Double,
+    val sharedSpend: Double,
+    val reimbursedAmount: Double,
+    val netSharedLiability: Double,
+    val effectiveSpend: Double,
+    val pendingReimbursements: Double
 )
 
 enum class BudgetHealthStatus {

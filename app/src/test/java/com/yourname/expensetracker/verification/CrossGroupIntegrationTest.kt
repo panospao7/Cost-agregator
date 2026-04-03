@@ -49,9 +49,13 @@ import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
+import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
+import com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarData
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
+import com.yourname.expensetracker.domain.usecase.dashboard.UrgencyLevel
+import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.every
@@ -182,12 +186,30 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
         val weather = weatherRepository.getFinancialWeather().first()
 
+        val healthScoreV2 = mockk<com.yourname.expensetracker.domain.health.FinancialHealthScoreV2>(relaxed = true)
+        val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
+        val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
+        coEvery { computeMoneyRadarUseCase.compute() } returns MoneyRadarData(
+            urgencyScore = 0,
+            urgencyLevel = UrgencyLevel.GREEN,
+            dueBills = emptyList(),
+            anomalyAlerts = emptyList(),
+            budgetRisk = null,
+            topReasons = emptyList(),
+            primaryCta = null
+        )
+        val stressForecastEngine = mockk<com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine>(relaxed = true)
+
         val useCase = ComputeDashboardWidgetsUseCase(
             insightsEngine = insightsEngine,
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = mockk(relaxed = true),
             timeProvider = timeProvider,
-            healthCalculator = FinancialHealthCalculator(timeProvider)
+            healthCalculator = FinancialHealthCalculator(timeProvider),
+            healthScoreV2 = healthScoreV2,
+            lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
+            computeMoneyRadarUseCase = computeMoneyRadarUseCase,
+            stressForecastEngine = stressForecastEngine
         )
 
         val monthSpent = expenses.filter { it.transactionType == TransactionType.PURCHASE && it.date in ms(2026, 3, 1) until ms(2026, 4, 1) }

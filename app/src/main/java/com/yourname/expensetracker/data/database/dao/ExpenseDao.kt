@@ -71,11 +71,25 @@ interface ExpenseDao {
     fun getExpensesWithCategoryInPeriodFlow(startMs: Long, endMs: Long): Flow<List<ExpenseWithCategory>>
 
     @Deprecated("Use getAllFlow(limit) or getPage(limit, offset) to prevent OOM", ReplaceWith("getAllFlow(500)"))
-    @Query("SELECT * FROM expenses ORDER BY date DESC")
-    suspend fun getAll(): List<Expense>
+    @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
+    suspend fun getAll(limit: Int = 2000): List<Expense>
     
     @Query("SELECT * FROM expenses WHERE date >= :since AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getExpensesSince(since: Long): List<Expense>
+    
+    /**
+     * Fetch recent expenses for a specific merchant for subscription detection.
+     * Returns all purchases for the merchant since the given timestamp.
+     */
+    @Query("""
+        SELECT * FROM expenses 
+        WHERE merchant = :merchant 
+        AND date >= :since 
+        AND transactionType = 'PURCHASE'
+        AND isNotMine = 0
+        ORDER BY date ASC
+    """)
+    suspend fun getRecentExpensesForMerchant(merchant: String, since: Long): List<Expense>
     
     @Query("SELECT SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0 ELSE amount END) FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0")
     fun getTotalSpentFlow(): Flow<Double?>
@@ -206,17 +220,17 @@ interface ExpenseDao {
     """)
     suspend fun getAmountsForPercentileCalc(startMs: Long, endMs: Long): List<Double>
 
-    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
-    suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense>
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit OFFSET :offset")
+    suspend fun getExpensesBetween(startDate: Long, endDate: Long, limit: Int = 2000, offset: Int = 0): List<Expense>
 
-    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
-    suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String): List<Expense>
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit OFFSET :offset")
+    suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String, limit: Int = 2000, offset: Int = 0): List<Expense>
 
-    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
-    fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit")
+    fun getExpensesBetweenFlow(startDate: Long, endDate: Long, limit: Int = 2000): Flow<List<Expense>>
 
-    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
-    fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String): Flow<List<Expense>>
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit")
+    fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String, limit: Int = 2000): Flow<List<Expense>>
 
     @Query("""
         SELECT SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
@@ -502,8 +516,8 @@ interface ExpenseDao {
     fun getLocatedExpensesFlow(): Flow<List<Expense>>
 
     /** Suspend version for one-shot reads (e.g., analytics). */
-    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC")
-    suspend fun getLocatedExpenses(): List<Expense>
+    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC LIMIT :limit")
+    suspend fun getLocatedExpenses(limit: Int = 2000): List<Expense>
 
     /** All expenses that still lack coordinates. */
     @Query("SELECT * FROM expenses WHERE latitude IS NULL ORDER BY date DESC LIMIT :limit")
@@ -603,10 +617,12 @@ interface ExpenseDao {
           AND longitude BETWEEN :minLon AND :maxLon
           AND latitude IS NOT NULL
         ORDER BY date DESC
+        LIMIT :limit
     """)
     suspend fun getExpensesInBoundingBox(
         minLat: Double, maxLat: Double,
-        minLon: Double, maxLon: Double
+        minLon: Double, maxLon: Double,
+        limit: Int = 2000
     ): List<Expense>
 
     /**

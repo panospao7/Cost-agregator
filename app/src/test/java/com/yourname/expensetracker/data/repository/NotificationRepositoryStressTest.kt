@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.ProcessingResult
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import io.mockk.*
@@ -198,7 +199,7 @@ class NotificationRepositoryStressTest {
 
     @Test
     fun `stress - processAndSave calls pipeline process`() = runTest {
-        coEvery { pipeline.process(any()) } returns Unit
+        coEvery { pipeline.process(any()) } returns ProcessingResult.Success("com.revolut.revolut")
         val notification = RawNotification(
             packageName = "com.revolut.revolut",
             appName = "Revolut",
@@ -213,7 +214,7 @@ class NotificationRepositoryStressTest {
 
     @Test
     fun `stress - processAndSaveAll calls pipeline processBatch with list`() = runTest {
-        coEvery { pipeline.processBatch(any()) } returns Unit
+        coEvery { pipeline.processBatch(any()) } returns emptyList()
         val notifications = (1..10).map { i ->
             RawNotification(
                 packageName = "com.test",

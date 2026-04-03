@@ -23,6 +23,8 @@ import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 
+import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
+
 @Singleton
 class ReviewQueueRepository @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -38,6 +40,7 @@ class ReviewQueueRepository @Inject constructor(
     private val hybridClassifier: HybridExpenseClassifier,
     private val classifier: TransactionClassifier,
     private val budgetMonitor: BudgetMonitor,
+    private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val parserRegistry: AppParserRegistry,
     private val timeProvider: TimeProvider,
     private val confidenceRouter: ConfidenceRouter
@@ -160,6 +163,14 @@ class ReviewQueueRepository @Inject constructor(
         if (expenseId > 0) {
             // External operations outside DB transaction
             budgetMonitor.checkBudgets()
+
+            // Check for anomalies and alert
+            val enrichedExpense = expense.copy(id = expenseId)
+            val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+                expense = enrichedExpense,
+                category = categoryId?.let { database.categoryDao().getById(it) }
+            )
+            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
 
             try { classifier.retrainFromCorrections() } catch (e: Exception) {
                 Timber.e(e, "Failed to retrain classifier")

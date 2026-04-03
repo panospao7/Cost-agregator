@@ -3,13 +3,16 @@ package com.yourname.expensetracker.data.database
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.data.database.dao.*
 import androidx.room.*
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
-import com.yourname.expensetracker.data.database.dao.AiArtifactDao
+import com.yourname.expensetracker.data.database.entity.BudgetAdjustmentRecommendation
+import com.yourname.expensetracker.data.database.entity.BudgetAdjustmentEvent
+import com.yourname.expensetracker.data.database.entity.SpendingPersonalityProfileEntity
+import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
+import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 
 @Database(
     entities = [
-        RawNotification::class, 
-        BlockedPackage::class, 
+        RawNotification::class,
+        BlockedPackage::class,
         Expense::class,
         Category::class,
         MerchantCategory::class,
@@ -44,9 +47,19 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
         InvestmentValue::class,
         BankConnection::class,
         SplitTemplate::class,
-        SplitItemAssignment::class
+        SplitItemAssignment::class,
+        AnomalyAlert::class,
+        PromptState::class,
+        HealthScoreHistory::class,
+        SavingsSweepPlan::class,
+        SubscriptionCandidate::class,
+        BudgetAdjustmentRecommendation::class,
+        BudgetAdjustmentEvent::class,
+        SpendingPersonalityProfileEntity::class,
+        StressForecastSnapshot::class,
+        EmailReceiptSource::class
     ],
-            version = 52,
+    version = 65,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -88,6 +101,15 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bankConnectionDao(): BankConnectionDao
     abstract fun splitTemplateDao(): SplitTemplateDao
     abstract fun splitItemAssignmentDao(): SplitItemAssignmentDao
+    abstract fun anomalyAlertDao(): AnomalyAlertDao
+    abstract fun promptStateDao(): PromptStateDao
+    abstract fun healthScoreHistoryDao(): HealthScoreHistoryDao
+    abstract fun savingsSweepPlanDao(): SavingsSweepPlanDao
+    abstract fun subscriptionCandidateDao(): SubscriptionCandidateDao
+    abstract fun budgetAdjustmentDao(): BudgetAdjustmentDao
+    abstract fun stressForecastSnapshotDao(): StressForecastSnapshotDao
+    abstract fun spendingPersonalityProfileDao(): SpendingPersonalityProfileDao
+    abstract fun emailReceiptDao(): EmailReceiptDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -2391,6 +2413,500 @@ abstract class AppDatabase : RoomDatabase() {
                 } finally {
                     database.endTransaction()
                 }
+            }
+        }
+
+        // Migration 52 -> 53: Performance index alignment for audit findings.
+        val MIGRATION_52_53 = object : androidx.room.migration.Migration(52, 53) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_expenses_latitude_backfillAttempts_date " +
+                        "ON expenses(latitude, backfillAttempts, date)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_group_members_groupId_isCurrentUser " +
+                        "ON group_members(groupId, isCurrentUser)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_expense_groups_isActive_createdAt " +
+                        "ON expense_groups(isActive, createdAt)"
+                )
+            }
+        }
+
+        // Migration 53 -> 54: F1 Receipt → Warranty Pipeline - Add auto-detection fields
+        val MIGRATION_53_54 = object : androidx.room.migration.Migration(53, 54) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // Recreate warranties table with new auto-detection columns
+                    database.execSQL("""
+                        CREATE TABLE warranties_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            receiptId INTEGER NOT NULL,
+                            expenseId INTEGER,
+                            productName TEXT NOT NULL,
+                            merchantName TEXT NOT NULL,
+                            purchaseDate INTEGER NOT NULL,
+                            warrantyDurationMonths INTEGER NOT NULL,
+                            warrantyEndDate INTEGER NOT NULL,
+                            warrantyType TEXT NOT NULL DEFAULT 'MANUFACTURER',
+                            supportPhone TEXT,
+                            supportEmail TEXT,
+                            warrantyDocumentUrl TEXT,
+                            notes TEXT,
+                            status TEXT NOT NULL DEFAULT 'ACTIVE',
+                            claimedAt INTEGER,
+                            createdAt INTEGER NOT NULL,
+                            updatedAt INTEGER NOT NULL,
+                            autoDetected INTEGER NOT NULL DEFAULT 0,
+                            extractionConfidence REAL NOT NULL DEFAULT 0.0,
+                            extractionSource TEXT NOT NULL DEFAULT 'manual',
+                            needsReview INTEGER NOT NULL DEFAULT 0,
+                            FOREIGN KEY (receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE,
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                        )
+                    """.trimIndent())
+
+                    // Copy data from old table
+                    database.execSQL("""
+                        INSERT INTO warranties_new (
+                            id, receiptId, expenseId, productName, merchantName, purchaseDate, 
+                            warrantyDurationMonths, warrantyEndDate, warrantyType, supportPhone, 
+                            supportEmail, warrantyDocumentUrl, notes, status, claimedAt, 
+                            createdAt, updatedAt, autoDetected, extractionConfidence, 
+                            extractionSource, needsReview
+                        )
+                        SELECT 
+                            id, receiptId, expenseId, productName, merchantName, purchaseDate, 
+                            warrantyDurationMonths, warrantyEndDate, warrantyType, supportPhone, 
+                            supportEmail, warrantyDocumentUrl, notes, status, claimedAt, 
+                            createdAt, updatedAt, 0, 0.0, 'manual', 0
+                        FROM warranties
+                    """.trimIndent())
+
+                    database.execSQL("DROP TABLE warranties")
+                    database.execSQL("ALTER TABLE warranties_new RENAME TO warranties")
+                    
+                    // Recreate indices
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_receiptId ON warranties (receiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_expenseId ON warranties (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_warrantyEndDate ON warranties (warrantyEndDate)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_status ON warranties (status)")
+                    
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Migration 54 -> 55: F11 Shared Expenses Budget Offset - Add reimbursement tracking columns
+        val MIGRATION_54_55 = object : androidx.room.migration.Migration(54, 55) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // Recreate group_expenses table with new reimbursement tracking columns
+                    database.execSQL("""
+                        CREATE TABLE group_expenses_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            groupId INTEGER NOT NULL,
+                            expenseId INTEGER,
+                            paidById INTEGER NOT NULL,
+                            date INTEGER NOT NULL,
+                            description TEXT NOT NULL,
+                            totalAmount REAL NOT NULL,
+                            currency TEXT NOT NULL DEFAULT 'EUR',
+                            splitType TEXT NOT NULL DEFAULT 'EQUAL',
+                            customSplitsJson TEXT,
+                            isReimbursable INTEGER NOT NULL DEFAULT 0,
+                            reimbursedAmount REAL NOT NULL DEFAULT 0.0,
+                            settledAt INTEGER,
+                            myShareAmount REAL,
+                            FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE,
+                            FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE CASCADE,
+                            FOREIGN KEY (paidById) REFERENCES group_members(id) ON DELETE RESTRICT
+                        )
+                    """.trimIndent())
+
+                    // Copy data from old table
+                    database.execSQL("""
+                        INSERT INTO group_expenses_new (
+                            id, groupId, expenseId, paidById, date, description, totalAmount,
+                            currency, splitType, customSplitsJson, isReimbursable, reimbursedAmount,
+                            settledAt, myShareAmount
+                        )
+                        SELECT
+                            id, groupId, expenseId, paidById, date, description, totalAmount,
+                            currency, splitType, customSplitsJson, 0, 0.0, NULL, NULL
+                        FROM group_expenses
+                    """.trimIndent())
+
+                    database.execSQL("DROP TABLE group_expenses")
+                    database.execSQL("ALTER TABLE group_expenses_new RENAME TO group_expenses")
+
+                    // Recreate indices
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId ON group_expenses (groupId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_expenseId ON group_expenses (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_paidById ON group_expenses (paidById)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId_date ON group_expenses (groupId, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_isReimbursable ON group_expenses (isReimbursable)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Migration 55 -> 56: Add prompt_states table for F12 Lifestyle Inflation -> Savings Goals
+        val MIGRATION_55_56 = object : androidx.room.migration.Migration(55, 56) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create prompt_states table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS prompt_states (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        promptType TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        userAction TEXT,
+                        actionDetails TEXT,
+                        acknowledgedAt INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+
+                // Create indices for efficient queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_prompt_states_promptType_createdAt ON prompt_states (promptType, createdAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_prompt_states_promptType_userAction ON prompt_states (promptType, userAction)")
+            }
+        }
+
+        // Migration 56 -> 57: F5 Financial Health Score 2.0 - Add health score history tracking
+        val MIGRATION_56_57 = object : androidx.room.migration.Migration(56, 57) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create health_score_history table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS health_score_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        overallScore INTEGER NOT NULL,
+                        savingsRateScore INTEGER NOT NULL,
+                        runwayScore INTEGER NOT NULL,
+                        budgetAdherenceScore INTEGER NOT NULL,
+                        billReliabilityScore INTEGER NOT NULL,
+                        savingsRateWeight REAL NOT NULL DEFAULT 0.30,
+                        runwayWeight REAL NOT NULL DEFAULT 0.25,
+                        budgetAdherenceWeight REAL NOT NULL DEFAULT 0.25,
+                        billReliabilityWeight REAL NOT NULL DEFAULT 0.20,
+                        periodStart INTEGER NOT NULL,
+                        periodEnd INTEGER NOT NULL,
+                        calculatedAt INTEGER NOT NULL DEFAULT 0,
+                        trend TEXT NOT NULL DEFAULT 'STABLE',
+                        recommendation TEXT,
+                        isSynced INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+
+                // Create indices for efficient queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_health_score_history_calculatedAt ON health_score_history (calculatedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_health_score_history_overallScore ON health_score_history (overallScore)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_health_score_history_periodStart_periodEnd ON health_score_history (periodStart, periodEnd)")
+            }
+        }
+
+        // Migration 57 -> 58: F6 Smart Savings Sweeps - Add savings_sweep_plan table
+        val MIGRATION_57_58 = object : androidx.room.migration.Migration(57, 58) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create savings_sweep_plan table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS savings_sweep_plan (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        goalId INTEGER NOT NULL,
+                        monthEnd INTEGER NOT NULL,
+                        totalUnderspend REAL NOT NULL,
+                        riskBuffer REAL NOT NULL,
+                        safeSweepAmount REAL NOT NULL,
+                        allocatedAmount REAL NOT NULL,
+                        allocationPercentage REAL NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        actionedAt INTEGER,
+                        notes TEXT,
+                        confidence REAL NOT NULL,
+                        computedAt INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY (goalId) REFERENCES savings_goals (id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+
+                // Create indices for efficient queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_savings_sweep_plan_goalId ON savings_sweep_plan (goalId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_savings_sweep_plan_monthEnd_status ON savings_sweep_plan (monthEnd, status)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_savings_sweep_plan_computedAt ON savings_sweep_plan (computedAt)")
+            }
+        }
+
+        // Migration 58 -> 59: F2 Notification → Subscription Detection - Add subscription_candidates table
+        val MIGRATION_58_59 = object : androidx.room.migration.Migration(58, 59) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create subscription_candidates table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS subscription_candidates (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        merchant TEXT NOT NULL,
+                        canonicalMerchant TEXT NOT NULL,
+                        averageAmount REAL NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        detectedInterval TEXT NOT NULL,
+                        confidence REAL NOT NULL,
+                        transactionCount INTEGER NOT NULL,
+                        firstSeen INTEGER NOT NULL,
+                        lastSeen INTEGER NOT NULL,
+                        estimatedAnnualCost REAL NOT NULL,
+                        isConverted INTEGER NOT NULL DEFAULT 0,
+                        convertedSubscriptionId INTEGER,
+                        userAction TEXT NOT NULL DEFAULT 'pending',
+                        createdAt INTEGER NOT NULL DEFAULT 0,
+                        updatedAt INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+
+                // Create indices for efficient queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_candidates_canonicalMerchant ON subscription_candidates (canonicalMerchant)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_candidates_isConverted ON subscription_candidates (isConverted)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_candidates_confidence ON subscription_candidates (confidence)")
+            }
+        }
+
+        // Migration 59 -> 60: F5 Financial Health Score 2.0 - Add health score history tracking
+        val MIGRATION_59_60 = object : androidx.room.migration.Migration(59, 60) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create health_score_history table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS health_score_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        overallScore INTEGER NOT NULL,
+                        savingsRateScore INTEGER NOT NULL,
+                        runwayScore INTEGER NOT NULL,
+                        budgetAdherenceScore INTEGER NOT NULL,
+                        billReliabilityScore INTEGER NOT NULL,
+                        savingsRateWeight REAL NOT NULL DEFAULT 0.30,
+                        runwayWeight REAL NOT NULL DEFAULT 0.25,
+                        budgetAdherenceWeight REAL NOT NULL DEFAULT 0.25,
+                        billReliabilityWeight REAL NOT NULL DEFAULT 0.20,
+                        periodStart INTEGER NOT NULL,
+                        periodEnd INTEGER NOT NULL,
+                        calculatedAt INTEGER NOT NULL DEFAULT 0,
+                        trend TEXT NOT NULL DEFAULT 'STABLE',
+                        recommendation TEXT,
+                        isSynced INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+
+                // Create indices for efficient queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_health_score_history_calculatedAt ON health_score_history (calculatedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_health_score_history_overallScore ON health_score_history (overallScore)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_health_score_history_periodStart_periodEnd ON health_score_history (periodStart, periodEnd)")
+            }
+        }
+
+        // Migration 60 -> 61: F9 AI Budget Autopilot - Add budget adjustment tables
+        val MIGRATION_60_61 = object : androidx.room.migration.Migration(60, 61) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create budget_adjustment_recommendations table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS budget_adjustment_recommendations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        budgetId INTEGER NOT NULL,
+                        categoryId INTEGER,
+                        categoryName TEXT NOT NULL,
+                        currentBudget REAL NOT NULL,
+                        recommendedBudget REAL NOT NULL,
+                        delta REAL NOT NULL,
+                        deltaPercentage REAL NOT NULL,
+                        reason TEXT NOT NULL,
+                        confidence REAL NOT NULL,
+                        trend TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        generatedAt INTEGER NOT NULL DEFAULT 0,
+                        expiresAt INTEGER,
+                        appliedAt INTEGER,
+                        dismissedAt INTEGER,
+                        FOREIGN KEY (budgetId) REFERENCES budgets (id) ON DELETE CASCADE,
+                        FOREIGN KEY (categoryId) REFERENCES categories (id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+
+                // Create indices for budget_adjustment_recommendations
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_adjustment_recommendations_budgetId ON budget_adjustment_recommendations (budgetId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_adjustment_recommendations_categoryId ON budget_adjustment_recommendations (categoryId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_adjustment_recommendations_status_generatedAt ON budget_adjustment_recommendations (status, generatedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_adjustment_recommendations_generatedAt ON budget_adjustment_recommendations (generatedAt)")
+
+                // Create budget_adjustment_events table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS budget_adjustment_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        budgetId INTEGER NOT NULL,
+                        previousAmount REAL NOT NULL,
+                        newAmount REAL NOT NULL,
+                        delta REAL NOT NULL,
+                        reason TEXT NOT NULL,
+                        confidence REAL NOT NULL,
+                        appliedAt INTEGER NOT NULL DEFAULT 0,
+                        appliedBy TEXT NOT NULL DEFAULT 'autopilot',
+                        FOREIGN KEY (budgetId) REFERENCES budgets (id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+
+                // Create indices for budget_adjustment_events
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_adjustment_events_budgetId ON budget_adjustment_events (budgetId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_adjustment_events_appliedAt ON budget_adjustment_events (appliedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_adjustment_events_budgetId_appliedAt ON budget_adjustment_events (budgetId, appliedAt)")
+            }
+        }
+
+        // Migration 61 -> 62: F8 Financial Stress Forecast - Add stress forecast snapshots table
+        val MIGRATION_61_62 = object : androidx.room.migration.Migration(61, 62) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create stress_forecast_snapshots table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS stress_forecast_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        overallRiskLevel TEXT NOT NULL,
+                        days30ProjectedBalance REAL NOT NULL,
+                        days30MinBalance REAL NOT NULL,
+                        days30ProbabilityOfCrunch REAL NOT NULL,
+                        days30RiskLevel TEXT NOT NULL,
+                        days30RecurringObligations REAL NOT NULL,
+                        days30ExpectedIncome REAL NOT NULL,
+                        days30DiscretionaryBuffer REAL NOT NULL,
+                        days60ProjectedBalance REAL NOT NULL,
+                        days60MinBalance REAL NOT NULL,
+                        days60ProbabilityOfCrunch REAL NOT NULL,
+                        days60RiskLevel TEXT NOT NULL,
+                        days60RecurringObligations REAL NOT NULL,
+                        days60ExpectedIncome REAL NOT NULL,
+                        days60DiscretionaryBuffer REAL NOT NULL,
+                        days90ProjectedBalance REAL NOT NULL,
+                        days90MinBalance REAL NOT NULL,
+                        days90ProbabilityOfCrunch REAL NOT NULL,
+                        days90RiskLevel TEXT NOT NULL,
+                        days90RecurringObligations REAL NOT NULL,
+                        days90ExpectedIncome REAL NOT NULL,
+                        days90DiscretionaryBuffer REAL NOT NULL,
+                        earliestCrunchDate INTEGER,
+                        recommendationsJson TEXT,
+                        currentBalance REAL NOT NULL,
+                        computedAt INTEGER NOT NULL DEFAULT 0,
+                        isSynced INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+
+                // Create indices for stress_forecast_snapshots
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_computedAt ON stress_forecast_snapshots (computedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_overallRiskLevel ON stress_forecast_snapshots (overallRiskLevel)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_days30RiskLevel ON stress_forecast_snapshots (days30RiskLevel)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_days60RiskLevel ON stress_forecast_snapshots (days60RiskLevel)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_days90RiskLevel ON stress_forecast_snapshots (days90RiskLevel)")
+            }
+        }
+
+        // Migration 62 -> 63: F13 Spending Personality Profile - Add personality classification table
+        val MIGRATION_62_63 = object : androidx.room.migration.Migration(62, 63) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create spending_personality_profiles table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS spending_personality_profiles (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        personalityType TEXT NOT NULL,
+                        confidence REAL NOT NULL,
+                        featureScoresJson TEXT NOT NULL DEFAULT '{}',
+                        explanationJson TEXT NOT NULL DEFAULT '[]',
+                        coachingTipsJson TEXT NOT NULL DEFAULT '[]',
+                        lastUpdated INTEGER NOT NULL,
+                        analysisPeriodStart INTEGER NOT NULL,
+                        analysisPeriodEnd INTEGER NOT NULL,
+                        transactionCount INTEGER NOT NULL,
+                        isViewed INTEGER NOT NULL DEFAULT 0,
+                        viewedAt INTEGER,
+                        isActive INTEGER NOT NULL DEFAULT 1
+                    )
+                """.trimIndent())
+
+                // Create indices for efficient queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_lastUpdated ON spending_personality_profiles (lastUpdated)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_personalityType ON spending_personality_profiles (personalityType)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_isActive ON spending_personality_profiles (isActive)")
+            }
+        }
+
+        // Migration 63 -> 64: F8 Financial Stress Forecast - Add stress forecast snapshots table
+        val MIGRATION_63_64 = object : androidx.room.migration.Migration(63, 64) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create stress_forecast_snapshots table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS stress_forecast_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        overallRiskLevel TEXT NOT NULL,
+                        days30ProjectedBalance REAL NOT NULL,
+                        days30MinBalance REAL NOT NULL,
+                        days30ProbabilityOfCrunch REAL NOT NULL,
+                        days30RiskLevel TEXT NOT NULL,
+                        days30RecurringObligations REAL NOT NULL,
+                        days30ExpectedIncome REAL NOT NULL,
+                        days30DiscretionaryBuffer REAL NOT NULL,
+                        days60ProjectedBalance REAL NOT NULL,
+                        days60MinBalance REAL NOT NULL,
+                        days60ProbabilityOfCrunch REAL NOT NULL,
+                        days60RiskLevel TEXT NOT NULL,
+                        days60RecurringObligations REAL NOT NULL,
+                        days60ExpectedIncome REAL NOT NULL,
+                        days60DiscretionaryBuffer REAL NOT NULL,
+                        days90ProjectedBalance REAL NOT NULL,
+                        days90MinBalance REAL NOT NULL,
+                        days90ProbabilityOfCrunch REAL NOT NULL,
+                        days90RiskLevel TEXT NOT NULL,
+                        days90RecurringObligations REAL NOT NULL,
+                        days90ExpectedIncome REAL NOT NULL,
+                        days90DiscretionaryBuffer REAL NOT NULL,
+                        earliestCrunchDate INTEGER,
+                        recommendationsJson TEXT,
+                        currentBalance REAL NOT NULL,
+                        computedAt INTEGER NOT NULL DEFAULT 0,
+                        isSynced INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+
+                // Create indices for stress_forecast_snapshots
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_computedAt ON stress_forecast_snapshots (computedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_overallRiskLevel ON stress_forecast_snapshots (overallRiskLevel)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_days30RiskLevel ON stress_forecast_snapshots (days30RiskLevel)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_days60RiskLevel ON stress_forecast_snapshots (days60RiskLevel)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_days90RiskLevel ON stress_forecast_snapshots (days90RiskLevel)")
+            }
+        }
+
+        // Migration 64 -> 65: F14 Email Receipt Ingestion - Add email_receipt_sources table
+        val MIGRATION_64_65 = object : androidx.room.migration.Migration(64, 65) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Create email_receipt_sources table for tracking email-based receipts
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS email_receipt_sources (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        receiptId INTEGER NOT NULL,
+                        emailSender TEXT NOT NULL,
+                        emailSubject TEXT NOT NULL,
+                        emailMessageId TEXT NOT NULL DEFAULT '',
+                        parsedAt INTEGER NOT NULL,
+                        provider TEXT NOT NULL,
+                        confidence REAL NOT NULL,
+                        fingerprint TEXT NOT NULL DEFAULT '',
+                        FOREIGN KEY (receiptId) REFERENCES scanned_receipts (id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+
+                // Create indices for efficient queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_receiptId ON email_receipt_sources (receiptId)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources (emailMessageId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources (provider, parsedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources (fingerprint)")
             }
         }
     }

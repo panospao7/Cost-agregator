@@ -38,11 +38,7 @@ fun PriceProtectionScreen(
     val protectedItems by viewModel.protectedItems.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     var selectedTab by remember { mutableIntStateOf(0) }
-    
-    LaunchedEffect(Unit) {
-        viewModel.loadData()
-    }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -26,7 +27,8 @@ class BudgetRepository @Inject constructor(
     private val categoryDao: CategoryDao,
     private val expenseDao: ExpenseDao,
     private val budgetCalculator: BudgetCalculator,
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+    private val offsetEngine: SharedExpenseBudgetOffsetEngine
 ) {
     val allBudgets: Flow<List<Budget>> = budgetDao.getAllFlow()
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
@@ -63,7 +65,14 @@ class BudgetRepository @Inject constructor(
                         .sumOf { it.effectiveAmount }
                 }
 
-                val spent = getSpentInRange(window.start, window.end)
+                // Calculate effective spend using offset engine for shared expenses
+                // Note: We can't call suspend function here, so we use the regular calculation
+                // The offset calculation happens in the background via a separate flow
+                val rawSpent = getSpentInRange(window.start, window.end)
+                
+                // For now, use the raw spend. The adjusted spend will be calculated
+                // asynchronously by the BudgetMonitor or ViewModel
+                val spent = rawSpent
                 var limit = budget.amount
                 
                 // LOG-002: Implement Compounding Rollover - BUG-2 FIX

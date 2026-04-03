@@ -27,6 +27,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.ui.components.common.EmptyStateType
+import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
+import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -37,11 +43,21 @@ import java.util.Locale
 @Composable
 fun SubscriptionManagementScreen(
     onNavigateBack: () -> Unit,
-    viewModel: SubscriptionManagementViewModel = hiltViewModel()
+    onOpenNotificationSettings: () -> Unit = {},
+    onOpenBankConnections: () -> Unit = {},
+    viewModel: SubscriptionManagementViewModel = hiltViewModel(),
+    actionRegistry: ContextualActionRegistry = ContextualActionRegistry()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf<SubscriptionInfo?>(null) }
+    
+    // Get contextual actions for empty state
+    val emptyStateActions by remember {
+        derivedStateOf {
+            actionRegistry.getActions(EmptyStateScreenKeys.SUBSCRIPTION)
+        }
+    }
     
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
@@ -107,6 +123,33 @@ fun SubscriptionManagementScreen(
                         onRetry = { viewModel.refresh() }
                     )
                 }
+                uiState.subscriptions.isEmpty() -> {
+                    // Enhanced empty state with contextual actions
+                    EnhancedEmptyState(
+                        type = EmptyStateType.GENERIC,
+                        title = stringResource(R.string.subscriptions_empty_title),
+                        message = stringResource(R.string.subscriptions_empty_message),
+                        actions = emptyStateActions,
+                        onActionClick = { action ->
+                            when (val actionType = action.action) {
+                                is EmptyStateActionType.NavigateToDestination -> {
+                                    // Handle navigation if needed
+                                }
+                                is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
+                                is EmptyStateActionType.OpenFeature -> {
+                                    when (actionType.feature) {
+                                        "notification_settings" -> onOpenNotificationSettings()
+                                        "add_subscription" -> showAddDialog = true
+                                    }
+                                }
+                            }
+                        },
+                        onDismissAction = { actionId ->
+                            actionRegistry.markCompleted(EmptyStateScreenKeys.SUBSCRIPTION, actionId)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
                 else -> {
                     LazyColumn(
                         modifier = Modifier
@@ -127,6 +170,29 @@ fun SubscriptionManagementScreen(
                             )
                         }
                         
+                        // Detected Candidates Section
+                        if (uiState.detectedCandidates.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = stringResource(R.string.header_detected_subscriptions, uiState.detectedCount),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = SemanticColors.TextPrimary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            
+                            items(
+                                uiState.detectedCandidates,
+                                key = { it.id }
+                            ) { candidate ->
+                                SubscriptionCandidateCard(
+                                    candidate = candidate,
+                                    onAccept = { viewModel.acceptCandidate(it) },
+                                    onReject = { viewModel.rejectCandidate(it.id) }
+                                )
+                            }
+                        }
+                        
                         // Active Subscriptions Header
                         if (uiState.subscriptions.any { it.subscription.isActive }) {
                             item {
@@ -134,7 +200,8 @@ fun SubscriptionManagementScreen(
                                     text = stringResource(R.string.header_active_subscriptions, uiState.activeCount),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = SemanticColors.TextPrimary,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(top = if (uiState.detectedCandidates.isNotEmpty()) 16.dp else 0.dp)
                                 )
                             }
                         }
@@ -491,6 +558,128 @@ private fun SubscriptionCard(
                     Icon(Icons.Rounded.Delete, null)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(stringResource(R.string.action_delete))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionCandidateCard(
+    candidate: com.yourname.expensetracker.data.database.entity.SubscriptionCandidate,
+    onAccept: (com.yourname.expensetracker.data.database.entity.SubscriptionCandidate) -> Unit,
+    onReject: (com.yourname.expensetracker.data.database.entity.SubscriptionCandidate) -> Unit
+) {
+    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.15f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Header with confidence badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = candidate.merchant,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = SemanticColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    
+                    Text(
+                        text = stringResource(
+                            R.string.subscription_candidate_details,
+                            candidate.transactionCount,
+                            candidate.detectedInterval.replaceFirstChar { it.uppercase() },
+                            "${(candidate.confidence * 100).toInt()}%"
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SemanticColors.TextSecondary
+                    )
+                }
+                
+                // Confidence badge
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = when {
+                        candidate.confidence >= 0.8 -> Color(0xFF4CAF50)
+                        candidate.confidence >= 0.6 -> Color(0xFFFF9800)
+                        else -> Color(0xFFF44336)
+                    }.copy(alpha = 0.2f)
+                ) {
+                    Text(
+                        text = "${(candidate.confidence * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = when {
+                            candidate.confidence >= 0.8 -> Color(0xFF4CAF50)
+                            candidate.confidence >= 0.6 -> Color(0xFFFF9800)
+                            else -> Color(0xFFF44336)
+                        },
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Amount and annual cost
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = currencyFormat.format(candidate.averageAmount),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = SemanticColors.TextPrimary,
+                    fontWeight = FontWeight.Medium
+                )
+                
+                Text(
+                    text = stringResource(R.string.label_estimated_annual, currencyFormat.format(candidate.estimatedAnnualCost)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Action buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { onReject(candidate) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text(stringResource(R.string.action_reject))
+                }
+                
+                Button(
+                    onClick = { onAccept(candidate) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SemanticColors.PrimaryIndigo
+                    )
+                ) {
+                    Text(stringResource(R.string.action_add_subscription))
                 }
             }
         }

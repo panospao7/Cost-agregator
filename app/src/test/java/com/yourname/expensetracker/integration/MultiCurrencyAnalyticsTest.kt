@@ -8,12 +8,14 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
+import org.junit.Assert.assertTrue
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -44,7 +46,8 @@ class MultiCurrencyAnalyticsTest {
         val totalInEur = repository.getTotalExpensesInHomeCurrency(start, end, homeCurrency = "EUR")
 
         // 100 EUR + (50 USD * 0.8) + (1000 JPY fallback as-is when no rate)
-        assertApproxEquals(1140.0, totalInEur, 0.0001)
+        assertTrue(totalInEur is Result.Success)
+        assertApproxEquals(1140.0, (totalInEur as Result.Success).data, 0.0001)
     }
 
     private fun expense(id: Long, amount: Double, currency: String, type: TransactionType, date: Long) = Expense(

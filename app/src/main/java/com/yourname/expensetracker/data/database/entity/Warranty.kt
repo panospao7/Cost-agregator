@@ -47,7 +47,12 @@ data class Warranty(
     @ColumnInfo(defaultValue = "ACTIVE") val status: WarrantyStatus = WarrantyStatus.ACTIVE,
     val claimedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    // F1: Receipt → Warranty Pipeline fields
+    @ColumnInfo(defaultValue = "0") val autoDetected: Boolean = false,
+    @ColumnInfo(defaultValue = "0.0") val extractionConfidence: Double = 0.0,
+    @ColumnInfo(defaultValue = "manual") val extractionSource: String = "manual", // "manual", "ocr", "email"
+    @ColumnInfo(defaultValue = "0") val needsReview: Boolean = false
 )
 
 enum class WarrantyType {

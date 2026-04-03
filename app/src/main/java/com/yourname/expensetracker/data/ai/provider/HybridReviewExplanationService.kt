@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanation
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
@@ -20,7 +21,7 @@ class HybridReviewExplanationService @Inject constructor(
     private val noOpReviewExplanationService: NoOpReviewExplanationService
 ) : ReviewExplanationService {
 
-    override suspend fun generate(input: ReviewExplanationInput): ReviewExplanation? {
+    override suspend fun generate(input: ReviewExplanationInput): AiServiceResult<ReviewExplanation> {
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.REVIEW_EXPLANATION, settings).route) {
             AiRoute.CLOUD -> cloudReviewExplanationService.generate(input)

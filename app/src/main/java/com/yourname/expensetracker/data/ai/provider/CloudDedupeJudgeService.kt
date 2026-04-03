@@ -2,6 +2,8 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
@@ -13,8 +15,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,10 +46,10 @@ class CloudDedupeJudgeService @Inject constructor(
     private val apiKey: String
         get() = secureKeyStorage.getGeminiKey() ?: ""
 
-    override suspend fun judge(input: DedupeJudgeInput): DedupeJudgeSuggestion? {
+    override suspend fun judge(input: DedupeJudgeInput): AiServiceResult<DedupeJudgeSuggestion> {
         if (apiKey.isBlank()) {
             Timber.d("CloudDedupeJudgeService: Gemini API key missing, skipping.")
-            return null
+            return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
         }
 
         val requestBody = buildRequestBody(input)
@@ -61,17 +66,31 @@ class CloudDedupeJudgeService @Inject constructor(
                     Timber.w(
                         "CloudDedupeJudgeService: HTTP ${response.code} ${response.body?.string()?.take(200)}"
                     )
-                    return@use null
+                    return@use AiServiceResult.Failure(
+                        AiServiceError.HttpError(response.code, response.body?.string()?.take(200))
+                    )
                 }
-                val body = response.body?.string() ?: return@use null
-                parseResponse(body)
+                val body = response.body?.string()
+                    ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                val parsed = parseResponse(body)
+                    ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable dedupe verdict in response"))
+                AiServiceResult.Success(parsed)
             }
+        } catch (e: SocketTimeoutException) {
+            Timber.w(e, "CloudDedupeJudgeService: timeout")
+            AiServiceResult.Failure(AiServiceError.Timeout)
+        } catch (e: SSLException) {
+            Timber.w(e, "CloudDedupeJudgeService: SSL failure")
+            AiServiceResult.Failure(AiServiceError.SslError)
         } catch (e: IOException) {
             Timber.w(e, "CloudDedupeJudgeService: network failure")
-            null
+            AiServiceResult.Failure(AiServiceError.Offline)
+        } catch (e: JSONException) {
+            Timber.w(e, "CloudDedupeJudgeService: parse failure")
+            AiServiceResult.Failure(AiServiceError.ParseError(e.message))
         } catch (e: Exception) {
             Timber.w(e, "CloudDedupeJudgeService: parse failure")
-            null
+            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
         }
     }
 

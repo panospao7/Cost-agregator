@@ -6,6 +6,8 @@ import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
@@ -90,29 +92,33 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
         aiArtifactRepository.upsert(baseEntity)
 
         return try {
-            val suggestion = dedupeJudgeService.judge(input)
-            if (suggestion == null) {
-                aiArtifactRepository.upsert(
-                    baseEntity.copy(
-                        status = AiArtifactStatus.FAILED,
-                        errorMessage = failureMessage(routeDecision.reason, routeDecision),
-                        updatedAt = timeProvider.now()
+            when (val serviceResult = dedupeJudgeService.judge(input)) {
+                is AiServiceResult.Success -> {
+                    val suggestion = serviceResult.value
+                    aiArtifactRepository.upsert(
+                        baseEntity.copy(
+                            status = AiArtifactStatus.READY,
+                            summaryText = "AI duplicate verdict: ${suggestion.verdict.name}",
+                            explanationText = suggestion.rationale
+                                ?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
+                                .withRouteDiagnostics(routeDecision),
+                            payloadJson = suggestion.toPayloadJson(),
+                            updatedAt = timeProvider.now()
+                        )
                     )
-                )
-                DedupeJudgeGenerationResult.Error("AI duplicate assist returned no verdict.")
-            } else {
-                aiArtifactRepository.upsert(
-                    baseEntity.copy(
-                        status = AiArtifactStatus.READY,
-                        summaryText = "AI duplicate verdict: ${suggestion.verdict.name}",
-                        explanationText = suggestion.rationale
-                            ?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
-                            .withRouteDiagnostics(routeDecision),
-                        payloadJson = suggestion.toPayloadJson(),
-                        updatedAt = timeProvider.now()
+                    DedupeJudgeGenerationResult.Success(suggestion, fromCache = false)
+                }
+                is AiServiceResult.Failure -> {
+                    val readableError = serviceResult.error.toReadableMessage()
+                    aiArtifactRepository.upsert(
+                        baseEntity.copy(
+                            status = AiArtifactStatus.FAILED,
+                            errorMessage = failureMessage(readableError, routeDecision),
+                            updatedAt = timeProvider.now()
+                        )
                     )
-                )
-                DedupeJudgeGenerationResult.Success(suggestion, fromCache = false)
+                    DedupeJudgeGenerationResult.Error(readableError)
+                }
             }
         } catch (e: Exception) {
             aiArtifactRepository.upsert(
@@ -127,6 +133,16 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
             )
         }
     }
+}
+
+private fun AiServiceError.toReadableMessage(): String = when (this) {
+    AiServiceError.Timeout -> "Duplicate assist timed out"
+    AiServiceError.Offline -> "No network connection"
+    AiServiceError.SslError -> "Secure connection failed"
+    is AiServiceError.HttpError -> "HTTP $code"
+    is AiServiceError.ParseError -> message ?: "Response parse error"
+    is AiServiceError.Disabled -> reason
+    is AiServiceError.Unknown -> message ?: "Unknown service error"
 }
 
 private fun DedupeJudgeSuggestion.toPayloadJson(): String {

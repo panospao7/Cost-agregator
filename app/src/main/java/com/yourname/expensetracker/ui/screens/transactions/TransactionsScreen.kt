@@ -56,6 +56,7 @@ import com.yourname.expensetracker.data.database.model.formattedDate
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
+import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
@@ -860,22 +861,10 @@ private fun TransactionItem(
         }
     }
     
-    // Build accessibility description for the transaction
-    val accessibilityDescription = buildString {
-        append("${expense.merchant}, ${transaction.formattedAmount}")
-        category?.name?.let { append(", Category: $it") }
-        if (expense.isManualEntry) append(", Manual entry")
-        if (expense.resolvedAddress != null) append(", Location: ${expense.resolvedAddress}")
-        expense.transferDirection?.let { append(", ${it.name}") }
-    }
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-            .semantics {
-                contentDescription = accessibilityDescription
-            },
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
@@ -1079,7 +1068,7 @@ private fun TransactionItem(
                     IconButton(
                         onClick = onChangeType,
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(Dimens.TouchTargetMin)
                             .semantics { contentDescription = changeTypeCd }
                     ) {
                         val typeIcon = when (expense.transactionType) {
@@ -1102,7 +1091,7 @@ private fun TransactionItem(
                         IconButton(
                             onClick = { showActionMenu = true },
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(Dimens.TouchTargetMin)
                                 .semantics { contentDescription = moreOptionsCd }
                         ) {
                             Icon(

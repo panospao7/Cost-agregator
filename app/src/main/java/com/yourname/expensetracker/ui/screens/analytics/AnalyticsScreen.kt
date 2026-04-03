@@ -55,6 +55,7 @@ import com.yourname.expensetracker.domain.analytics.*
 import com.yourname.expensetracker.domain.location.AreaSpending
 import com.yourname.expensetracker.domain.location.TravelInsight
 import com.yourname.expensetracker.ui.components.*
+import com.yourname.expensetracker.ui.components.analytics.PersonalityProfileCard
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import java.util.Locale
 
@@ -286,6 +287,12 @@ fun AnalyticsScreen(
                 if (state.recurring.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_subscription_detection)) }
                     items(state.recurring) { RecurringItem(it) }
+                }
+
+                // 14. Spending Personality Profile (F13)
+                state.personalityProfile?.let { profile ->
+                    item { SectionHeader(stringResource(R.string.analytics_section_personality_profile)) }
+                    item { PersonalityProfileCard(profile) }
                 }
 
                 item { Spacer(modifier = Modifier.height(24.dp)) }

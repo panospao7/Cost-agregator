@@ -116,6 +116,52 @@ sealed class DashboardWidget {
     data class FinancialHealthScoreWidget(
         val healthScore: com.yourname.expensetracker.domain.health.HealthScoreResult
     ) : DashboardWidget()
+
+    /**
+     * Financial Health Score V2 widget (F5) - Enhanced health score calculation.
+     */
+    data class FinancialHealthScoreV2Widget(
+        val healthScore: com.yourname.expensetracker.domain.health.FinancialHealthResult
+    ) : DashboardWidget()
+    
+    data class LifestyleSavingsPrompt(
+        val inflationRate: Double,
+        val suggestedUplift: Double,
+        val reason: String,
+        val hasExistingGoals: Boolean
+    ) : DashboardWidget()
+    
+    /**
+     * Monthly Savings Sweep widget - shown at month-end when there is
+     * underspend that can be safely swept to savings goals.
+     */
+    data class SavingsSweepPrompt(
+        val sweepAmount: Double,
+        val underspend: Double,
+        val riskBuffer: Double,
+        val goalAllocations: List<SweepGoalAllocation>,
+        val confidence: Double,
+        val daysUntilMonthEnd: Int
+    ) : DashboardWidget()
+    
+    data class SweepGoalAllocation(
+        val goalId: Long,
+        val goalName: String,
+        val suggestedAmount: Double,
+        val currentProgress: Double,
+        val targetAmount: Double
+    )
+    
+    data class MoneyRadar(
+        val data: MoneyRadarData
+    ) : DashboardWidget()
+
+    /**
+     * Financial Stress Forecast widget (F8) - Shows 30/60/90 day cash crunch prediction.
+     */
+    data class FinancialStressForecast(
+        val result: com.yourname.expensetracker.domain.forecasting.StressForecastResult
+    ) : DashboardWidget()
 }
 
 data class CategorySpending(
@@ -144,7 +190,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private val synthesisEngine: SynthesisEngine,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
     private val timeProvider: TimeProvider,
-    private val healthCalculator: com.yourname.expensetracker.domain.health.FinancialHealthCalculator
+    private val healthCalculator: com.yourname.expensetracker.domain.health.FinancialHealthCalculator,
+    private val healthScoreV2: com.yourname.expensetracker.domain.health.FinancialHealthScoreV2,
+    private val lifestyleSavingsPromptUseCase: com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase,
+    private val computeMoneyRadarUseCase: ComputeMoneyRadarUseCase,
+    private val stressForecastEngine: com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
 ) {
 
     /** Pure computation: maps raw dashboard data → a list of ordered [DashboardWidget]s. */
@@ -450,11 +500,62 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             noSpendStreak = currentStreak
         )
 
+        // ── Calculate Financial Health Score V2 (F5) ─────────────────────────
+        val healthScoreV2Result = try {
+            healthScoreV2.calculateHealthScore(
+                periodStart = monthStart,
+                periodEnd = TimePeriodUtils.getEndOfMonth(now)
+            )
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to calculate financial health score v2")
+            null
+        }
+
+        // ── Check for Lifestyle Savings Opportunity ─────────────────────────
+        val lifestyleRecommendation = lifestyleSavingsPromptUseCase.evaluateAndPrompt()
+        val lifestyleWidget: DashboardWidget.LifestyleSavingsPrompt? = lifestyleRecommendation?.let {
+            DashboardWidget.LifestyleSavingsPrompt(
+                inflationRate = it.inflationRate,
+                suggestedUplift = it.suggestedMonthlyUplift,
+                reason = it.reason,
+                hasExistingGoals = it.goals.isNotEmpty()
+            )
+        }
+        
+        // ── Compute Money Radar (F4) ───────────────────────────────────────
+        val moneyRadarData = computeMoneyRadarUseCase.compute()
+
+        // ── Compute Financial Stress Forecast (F8) ─────────────────────────
+        val stressForecastResult = try {
+            stressForecastEngine.computeStressForecast()
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to compute financial stress forecast")
+            null
+        }
+
         // ── Assemble widget list ─────────────────────────────────────────────
         val widgets = buildList {
             add(DashboardWidget.FinancialWeatherWidget(weather))
             
-            // NEW: Financial Health Score Widget
+            // NEW: Money Radar Widget (F4) - Today's unified alerts
+            add(DashboardWidget.MoneyRadar(moneyRadarData))
+            
+            // NEW: Financial Stress Forecast Widget (F8) - 30/60/90 day cash crunch prediction
+            if (stressForecastResult != null) {
+                add(DashboardWidget.FinancialStressForecast(stressForecastResult))
+            }
+            
+            // NEW: Lifestyle Savings Prompt (if applicable)
+            if (lifestyleWidget != null) {
+                add(lifestyleWidget)
+            }
+            
+            // NEW: Financial Health Score V2 Widget (F5)
+            if (healthScoreV2Result != null) {
+                add(DashboardWidget.FinancialHealthScoreV2Widget(healthScoreV2Result))
+            }
+            
+            // Legacy Financial Health Score Widget (keep for comparison)
             add(DashboardWidget.FinancialHealthScoreWidget(healthScore))
             
             add(DashboardWidget.TotalsDashboard)

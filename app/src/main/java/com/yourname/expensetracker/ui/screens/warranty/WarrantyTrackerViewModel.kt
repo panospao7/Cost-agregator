@@ -16,7 +16,10 @@ data class WarrantyTrackerState(
     val activeCount: Int = 0,
     val expiringSoonCount: Int = 0,
     val totalProtectedValue: Double = 0.0,
-    val selectedFilter: WarrantyStatus? = null
+    val selectedFilter: WarrantyStatus? = null,
+    // F1: Auto-detected warranties needing review
+    val needsReviewCount: Int = 0,
+    val autoDetectedWarranties: List<Warranty> = emptyList()
 )
 
 @HiltViewModel
@@ -38,9 +41,14 @@ class WarrantyTrackerViewModel @Inject constructor(
             
             warrantyRepository.getAllWarranties()
                 .collect { warranties ->
+                    val autoDetected = warranties.filter { it.autoDetected }
+                    val needsReview = warranties.filter { it.needsReview }
+                    
                     _state.update { 
                         it.copy(
                             warranties = warranties,
+                            autoDetectedWarranties = autoDetected,
+                            needsReviewCount = needsReview.size,
                             isLoading = false
                         )
                     }
@@ -67,6 +75,49 @@ class WarrantyTrackerViewModel @Inject constructor(
     fun filterByStatus(status: WarrantyStatus?) {
         _state.update { it.copy(selectedFilter = status) }
     }
+    
+    // F1: Filter for auto-detected warranties
+    fun filterByAutoDetected() {
+        _state.update { 
+            it.copy(
+                warranties = it.autoDetectedWarranties,
+                selectedFilter = null
+            ) 
+        }
+    }
+    
+    // F1: Show warranties needing review
+    fun showNeedsReview() {
+        viewModelScope.launch {
+            val needsReview = _state.value.warranties.filter { it.needsReview }
+            _state.update { 
+                it.copy(
+                    warranties = needsReview,
+                    selectedFilter = null
+                ) 
+            }
+        }
+    }
+    
+    // F1: Confirm a low-confidence auto-detected warranty
+    fun confirmWarranty(warranty: Warranty) {
+        viewModelScope.launch {
+            val updated = warranty.copy(
+                needsReview = false,
+                updatedAt = System.currentTimeMillis()
+            )
+            warrantyRepository.updateWarranty(updated)
+            loadStats()
+        }
+    }
+    
+    // F1: Reject/delete an auto-detected warranty that was incorrect
+    fun rejectAutoDetectedWarranty(warranty: Warranty) {
+        viewModelScope.launch {
+            warrantyRepository.deleteWarranty(warranty)
+            loadStats()
+        }
+    }
 
     fun markAsClaimed(warrantyId: Long) {
         viewModelScope.launch {
@@ -83,6 +134,7 @@ class WarrantyTrackerViewModel @Inject constructor(
     }
 
     fun refresh() {
+        loadWarranties()
         loadStats()
     }
 }

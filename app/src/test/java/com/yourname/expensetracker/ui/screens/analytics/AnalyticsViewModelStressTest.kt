@@ -26,6 +26,7 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
     private lateinit var locationInsightsEngine: com.yourname.expensetracker.domain.location.LocationInsightsEngine
     private lateinit var areaSpendingEngine: com.yourname.expensetracker.domain.location.AreaSpendingEngine
     private lateinit var travelDetectionEngine: com.yourname.expensetracker.domain.location.TravelDetectionEngine
+    private lateinit var spendingPersonalityClassifier: com.yourname.expensetracker.domain.analytics.SpendingPersonalityClassifier
     private lateinit var timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 
     private lateinit var viewModel: AnalyticsViewModel
@@ -43,6 +44,7 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
         locationInsightsEngine = mockk(relaxed = true)
         areaSpendingEngine = mockk(relaxed = true)
         travelDetectionEngine = mockk(relaxed = true)
+        spendingPersonalityClassifier = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
 
         every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
@@ -86,6 +88,14 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             travelSpend = 0.0,
             travelTrips = emptyList()
         )
+        coEvery { spendingPersonalityClassifier.classify() } returns com.yourname.expensetracker.domain.analytics.SpendingPersonalityProfile(
+            personalityType = com.yourname.expensetracker.domain.analytics.SpendingPersonalityType.BALANCED,
+            confidence = 0.0,
+            featureScores = emptyMap(),
+            explanation = emptyList(),
+            coachingTips = emptyList(),
+            lastUpdated = System.currentTimeMillis()
+        )
 
         viewModel = AnalyticsViewModel(
             expenseRepository,
@@ -98,6 +108,7 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             locationInsightsEngine,
             areaSpendingEngine,
             travelDetectionEngine,
+            spendingPersonalityClassifier,
             timeProvider
         )
     }

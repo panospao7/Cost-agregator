@@ -57,8 +57,10 @@ class LocationResolverStressTest {
         coEvery { locationRepository.getCachedLocation(any()) } returns null
         coEvery { locationRepository.getCachedLocationForArea(any(), any()) } returns null
         coEvery { expenseRepository.getMerchantLocationClusters(any()) } returns emptyList()
-        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns null
-        coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns emptyList()
+        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
+            GeocodingLookupResult.Success(null)
+        coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns
+            NearbyPoiResult.Success(emptyList())
 
         locationResolver = LocationResolver(
             geocodingService = geocodingService,
@@ -95,7 +97,8 @@ class LocationResolverStressTest {
     @Test
     fun `force refresh bypasses cache`() = runBlocking {
         coEvery { locationRepository.getCachedLocation(any()) } returns cached(40.7, -74.0, "cache")
-        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns geocoded(41.0, -73.0)
+        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(41.0, -73.0))
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis(), forceRefresh = true)
         assertTrue(result is LocationResolutionResult.Resolved)
@@ -105,7 +108,8 @@ class LocationResolverStressTest {
     @Test
     fun `recent transaction with device location uses gps bias`() = runBlocking {
         coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
-        coEvery { geocodingService.search(any(), 40.71, -74.01, any(), any()) } returns geocoded(40.72, -74.02)
+        coEvery { geocodingService.search(any(), 40.71, -74.01, any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(40.72, -74.02))
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis() - 60_000)
         assertTrue(result is LocationResolutionResult.Resolved)
@@ -114,7 +118,8 @@ class LocationResolverStressTest {
     @Test
     fun `old transaction does not use gps bias`() = runBlocking {
         coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
-        coEvery { geocodingService.search(any(), null, null, any(), any()) } returns geocoded(40.72, -74.02)
+        coEvery { geocodingService.search(any(), null, null, any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(40.72, -74.02))
 
         val result = locationResolver.resolve("Shop", 0L)
         assertTrue(result is LocationResolutionResult.Resolved)
@@ -123,7 +128,8 @@ class LocationResolverStressTest {
 
     @Test
     fun `null island result is rejected`() = runBlocking {
-        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns geocoded(0.0, 0.0)
+        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(0.0, 0.0))
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis())
         assertTrue(result is LocationResolutionResult.Unresolved)
@@ -132,10 +138,13 @@ class LocationResolverStressTest {
     @Test
     fun `multiple nearby pois require user selection`() = runBlocking {
         coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
-        coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns listOf(
-            poi("P1", 40.70, -74.00, "A"),
-            poi("P2", 40.71, -74.01, "B")
-        )
+        coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns
+            NearbyPoiResult.Success(
+                listOf(
+                    poi("P1", 40.70, -74.00, "A"),
+                    poi("P2", 40.71, -74.01, "B")
+                )
+            )
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis())
         assertTrue(result is LocationResolutionResult.NeedsUserSelection)

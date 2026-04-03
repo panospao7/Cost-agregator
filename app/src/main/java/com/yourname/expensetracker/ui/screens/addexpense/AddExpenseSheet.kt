@@ -189,7 +189,13 @@ fun AddExpenseSheet(
                     ),
                     isError = state.amountError != null,
                     supportingText = state.amountError?.let { { Text(it) } },
-                    leadingIcon = { Text(Currency.getInstance("EUR").symbol, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = {
+                        Text(
+                            text = Currency.getInstance("EUR").symbol,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics { contentDescription = amountCd }
@@ -272,7 +278,11 @@ fun AddExpenseSheet(
                     Icon(
                         if (state.showTransactionType) Icons.Default.KeyboardArrowUp
                         else Icons.Default.KeyboardArrowDown,
-                        contentDescription = stringResource(com.yourname.expensetracker.R.string.toggle_content_description)
+                        contentDescription = if (state.showTransactionType) {
+                            "Transaction type expanded"
+                        } else {
+                            "Transaction type collapsed"
+                        }
                     )
                 }
 
@@ -289,7 +299,7 @@ fun AddExpenseSheet(
                                 label = {
                                     Text(
                                         typeLabel,
-                                        fontSize = 12.sp
+                                        style = MaterialTheme.typography.labelMedium
                                     )
                                 }
                             )
@@ -313,7 +323,11 @@ fun AddExpenseSheet(
                     Icon(
                         if (state.showNotes) Icons.Default.KeyboardArrowUp
                         else Icons.Default.KeyboardArrowDown,
-                        contentDescription = stringResource(com.yourname.expensetracker.R.string.toggle_content_description)
+                        contentDescription = if (state.showNotes) {
+                            "Notes expanded"
+                        } else {
+                            "Notes collapsed"
+                        }
                     )
                 }
 
@@ -674,7 +688,7 @@ fun PaymentMethodChip(
             Text(
                 label,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 color = if (selected)
                     MaterialTheme.colorScheme.onPrimaryContainer
                 else
@@ -737,7 +751,7 @@ fun CategoryGrid(
                         )
                         Text(
                             category.name,
-                            fontSize = 10.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )

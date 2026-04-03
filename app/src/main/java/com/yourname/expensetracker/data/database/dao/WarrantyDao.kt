@@ -53,6 +53,13 @@ interface WarrantyDao {
     @Query("SELECT COUNT(*) FROM warranties WHERE status = 'ACTIVE' AND warrantyEndDate > :currentTime")
     suspend fun getActiveWarrantyCount(currentTime: Long): Int
 
-    @Query("SELECT SUM(CASE WHEN expenseId IS NOT NULL THEN (SELECT amount FROM expenses WHERE id = expenseId) ELSE 0 END) FROM warranties WHERE status = 'ACTIVE'")
+    @Query(
+        """
+        SELECT SUM(COALESCE(e.amount, 0))
+        FROM warranties w
+        LEFT JOIN expenses e ON e.id = w.expenseId
+        WHERE w.status = 'ACTIVE'
+        """
+    )
     suspend fun getTotalProtectedValue(): Double?
 }

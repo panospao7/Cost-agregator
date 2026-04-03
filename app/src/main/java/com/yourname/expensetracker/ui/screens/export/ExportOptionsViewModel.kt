@@ -19,6 +19,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
+import timber.log.Timber
 
 /**
  * UI state for export options screen.
@@ -73,9 +74,16 @@ class ExportOptionsViewModel @Inject constructor(
                     _uiState.value.startDate,
                     _uiState.value.endDate
                 )
-                _uiState.value = _uiState.value.copy(expenseCount = expenses.size)
+                _uiState.value = _uiState.value.copy(
+                    expenseCount = expenses.size,
+                    error = null
+                )
             } catch (e: Exception) {
-                // Silently fail, not critical
+                Timber.e(e, "Failed loading expense count for export")
+                _uiState.value = _uiState.value.copy(
+                    expenseCount = 0,
+                    error = "Failed to load expense count. Pull to retry."
+                )
             }
         }
     }
@@ -106,7 +114,8 @@ class ExportOptionsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
                 exportData = null,
-                exportSuccess = false
+                exportSuccess = false,
+                error = null
             )
             
             try {
@@ -195,5 +204,9 @@ class ExportOptionsViewModel @Inject constructor(
      */
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)
+    }
+
+    fun retry() {
+        loadExpenseCount()
     }
 }

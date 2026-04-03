@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
@@ -36,9 +37,13 @@ import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 
+import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
+import com.yourname.expensetracker.data.database.AppDatabase
+
 @Singleton
 class ReceiptRepository @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val database: AppDatabase,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
@@ -50,8 +55,10 @@ class ReceiptRepository @Inject constructor(
     private val merchantNormalizer: NewMerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val budgetMonitor: BudgetMonitor,
+    private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val crossSourceDeduplication: CrossSourceDeduplication,
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+    private val warrantyUseCase: AutoCreateWarrantyFromReceiptUseCase
 ) {
     val allReceipts: Flow<List<ScannedReceipt>> = scannedReceiptDao.getAllFlow()
 
@@ -106,6 +113,15 @@ class ReceiptRepository @Inject constructor(
             )
 
             val receiptId = scannedReceiptDao.insert(receipt)
+
+            // F1: Trigger warranty extraction after receipt is saved
+            try {
+                val warrantyResult = warrantyUseCase.execute(receiptId, ocrResult.fullText)
+                Timber.d("Warranty extraction result for receipt $receiptId: $warrantyResult")
+            } catch (e: Exception) {
+                Timber.e(e, "Warranty extraction failed for receipt $receiptId")
+                // Don't fail the whole process if warranty extraction fails
+            }
 
             // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
             if (autoCreateReview) {
@@ -265,7 +281,15 @@ class ReceiptRepository @Inject constructor(
         // 5. Check budgets
         budgetMonitor.checkBudgets()
 
-        // 6. Learn merchant → category mapping
+        // 6. Check for anomalies and alert
+        val enrichedExpense = expense.copy(id = expenseId)
+        val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+            expense = enrichedExpense,
+            category = finalCategoryId?.let { database.categoryDao().getById(it) }
+        )
+        anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+
+        // 7. Learn merchant → category mapping
         if (finalCategoryId != null) {
             try {
                 hybridClassifier.learnFromCorrection(

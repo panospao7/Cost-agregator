@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
@@ -84,9 +85,11 @@ class JudgePendingReviewDuplicateUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
         coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dedupeJudgeService.judge(any()) } returns DedupeJudgeSuggestion(
-            verdict = DuplicateVerdict.UNCERTAIN,
-            rationale = "Two nearby matches look similar"
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(
+                verdict = DuplicateVerdict.UNCERTAIN,
+                rationale = "Two nearby matches look similar"
+            )
         )
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
@@ -115,9 +118,11 @@ class JudgePendingReviewDuplicateUseCaseTest {
             modelName = AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL
         )
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dedupeJudgeService.judge(any()) } returns DedupeJudgeSuggestion(
-            verdict = DuplicateVerdict.UNCERTAIN,
-            rationale = "Two nearby matches look similar"
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(
+                verdict = DuplicateVerdict.UNCERTAIN,
+                rationale = "Two nearby matches look similar"
+            )
         )
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L

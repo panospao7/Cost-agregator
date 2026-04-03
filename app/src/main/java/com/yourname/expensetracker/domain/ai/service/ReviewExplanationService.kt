@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.ai.service
 
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanation
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 
 /**
  * Domain contract for AI-powered review explanation generation.
@@ -27,5 +28,5 @@ interface ReviewExplanationService {
      * @return A [ReviewExplanation] on success, or `null` if the provider is
      *         unavailable, disabled, or intentionally silent for this input.
      */
-    suspend fun generate(input: ReviewExplanationInput): ReviewExplanation?
+    suspend fun generate(input: ReviewExplanationInput): AiServiceResult<ReviewExplanation>
 }

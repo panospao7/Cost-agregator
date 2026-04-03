@@ -8,7 +8,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
-import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
@@ -19,15 +19,18 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
+
+import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 
 @Singleton
 class ManualExpenseRepository @Inject constructor(
@@ -39,18 +42,28 @@ class ManualExpenseRepository @Inject constructor(
     private val hybridClassifier: HybridExpenseClassifier,
     private val categorizationEngine: CategorizationEngine,
     private val budgetMonitor: BudgetMonitor,
+    private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val timeProvider: TimeProvider,
     private val aiSettingsRepository: AiSettingsRepository,
     private val generateTransactionInsightUseCase: GenerateTransactionInsightUseCase,
     private val dashboardFollowThroughEngine: DashboardFollowThroughEngine,
     private val recommendationRepository: RecommendationRepository,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @ApplicationScope private val applicationScope: CoroutineScope
 ) {
-    private val asyncScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    /**
+     * Recommendation generation is intentionally app-scoped.
+     *
+     * This work should survive the caller lifecycle (e.g., screen/ViewModel destruction)
+     * and complete in the background as best-effort enrichment.
+     */
+    private val asyncScope: CoroutineScope = applicationScope
+    private val recommendationSemaphore = Semaphore(MAX_CONCURRENT_RECOMMENDATION_JOBS)
 
     companion object {
         // TODO: Replace with actual UserSessionProvider
         private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
+        private const val RECOMMENDATION_JOB_TIMEOUT_MS = 3_000L
+        private const val MAX_CONCURRENT_RECOMMENDATION_JOBS = 2
     }
 
     /**
@@ -136,7 +149,18 @@ class ManualExpenseRepository @Inject constructor(
             // 4. Check budgets
             budgetMonitor.checkBudgets()
 
-            // 5. Learn the merchant→category mapping
+            // 5. Check for anomalies and alert
+            insertedExpenseForHook?.let { expense ->
+                val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+                    expense = expense,
+                    category = finalCategoryId?.let { 
+                        database.categoryDao().getById(it) 
+                    }
+                )
+                anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+            }
+
+            // 6. Learn the merchant→category mapping
             finalCategoryId?.let { merchantCategoryRepository.learnPattern(normalizedMerchant, it) }
 
             Result.Success(id)
@@ -145,24 +169,26 @@ class ManualExpenseRepository @Inject constructor(
         if (result is Result.Success) {
             // Non-blocking recommendation generation (fire-and-forget)
             asyncScope.launch {
-                try {
-                    val aiSettings = aiSettingsRepository.settings().first()
-                    if (aiSettings.aiEnabled) {
-                        val insertedExpense = insertedExpenseForHook ?: return@launch
-                        
-                        // Generate AI insight for the transaction (with 3s timeout)
-                        val aiArtifact = generateTransactionInsightUseCase(insertedExpense)
-                        
-                        // Generate recommendations (with or without AI text)
-                        val recommendations = dashboardFollowThroughEngine.generateRecommendations(
-                            transaction = insertedExpense,
-                            aiArtifact = aiArtifact,
-                            userId = DEFAULT_RECOMMENDATION_USER_ID
-                        )
-                        recommendationRepository.saveAll(recommendations)
+                recommendationSemaphore.withPermit {
+                    try {
+                        withTimeoutOrNull(RECOMMENDATION_JOB_TIMEOUT_MS) {
+                            val aiSettings = aiSettingsRepository.settings().first()
+                            if (aiSettings.aiEnabled) {
+                                val insertedExpense = insertedExpenseForHook ?: return@withTimeoutOrNull
+
+                                val aiArtifact = generateTransactionInsightUseCase(insertedExpense)
+
+                                val recommendations = dashboardFollowThroughEngine.generateRecommendations(
+                                    transaction = insertedExpense,
+                                    aiArtifact = aiArtifact,
+                                    userId = DEFAULT_RECOMMENDATION_USER_ID
+                                )
+                                recommendationRepository.saveAll(recommendations)
+                            }
+                        } ?: Timber.w("Recommendation generation timed out after ${RECOMMENDATION_JOB_TIMEOUT_MS}ms")
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to generate recommendations")
                     }
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to generate recommendations")
                 }
             }
         }

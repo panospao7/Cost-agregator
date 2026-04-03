@@ -593,8 +593,12 @@ private fun ConversionDialog(
     onConvert: (Double, String, String) -> Unit
 ) {
     var amount by remember { mutableStateOf("100") }
-    var fromCurrency by remember { mutableStateOf("EUR") }
-    var toCurrency by remember { mutableStateOf("USD") }
+    val defaultFrom = remember(supportedCurrencies) { supportedCurrencies.firstOrNull()?.code.orEmpty() }
+    val defaultTo = remember(supportedCurrencies, defaultFrom) {
+        supportedCurrencies.firstOrNull { it.code != defaultFrom }?.code ?: defaultFrom
+    }
+    var fromCurrency by remember(defaultFrom) { mutableStateOf(defaultFrom) }
+    var toCurrency by remember(defaultTo) { mutableStateOf(defaultTo) }
     
     AlertDialog(
         onDismissRequest = onDismiss,

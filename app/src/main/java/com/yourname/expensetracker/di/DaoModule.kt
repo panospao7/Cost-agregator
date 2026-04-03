@@ -172,4 +172,49 @@ object DaoModule {
     @Singleton
     fun provideSplitItemAssignmentDao(database: AppDatabase): SplitItemAssignmentDao = 
         database.splitItemAssignmentDao()
+
+    @Provides
+    @Singleton
+    fun provideSubscriptionCandidateDao(database: AppDatabase): com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao = 
+        database.subscriptionCandidateDao()
+
+    @Provides
+    @Singleton
+    fun provideBudgetAdjustmentDao(database: AppDatabase): BudgetAdjustmentDao = 
+        database.budgetAdjustmentDao()
+
+    @Provides
+    @Singleton
+    fun provideEmailReceiptDao(database: AppDatabase): EmailReceiptDao = 
+        database.emailReceiptDao()
+
+    @Provides
+    @Singleton
+    fun provideAnomalyAlertDao(database: AppDatabase): AnomalyAlertDao =
+        database.anomalyAlertDao()
+
+    @Provides
+    @Singleton
+    fun provideHealthScoreHistoryDao(database: AppDatabase): HealthScoreHistoryDao =
+        database.healthScoreHistoryDao()
+
+    @Provides
+    @Singleton
+    fun providePromptStateDao(database: AppDatabase): PromptStateDao =
+        database.promptStateDao()
+
+    @Provides
+    @Singleton
+    fun provideSpendingPersonalityProfileDao(database: AppDatabase): SpendingPersonalityProfileDao =
+        database.spendingPersonalityProfileDao()
+
+    @Provides
+    @Singleton
+    fun provideStressForecastSnapshotDao(database: AppDatabase): StressForecastSnapshotDao =
+        database.stressForecastSnapshotDao()
+
+    @Provides
+    @Singleton
+    fun provideSavingsSweepPlanDao(database: AppDatabase): SavingsSweepPlanDao =
+        database.savingsSweepPlanDao()
 }

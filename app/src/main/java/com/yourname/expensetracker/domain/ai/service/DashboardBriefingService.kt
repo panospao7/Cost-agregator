@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.ai.service
 
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 
 /**
  * Domain contract for AI-powered dashboard briefing generation.
@@ -26,5 +27,5 @@ interface DashboardBriefingService {
      * @return A [DashboardBriefing] on success, or `null` if the provider is
      *         unavailable, disabled, or intentionally silent for this input.
      */
-    suspend fun generate(input: DashboardBriefingInput): DashboardBriefing?
+    suspend fun generate(input: DashboardBriefingInput): AiServiceResult<DashboardBriefing>
 }

@@ -7,6 +7,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.rounded.TrendingUp
+import androidx.compose.material.icons.rounded.Savings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,6 +19,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.savings.SavingsStreak
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.usecase.savings.GoalAllocation
+import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -68,6 +72,30 @@ fun SavingsGoalsScreen(
             )
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Monthly Savings Sweep Recommendation
+            val sweepRec = state.sweepRecommendation
+            if (sweepRec != null) {
+                SweepRecommendationCard(
+                    recommendation = sweepRec,
+                    onAccept = { viewModel.acceptSweepRecommendation() },
+                    onDismiss = { viewModel.dismissSweepRecommendation() }
+                )
+                
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Lifestyle-Linked Recommendations
+            val lifestyleRec = state.lifestyleRecommendation
+            if (lifestyleRec != null) {
+                LifestyleRecommendationCard(
+                    recommendation = lifestyleRec,
+                    onAccept = { viewModel.acceptLifestyleRecommendation(null) },
+                    onDismiss = { viewModel.dismissLifestyleRecommendation() }
+                )
+                
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             // Smart Recommendations
             if (state.smartRecommendations.isNotEmpty()) {
@@ -341,5 +369,230 @@ private fun EmptyGoalsState() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+@Composable
+private fun LifestyleRecommendationCard(
+    recommendation: com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsRecommendation,
+    onAccept: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.TrendingUp,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.tertiary
+                )
+                
+                Spacer(modifier = Modifier.width(8.dp))
+                
+                Text(
+                    text = "💡 Lifestyle Inflation Alert",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = recommendation.reason,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Show suggested uplift
+            Text(
+                text = "Suggested savings boost: +${String.format("%.1f", recommendation.suggestedMonthlyUplift)}% monthly",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
+                fontWeight = FontWeight.Medium
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                OutlinedButton(
+                    onClick = onDismiss
+                ) {
+                    Text("Not Now")
+                }
+                
+                Button(
+                    onClick = onAccept
+                ) {
+                    Icon(androidx.compose.material.icons.Icons.Rounded.Savings, contentDescription = null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Boost Savings")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SweepRecommendationCard(
+    recommendation: SavingsSweepRecommendation,
+    onAccept: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val dateFormat = remember { SimpleDateFormat("MMM d", Locale.getDefault()) }
+    val monthEndDate = remember(recommendation.monthEnd) { Date(recommendation.monthEnd) }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.Savings,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                
+                Spacer(modifier = Modifier.width(8.dp))
+                
+                Column {
+                    Text(
+                        text = "End of Month Sweep",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Month ends ${dateFormat.format(monthEndDate)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Safe to save amount
+            Text(
+                text = "Safe to Save: €${String.format("%.2f", recommendation.safeSweepAmount)}",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            // Underspend and buffer details
+            Text(
+                text = "Underspend: €${String.format("%.2f", recommendation.totalUnderspend)} • " +
+                       "Buffer: €${String.format("%.2f", recommendation.riskBuffer)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Confidence indicator
+            if (recommendation.confidence >= 0.6) {
+                val confidenceText = when {
+                    recommendation.confidence >= 0.8 -> "High confidence"
+                    else -> "Good confidence"
+                }
+                Text(
+                    text = "✓ $confidenceText",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            
+            // Goal allocations
+            if (recommendation.goalAllocations.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    text = "Suggested allocation:",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                recommendation.goalAllocations.take(3).forEach { allocation ->
+                    GoalAllocationRow(allocation)
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                OutlinedButton(
+                    onClick = onDismiss
+                ) {
+                    Text("Skip")
+                }
+                
+                Button(
+                    onClick = onAccept
+                ) {
+                    Icon(androidx.compose.material.icons.Icons.Rounded.Savings, contentDescription = null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Sweep to Goals")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GoalAllocationRow(allocation: GoalAllocation) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = allocation.goalName,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            
+            val progressAfter = allocation.getProgressAfterAllocation()
+            Text(
+                text = "Progress: ${String.format("%.0f", progressAfter)}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
+        }
+        
+        Text(
+            text = "+€${String.format("%.2f", allocation.suggestedAllocation)}",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
     }
 }

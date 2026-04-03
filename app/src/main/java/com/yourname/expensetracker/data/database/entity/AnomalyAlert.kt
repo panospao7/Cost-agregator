@@ -1,0 +1,54 @@
+package com.yourname.expensetracker.data.database.entity
+
+import androidx.room.ColumnInfo
+import androidx.room.Entity
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+/**
+ * Stores anomaly alerts for anomalous transactions detected in near real-time.
+ * Used for deduplication, cooldown management, and user feedback tracking.
+ */
+@Entity(
+    tableName = "anomaly_alerts",
+    indices = [
+        Index(value = ["expenseId"]),
+        Index(value = ["merchant", "alertedAt"]),
+        Index(value = ["severity", "alertedAt"]),
+        Index(value = ["dismissed", "alertedAt"])
+    ]
+)
+data class AnomalyAlert(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+
+    @ColumnInfo(name = "expenseId")
+    val expenseId: Long,
+
+    @ColumnInfo(name = "merchant")
+    val merchant: String,
+
+    @ColumnInfo(name = "category")
+    val category: String?,
+
+    @ColumnInfo(name = "amount")
+    val amount: Double,
+
+    @ColumnInfo(name = "anomalyReason")
+    val anomalyReason: String,
+
+    @ColumnInfo(name = "severity")
+    val severity: String, // "LOW", "MEDIUM", "HIGH"
+
+    @ColumnInfo(name = "alertedAt")
+    val alertedAt: Long,
+
+    @ColumnInfo(name = "dismissed", defaultValue = "0")
+    val dismissed: Boolean = false,
+
+    @ColumnInfo(name = "dismissedAt")
+    val dismissedAt: Long? = null,
+
+    @ColumnInfo(name = "userFeedback")
+    val userFeedback: String? = null // "looks_normal", "was_anomaly"
+)

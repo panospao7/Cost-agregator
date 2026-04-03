@@ -17,7 +17,6 @@ class WarrantyTrackerRepositoryTest {
     private lateinit var repository: WarrantyTrackerRepository
     private val warrantyDao: WarrantyDao = mockk()
     private val returnWindowDao: ReturnWindowDao = mockk()
-    private val receiptRepository: ReceiptRepository = mockk()
     private val cloudExtractionService: CloudWarrantyExtractionService = mockk()
     private val timeProvider = FakeTimeProvider(1_700_000_000_000L)
 
@@ -26,7 +25,6 @@ class WarrantyTrackerRepositoryTest {
         repository = WarrantyTrackerRepository(
             warrantyDao,
             returnWindowDao,
-            receiptRepository,
             cloudExtractionService,
             timeProvider
         )

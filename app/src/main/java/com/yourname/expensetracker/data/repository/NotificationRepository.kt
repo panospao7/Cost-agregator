@@ -59,11 +59,29 @@ class NotificationRepository @Inject constructor(
 
     // === Core Processing Pipeline (delegated) ===
     suspend fun processAndSave(notification: RawNotification) {
-        pipeline.process(notification)
+        when (val result = pipeline.process(notification)) {
+            is NotificationProcessingPipeline.ProcessingResult.Success -> Unit
+            is NotificationProcessingPipeline.ProcessingResult.Rejected -> {
+                Timber.w("Notification rejected: ${result.packageName}, reason=${result.reason}")
+            }
+            is NotificationProcessingPipeline.ProcessingResult.Error -> {
+                Timber.e(result.error, "Notification processing failed for ${result.packageName}")
+            }
+        }
     }
 
     suspend fun processAndSaveAll(notifications: List<RawNotification>) {
-        pipeline.processBatch(notifications)
+        pipeline.processBatch(notifications).forEach { result ->
+            when (result) {
+                is NotificationProcessingPipeline.ProcessingResult.Success -> Unit
+                is NotificationProcessingPipeline.ProcessingResult.Rejected -> {
+                    Timber.w("Batch notification rejected: ${result.packageName}, reason=${result.reason}")
+                }
+                is NotificationProcessingPipeline.ProcessingResult.Error -> {
+                    Timber.e(result.error, "Batch notification failed for ${result.packageName}")
+                }
+            }
+        }
     }
 
     // === Package blocking ===

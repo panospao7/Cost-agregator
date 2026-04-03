@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.ai.model.toDisplayText
 import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
@@ -106,6 +107,7 @@ class HomeViewModel @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiEnvironmentMonitor: AiEnvironmentMonitor,
+    private val aiEngagementRepository: AiEngagementRepository,
     private val widgetStyleRepository: WidgetStyleRepository,
     private val timeProvider: TimeProvider,
     private val recommendationStateManager: RecommendationStateManager,
@@ -130,6 +132,8 @@ class HomeViewModel @Inject constructor(
     private val isEditMode = MutableStateFlow(false)
     private val _categoryTrends = MutableStateFlow<Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>>(emptyMap())
     private val dateKeyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    private fun dashboardBriefingKeyForToday(): String =
+        "dashboard_home:${dateKeyFormat.format(Date(timeProvider.now()))}"
     // TODO: Replace with actual UserSessionProvider
     private val defaultRecommendationUserId = "default_user"
 
@@ -182,46 +186,48 @@ class HomeViewModel @Inject constructor(
     private val aiBriefingFlow: Flow<AiLoadState<DashboardBriefingUi>> =
         aiSettingsRepository.settings()
             .flatMapLatest { settings ->
-                if (!settings.aiEnabled || !settings.dashboardBriefingEnabled) {
-                    flowOf(AiLoadState.Disabled)
-                } else {
-                    val targetKey = "dashboard_home:${dateKeyFormat.format(Date(timeProvider.now()))}"
-                    aiArtifactRepository.observeLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)
-                        .map { entity ->
-                            val runtimeStatus = when {
-                                entity?.mode == AiMode.CLOUD -> null
-                                entity?.mode == AiMode.ON_DEVICE -> aiEnvironmentMonitor
-                                    .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
-                                    .toRuntimeStatusMessage(capabilityLabel = "briefing")
-                                settings.preferredMode == AiMode.ON_DEVICE -> aiEnvironmentMonitor
-                                    .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
-                                    .toRuntimeStatusMessage(capabilityLabel = "briefing")
-                                !settings.allowCloudAi && settings.allowOnDeviceAi -> aiEnvironmentMonitor
-                                    .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
-                                    .toRuntimeStatusMessage(capabilityLabel = "briefing")
-                                else -> null
-                            }
-
-                            when {
-                                entity == null -> AiLoadState.Idle
-                                entity.status == AiArtifactStatus.RUNNING -> AiLoadState.Loading
-                                entity.status == AiArtifactStatus.READY && entity.summaryText != null -> {
-                                AiLoadState.Ready(
-                                    DashboardBriefingUi(
-                                        title = UiText.StringResource(R.string.home_ai_briefing_title),
-                                        text  = UiText.from(entity.summaryText!!),
-                                        icon  = "✨",
-                                        isAi  = true,
-                                        runtimeStatusMessage = runtimeStatus,
-                                        diagnostics = entity.toDiagnosticsOrNull()?.toDisplayText()
-                                    )
-                                )
+                aiEngagementRepository.engagementState().flatMapLatest { engagementState ->
+                    if (!settings.aiEnabled || !settings.dashboardBriefingEnabled) {
+                        flowOf(AiLoadState.Disabled)
+                    } else {
+                        val targetKey = engagementState.lastOpenedDashboardBriefingKey ?: dashboardBriefingKeyForToday()
+                        aiArtifactRepository.observeLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)
+                            .map { entity ->
+                                val runtimeStatus = when {
+                                    entity?.mode == AiMode.CLOUD -> null
+                                    entity?.mode == AiMode.ON_DEVICE -> aiEnvironmentMonitor
+                                        .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
+                                        .toRuntimeStatusMessage(capabilityLabel = "briefing")
+                                    settings.preferredMode == AiMode.ON_DEVICE -> aiEnvironmentMonitor
+                                        .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
+                                        .toRuntimeStatusMessage(capabilityLabel = "briefing")
+                                    !settings.allowCloudAi && settings.allowOnDeviceAi -> aiEnvironmentMonitor
+                                        .getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
+                                        .toRuntimeStatusMessage(capabilityLabel = "briefing")
+                                    else -> null
                                 }
-                                entity.status == AiArtifactStatus.FAILED ->
-                                    AiLoadState.Error(runtimeStatus ?: entity.errorMessage ?: application.getString(R.string.home_error_generation_failed))
-                                else -> AiLoadState.Idle
+
+                                when {
+                                    entity == null -> AiLoadState.Idle
+                                    entity.status == AiArtifactStatus.RUNNING -> AiLoadState.Loading
+                                    entity.status == AiArtifactStatus.READY && entity.summaryText != null -> {
+                                    AiLoadState.Ready(
+                                        DashboardBriefingUi(
+                                            title = UiText.StringResource(R.string.home_ai_briefing_title),
+                                            text  = UiText.from(entity.summaryText!!),
+                                            icon  = "✨",
+                                            isAi  = true,
+                                            runtimeStatusMessage = runtimeStatus,
+                                            diagnostics = entity.toDiagnosticsOrNull()?.toDisplayText()
+                                        )
+                                    )
+                                    }
+                                    entity.status == AiArtifactStatus.FAILED ->
+                                        AiLoadState.Error(runtimeStatus ?: entity.errorMessage ?: application.getString(R.string.home_error_generation_failed))
+                                    else -> AiLoadState.Idle
+                                }
                             }
-                        }
+                    }
                 }
             }
             .catch { e ->
@@ -698,6 +704,11 @@ class HomeViewModel @Inject constructor(
             is DashboardWidget.MonteCarloForecast   -> "monte_carlo_forecast"
             is DashboardWidget.NoSpendStreak        -> "no_spend_streak"
             is DashboardWidget.FinancialHealthScoreWidget -> "financial_health_score"
+            is DashboardWidget.FinancialHealthScoreV2Widget -> "financial_health_score_v2"
+            is DashboardWidget.LifestyleSavingsPrompt -> "lifestyle_savings_prompt"
+            is DashboardWidget.MoneyRadar           -> "money_radar"
+            is DashboardWidget.FinancialStressForecast -> "financial_stress_forecast"
+            is DashboardWidget.SavingsSweepPrompt   -> "savings_sweep_prompt"
         }
     }
 }

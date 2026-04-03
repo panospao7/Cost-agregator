@@ -3,12 +3,14 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,6 +24,12 @@ class MultiCurrencyRepository @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val timeProvider: TimeProvider
 ) {
+    sealed interface CurrencyRepositoryError {
+        data class Dao(val message: String, val cause: Throwable? = null) : CurrencyRepositoryError
+        data class Conversion(val message: String, val cause: Throwable? = null) : CurrencyRepositoryError
+        data class Unknown(val message: String, val cause: Throwable? = null) : CurrencyRepositoryError
+    }
+
     companion object {
         const val DEFAULT_HOME_CURRENCY = "EUR"
     }
@@ -33,10 +41,18 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long,
         homeCurrency: String = DEFAULT_HOME_CURRENCY
-    ): Double = withContext(Dispatchers.IO) {
-        val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-        val amounts = expenses.map { Pair(it.amount, it.currency) }
-        currencyConverter.convertMultiple(amounts, homeCurrency)
+    ): Result<Double> = withContext(Dispatchers.IO) {
+        runCatching {
+            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
+            val amounts = expenses.map { Pair(it.amount, it.currency) }
+            currencyConverter.convertMultiple(amounts, homeCurrency)
+        }.fold(
+            onSuccess = { Result.Success(it) },
+            onFailure = {
+                Timber.e(it, "getTotalExpensesInHomeCurrency failed")
+                Result.Error(it, classifyErrorMessage(it))
+            }
+        )
     }
 
     /**
@@ -45,16 +61,24 @@ class MultiCurrencyRepository @Inject constructor(
     suspend fun getExpensesByCurrency(
         startDate: Long,
         endDate: Long
-    ): Map<String, Double> = withContext(Dispatchers.IO) {
-        val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-        val result = mutableMapOf<String, Double>()
-        
-        for (expense in expenses) {
-            val current = result[expense.currency] ?: 0.0
-            result[expense.currency] = current + expense.amount
-        }
-        
-        result
+    ): Result<Map<String, Double>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
+            val result = mutableMapOf<String, Double>()
+
+            for (expense in expenses) {
+                val current = result[expense.currency] ?: 0.0
+                result[expense.currency] = current + expense.amount
+            }
+
+            result
+        }.fold(
+            onSuccess = { Result.Success(it) },
+            onFailure = {
+                Timber.e(it, "getExpensesByCurrency failed")
+                Result.Error(it, classifyErrorMessage(it))
+            }
+        )
     }
 
     /**
@@ -64,28 +88,36 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long,
         homeCurrency: String = DEFAULT_HOME_CURRENCY
-    ): List<ConvertedExpense> = withContext(Dispatchers.IO) {
-        val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-        val result = mutableListOf<ConvertedExpense>()
-        
-        for (expense in expenses) {
-            val conversion = currencyConverter.convert(
-                expense.amount,
-                expense.currency,
-                homeCurrency
-            )
-            
-            result.add(
-                ConvertedExpense(
-                    expense = expense,
-                    homeCurrencyAmount = conversion?.convertedAmount ?: expense.amount,
-                    conversionRate = conversion?.rateUsed ?: 1.0,
-                    homeCurrency = homeCurrency
+    ): Result<List<ConvertedExpense>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
+            val result = mutableListOf<ConvertedExpense>()
+
+            for (expense in expenses) {
+                val conversion = currencyConverter.convert(
+                    expense.amount,
+                    expense.currency,
+                    homeCurrency
                 )
-            )
-        }
-        
-        result
+
+                result.add(
+                    ConvertedExpense(
+                        expense = expense,
+                        homeCurrencyAmount = conversion?.convertedAmount ?: expense.amount,
+                        conversionRate = conversion?.rateUsed ?: 1.0,
+                        homeCurrency = homeCurrency
+                    )
+                )
+            }
+
+            result
+        }.fold(
+            onSuccess = { Result.Success(it) },
+            onFailure = {
+                Timber.e(it, "getExpensesWithConversion failed")
+                Result.Error(it, classifyErrorMessage(it))
+            }
+        )
     }
 
     /**
@@ -95,23 +127,31 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long,
         homeCurrency: String = DEFAULT_HOME_CURRENCY
-    ): Map<Long?, Double> = withContext(Dispatchers.IO) {
-        val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-        val result = mutableMapOf<Long?, Double>()
-        
-        for (expense in expenses) {
-            val conversion = currencyConverter.convert(
-                expense.amount,
-                expense.currency,
-                homeCurrency
-            )
-            
-            val convertedAmount = conversion?.convertedAmount ?: expense.amount
-            val current = result[expense.categoryId] ?: 0.0
-            result[expense.categoryId] = current + convertedAmount
-        }
-        
-        result
+    ): Result<Map<Long?, Double>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
+            val result = mutableMapOf<Long?, Double>()
+
+            for (expense in expenses) {
+                val conversion = currencyConverter.convert(
+                    expense.amount,
+                    expense.currency,
+                    homeCurrency
+                )
+
+                val convertedAmount = conversion?.convertedAmount ?: expense.amount
+                val current = result[expense.categoryId] ?: 0.0
+                result[expense.categoryId] = current + convertedAmount
+            }
+
+            result
+        }.fold(
+            onSuccess = { Result.Success(it) },
+            onFailure = {
+                Timber.e(it, "getCategoryTotalsInHomeCurrency failed")
+                Result.Error(it, classifyErrorMessage(it))
+            }
+        )
     }
 
     /**
@@ -121,24 +161,32 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long,
         homeCurrency: String = DEFAULT_HOME_CURRENCY
-    ): Map<String, Double> = withContext(Dispatchers.IO) {
-        val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-        val result = mutableMapOf<String, Double>()
-        
-        for (expense in expenses) {
-            val conversion = currencyConverter.convert(
-                expense.amount,
-                expense.currency,
-                homeCurrency
-            )
-            
-            val convertedAmount = conversion?.convertedAmount ?: expense.amount
-            val merchant = expense.merchant
-            val current = result[merchant] ?: 0.0
-            result[merchant] = current + convertedAmount
-        }
-        
-        result.toList().sortedByDescending { it.second }.toMap()
+    ): Result<Map<String, Double>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
+            val result = mutableMapOf<String, Double>()
+
+            for (expense in expenses) {
+                val conversion = currencyConverter.convert(
+                    expense.amount,
+                    expense.currency,
+                    homeCurrency
+                )
+
+                val convertedAmount = conversion?.convertedAmount ?: expense.amount
+                val merchant = expense.merchant
+                val current = result[merchant] ?: 0.0
+                result[merchant] = current + convertedAmount
+            }
+
+            result.toList().sortedByDescending { it.second }.toMap()
+        }.fold(
+            onSuccess = { Result.Success(it) },
+            onFailure = {
+                Timber.e(it, "getMerchantTotalsInHomeCurrency failed")
+                Result.Error(it, classifyErrorMessage(it))
+            }
+        )
     }
 
     /**
@@ -148,29 +196,37 @@ class MultiCurrencyRepository @Inject constructor(
         startDate: Long,
         endDate: Long,
         homeCurrency: String = DEFAULT_HOME_CURRENCY
-    ): List<MonthTotal> = withContext(Dispatchers.IO) {
-        val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-        val monthlyMap = mutableMapOf<String, MutableList<Pair<Double, String>>>()
-        
-        for (expense in expenses) {
-            val monthKey = getMonthKey(expense.date)
-            val list = monthlyMap.getOrPut(monthKey) { mutableListOf() }
-            list.add(Pair(expense.amount, expense.currency))
-        }
-        
-        val result = mutableListOf<MonthTotal>()
-        for ((monthKey, amounts) in monthlyMap.toSortedMap()) {
-            val total = currencyConverter.convertMultiple(amounts, homeCurrency)
-            result.add(
-                MonthTotal(
-                    monthKey = monthKey,
-                    total = total,
-                    homeCurrency = homeCurrency
+    ): Result<List<MonthTotal>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
+            val monthlyMap = mutableMapOf<String, MutableList<Pair<Double, String>>>()
+
+            for (expense in expenses) {
+                val monthKey = getMonthKey(expense.date)
+                val list = monthlyMap.getOrPut(monthKey) { mutableListOf() }
+                list.add(Pair(expense.amount, expense.currency))
+            }
+
+            val result = mutableListOf<MonthTotal>()
+            for ((monthKey, amounts) in monthlyMap.toSortedMap()) {
+                val total = currencyConverter.convertMultiple(amounts, homeCurrency)
+                result.add(
+                    MonthTotal(
+                        monthKey = monthKey,
+                        total = total,
+                        homeCurrency = homeCurrency
+                    )
                 )
-            )
-        }
-        
-        result
+            }
+
+            result
+        }.fold(
+            onSuccess = { Result.Success(it) },
+            onFailure = {
+                Timber.e(it, "getMonthlyTotalsInHomeCurrency failed")
+                Result.Error(it, classifyErrorMessage(it))
+            }
+        )
     }
 
     /**
@@ -199,6 +255,17 @@ class MultiCurrencyRepository @Inject constructor(
         val year = TimePeriodUtils.getYear(timestamp)
         val month = TimePeriodUtils.getMonth(timestamp) + 1
         return "$year-${month.toString().padStart(2, '0')}"
+    }
+
+    private fun classifyErrorMessage(throwable: Throwable): String {
+        return when {
+            throwable is android.database.SQLException ->
+                CurrencyRepositoryError.Dao("Database operation failed", throwable).message
+            throwable is IllegalArgumentException ->
+                CurrencyRepositoryError.Conversion("Currency conversion input invalid", throwable).message
+            else ->
+                CurrencyRepositoryError.Unknown("Unexpected multi-currency error", throwable).message
+        }
     }
 }
 

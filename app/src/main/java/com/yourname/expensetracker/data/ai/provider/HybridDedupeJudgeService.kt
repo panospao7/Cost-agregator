@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
@@ -20,7 +21,7 @@ class HybridDedupeJudgeService @Inject constructor(
     private val noOpDedupeJudgeService: NoOpDedupeJudgeService
 ) : DedupeJudgeService {
 
-    override suspend fun judge(input: DedupeJudgeInput): DedupeJudgeSuggestion? {
+    override suspend fun judge(input: DedupeJudgeInput): AiServiceResult<DedupeJudgeSuggestion> {
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.DEDUPE_JUDGE, settings).route) {
             AiRoute.CLOUD -> cloudDedupeJudgeService.judge(input)

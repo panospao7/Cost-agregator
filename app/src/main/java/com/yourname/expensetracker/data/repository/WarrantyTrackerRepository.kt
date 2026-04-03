@@ -17,7 +17,6 @@ import javax.inject.Singleton
 class WarrantyTrackerRepository @Inject constructor(
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
-    private val receiptRepository: ReceiptRepository,
     private val cloudExtractionService: CloudWarrantyExtractionService,
     private val timeProvider: TimeProvider
 ) {

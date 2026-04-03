@@ -22,6 +22,8 @@ import com.patrykandpatrick.vico.core.entry.ChartEntryModel
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
@@ -96,6 +98,15 @@ fun ForecastTimeline(
             )
         }
 
+        val allPoints = remember(pastPoints, projectedPoints) { pastPoints + projectedPoints }
+        val minPoint = allPoints.minOrNull() ?: 0.0
+        val maxPoint = allPoints.maxOrNull() ?: 0.0
+        val currentPoint = pastPoints.lastOrNull() ?: 0.0
+        val projectedEnd = projectedPoints.lastOrNull() ?: currentPoint
+        val chartSummary = remember(minPoint, maxPoint, currentPoint, projectedEnd, safeBudgetLimit) {
+            "Forecast timeline. Current spending €${String.format("%.0f", currentPoint)}, projected month-end €${String.format("%.0f", projectedEnd)}, minimum €${String.format("%.0f", minPoint)}, maximum €${String.format("%.0f", maxPoint)}, budget limit €${String.format("%.0f", safeBudgetLimit)}."
+        }
+
         Chart(
             chart = lineChart(lines = lineSpecs),
             model = chartEntryModel,
@@ -106,6 +117,7 @@ fun ForecastTimeline(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(180.dp)
+                .semantics { contentDescription = chartSummary }
         )
         
         Spacer(modifier = Modifier.height(8.dp))

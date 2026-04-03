@@ -15,6 +15,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,18 +50,51 @@ fun VisualSplitEditorScreen(
 ) {
     val templates by viewModel.templates.collectAsState()
     val currentSplit by viewModel.currentSplit.collectAsState()
-    
-    var splitType by remember { mutableStateOf(SplitTemplate.SplitType.EQUAL) }
+
+    val participantsSaver = remember {
+        listSaver<List<SplitShare>, Any?>(
+            save = { participants ->
+                participants.flatMap { share ->
+                    listOf(
+                        share.participantIndex,
+                        share.participantName,
+                        share.percentage,
+                        share.amount,
+                        share.color
+                    )
+                }
+            },
+            restore = { flat ->
+                flat.chunked(5).mapNotNull { chunk ->
+                    val index = chunk.getOrNull(0) as? Int ?: return@mapNotNull null
+                    val name = chunk.getOrNull(1) as? String ?: return@mapNotNull null
+                    SplitShare(
+                        participantIndex = index,
+                        participantName = name,
+                        percentage = chunk.getOrNull(2) as? Double,
+                        amount = chunk.getOrNull(3) as? Double,
+                        color = chunk.getOrNull(4) as? String
+                    )
+                }
+            }
+        )
+    }
+
+    var splitType by rememberSaveable { mutableStateOf(SplitTemplate.SplitType.EQUAL) }
     val youLabel = stringResource(R.string.split_you)
     val person2Label = stringResource(R.string.visual_split_person_format, 2)
-    var participants by remember(youLabel, person2Label) { mutableStateOf(listOf(
-        SplitShare(0, youLabel, color = "#FF6B6B"),
-        SplitShare(1, person2Label, color = "#4ECDC4")
-    )) }
-    var showTemplateDialog by remember { mutableStateOf(false) }
-    var showSaveTemplateDialog by remember { mutableStateOf(false) }
-    var templateName by remember { mutableStateOf("") }
-    var selectedTemplate by remember { mutableStateOf<SplitTemplate?>(null) }
+    var participants by rememberSaveable(stateSaver = participantsSaver) {
+        mutableStateOf(
+            listOf(
+                SplitShare(0, youLabel, color = "#FF6B6B"),
+                SplitShare(1, person2Label, color = "#4ECDC4")
+            )
+        )
+    }
+    var showTemplateDialog by rememberSaveable { mutableStateOf(false) }
+    var showSaveTemplateDialog by rememberSaveable { mutableStateOf(false) }
+    var templateName by rememberSaveable { mutableStateOf("") }
+    var selectedTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
     
     val currency = remember(currencyCode) {
         Currency.getInstance(currencyCode)
@@ -70,7 +105,7 @@ fun VisualSplitEditorScreen(
     LaunchedEffect(templateId) {
         templateId?.let { id ->
             viewModel.loadTemplate(id)?.let { template ->
-                selectedTemplate = template
+                selectedTemplateId = template.id
                 splitType = template.splitType
                 // Parse template shares into participants
                 val shares = viewModel.parseTemplateShares(template)
@@ -337,7 +372,7 @@ fun VisualSplitEditorScreen(
                                 )
                             },
                             modifier = Modifier.clickable {
-                                selectedTemplate = template
+                                selectedTemplateId = template.id
                                 participants = viewModel.parseTemplateShares(template)
                                 splitType = template.splitType
                                 showTemplateDialog = false

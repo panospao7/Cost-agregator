@@ -2,12 +2,14 @@ package com.yourname.expensetracker.data.repository
 
 import android.content.Context
 import android.net.Uri
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
@@ -20,6 +22,8 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
+import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -44,6 +48,7 @@ import org.robolectric.annotation.Config
 class ReceiptRepositoryStressTest {
 
     private val scannedReceiptDao = mockk<ScannedReceiptDao>(relaxed = true)
+    private val database = mockk<AppDatabase>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
@@ -54,8 +59,10 @@ class ReceiptRepositoryStressTest {
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private val hybridClassifier = mockk<HybridExpenseClassifier>(relaxed = true)
     private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
+    private val anomalyAlertOrchestrator = mockk<AnomalyAlertOrchestrator>(relaxed = true)
     private val crossSourceDeduplication = mockk<CrossSourceDeduplication>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val warrantyUseCase = mockk<AutoCreateWarrantyFromReceiptUseCase>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
 
     private lateinit var repository: ReceiptRepository
@@ -78,9 +85,11 @@ class ReceiptRepositoryStressTest {
         coEvery { pendingReviewDao.insert(any()) } returns 1L
         coEvery { pendingReviewDao.getPending(any()) } returns emptyList()
         coEvery { merchantCategoryRepository.learnPattern(any(), any()) } returns Unit
+        coEvery { warrantyUseCase.execute(any(), any()) } returns WarrantyCreationResult.Failure("test")
 
         repository = ReceiptRepository(
             context = context,
+            database = database,
             scannedReceiptDao = scannedReceiptDao,
             expenseDao = expenseDao,
             merchantCategoryRepository = merchantCategoryRepository,
@@ -92,8 +101,10 @@ class ReceiptRepositoryStressTest {
             merchantNormalizer = merchantNormalizer,
             hybridClassifier = hybridClassifier,
             budgetMonitor = budgetMonitor,
+            anomalyAlertOrchestrator = anomalyAlertOrchestrator,
             crossSourceDeduplication = crossSourceDeduplication,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            warrantyUseCase = warrantyUseCase
         )
     }
 

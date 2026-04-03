@@ -6,6 +6,8 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
@@ -163,11 +165,12 @@ class GenerateDashboardBriefingUseCaseTest {
     // ── provider returns null ─────────────────────────────────────────────────
 
     @Test
-    fun `invoke stores FAILED artifact when provider returns null`() = runTest {
+    fun `invoke stores FAILED artifact when provider returns failure`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any()) } returns fakeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dashboardBriefingService.generate(any()) } returns null
+        coEvery { dashboardBriefingService.generate(any()) } returns
+            AiServiceResult.Failure(AiServiceError.Unknown("provider unavailable"))
 
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
@@ -192,7 +195,7 @@ class GenerateDashboardBriefingUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any()) } returns fakeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dashboardBriefingService.generate(any()) } returns briefing
+        coEvery { dashboardBriefingService.generate(any()) } returns AiServiceResult.Success(briefing)
 
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
@@ -219,7 +222,7 @@ class GenerateDashboardBriefingUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any()) } returns fakeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dashboardBriefingService.generate(any()) } returns briefing
+        coEvery { dashboardBriefingService.generate(any()) } returns AiServiceResult.Success(briefing)
 
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
@@ -257,9 +260,8 @@ class GenerateDashboardBriefingUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any()) } returns fakeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { dashboardBriefingService.generate(any()) } returns DashboardBriefing(
-            title = "T", text = "B", tone = "neutral"
-        )
+        coEvery { dashboardBriefingService.generate(any()) } returns
+            AiServiceResult.Success(DashboardBriefing(title = "T", text = "B", tone = "neutral"))
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 

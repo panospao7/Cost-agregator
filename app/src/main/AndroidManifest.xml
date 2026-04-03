@@ -65,7 +65,12 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="expensetracker" android:host="home" />
                 <data android:scheme="expensetracker" android:host="dashboard" />
+                <data android:scheme="expensetracker" android:host="activity" />
+                <data android:scheme="expensetracker" android:host="review" />
+                <data android:scheme="expensetracker" android:host="plan" />
                 <data android:scheme="expensetracker" android:host="add" />
+                <data android:scheme="expensetracker" android:host="analytics" />
+                <data android:scheme="expensetracker" android:host="map" />
             </intent-filter>
         </activity>
 

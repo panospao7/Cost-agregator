@@ -5,6 +5,8 @@ import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
@@ -14,9 +16,12 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONException
 import java.io.File
 import java.util.Base64
 import java.io.IOException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -52,10 +57,10 @@ class CloudReceiptAssistService @Inject constructor(
     override fun usedImageInput(input: ReceiptAssistInput): Boolean =
         input.imagePath != null && input.imageMimeType != null
 
-    override suspend fun suggest(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
+    override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
         if (apiKey.isBlank()) {
             Timber.d("CloudReceiptAssistService: Gemini API key missing, skipping.")
-            return null
+            return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
         }
 
         val settings = aiSettingsRepository.settings().first()
@@ -75,17 +80,31 @@ class CloudReceiptAssistService @Inject constructor(
                     Timber.w(
                         "CloudReceiptAssistService: HTTP ${response.code} ${response.body?.string()?.take(200)}"
                     )
-                    return@use null
+                    return@use AiServiceResult.Failure(
+                        AiServiceError.HttpError(response.code, response.body?.string()?.take(200))
+                    )
                 }
-                val body = response.body?.string() ?: return@use null
-                parseResponse(body)
+                val body = response.body?.string()
+                    ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                val parsed = parseResponse(body)
+                    ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable suggestion in response"))
+                AiServiceResult.Success(parsed)
             }
+        } catch (e: SocketTimeoutException) {
+            Timber.w(e, "CloudReceiptAssistService: timeout")
+            AiServiceResult.Failure(AiServiceError.Timeout)
+        } catch (e: SSLException) {
+            Timber.w(e, "CloudReceiptAssistService: SSL failure")
+            AiServiceResult.Failure(AiServiceError.SslError)
         } catch (e: IOException) {
             Timber.w(e, "CloudReceiptAssistService: network failure")
-            null
+            AiServiceResult.Failure(AiServiceError.Offline)
+        } catch (e: JSONException) {
+            Timber.w(e, "CloudReceiptAssistService: JSON parse failure")
+            AiServiceResult.Failure(AiServiceError.ParseError(e.message))
         } catch (e: Exception) {
             Timber.w(e, "CloudReceiptAssistService: parse failure")
-            null
+            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
         }
     }
 

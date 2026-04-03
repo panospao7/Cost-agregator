@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.yourname.expensetracker.R
 
 /**
@@ -59,6 +61,21 @@ fun CategoryDonutChart(
         }
     }
 
+    val topCategorySummary = remember(categories) {
+        categories
+            .sortedByDescending { it.percentage }
+            .take(3)
+            .joinToString(", ") { "${it.category.name} ${it.percentage.toInt()}%" }
+    }
+    val chartSummary = remember(totalSpent, topCategorySummary) {
+        "Category split. Total €${String.format("%.0f", totalSpent)}. Top categories: $topCategorySummary."
+    }
+    val legendSummary = remember(categories) {
+        categories
+            .take(8)
+            .joinToString(", ") { "${it.category.name} ${it.percentage.toInt()}%" }
+    }
+
     BentoCard(modifier = modifier) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
@@ -75,7 +92,8 @@ fun CategoryDonutChart(
             Box(
                 modifier = Modifier
                     .size(180.dp)
-                    .align(Alignment.CenterHorizontally),
+                    .align(Alignment.CenterHorizontally)
+                    .semantics { contentDescription = chartSummary },
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -120,7 +138,12 @@ fun CategoryDonutChart(
 
             // Compact legend (2-column grid)
             val legendItems = categories.take(8) // cap at 8 for readability
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.semantics {
+                    contentDescription = "Legend: $legendSummary"
+                }
+            ) {
                 legendItems.chunked(2).forEach { row ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),

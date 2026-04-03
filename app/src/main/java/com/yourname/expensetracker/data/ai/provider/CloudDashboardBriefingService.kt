@@ -2,6 +2,8 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
@@ -11,9 +13,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.IOException
+import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,12 +46,12 @@ class CloudDashboardBriefingService @Inject constructor(
     private val apiKey: String
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
-    override suspend fun generate(input: DashboardBriefingInput): DashboardBriefing? {
+    override suspend fun generate(input: DashboardBriefingInput): AiServiceResult<DashboardBriefing> {
         Timber.d("CloudDashboardBriefingService: Starting generation for: ${input.weatherSummary}")
         
         if (apiKey.isBlank()) {
             Timber.w("CloudDashboardBriefingService: FAILED - Gemini API key missing/blank")
-            return null
+            return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
         }
         
         // HIGH-13 FIX: Remove API key length logging (information disclosure)
@@ -72,12 +77,12 @@ class CloudDashboardBriefingService @Inject constructor(
                 if (!response.isSuccessful) {
                     val errorBody = response.body?.string()?.take(200) ?: "empty"
                     Timber.w("CloudDashboardBriefingService: HTTP ${response.code} error: $errorBody")
-                    return@use null
+                    return@use AiServiceResult.Failure(AiServiceError.HttpError(response.code, errorBody))
                 }
 
                 val body = response.body?.string() ?: run {
                     Timber.w("CloudDashboardBriefingService: Response body was null/empty")
-                    return@use null
+                    return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
                 }
                 
                 Timber.d("CloudDashboardBriefingService: Response body length: ${body.length}")
@@ -85,18 +90,27 @@ class CloudDashboardBriefingService @Inject constructor(
                 
                 if (briefing != null) {
                     Timber.d("CloudDashboardBriefingService: SUCCESS - briefing text length: ${briefing.text.length}")
+                    AiServiceResult.Success(briefing)
                 } else {
                     Timber.w("CloudDashboardBriefingService: FAILED - parseResponse returned null")
+                    AiServiceResult.Failure(AiServiceError.ParseError("No usable briefing in response"))
                 }
-                
-                briefing
             }
+        } catch (e: SocketTimeoutException) {
+            Timber.w(e, "CloudDashboardBriefingService: FAILED - timeout")
+            AiServiceResult.Failure(AiServiceError.Timeout)
+        } catch (e: SSLException) {
+            Timber.w(e, "CloudDashboardBriefingService: FAILED - SSL error")
+            AiServiceResult.Failure(AiServiceError.SslError)
         } catch (e: IOException) {
             Timber.w(e, "CloudDashboardBriefingService: FAILED - network failure")
-            null
+            AiServiceResult.Failure(AiServiceError.Offline)
+        } catch (e: JSONException) {
+            Timber.w(e, "CloudDashboardBriefingService: FAILED - json parse failure")
+            AiServiceResult.Failure(AiServiceError.ParseError(e.message))
         } catch (e: Exception) {
             Timber.w(e, "CloudDashboardBriefingService: FAILED - parse failure")
-            null
+            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
         }
     }
 

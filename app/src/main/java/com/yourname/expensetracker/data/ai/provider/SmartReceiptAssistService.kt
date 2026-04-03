@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
@@ -64,7 +66,7 @@ class SmartReceiptAssistService @Inject constructor(
         DETERMINISTIC_FALLBACK
     }
 
-    override suspend fun suggest(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
+    override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
         val settings = aiSettingsRepository.settings().first()
         val routeDecision = aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings)
         val attempts = mutableListOf<AttemptDetails>()
@@ -75,12 +77,12 @@ class SmartReceiptAssistService @Inject constructor(
         if (shouldAttemptCloudVision(input, settings, routeDecision)) {
             Timber.d("SmartReceiptAssist: Attempt 1 - Cloud Vision AI")
             val result = tryCloudVision(input)
-            attempts.add(AttemptDetails(1, AttemptMethod.CLOUD_VISION, result != null, result?.total?.confidence))
-            
-            if (isGoodResult(result)) {
+            attempts.add(result.toAttemptDetails(1, AttemptMethod.CLOUD_VISION))
+
+            if (result is AiServiceResult.Success && isGoodResult(result.value)) {
                 lastUsedImageInput = true
                 lastAttemptDetails = attempts.last()
-                Timber.d("SmartReceiptAssist: Cloud Vision succeeded with confidence ${result?.total?.confidence}")
+                Timber.d("SmartReceiptAssist: Cloud Vision succeeded with confidence ${result.value.total?.confidence}")
                 return result
             }
         }
@@ -89,9 +91,9 @@ class SmartReceiptAssistService @Inject constructor(
         if (shouldAttemptOnDeviceVision(input, settings, routeDecision)) {
             Timber.d("SmartReceiptAssist: Attempt 2 - On-Device Vision AI")
             val result = tryOnDeviceVision(input)
-            attempts.add(AttemptDetails(2, AttemptMethod.ON_DEVICE_VISION, result != null, result?.total?.confidence))
-            
-            if (isGoodResult(result)) {
+            attempts.add(result.toAttemptDetails(2, AttemptMethod.ON_DEVICE_VISION))
+
+            if (result is AiServiceResult.Success && isGoodResult(result.value)) {
                 lastUsedImageInput = true
                 lastAttemptDetails = attempts.last()
                 Timber.d("SmartReceiptAssist: On-Device Vision succeeded")
@@ -104,9 +106,9 @@ class SmartReceiptAssistService @Inject constructor(
             Timber.d("SmartReceiptAssist: Attempt 3 - Cloud Text AI")
             val textInput = input.copy(isImageAnalysisMode = false)  // Force text mode
             val result = tryCloudText(textInput)
-            attempts.add(AttemptDetails(3, AttemptMethod.CLOUD_TEXT, result != null, result?.total?.confidence))
-            
-            if (isGoodResult(result)) {
+            attempts.add(result.toAttemptDetails(3, AttemptMethod.CLOUD_TEXT))
+
+            if (result is AiServiceResult.Success && isGoodResult(result.value)) {
                 lastUsedImageInput = false
                 lastAttemptDetails = attempts.last()
                 Timber.d("SmartReceiptAssist: Cloud Text succeeded")
@@ -119,9 +121,9 @@ class SmartReceiptAssistService @Inject constructor(
             Timber.d("SmartReceiptAssist: Attempt 4 - On-Device Text AI")
             val textInput = input.copy(isImageAnalysisMode = false)  // Force text mode
             val result = tryOnDeviceText(textInput)
-            attempts.add(AttemptDetails(4, AttemptMethod.ON_DEVICE_TEXT, result != null, result?.total?.confidence))
-            
-            if (isGoodResult(result)) {
+            attempts.add(result.toAttemptDetails(4, AttemptMethod.ON_DEVICE_TEXT))
+
+            if (result is AiServiceResult.Success && isGoodResult(result.value)) {
                 lastUsedImageInput = false
                 lastAttemptDetails = attempts.last()
                 Timber.d("SmartReceiptAssist: On-Device Text succeeded")
@@ -132,7 +134,7 @@ class SmartReceiptAssistService @Inject constructor(
         // Attempt 5: Deterministic Fallback (no AI)
         Timber.d("SmartReceiptAssist: Attempt 5 - Deterministic Fallback")
         val fallbackResult = noOpReceiptAssistService.suggest(input)
-        attempts.add(AttemptDetails(5, AttemptMethod.DETERMINISTIC_FALLBACK, fallbackResult != null, null))
+        attempts.add(fallbackResult.toAttemptDetails(5, AttemptMethod.DETERMINISTIC_FALLBACK))
         
         lastUsedImageInput = false
         lastAttemptDetails = attempts.last()
@@ -185,48 +187,23 @@ class SmartReceiptAssistService @Inject constructor(
                (routeDecision.route == AiRoute.ON_DEVICE)
     }
 
-    private suspend fun tryCloudVision(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
-        return try {
-            cloudReceiptAssistService.suggest(input)
-        } catch (e: Exception) {
-            Timber.w(e, "SmartReceiptAssist: Cloud Vision failed")
-            null
-        }
-    }
+    private suspend fun tryCloudVision(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> =
+        cloudReceiptAssistService.suggest(input)
 
-    private suspend fun tryOnDeviceVision(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
-        return try {
-            onDeviceReceiptAssistService.suggest(input)
-        } catch (e: Exception) {
-            Timber.w(e, "SmartReceiptAssist: On-Device Vision failed")
-            null
-        }
-    }
+    private suspend fun tryOnDeviceVision(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> =
+        onDeviceReceiptAssistService.suggest(input)
 
-    private suspend fun tryCloudText(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
-        return try {
-            cloudReceiptAssistService.suggest(input)
-        } catch (e: Exception) {
-            Timber.w(e, "SmartReceiptAssist: Cloud Text failed")
-            null
-        }
-    }
+    private suspend fun tryCloudText(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> =
+        cloudReceiptAssistService.suggest(input)
 
-    private suspend fun tryOnDeviceText(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
-        return try {
-            onDeviceReceiptAssistService.suggest(input)
-        } catch (e: Exception) {
-            Timber.w(e, "SmartReceiptAssist: On-Device Text failed")
-            null
-        }
-    }
+    private suspend fun tryOnDeviceText(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> =
+        onDeviceReceiptAssistService.suggest(input)
 
     /**
      * Determines if a result is "good enough" to stop retrying.
      * Considers confidence score and presence of critical fields.
      */
-    private fun isGoodResult(result: ReceiptAssistSuggestion?): Boolean {
-        if (result == null) return false
+    private fun isGoodResult(result: ReceiptAssistSuggestion): Boolean {
         
         // Check if we have at least merchant or total (critical fields)
         val hasCriticalField = result.merchant != null || result.total != null
@@ -247,5 +224,35 @@ class SmartReceiptAssistService @Inject constructor(
             "${attempt.attemptNumber}.${attempt.method}: ${if (attempt.success) "✓" else "✗"} ${attempt.confidence?.let { "($it)" } ?: ""}"
         }
         Timber.d("SmartReceiptAssist: Receipt $receiptId attempt summary: $summary")
+    }
+
+    private fun AiServiceResult<ReceiptAssistSuggestion>.toAttemptDetails(
+        attemptNumber: Int,
+        method: AttemptMethod
+    ): AttemptDetails {
+        return when (this) {
+            is AiServiceResult.Success -> AttemptDetails(
+                attemptNumber = attemptNumber,
+                method = method,
+                success = true,
+                confidence = value.total?.confidence,
+                errorMessage = null
+            )
+            is AiServiceResult.Failure -> AttemptDetails(
+                attemptNumber = attemptNumber,
+                method = method,
+                success = false,
+                confidence = null,
+                errorMessage = when (val err = error) {
+                    is AiServiceError.HttpError -> "HTTP ${err.code}"
+                    is AiServiceError.Disabled -> err.reason
+                    is AiServiceError.ParseError -> err.message
+                    is AiServiceError.Unknown -> err.message
+                    AiServiceError.Timeout -> "timeout"
+                    AiServiceError.Offline -> "offline"
+                    AiServiceError.SslError -> "ssl"
+                }
+            )
+        }
     }
 }

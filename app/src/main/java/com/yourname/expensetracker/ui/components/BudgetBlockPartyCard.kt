@@ -13,6 +13,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -117,15 +122,19 @@ fun BudgetBlockPartyCard(
         // Color legend
         Spacer(modifier = Modifier.height(12.dp))
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    contentDescription = "Legend: under budget, over budget, today, and bill day indicators."
+                },
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            BlockLegendItem(color = SemanticColors.SuccessGreen, label = "Under")
-            BlockLegendItem(color = SemanticColors.DangerRed, label = "Over")
+            BlockLegendItem(color = SemanticColors.SuccessGreen, label = "Under budget")
+            BlockLegendItem(color = SemanticColors.DangerRed, label = "Over budget")
             BlockLegendItem(color = SemanticColors.PrimaryIndigo, label = "Today")
             BlockLegendItem(
                 color = Color.Transparent,
-                label = "Bill",
+                label = "Bill day",
                 borderColor = Color.White.copy(alpha = 0.5f)
             )
         }
@@ -174,13 +183,37 @@ fun DayBlock(day: DayBudgetStatus, onClick: () -> Unit) {
         Modifier.border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
     } else Modifier
 
+    val stateLabel = when (day.status) {
+        BlockStatus.UNDER_BUDGET -> "Under budget"
+        BlockStatus.OVER_BUDGET -> "Over budget"
+        BlockStatus.TODAY -> if (day.actualSpent <= day.targetBudget) "Today, on track" else "Today, over budget"
+        BlockStatus.BILL_DAY -> "Bill day"
+        BlockStatus.FUTURE -> "Future day"
+        BlockStatus.NO_DATA -> "No spending data"
+    }
+    val isInteractive = day.status != BlockStatus.FUTURE
+    val blockDescription = "Day ${day.dayOfMonth}, $stateLabel. Spent €${String.format("%.2f", day.actualSpent)} of €${String.format("%.2f", day.targetBudget)} target."
+    val indicatorGlyph = when (day.status) {
+        BlockStatus.UNDER_BUDGET -> "✓"
+        BlockStatus.OVER_BUDGET -> "!"
+        BlockStatus.TODAY -> "●"
+        BlockStatus.BILL_DAY -> "💸"
+        BlockStatus.NO_DATA -> "–"
+        BlockStatus.FUTURE -> ""
+    }
+
     Box(
         modifier = Modifier
             .aspectRatio(1.2f)
             .clip(RoundedCornerShape(6.dp))
             .background(color.copy(alpha = if (day.status == BlockStatus.FUTURE) 0.2f else if (isBillDay) 0f else 0.9f))
             .then(borderModifier)
-            .clickable(enabled = day.status != BlockStatus.FUTURE, onClick = onClick),
+            .semantics {
+                if (isInteractive) role = Role.Button
+                contentDescription = blockDescription
+                stateDescription = stateLabel
+            }
+            .clickable(enabled = isInteractive, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         if (day.status != BlockStatus.FUTURE) {
@@ -192,11 +225,11 @@ fun DayBlock(day: DayBudgetStatus, onClick: () -> Unit) {
                     fontWeight = FontWeight.Bold,
                     fontSize = 10.sp
                 )
-                if (isBillDay) {
-                     Text(
-                        text = "💸",
+                if (indicatorGlyph.isNotEmpty()) {
+                    Text(
+                        text = indicatorGlyph,
                         fontSize = 8.sp,
-                        modifier = Modifier.alpha(0.8f)
+                        modifier = Modifier.alpha(0.9f)
                     )
                 }
             }
@@ -335,7 +368,13 @@ fun DayAtAGlanceDialog(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text(exp.merchant, color = SemanticColors.TextSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                                Text(
+                                    exp.merchant,
+                                    color = SemanticColors.TextSecondary,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 2
+                                )
                                 Text("€${String.format("%.2f", exp.amount)}", color = SemanticColors.TextPrimary, fontSize = 13.sp)
                             }
                         }

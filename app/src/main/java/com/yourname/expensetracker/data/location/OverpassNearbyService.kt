@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
+import com.yourname.expensetracker.di.LocationHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.location.GeocodingError
+import com.yourname.expensetracker.domain.location.NearbyPoiResult
 import com.yourname.expensetracker.domain.location.NearbyPoi
 import com.yourname.expensetracker.domain.location.NearbyPoiService
 import okhttp3.MediaType.Companion.toMediaType
@@ -11,7 +14,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.delay
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.*
@@ -23,19 +26,16 @@ import kotlin.math.*
  * given coordinate, then filters/ranks by name similarity to [merchantName].
  */
 @Singleton
-class OverpassNearbyService @Inject constructor() : NearbyPoiService {
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
+class OverpassNearbyService @Inject constructor(
+    @LocationHttpClient private val client: OkHttpClient
+) : NearbyPoiService {
 
     override suspend fun findNearby(
         lat: Double,
         lon: Double,
         merchantName: String,
         radiusMetres: Int
-    ): List<NearbyPoi> {
+    ): NearbyPoiResult {
         val query = buildOverpassQuery(lat, lon, radiusMetres)
         val body = query.toRequestBody("text/plain".toMediaType())
         val request = Request.Builder()
@@ -45,21 +45,56 @@ class OverpassNearbyService @Inject constructor() : NearbyPoiService {
             .build()
 
         return try {
-            client.newCall(request).execute().use { response ->
+            executeWithRetry(request).use { response ->
                 if (!response.isSuccessful) {
                     Log.w(TAG, "Overpass HTTP ${response.code}")
-                    return@use emptyList()
+                    return@use NearbyPoiResult.Failure(
+                        if (response.code == 429) GeocodingError.RateLimited else GeocodingError.HttpError(response.code)
+                    )
                 }
-                val responseBody = response.body?.string() ?: return@use emptyList()
-                parseAndRank(responseBody, lat, lon, merchantName)
+                val responseBody = response.body?.string()
+                    ?: return@use NearbyPoiResult.Failure(GeocodingError.ParseError)
+                val parsed = parseAndRank(responseBody, lat, lon, merchantName)
+                if (parsed.isEmpty()) NearbyPoiResult.Failure(GeocodingError.NoResults)
+                else NearbyPoiResult.Success(parsed)
             }
         } catch (e: IOException) {
             Log.w(TAG, "Overpass network error: ${e.message}")
-            emptyList()
+            NearbyPoiResult.Failure(GeocodingError.NetworkError)
         } catch (e: JSONException) {
             Log.w(TAG, "Overpass parse error: ${e.message}")
-            emptyList()
+            NearbyPoiResult.Failure(GeocodingError.ParseError)
         }
+    }
+
+    private suspend fun executeWithRetry(
+        request: Request,
+        maxAttempts: Int = 3,
+        initialDelayMs: Long = 400
+    ): okhttp3.Response {
+        var currentDelay = initialDelayMs
+        var lastError: IOException? = null
+        repeat(maxAttempts) { attempt ->
+            try {
+                val response = client.newCall(request).execute()
+                if (response.code >= 500 || response.code == 429) {
+                    response.close()
+                    if (attempt < maxAttempts - 1) {
+                        delay(currentDelay)
+                        currentDelay = (currentDelay * 2).coerceAtMost(3000)
+                    }
+                    return@repeat
+                }
+                return response
+            } catch (e: IOException) {
+                lastError = e
+                if (attempt < maxAttempts - 1) {
+                    delay(currentDelay)
+                    currentDelay = (currentDelay * 2).coerceAtMost(3000)
+                }
+            }
+        }
+        throw lastError ?: IOException("Overpass request failed after retries")
     }
 
     private fun buildOverpassQuery(lat: Double, lon: Double, radiusMetres: Int): String {

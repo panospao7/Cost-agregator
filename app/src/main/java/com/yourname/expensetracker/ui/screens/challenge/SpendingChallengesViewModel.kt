@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.challenge
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.challenge.NoSpendStatus
+import com.yourname.expensetracker.domain.challenge.SpendingChallenge
 import com.yourname.expensetracker.domain.challenge.SpendingChallengeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,6 +19,9 @@ class SpendingChallengesViewModel @Inject constructor(
     
     private val _noSpendStatus = MutableStateFlow<NoSpendStatus?>(null)
     val noSpendStatus: StateFlow<NoSpendStatus?> = _noSpendStatus.asStateFlow()
+
+    private val _activeChallenges = MutableStateFlow<List<SpendingChallenge>>(emptyList())
+    val activeChallenges: StateFlow<List<SpendingChallenge>> = _activeChallenges.asStateFlow()
     
     init {
         checkNoSpendStatus()

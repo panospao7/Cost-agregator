@@ -74,9 +74,23 @@ object DatabaseModule {
             AppDatabase.MIGRATION_48_49,
             AppDatabase.MIGRATION_49_50,
             AppDatabase.MIGRATION_50_51,
-            AppDatabase.MIGRATION_51_52
+            AppDatabase.MIGRATION_51_52,
+            AppDatabase.MIGRATION_52_53,
+            AppDatabase.MIGRATION_53_54,
+            AppDatabase.MIGRATION_54_55,
+            AppDatabase.MIGRATION_55_56,
+            AppDatabase.MIGRATION_56_57,
+            AppDatabase.MIGRATION_57_58,
+            AppDatabase.MIGRATION_58_59,
+            AppDatabase.MIGRATION_59_60,
+            AppDatabase.MIGRATION_60_61,
+            AppDatabase.MIGRATION_61_62,
+            AppDatabase.MIGRATION_62_63,
+            AppDatabase.MIGRATION_63_64,
+            AppDatabase.MIGRATION_64_65
         )
-            .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5)
+            // ISSUE-1: Never destructively wipe user data on migration failures.
+            // Old schemas must be migrated explicitly or handled through backup/recovery UX.
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()
     }

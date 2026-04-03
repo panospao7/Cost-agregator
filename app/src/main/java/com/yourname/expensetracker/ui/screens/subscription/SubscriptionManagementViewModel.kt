@@ -3,9 +3,11 @@ package com.yourname.expensetracker.ui.screens.subscription
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
@@ -29,12 +31,14 @@ import javax.inject.Inject
  */
 data class SubscriptionManagementUiState(
     val subscriptions: List<SubscriptionInfo> = emptyList(),
+    val detectedCandidates: List<SubscriptionCandidate> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
     val totalMonthlyCost: Double = 0.0,
     val totalAnnualCost: Double = 0.0,
     val activeCount: Int = 0,
     val inactiveCount: Int = 0,
+    val detectedCount: Int = 0,
     val selectedSubscription: SubscriptionInfo? = null
 )
 
@@ -59,6 +63,7 @@ class SubscriptionManagementViewModel @Inject constructor(
     private val subscriptionDao: ManualRecurringExpenseDao,
     private val priceHistoryDao: SubscriptionPriceHistoryDao,
     private val usageDao: SubscriptionUsageDao,
+    private val candidateDao: SubscriptionCandidateDao,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
     
@@ -74,49 +79,58 @@ class SubscriptionManagementViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true)
             
             try {
-                val allSubscriptions = subscriptionDao.getAllActiveSubscriptions()
-                
-                val subscriptionInfos = coroutineScope {
-                    allSubscriptions.map { subscription ->
-                        async {
-                            val subscriptionId = subscription.id ?: 0L
-                            if (subscriptionId == 0L) return@async null
-                            
-                            val priceHistory = priceHistoryDao
-                                .getPriceHistoryForSubscription(subscriptionId)
-                                .first()
-                            
-                            // Calculate usage and cost per use with frequency-aware window
-                            val (usageCount, costPerUse) = calculateUsageAndCostPerUse(subscription)
-                            
-                            // Calculate price change
-                            val priceChange = calculatePriceChange(priceHistory)
-                            
-                            SubscriptionInfo(
-                                subscription = subscription,
-                                priceHistory = priceHistory,
-                                monthlyUsage = usageCount,
-                                costPerUse = costPerUse,
-                                priceChange = priceChange
-                            )
-                        }
-                    }.awaitAll().filterNotNull()
+                coroutineScope {
+                    // Load active subscriptions
+                    val subscriptionsDeferred = async {
+                        val allSubscriptions = subscriptionDao.getAllActiveSubscriptions()
+                        allSubscriptions.map { subscription ->
+                            async {
+                                val subscriptionId = subscription.id ?: 0L
+                                if (subscriptionId == 0L) return@async null
+                                
+                                val priceHistory = priceHistoryDao
+                                    .getPriceHistoryForSubscription(subscriptionId)
+                                    .first()
+                                
+                                val (usageCount, costPerUse) = calculateUsageAndCostPerUse(subscription)
+                                val priceChange = calculatePriceChange(priceHistory)
+                                
+                                SubscriptionInfo(
+                                    subscription = subscription,
+                                    priceHistory = priceHistory,
+                                    monthlyUsage = usageCount,
+                                    costPerUse = costPerUse,
+                                    priceChange = priceChange
+                                )
+                            }
+                        }.awaitAll().filterNotNull()
+                    }
+                    
+                    // Load detected candidates
+                    val candidatesDeferred = async {
+                        candidateDao.getPendingCandidates()
+                    }
+                    
+                    val subscriptionInfos = subscriptionsDeferred.await()
+                    val candidates = candidatesDeferred.await()
+                    
+                    // Calculate totals
+                    val totalMonthly = subscriptionInfos.filter { it.subscription.isActive }
+                        .sumOf { calculateMonthlyCost(it.subscription) }
+                    val totalAnnual = totalMonthly * 12
+                    
+                    _uiState.value = SubscriptionManagementUiState(
+                        subscriptions = subscriptionInfos,
+                        detectedCandidates = candidates,
+                        isLoading = false,
+                        error = null,
+                        totalMonthlyCost = totalMonthly,
+                        totalAnnualCost = totalAnnual,
+                        activeCount = subscriptionInfos.count { it.subscription.isActive },
+                        inactiveCount = subscriptionInfos.count { !it.subscription.isActive },
+                        detectedCount = candidates.size
+                    )
                 }
-                
-                // Calculate totals
-                val totalMonthly = subscriptionInfos.filter { it.subscription.isActive }
-                    .sumOf { calculateMonthlyCost(it.subscription) }
-                val totalAnnual = totalMonthly * 12
-                
-                _uiState.value = SubscriptionManagementUiState(
-                    subscriptions = subscriptionInfos,
-                    isLoading = false,
-                    error = null,
-                    totalMonthlyCost = totalMonthly,
-                    totalAnnualCost = totalAnnual,
-                    activeCount = subscriptionInfos.count { it.subscription.isActive },
-                    inactiveCount = subscriptionInfos.count { !it.subscription.isActive }
-                )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -304,6 +318,80 @@ class SubscriptionManagementViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(selectedSubscription = subscription)
     }
     
+    /**
+     * Accept a detected subscription candidate and convert it to an active subscription.
+     */
+    fun acceptCandidate(candidate: SubscriptionCandidate) {
+        viewModelScope.launch {
+            try {
+                // Map detected interval to RecurrenceFrequency
+                val frequency = when (candidate.detectedInterval) {
+                    "weekly" -> RecurrenceFrequency.WEEKLY
+                    "biweekly" -> RecurrenceFrequency.BIWEEKLY
+                    "monthly" -> RecurrenceFrequency.MONTHLY
+                    "quarterly" -> RecurrenceFrequency.QUARTERLY
+                    "semiannual" -> RecurrenceFrequency.SEMI_ANNUALLY
+                    "annual" -> RecurrenceFrequency.ANNUALLY
+                    else -> RecurrenceFrequency.MONTHLY
+                }
+                
+                // Create subscription from candidate
+                val subscription = ManualRecurringExpense(
+                    merchant = candidate.merchant,
+                    amount = candidate.averageAmount,
+                    currency = candidate.currency,
+                    frequency = frequency,
+                    nextDate = candidate.lastSeen + when (frequency) {
+                        RecurrenceFrequency.WEEKLY -> 7L * TimePeriodUtils.DAY_IN_MILLIS
+                        RecurrenceFrequency.BIWEEKLY -> 14L * TimePeriodUtils.DAY_IN_MILLIS
+                        RecurrenceFrequency.MONTHLY -> 30L * TimePeriodUtils.DAY_IN_MILLIS
+                        RecurrenceFrequency.QUARTERLY -> 90L * TimePeriodUtils.DAY_IN_MILLIS
+                        RecurrenceFrequency.SEMI_ANNUALLY -> 180L * TimePeriodUtils.DAY_IN_MILLIS
+                        RecurrenceFrequency.ANNUALLY -> 365L * TimePeriodUtils.DAY_IN_MILLIS
+                        RecurrenceFrequency.IRREGULAR -> 30L * TimePeriodUtils.DAY_IN_MILLIS
+                    },
+                    isSubscription = true,
+                    isActive = true
+                )
+                
+                val subscriptionId = subscriptionDao.insert(subscription)
+                
+                // Record initial price
+                val priceHistory = SubscriptionPriceHistory(
+                    subscriptionId = subscriptionId,
+                    amount = candidate.averageAmount,
+                    changeReason = "Auto-detected from notifications"
+                )
+                priceHistoryDao.insert(priceHistory)
+                
+                // Mark candidate as converted
+                candidateDao.markAsConverted(candidate.id, subscriptionId, timeProvider.now())
+                
+                loadSubscriptions()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Failed to accept candidate: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    /**
+     * Reject a detected subscription candidate.
+     */
+    fun rejectCandidate(candidateId: Long) {
+        viewModelScope.launch {
+            try {
+                candidateDao.markAsRejected(candidateId, timeProvider.now())
+                loadSubscriptions()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Failed to reject candidate: ${e.message}"
+                )
+            }
+        }
+    }
+
     /**
      * Calculate monthly cost from subscription amount and frequency.
      */

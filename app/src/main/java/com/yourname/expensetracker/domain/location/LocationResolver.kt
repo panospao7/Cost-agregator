@@ -8,8 +8,7 @@ import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,9 +23,7 @@ import javax.inject.Singleton
  *  5. Overpass nearby POIs  →  [LocationResolutionResult.NeedsUserSelection]
  *  6. Unresolved
  *
- * Rate limiting: enforced via a simple sequential lock + delay before each
- * Nominatim HTTP call.  Overpass does not have a strict per-second policy but
- * shares the same throttle for safety.
+ * Rate limiting is enforced in the geocoding service layer.
  */
 @Singleton
 class LocationResolver @Inject constructor(
@@ -39,10 +36,6 @@ class LocationResolver @Inject constructor(
     private val canonicalizer: MerchantCanonicalizer,
     private val greeklishNormalizer: GreeklishNormalizer
 ) {
-    /** Ensures at most one geocoding request at a time (rate-limiting). */
-    private val rateLimitMutex = Mutex()
-    private var lastRequestAt = 0L
-
     /**
      * Resolve the location for an expense identified by [rawMerchantName].
      *
@@ -120,12 +113,12 @@ class LocationResolver @Inject constructor(
                 }
             }
             // Call Nominatim bounded around cluster centre
-            val clusterResult = geocodeWithRateLimit(
+            val clusterResult = geocode(
                 name = latinName,
                 biasLat = topCluster.centerLat,
                 biasLon = topCluster.centerLon,
                 bounded = true
-            ) ?: geocodeWithRateLimit(
+            ) ?: geocode(
                 name = cleanedName,
                 biasLat = topCluster.centerLat,
                 biasLon = topCluster.centerLon,
@@ -159,11 +152,11 @@ class LocationResolver @Inject constructor(
 
         // ── Step 5: Nominatim with GPS bias (recent transactions only) ─────────
         if (isRecent && deviceLocation != null) {
-            val result = geocodeWithRateLimit(
+            val result = geocode(
                 name = latinName,
                 biasLat = deviceLocation.first,
                 biasLon = deviceLocation.second
-            ) ?: geocodeWithRateLimit(
+            ) ?: geocode(
                 name = cleanedName,  // retry with original Greek
                 biasLat = deviceLocation.first,
                 biasLon = deviceLocation.second
@@ -178,8 +171,8 @@ class LocationResolver @Inject constructor(
         }
 
         // ── Step 6: Nominatim name-only (Greece bias) ─────────────────────────
-        val nameOnlyResult = geocodeWithRateLimit(latinName)
-            ?: geocodeWithRateLimit(cleanedName)
+        val nameOnlyResult = geocode(latinName)
+            ?: geocode(cleanedName)
         if (nameOnlyResult != null) {
             // HIGH-14 FIX: Anonymize merchant names in logs
             Log.d(TAG, "Nominatim name-only resolved merchant hash: ${cacheKey.hashCode().toUInt().toString(16)}")
@@ -190,12 +183,19 @@ class LocationResolver @Inject constructor(
 
         // ── Step 7: Overpass nearby POIs (requires device location) ───────────
         if (deviceLocation != null) {
-            val pois = nearbyPoiService.findNearby(
+            val nearbyResult = nearbyPoiService.findNearby(
                 lat = deviceLocation.first,
                 lon = deviceLocation.second,
                 merchantName = cleanedName,
                 radiusMetres = AppConfig.Location.OVERPASS_SEARCH_RADIUS_M
-            ).filter { !isNullIsland(it.latitude, it.longitude) }
+            )
+            val pois = when (nearbyResult) {
+                is NearbyPoiResult.Success -> nearbyResult.pois
+                is NearbyPoiResult.Failure -> {
+                    Timber.w("Overpass lookup failed for merchant hash ${cacheKey.hashCode().toUInt().toString(16)}: ${nearbyResult.error}")
+                    emptyList()
+                }
+            }.filter { !isNullIsland(it.latitude, it.longitude) }
             if (pois.isNotEmpty()) {
                 // HIGH-14 FIX: Anonymize merchant names in logs
                 Log.d(TAG, "Overpass found ${pois.size} candidates for merchant hash: ${cacheKey.hashCode().toUInt().toString(16)}")
@@ -226,21 +226,21 @@ class LocationResolver @Inject constructor(
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private suspend fun geocodeWithRateLimit(
+    private suspend fun geocode(
         name: String,
         biasLat: Double? = null,
         biasLon: Double? = null,
         cityHint: String? = null,
         bounded: Boolean = false
-    ): GeocodingResult? = rateLimitMutex.withLock {
-        val now = System.currentTimeMillis()
-        val elapsed = now - lastRequestAt
-        if (elapsed < AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS) {
-            kotlinx.coroutines.delay(AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS - elapsed)
+    ): GeocodingResult? {
+        return when (val result = geocodingService.search(name, biasLat, biasLon, cityHint, bounded)) {
+            is GeocodingLookupResult.Success -> result.result
+                ?.takeUnless { isNullIsland(it.latitude, it.longitude) }
+            is GeocodingLookupResult.Failure -> {
+                Timber.w("Geocoding failed for '$name': ${result.error}")
+                null
+            }
         }
-        lastRequestAt = System.currentTimeMillis()
-        geocodingService.search(name, biasLat, biasLon, cityHint, bounded)
-            ?.takeUnless { isNullIsland(it.latitude, it.longitude) }
     }
 
     private fun GeocodingResult.toResolved() = LocationResolutionResult.Resolved(

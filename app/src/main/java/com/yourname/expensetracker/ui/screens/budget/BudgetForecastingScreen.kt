@@ -170,19 +170,19 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val (riskColor, riskEmoji, riskTitle, riskDescription) = when (forecast.riskLevel) {
         ForecastRiskLevel.LOW -> Quadruple(
-            Color(0xFF4CAF50), "✅", context.getString(R.string.budget_forecast_risk_on_track), 
+            SemanticColors.StatusGreen, "✅", context.getString(R.string.budget_forecast_risk_on_track), 
             context.getString(R.string.budget_forecast_desc_on_track)
         )
         ForecastRiskLevel.MEDIUM -> Quadruple(
-            Color(0xFFFF9800), "⚠️", context.getString(R.string.budget_forecast_risk_caution), 
+            SemanticColors.StatusYellow, "⚠️", context.getString(R.string.budget_forecast_risk_caution), 
             context.getString(R.string.budget_forecast_desc_caution)
         )
         ForecastRiskLevel.HIGH -> Quadruple(
-            Color(0xFFF44336), "🔴", context.getString(R.string.budget_forecast_risk_high), 
+            SemanticColors.StatusRed, "🔴", context.getString(R.string.budget_forecast_risk_high), 
             context.getString(R.string.budget_forecast_desc_high)
         )
         ForecastRiskLevel.CRITICAL -> Quadruple(
-            Color(0xFFB71C1C), "🚨", context.getString(R.string.budget_forecast_risk_critical), 
+            SemanticColors.StatusDarkRed, "🚨", context.getString(R.string.budget_forecast_risk_critical), 
             context.getString(R.string.budget_forecast_desc_critical)
         )
     }
@@ -283,8 +283,8 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
                     Icons.Default.Savings else Icons.Default.Warning,
                 valueColor = when {
                     forecast.predictedRemaining < 0 -> SemanticColors.DangerRed
-                    forecast.predictedRemaining < budget.amount * 0.2 -> Color(0xFFFF9800)
-                    else -> Color(0xFF4CAF50)
+                    forecast.predictedRemaining < budget.amount * 0.2 -> SemanticColors.StatusYellow
+                    else -> SemanticColors.StatusGreen
                 }
             )
         }
@@ -361,9 +361,9 @@ private fun ConfidenceCard(forecast: BudgetForecast) {
                     .height(8.dp)
                     .clip(RoundedCornerShape(4.dp)),
                 color = when {
-                    forecast.confidenceScore >= 0.8 -> Color(0xFF4CAF50)
-                    forecast.confidenceScore >= 0.6 -> Color(0xFFFF9800)
-                    else -> Color(0xFFF44336)
+                    forecast.confidenceScore >= 0.8 -> SemanticColors.StatusGreen
+                    forecast.confidenceScore >= 0.6 -> SemanticColors.StatusYellow
+                    else -> SemanticColors.StatusRed
                 },
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
@@ -412,10 +412,10 @@ private fun ConfidenceCard(forecast: BudgetForecast) {
 @Composable
 private fun RecommendationCard(recommendation: BudgetRecommendation) {
     val priorityColor = when (recommendation.priority) {
-        RecommendationPriority.CRITICAL -> Color(0xFFB71C1C)
-        RecommendationPriority.HIGH -> Color(0xFFF44336)
-        RecommendationPriority.MEDIUM -> Color(0xFFFF9800)
-        RecommendationPriority.LOW -> Color(0xFF4CAF50)
+        RecommendationPriority.CRITICAL -> SemanticColors.StatusDarkRed
+        RecommendationPriority.HIGH -> SemanticColors.StatusRed
+        RecommendationPriority.MEDIUM -> SemanticColors.StatusYellow
+        RecommendationPriority.LOW -> SemanticColors.StatusGreen
     }
     
     val priorityIcon = when (recommendation.priority) {
@@ -482,7 +482,7 @@ private fun RecommendationCard(recommendation: BudgetRecommendation) {
                 Text(
                     text = stringResource(R.string.budget_forecast_potential_savings_format, currencyFormatter.format(savings)),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF4CAF50),
+                    color = SemanticColors.StatusGreen,
                     fontWeight = FontWeight.SemiBold
                 )
             }

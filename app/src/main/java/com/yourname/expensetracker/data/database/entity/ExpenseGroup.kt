@@ -12,7 +12,8 @@ import androidx.room.PrimaryKey
     tableName = "expense_groups",
     indices = [
         Index(value = ["isActive"]),
-        Index(value = ["createdAt"])
+        Index(value = ["createdAt"]),
+        Index(value = ["isActive", "createdAt"])
     ]
 )
 data class ExpenseGroup(

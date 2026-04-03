@@ -6,8 +6,10 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.domain.budget.BudgetAutopilotEngine
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.model.Result
 import io.mockk.coEvery
 import io.mockk.every
@@ -34,6 +36,8 @@ class BudgetViewModelStressTest {
 
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var categoryRepository: CategoryRepository
+    private lateinit var offsetEngine: SharedExpenseBudgetOffsetEngine
+    private lateinit var autopilotEngine: BudgetAutopilotEngine
     private lateinit var viewModel: BudgetViewModel
 
     @Before
@@ -42,11 +46,13 @@ class BudgetViewModelStressTest {
         
         budgetRepository = mockk(relaxed = true)
         categoryRepository = mockk(relaxed = true)
+        offsetEngine = mockk(relaxed = true)
+        autopilotEngine = mockk(relaxed = true)
         
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         
-        viewModel = BudgetViewModel(budgetRepository, categoryRepository)
+        viewModel = BudgetViewModel(budgetRepository, categoryRepository, offsetEngine, autopilotEngine)
     }
 
     @After

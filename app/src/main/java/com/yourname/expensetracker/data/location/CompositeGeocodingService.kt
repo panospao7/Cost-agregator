@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
+import com.yourname.expensetracker.domain.location.GeocodingBatchResult
+import com.yourname.expensetracker.domain.location.GeocodingError
+import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
 import kotlinx.coroutines.CancellationException
@@ -52,14 +55,14 @@ class CompositeGeocodingService @Inject constructor(
         biasLon: Double?,
         cityHint: String?,
         bounded: Boolean
-    ): GeocodingResult? = nominatim.search(merchantName, biasLat, biasLon, cityHint, bounded)
+    ): GeocodingLookupResult = nominatim.search(merchantName, biasLat, biasLon, cityHint, bounded)
 
     /**
      * F2: Reverse-geocode a coordinate — delegates to Nominatim which has the
      * full implementation. The interface default returns null, so without this
      * override long-press pins would never resolve an address.
      */
-    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingResult? =
+    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingLookupResult =
         nominatim.reverseGeocode(lat, lon)
 
     /**
@@ -82,13 +85,13 @@ class CompositeGeocodingService @Inject constructor(
         biasLon: Double?,
         limit: Int,
         useGoogle: Boolean
-    ): List<GeocodingResult> {
+    ): GeocodingBatchResult {
         val complex = isComplexQuery(query)
         Log.d(TAG, "searchMultiple: \"$query\" complex=$complex useGoogle=$useGoogle")
 
         // ── Step 1: Fire services in parallel ──────────────────────────────
-        val allResults: List<Pair<String, List<GeocodingResult>>> = coroutineScope {
-            val jobs = mutableListOf<Deferred<Pair<String, List<GeocodingResult>>>>()
+        val allResults: List<Pair<String, GeocodingBatchResult>> = coroutineScope {
+            val jobs = mutableListOf<Deferred<Pair<String, GeocodingBatchResult>>>()
 
             // B12 fix: Use Dispatchers.IO for each async job. The geocoding services
             // use blocking OkHttp .execute() calls. Without an explicit IO dispatcher,
@@ -112,14 +115,28 @@ class CompositeGeocodingService @Inject constructor(
 
         // Log contributions from each service
         for ((name, results) in allResults) {
-            Log.d(TAG, "Merge: $name contributed ${results.size} results for \"$query\"")
+            when (results) {
+                is GeocodingBatchResult.Success ->
+                    Log.d(TAG, "Merge: $name contributed ${results.results.size} results for \"$query\"")
+                is GeocodingBatchResult.Failure ->
+                    Log.w(TAG, "Merge: $name failed for \"$query\" with ${results.error}")
+            }
         }
 
         // ── Step 2: Merge all results ───────────────────────────────────────
-        val merged = allResults.flatMap { it.second }
+        val merged = allResults.flatMap { (_, result) ->
+            when (result) {
+                is GeocodingBatchResult.Success -> result.results
+                is GeocodingBatchResult.Failure -> emptyList()
+            }
+        }
         if (merged.isEmpty()) {
             Log.d(TAG, "Merge: all providers returned 0 results for \"$query\"")
-            return emptyList()
+            val firstFailure = allResults.asSequence()
+                .mapNotNull { (_, result) -> (result as? GeocodingBatchResult.Failure)?.error }
+                .firstOrNull()
+            return if (firstFailure != null) GeocodingBatchResult.Failure(firstFailure)
+            else GeocodingBatchResult.Failure(GeocodingError.NoResults)
         }
 
         // ── Step 3: Re-rank by qualifier match + confidence ─────────────────
@@ -145,7 +162,7 @@ class CompositeGeocodingService @Inject constructor(
         val returnLimit = limit.coerceAtLeast(10)
         val final = deduped.take(returnLimit)
         Log.d(TAG, "Merge: returning ${final.size} results after dedup+rank for \"$query\"")
-        return final
+        return GeocodingBatchResult.Success(final)
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
@@ -271,15 +288,15 @@ class CompositeGeocodingService @Inject constructor(
      */
     private suspend fun safeSearch(
         name: String,
-        block: suspend () -> List<GeocodingResult>
-    ): List<GeocodingResult> = try {
+        block: suspend () -> GeocodingBatchResult
+    ): GeocodingBatchResult = try {
         block()
     } catch (e: CancellationException) {
         Log.d(TAG, "safeSearch[$name]: cancelled, propagating")
         throw e
     } catch (e: Exception) {
         Log.w(TAG, "safeSearch[$name]: failed — ${e.message}")
-        emptyList()
+        GeocodingBatchResult.Failure(GeocodingError.Unknown(e.message))
     }
 
     private companion object {

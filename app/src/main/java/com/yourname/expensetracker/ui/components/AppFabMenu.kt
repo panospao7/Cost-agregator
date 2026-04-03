@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.ui.theme.Dimens
 
 @Composable
 fun AppFabMenu(
@@ -49,8 +50,9 @@ fun AppFabMenu(
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
-                    SmallFloatingActionButton(
+                    FloatingActionButton(
                         onClick = onScanReceipt,
+                        modifier = Modifier.size(Dimens.TouchTargetMin),
                         containerColor = MaterialTheme.colorScheme.secondaryContainer
                     ) {
                         Icon(Icons.Default.Receipt, contentDescription = stringResource(R.string.add_expense_scan_receipt))
@@ -71,8 +73,9 @@ fun AppFabMenu(
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
-                    SmallFloatingActionButton(
+                    FloatingActionButton(
                         onClick = onRecurringExpenses,
+                        modifier = Modifier.size(Dimens.TouchTargetMin),
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer
                     ) {
                         Icon(Icons.Default.Repeat, contentDescription = stringResource(R.string.a11y_recurring_expenses))
@@ -93,8 +96,9 @@ fun AppFabMenu(
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
-                    SmallFloatingActionButton(
+                    FloatingActionButton(
                         onClick = onAddExpense,
+                        modifier = Modifier.size(Dimens.TouchTargetMin),
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     ) {
                         Icon(Icons.Default.Add, contentDescription = stringResource(R.string.a11y_add_expense))

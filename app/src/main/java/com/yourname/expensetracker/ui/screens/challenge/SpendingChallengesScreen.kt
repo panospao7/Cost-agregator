@@ -17,6 +17,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.challenge.NoSpendStatus
+import com.yourname.expensetracker.ui.components.common.EmptyStateType
+import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
+import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -25,9 +31,18 @@ import java.util.Locale
 fun SpendingChallengesScreen(
     onNavigateBack: () -> Unit,
     onCreateChallenge: () -> Unit,
-    viewModel: SpendingChallengesViewModel = hiltViewModel()
+    viewModel: SpendingChallengesViewModel = hiltViewModel(),
+    actionRegistry: ContextualActionRegistry = ContextualActionRegistry()
 ) {
     val noSpendStatus by viewModel.noSpendStatus.collectAsState()
+    val activeChallenges by viewModel.activeChallenges.collectAsState()
+    
+    // Get contextual actions for empty state
+    val emptyStateActions by remember {
+        derivedStateOf {
+            actionRegistry.getActions(EmptyStateScreenKeys.CHALLENGES)
+        }
+    }
     
     Scaffold(
         topBar = {
@@ -65,7 +80,49 @@ fun SpendingChallengesScreen(
                 )
             }
             
-            // Would show active challenges here
+            // Show active challenges or empty state
+            if (activeChallenges.isEmpty()) {
+                item {
+                    // Enhanced empty state with contextual actions
+                    EnhancedEmptyState(
+                        type = EmptyStateType.GENERIC,
+                        title = stringResource(R.string.challenges_empty_title),
+                        message = stringResource(R.string.challenges_empty_message),
+                        actions = emptyStateActions,
+                        onActionClick = { action ->
+                            when (val actionType = action.action) {
+                                is EmptyStateActionType.NavigateToDestination -> {
+                                    // Handle navigation if needed
+                                }
+                                is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
+                                is EmptyStateActionType.OpenFeature -> {
+                                    when (actionType.feature) {
+                                        "create_challenge" -> onCreateChallenge()
+                                        "no_spend_streak" -> {
+                                            // Handle no spend streak
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        onDismissAction = { actionId ->
+                            actionRegistry.markCompleted(EmptyStateScreenKeys.CHALLENGES, actionId)
+                        },
+                        actionLabel = stringResource(R.string.challenges_action_start),
+                        actionIcon = Icons.Default.Add,
+                        onPrimaryClick = onCreateChallenge,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                    )
+                }
+            } else {
+                // Would show active challenges here
+                items(activeChallenges.size) { index ->
+                    // ChallengeCard(challenge = activeChallenges[index])
+                    Text("Challenge ${index + 1}")
+                }
+            }
         }
     }
 }

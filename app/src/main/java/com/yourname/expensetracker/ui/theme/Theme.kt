@@ -29,7 +29,7 @@ object SemanticColors {
     
     val TextPrimary = Color(0xFFF1F5F9)
     val TextSecondary = Color(0xFF94A3B8)
-    val TextMuted = Color(0x9994A3B8) // 60% alpha
+    val TextMuted = Color(0xCC94A3B8) // 80% alpha for better contrast
     
     val GlassSurface = Color(0x661E293B) // 40% alpha SurfaceLight
     val GlassBorder = Color(0x1A94A3B8)   // 10% alpha TextSecondary
@@ -51,6 +51,18 @@ object SemanticColors {
         confidence >= 0.65f -> WarningOrange
         else -> DangerRed
     }
+
+    // Status palette (UI audit consistency)
+    val StatusGreen = Color(0xFF4CAF50)
+    val StatusGreenLight = Color(0xFFE8F5E9)
+    val StatusYellow = Color(0xFFFF9800)
+    val StatusYellowLight = Color(0xFFFFF9C4)
+    val StatusOrangeLight = Color(0xFFFFE0B2)
+    val StatusRed = Color(0xFFF44336)
+    val StatusDarkRed = Color(0xFFB71C1C)
+    val StatusGreenAlt = Color(0xFF4CAF50)
+    val StatusOrangeAlt = Color(0xFFFFA726)
+    val StatusRedAlt = Color(0xFFEF5350)
 }
 
 // === Typography with Tabular Lining Figures ===

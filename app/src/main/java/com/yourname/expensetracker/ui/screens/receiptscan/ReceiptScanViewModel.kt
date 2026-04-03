@@ -24,6 +24,7 @@ import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUse
 import com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCase
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.ui.screens.debug.DebugData
@@ -86,6 +87,7 @@ data class ReceiptScanState(
     val itemCategorizations: List<ReceiptItemCategorization> = emptyList(),
     val isAnalyzingItems: Boolean = false,
     val showItemBreakdown: Boolean = false,
+    val itemAnalysisError: String? = null,
     
     // Debug data
     val debugData: DebugData? = null
@@ -138,7 +140,8 @@ class ReceiptScanViewModel @Inject constructor(
     private val categorizeReceiptItemsUseCase: CategorizeReceiptItemsUseCase,
     private val itemCategorizationDao: ReceiptItemCategorizationDao,
     private val aiArtifactRepository: AiArtifactRepository,
-    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
+    private val receiptOcrService: ReceiptOcrService
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReceiptScanState(
@@ -989,7 +992,7 @@ class ReceiptScanViewModel @Inject constructor(
         val receiptId = _state.value.receiptId ?: return
         
         viewModelScope.launch {
-            _state.update { it.copy(isAnalyzingItems = true) }
+            _state.update { it.copy(isAnalyzingItems = true, itemAnalysisError = null) }
             
             try {
                 val result = categorizeReceiptItemsUseCase(receiptId)
@@ -1002,7 +1005,8 @@ class ReceiptScanViewModel @Inject constructor(
                             it.copy(
                                 itemCategorizations = items,
                                 showItemBreakdown = true,
-                                isAnalyzingItems = false
+                                isAnalyzingItems = false,
+                                itemAnalysisError = null
                             )
                         }
                     }
@@ -1011,18 +1015,33 @@ class ReceiptScanViewModel @Inject constructor(
                             it.copy(
                                 itemCategorizations = result.items,
                                 showItemBreakdown = true,
-                                isAnalyzingItems = false
+                                isAnalyzingItems = false,
+                                itemAnalysisError = null
                             )
                         }
                     }
                     else -> {
-                        _state.update { it.copy(isAnalyzingItems = false) }
+                        _state.update {
+                            it.copy(
+                                isAnalyzingItems = false,
+                                itemAnalysisError = "Item analysis returned no categorizations."
+                            )
+                        }
                     }
                 }
             } catch (e: Exception) {
-                _state.update { it.copy(isAnalyzingItems = false) }
+                _state.update {
+                    it.copy(
+                        isAnalyzingItems = false,
+                        itemAnalysisError = e.message ?: "Item analysis failed."
+                    )
+                }
             }
         }
+    }
+
+    fun clearItemAnalysisError() {
+        _state.update { it.copy(itemAnalysisError = null) }
     }
 
     fun updateItemCategory(item: ReceiptItemCategorization, category: Category?) {
@@ -1052,5 +1071,10 @@ class ReceiptScanViewModel @Inject constructor(
     fun showItemRationale(item: ReceiptItemCategorization) {
         // This would show a dialog with AI rationale - for now just log it
         Timber.d("Item rationale: ${item.aiRationale}")
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        receiptOcrService.close()
     }
 }

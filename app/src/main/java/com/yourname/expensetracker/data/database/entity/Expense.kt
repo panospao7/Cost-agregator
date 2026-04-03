@@ -33,6 +33,7 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
         Index(value = ["transactionType", "merchant", "date"]),
         Index(value = ["dedupeKey"], unique = true), // Atomic duplicate prevention
         Index(value = ["latitude", "longitude"]),     // Location queries (v28)
+        Index(value = ["latitude", "backfillAttempts", "date"]), // Backfill queue optimization
         Index(value = ["merchantKey"]),                // Unified merchant identity key (v32)
         Index(value = ["isBusinessExpense"])         // Business expense queries (v41)
     ]

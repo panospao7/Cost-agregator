@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -74,6 +75,7 @@ import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -131,11 +133,14 @@ class MainActivity : ComponentActivity() {
                 "review" -> mainViewModel.navigateToTab(2)
                 "plan" -> mainViewModel.navigateToTab(3)
                 "add" -> {
-                    mainViewModel.navigateToTab(0)
                     mainViewModel.triggerAddExpense()
                 }
                 "analytics" -> mainViewModel.navigateToTab(4)
                 "map" -> mainViewModel.navigateToTab(5)
+                else -> {
+                    Timber.w("Ignoring unsupported deep link host: ${data.host}")
+                    mainViewModel.navigateToTab(0)
+                }
             }
         }
     }
@@ -158,6 +163,10 @@ fun MainScreen(mainViewModel: MainViewModel) {
     // Navigation Controller - Single source of truth for ALL navigation
     val navigation = LocalNavigationController.current
     val currentDestination = navigation.destination
+
+    BackHandler(enabled = navigation.canNavigateBack()) {
+        navigation.navigateBack()
+    }
     
     var isFabExpanded by rememberSaveable { mutableStateOf(false) }
 

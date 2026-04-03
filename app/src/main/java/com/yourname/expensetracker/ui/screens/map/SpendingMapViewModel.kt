@@ -364,12 +364,25 @@ class SpendingMapViewModel @Inject constructor(
      * Bug #11 fix: avoids repeated GPS calls on every data reload.
      */
     private suspend fun fetchDeviceLocation() {
-        val loc = locationProvider.getLastKnownLocation() ?: return
-        cachedDeviceLoc = loc
-        _state.update { it.copy(
-            deviceLatitude = loc.first,
-            deviceLongitude = loc.second
-        ) }
+        try {
+            val loc = locationProvider.getLastKnownLocation() ?: return
+            cachedDeviceLoc = loc
+            _state.update { it.copy(
+                deviceLatitude = loc.first,
+                deviceLongitude = loc.second,
+                snackbarMessage = null
+            ) }
+        } catch (se: SecurityException) {
+            Log.w(TAG, "Location permission changed during fetch", se)
+            _state.update {
+                it.copy(snackbarMessage = "Location permission changed. Please re-enable to show device position.")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch device location", e)
+            _state.update {
+                it.copy(snackbarMessage = "Unable to fetch device location right now.")
+            }
+        }
     }
 
     private companion object {

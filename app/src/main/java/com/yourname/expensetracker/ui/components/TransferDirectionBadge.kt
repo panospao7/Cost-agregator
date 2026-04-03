@@ -75,7 +75,7 @@ private fun IncomingBadge(
     ) {
         Icon(
             imageVector = Icons.Default.ArrowDownward,
-            contentDescription = stringResource(R.string.a11y_transfer_incoming),
+            contentDescription = null,
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )
@@ -123,7 +123,7 @@ private fun OutgoingBadge(
     ) {
         Icon(
             imageVector = Icons.Default.ArrowUpward,
-            contentDescription = stringResource(R.string.a11y_transfer_outgoing),
+            contentDescription = null,
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )
@@ -169,7 +169,7 @@ private fun UnknownBadge(
     ) {
         Icon(
             imageVector = Icons.Default.HelpOutline,
-            contentDescription = stringResource(R.string.a11y_transfer_unknown),
+            contentDescription = null,
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )

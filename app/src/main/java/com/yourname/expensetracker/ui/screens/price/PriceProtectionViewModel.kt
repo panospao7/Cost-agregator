@@ -4,9 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -14,9 +21,23 @@ import javax.inject.Inject
 class PriceProtectionViewModel @Inject constructor(
     private val priceTracker: PriceProtectionTracker
 ) : ViewModel() {
-    
-    private val _priceDrops = MutableStateFlow<List<PriceProtectionTracker.PriceDropAlert>>(emptyList())
-    val priceDrops: StateFlow<List<PriceProtectionTracker.PriceDropAlert>> = _priceDrops.asStateFlow()
+
+    private val refreshSignals = MutableSharedFlow<Unit>(replay = 1)
+
+    val priceDrops: StateFlow<List<PriceProtectionTracker.PriceDropAlert>> = refreshSignals
+        .onStart { emit(Unit) }
+        .flatMapLatest { priceTracker.monitorPriceDrops() }
+        .onEach { _isLoading.value = false }
+        .catch {
+            it.printStackTrace()
+            _isLoading.value = false
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
     
     private val _protectedItems = MutableStateFlow<List<PriceProtectionTracker.PriceProtectedItem>>(emptyList())
     val protectedItems: StateFlow<List<PriceProtectionTracker.PriceProtectedItem>> = _protectedItems.asStateFlow()
@@ -32,22 +53,23 @@ class PriceProtectionViewModel @Inject constructor(
     
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-    
+
+    init {
+        loadData()
+    }
+
     fun loadData() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 // Load protected items
                 _protectedItems.value = priceTracker.getPriceProtectedItems()
-                
-                // Monitor for price drops
-                priceTracker.monitorPriceDrops().collect { drops ->
-                    _priceDrops.value = drops
-                }
-                
+
                 // Load deals, coupons, and benefits from recent receipts
                 loadDealsAndBenefits()
-                
+
+                // Trigger a refresh of the shared price-drop stream.
+                refreshSignals.emit(Unit)
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {
@@ -55,22 +77,21 @@ class PriceProtectionViewModel @Inject constructor(
             }
         }
     }
-    
+
     fun refreshPriceDrops() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                priceTracker.monitorPriceDrops().collect { drops ->
-                    _priceDrops.value = drops
-                }
+                refreshSignals.emit(Unit)
             } catch (e: Exception) {
                 e.printStackTrace()
-            } finally {
                 _isLoading.value = false
+            } finally {
+                // set to false in stream onEach/catch to reflect completed refresh signal
             }
         }
     }
-    
+
     private suspend fun loadDealsAndBenefits() {
         // In a real implementation, this would load from recent receipts
         // For now, we'll leave it empty as the data would come from the price tracker

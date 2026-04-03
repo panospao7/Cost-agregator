@@ -830,7 +830,9 @@
     <string name="a11y_clear_location">Clear location</string>
     <string name="a11y_clear_search">Clear search</string>
     <string name="a11y_error_format">Error: %1$s - %2$s</string>
-    <string name="a11y_empty_state_format">Empty state: %1$s - %2$s</string>
+     <string name="a11y_empty_state_format">Empty state: %1$s - %2$s</string>
+    <string name="empty_state_suggested_actions">Suggested Actions</string>
+    <string name="cd_dismiss_action">Dismiss action</string>
     <string name="a11y_loading_content">Loading content</string>
     <string name="a11y_priority_format">Priority %1$s, %2$s</string>
     <string name="a11y_no_category_selected">No category selected</string>
@@ -1227,6 +1229,17 @@
     <string name="warranty_empty_title">No warranties tracked</string>
     <string name="warranty_empty_message">Scan receipts to automatically detect warranties</string>
     
+    <!-- F1: Warranty Auto-Detection -->
+    <string name="warranty_auto_detected_count">%1$d auto-detected</string>
+    <string name="warranty_needs_review_count">%1$d needs review</string>
+    <string name="warranty_review_button">Review</string>
+    <string name="warranty_filter_auto">Auto</string>
+    <string name="warranty_badge_auto_detected">Auto-detected from receipt</string>
+    <string name="warranty_badge_needs_review">Needs Review</string>
+    <string name="warranty_confidence_format">Confidence: %1$d%%</string>
+    <string name="warranty_action_confirm">Confirm</string>
+    <string name="warranty_action_reject">Reject</string>
+    
     <!-- Receipt Matching -->
     <string name="screen_receipt_matching">Receipt Matching</string>
     <string name="receipt_stat_unmatched">Unmatched</string>
@@ -1293,6 +1306,16 @@
     <string name="debug_recent_ai_events">Recent AI Events</string>
     <string name="debug_filter_blocked_apps">Blocked Apps</string>
     <string name="debug_phase_4a_rollout">Phase 4A Rollout</string>
+    <string name="debug_categorization_title">Categorization Debug</string>
+    <string name="debug_preprocessing">Pre-Processing</string>
+    <string name="debug_postprocessing">Post-Processing</string>
+    <string name="debug_ml_model">ML Model</string>
+    <string name="debug_rules_engine">Rules Engine</string>
+    <string name="debug_confidence">Confidence</string>
+    <string name="debug_category_predicted">Category Predicted</string>
+    <string name="debug_category_actual">Category Actual</string>
+    <string name="debug_match">Match</string>
+    <string name="debug_mismatch">Mismatch</string>
     <string name="screen_bank_connections">Bank Connections</string>
     <string name="price_empty_no_drops_message">No price drops found</string>
     <string name="price_empty_no_protected_message">No items protected</string>
@@ -1597,6 +1620,7 @@
     <string name="analytics_section_yoy_comparison">Year-over-Year Comparison</string>
     <string name="analytics_section_post_salary">Post-Salary Spending Patterns</string>
     <string name="analytics_section_suspect_duplicates">Possible Errors &amp; Duplicates</string>
+    <string name="analytics_section_personality_profile">Your Spending Personality</string>
     <string name="analytics_section_subscription_detection">Subscription Detection</string>
     <string name="analytics_stat_daily_average">DAILY AVERAGE</string>
     <string name="analytics_stat_largest_spend">LARGEST SPEND</string>
@@ -1693,6 +1717,15 @@
     <string name="budget_category_label">Category</string>
     <string name="budget_period_label">Period</string>
     <string name="budget_rollover_label">Rollover unspent amount</string>
+    <!-- F11: Shared Expenses Budget Offset -->
+    <string name="budget_adjusted_spent_format">€%.2f adjusted spent</string>
+    <string name="budget_pending_reimbursement_format">€%.2f pending reimbursement</string>
+    <string name="budget_shared_expense_breakdown">Shared Expense Breakdown</string>
+    <string name="budget_personal_spend">Personal Spend</string>
+    <string name="budget_shared_liability">Shared Liability</string>
+    <string name="budget_reimbursed_amount">Reimbursed</string>
+    <string name="budget_net_liability">Net Liability</string>
+    <string name="budget_effective_spend">Effective Spend</string>
     <!-- Month Short Names -->
     <string name="month_jan_short">Jan</string>
     <string name="month_feb_short">Feb</string>
@@ -1997,5 +2030,42 @@
     <string name="debug_purchase_alert_title">Purchase Alert</string>
     <string name="debug_purchase_message_format">You paid €%1$.2f at %2$s</string>
     <string name="debug_deposit_received_title">Deposit Received</string>
+
+    <!-- F10: Contextual Empty States -->
+    <string name="subscriptions_empty_title">No Subscriptions Found</string>
+    <string name="subscriptions_empty_message">Connect your notifications or add subscriptions manually to start tracking them</string>
+    <string name="challenges_empty_title">No Active Challenges</string>
+    <string name="challenges_empty_message">Start a spending challenge to gamify your savings journey</string>
+    <string name="challenges_action_start">Start Challenge</string>
+
+    <!-- F2: Notification → Subscription Detection -->
+    <string name="header_detected_subscriptions">Detected from Notifications (%1$d)</string>
+    <string name="subscription_candidate_details">%1$d transactions • %2$s • %3$s confidence</string>
+    <string name="label_estimated_annual">Est. %1$s/year</string>
+    <string name="action_add_subscription">Add</string>
+    <string name="action_reject">Not a Subscription</string>
+
+    <!-- F6: Smart Savings Sweeps -->
+    <string name="savings_sweep_title">End of Month Sweep</string>
+    <string name="savings_sweep_underspend">Underspend: €%1$.2f</string>
+    <string name="savings_sweep_risk_buffer">Risk buffer: €%1$.2f</string>
+    <string name="savings_sweep_safe_amount">Safe to save: €%1$.2f</string>
+    <string name="savings_sweep_goal_allocation">%1$s: +€%2$.2f</string>
+    <string name="savings_sweep_accept">Sweep to Goals</string>
+    <string name="savings_sweep_dismiss">Skip</string>
+    <string name="savings_sweep_confidence_high">High confidence</string>
+    <string name="savings_sweep_confidence_good">Good confidence</string>
+    <string name="savings_sweep_month_end">Month ends %1$s</string>
+    <string name="savings_sweep_suggested_allocation">Suggested allocation:</string>
+    <string name="savings_sweep_progress_format">Progress: %1$.0f%%</string>
+
+    <!-- F13: Spending Personality Profile -->
+    <string name="personality_profile_title">Your Spending Style</string>
+    <string name="personality_planner_name">The Planner</string>
+    <string name="personality_impulse_name">The Spontaneous</string>
+    <string name="personality_optimizer_name">The Optimizer</string>
+    <string name="personality_social_name">The Social Spender</string>
+    <string name="personality_minimalist_name">The Minimalist</string>
+    <string name="personality_balanced_name">The Balanced</string>
 
 </resources>

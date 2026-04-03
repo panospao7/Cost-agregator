@@ -22,6 +22,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
+import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -249,21 +250,21 @@ private fun DayCellView(
                         Box(
                             modifier = Modifier
                                 .size(4.dp)
-                                .background(Color.Green, MaterialTheme.shapes.extraSmall)
+                                .background(SemanticColors.StatusGreen, MaterialTheme.shapes.extraSmall)
                         )
                     }
                     if (dayCell.cashFlow.expenses.isNotEmpty()) {
                         Box(
                             modifier = Modifier
                                 .size(4.dp)
-                                .background(Color.Red, MaterialTheme.shapes.extraSmall)
+                                .background(SemanticColors.StatusRed, MaterialTheme.shapes.extraSmall)
                         )
                     }
                     if (dayCell.cashFlow.predictedRecurring.isNotEmpty()) {
                         Box(
                             modifier = Modifier
                                 .size(4.dp)
-                                .background(Color.Yellow, MaterialTheme.shapes.extraSmall)
+                                .background(SemanticColors.StatusYellow, MaterialTheme.shapes.extraSmall)
                         )
                     }
                 }
@@ -275,9 +276,9 @@ private fun DayCellView(
 @Composable
 private fun getRiskColor(riskLevel: CashFlowRiskLevel): Color {
     return when (riskLevel) {
-        CashFlowRiskLevel.NONE -> Color(0xFFE8F5E9) // Light green
-        CashFlowRiskLevel.LOW -> Color(0xFFFFF9C4) // Light yellow
-        CashFlowRiskLevel.MEDIUM -> Color(0xFFFFE0B2) // Light orange
-        CashFlowRiskLevel.HIGH -> Color(0xFFFFCDD2) // Light red
+        CashFlowRiskLevel.NONE -> SemanticColors.StatusGreenLight
+        CashFlowRiskLevel.LOW -> SemanticColors.StatusYellowLight
+        CashFlowRiskLevel.MEDIUM -> SemanticColors.StatusOrangeLight
+        CashFlowRiskLevel.HIGH -> SemanticColors.StatusRed.copy(alpha = 0.2f)
     }
 }

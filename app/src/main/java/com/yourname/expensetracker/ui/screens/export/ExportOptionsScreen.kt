@@ -36,11 +36,32 @@ fun ExportOptionsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val clipboardManager = LocalClipboardManager.current
+    val snackbarHostState = remember { SnackbarHostState() }
     var showDatePicker by remember { mutableStateOf(false) }
     var isPickingStartDate by remember { mutableStateOf(true) }
+
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let {
+            snackbarHostState.showSnackbar(it, actionLabel = "Retry")
+        }
+    }
     
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
+        snackbarHost = { SnackbarHost(snackbarHostState) { data ->
+            Snackbar(
+                action = {
+                    TextButton(onClick = {
+                        if (data.visuals.actionLabel == "Retry") {
+                            viewModel.retry()
+                            viewModel.clearError()
+                        }
+                    }) {
+                        Text(data.visuals.actionLabel ?: "")
+                    }
+                }
+            ) { Text(data.visuals.message) }
+        } },
         topBar = {
             TopAppBar(
                 title = { 
@@ -146,6 +167,38 @@ fun ExportOptionsScreen(
                             },
                             onDismiss = { viewModel.clearExport() }
                         )
+                    }
+                }
+
+                uiState.error?.let { errorText ->
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = errorText,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                TextButton(onClick = {
+                                    viewModel.retry()
+                                    viewModel.clearError()
+                                }) {
+                                    Text("Retry")
+                                }
+                            }
+                        }
                     }
                 }
                 

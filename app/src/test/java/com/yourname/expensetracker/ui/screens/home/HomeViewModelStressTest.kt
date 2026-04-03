@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
@@ -56,6 +57,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var aiEnvironmentMonitor: AiEnvironmentMonitor
+    private lateinit var aiEngagementRepository: AiEngagementRepository
     private lateinit var timeProvider: TimeProvider
     private lateinit var recommendationStateManager: RecommendationStateManager
     private lateinit var navigationTargetResolver: NavigationTargetResolver
@@ -77,6 +79,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         aiSettingsRepository = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
         aiEnvironmentMonitor = mockk(relaxed = true)
+        aiEngagementRepository = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
         recommendationStateManager = mockk(relaxed = true)
         navigationTargetResolver = mockk(relaxed = true)
@@ -84,6 +87,9 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         totalsAggregationEngine = mockk(relaxed = true)
 
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings())
+        every { aiEngagementRepository.engagementState() } returns flowOf(
+            com.yourname.expensetracker.domain.ai.model.AiEngagementState()
+        )
         every { timeProvider.now() } returns 0L
         coEvery { aiEnvironmentMonitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING) } returns OnDeviceModelStatus.AVAILABLE
 
@@ -152,6 +158,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             aiSettingsRepository,
             aiArtifactRepository,
             aiEnvironmentMonitor,
+            aiEngagementRepository,
             widgetStyleRepository,
             timeProvider,
             recommendationStateManager,
@@ -248,6 +255,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             aiSettingsRepository,
             aiArtifactRepository,
             aiEnvironmentMonitor,
+            aiEngagementRepository,
             widgetStyleRepository,
             timeProvider,
             recommendationStateManager,
@@ -483,6 +491,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             aiSettingsRepository,
             aiArtifactRepository,
             aiEnvironmentMonitor,
+            aiEngagementRepository,
             widgetStyleRepository,
             timeProvider,
             recommendationStateManager,

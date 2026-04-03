@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,17 +28,25 @@ import java.util.Locale
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.ui.components.common.EmptyStateType
+import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
+import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
+import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CarbonFootprintScreen(
     onNavigateBack: () -> Unit,
     onViewOffsetOptions: () -> Unit = {},
-    viewModel: CarbonFootprintViewModel = hiltViewModel()
+    viewModel: CarbonFootprintViewModel = hiltViewModel(),
+    actionRegistry: ContextualActionRegistry = ContextualActionRegistry()
 ) {
     val report by viewModel.report.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
-    var selectedPeriod by remember { mutableIntStateOf(30) }
+    var selectedPeriod by rememberSaveable { mutableIntStateOf(30) }
     
     LaunchedEffect(selectedPeriod) {
         viewModel.loadReport(selectedPeriod)
@@ -160,9 +169,37 @@ fun CarbonFootprintScreen(
                     }
                 }
             } ?: run {
-                EmptyCarbonState(
-                    modifier = Modifier.fillMaxSize(),
-                    onRetry = { viewModel.loadReport(selectedPeriod) }
+                // Enhanced empty state with contextual actions
+                val emptyStateActions by remember {
+                    derivedStateOf {
+                        actionRegistry.getActions(EmptyStateScreenKeys.CARBON)
+                    }
+                }
+                
+                EnhancedEmptyState(
+                    type = EmptyStateType.GENERIC,
+                    title = stringResource(R.string.carbon_no_data),
+                    message = stringResource(R.string.carbon_add_transactions_hint),
+                    actions = emptyStateActions,
+                    onActionClick = { action ->
+                        when (val actionType = action.action) {
+                            is EmptyStateActionType.NavigateToDestination -> {
+                                // Handle navigation
+                            }
+                            is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
+                            is EmptyStateActionType.OpenFeature -> {
+                                when (actionType.feature) {
+                                    "carbon_offset" -> onViewOffsetOptions()
+                                }
+                            }
+                        }
+                    },
+                    onDismissAction = { actionId ->
+                        actionRegistry.markCompleted(EmptyStateScreenKeys.CARBON, actionId)
+                    },
+                    actionLabel = stringResource(R.string.carbon_calculate_button),
+                    onPrimaryClick = { viewModel.loadReport(selectedPeriod) },
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
@@ -172,9 +209,9 @@ fun CarbonFootprintScreen(
 @Composable
 fun CarbonScoreCard(report: CarbonFootprintCalculator.CarbonFootprintReport) {
     val scoreColor = when {
-        report.sustainabilityScore >= 70 -> Color(0xFF4CAF50)
-        report.sustainabilityScore >= 50 -> Color(0xFFFFA726)
-        else -> Color(0xFFEF5350)
+        report.sustainabilityScore >= 70 -> SemanticColors.StatusGreenAlt
+        report.sustainabilityScore >= 50 -> SemanticColors.StatusOrangeAlt
+        else -> SemanticColors.StatusRedAlt
     }
     
     Card(
@@ -652,49 +689,6 @@ fun AlternativeCard(alternative: CarbonFootprintCalculator.SustainableAlternativ
                     fontWeight = FontWeight.Medium
                 )
             }
-        }
-    }
-}
-
-@Composable
-fun EmptyCarbonState(
-    modifier: Modifier = Modifier,
-    onRetry: () -> Unit
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Rounded.Eco,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        )
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Text(
-            text = stringResource(R.string.carbon_no_data),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Text(
-            text = stringResource(R.string.carbon_add_transactions_hint),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 32.dp)
-        )
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        Button(onClick = onRetry) {
-            Text(stringResource(R.string.carbon_calculate_button))
         }
     }
 }

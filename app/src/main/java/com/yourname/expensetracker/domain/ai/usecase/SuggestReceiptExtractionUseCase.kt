@@ -8,6 +8,8 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
@@ -105,34 +107,48 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         aiArtifactRepository.upsert(baseEntity)
 
         return try {
-            val suggestion = receiptAssistService.suggest(input)
+            val serviceResult = receiptAssistService.suggest(input)
             val usedImageInput = receiptAssistService.usedImageInput(input)
-            if (suggestion == null || suggestion.isEmpty()) {
-                aiArtifactRepository.upsert(
-                    baseEntity.copy(
-                        status = AiArtifactStatus.FAILED,
-                        errorMessage = failureMessage(routeDecision.reason, routeDecision),
-                        updatedAt = timeProvider.now()
+            when (serviceResult) {
+                is AiServiceResult.Success -> {
+                    val suggestion = serviceResult.value
+                    if (suggestion.isEmpty()) {
+                        aiArtifactRepository.upsert(
+                            baseEntity.copy(
+                                status = AiArtifactStatus.FAILED,
+                                errorMessage = failureMessage("No usable suggestions", routeDecision),
+                                updatedAt = timeProvider.now()
+                            )
+                        )
+                        ReceiptAssistGenerationResult.Error("AI receipt assist returned no usable suggestions.")
+                    } else {
+                        aiArtifactRepository.upsert(
+                            baseEntity.copy(
+                                status = AiArtifactStatus.READY,
+                                summaryText = suggestion.toSummaryText(),
+                                explanationText = suggestion.toExplanationText(usedImageInput).withRouteDiagnostics(routeDecision),
+                                payloadJson = suggestion.toPayloadJson(),
+                                updatedAt = timeProvider.now()
+                            )
+                        )
+                        ReceiptAssistGenerationResult.Success(
+                            suggestion = suggestion,
+                            fromCache = false,
+                            usedImageInput = usedImageInput
+                        )
+                    }
+                }
+                is AiServiceResult.Failure -> {
+                    val readableError = serviceResult.error.toReadableMessage()
+                    aiArtifactRepository.upsert(
+                        baseEntity.copy(
+                            status = AiArtifactStatus.FAILED,
+                            errorMessage = failureMessage(readableError, routeDecision),
+                            updatedAt = timeProvider.now()
+                        )
                     )
-                )
-                ReceiptAssistGenerationResult.Error(
-                    "AI receipt assist returned no usable suggestions."
-                )
-            } else {
-                aiArtifactRepository.upsert(
-                    baseEntity.copy(
-                        status = AiArtifactStatus.READY,
-                        summaryText = suggestion.toSummaryText(),
-                        explanationText = suggestion.toExplanationText(usedImageInput).withRouteDiagnostics(routeDecision),
-                        payloadJson = suggestion.toPayloadJson(),
-                        updatedAt = timeProvider.now()
-                    )
-                )
-                ReceiptAssistGenerationResult.Success(
-                    suggestion = suggestion,
-                    fromCache = false,
-                    usedImageInput = usedImageInput
-                )
+                    ReceiptAssistGenerationResult.Error(readableError)
+                }
             }
         } catch (e: Exception) {
             aiArtifactRepository.upsert(
@@ -155,6 +171,16 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         if (rawText.startsWith("Scan Failed:", ignoreCase = true)) return false
         return true
     }
+}
+
+private fun AiServiceError.toReadableMessage(): String = when (this) {
+    AiServiceError.Timeout -> "AI receipt assist timed out. Please retry."
+    AiServiceError.Offline -> "Network unavailable. Check connection and retry."
+    AiServiceError.SslError -> "Secure connection failed. Please retry later."
+    is AiServiceError.HttpError -> "AI service returned HTTP $code."
+    is AiServiceError.ParseError -> message ?: "AI response could not be parsed."
+    is AiServiceError.Disabled -> reason
+    is AiServiceError.Unknown -> message ?: "AI receipt assist failed."
 }
 
 // REMOVED: needsAssist() function - no longer blocking AI from running

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
@@ -22,7 +23,7 @@ class HybridReceiptAssistService @Inject constructor(
 
     private var lastUsedImageInput = false
 
-    override suspend fun suggest(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
+    override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
         val settings = aiSettingsRepository.settings().first()
         return when (router.decide(AiCapability.RECEIPT_EXTRACTION, settings).route) {
             AiRoute.CLOUD -> {

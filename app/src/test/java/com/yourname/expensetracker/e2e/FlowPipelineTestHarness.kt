@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.MerchantInsightEngine
 import com.yourname.expensetracker.domain.analytics.MonthlyComparisonCalculator
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
+import com.yourname.expensetracker.domain.analytics.SpendingPersonalityClassifier
 import com.yourname.expensetracker.domain.location.AreaSpendingEngine
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
 import com.yourname.expensetracker.domain.location.TravelDetectionEngine
@@ -109,6 +110,7 @@ internal fun buildPipeline(
     )
 
     val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository)
+    val spendingPersonalityClassifier = mockk<SpendingPersonalityClassifier>(relaxed = true)
 
     val insightsEngine = InsightsEngine(
         expenseRepository = expenseRepository,
@@ -140,6 +142,7 @@ internal fun buildPipeline(
         locationInsightsEngine = locationInsightsEngine,
         areaSpendingEngine = areaSpendingEngine,
         travelDetectionEngine = travelDetectionEngine,
+        spendingPersonalityClassifier = spendingPersonalityClassifier,
         timeProvider = timeProvider
     )
 

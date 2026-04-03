@@ -24,6 +24,9 @@ class AndroidNotificationService @Inject constructor(
         private const val AI_CHANNEL_ID = "ai_briefings"
         private const val AI_CHANNEL_NAME = "AI Briefings"
         private const val AI_CHANNEL_DESC = "Read-only notifications for proactive AI finance briefings"
+        private const val ANOMALY_CHANNEL_ID = "anomaly_alerts"
+        private const val ANOMALY_CHANNEL_NAME = "Unusual Activity Alerts"
+        private const val ANOMALY_CHANNEL_DESC = "Real-time alerts for anomalous or suspicious charges"
     }
 
     private val notificationManager: NotificationManager by lazy {
@@ -49,7 +52,14 @@ class AndroidNotificationService @Inject constructor(
         ).apply {
             description = AI_CHANNEL_DESC
         }
-        notificationManager.createNotificationChannels(listOf(budgetChannel, aiChannel))
+        val anomalyChannel = NotificationChannel(
+            ANOMALY_CHANNEL_ID,
+            ANOMALY_CHANNEL_NAME,
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = ANOMALY_CHANNEL_DESC
+        }
+        notificationManager.createNotificationChannels(listOf(budgetChannel, aiChannel, anomalyChannel))
     }
 
     override fun sendBudgetAlert(
@@ -103,6 +113,40 @@ class AndroidNotificationService @Inject constructor(
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .build()
+
+        notificationManager.notify(notificationId, notification)
+    }
+
+    override fun sendAnomalyAlert(
+        notificationId: Int,
+        title: String,
+        message: String,
+        expenseId: Long
+    ) {
+        if (!notificationManager.areNotificationsEnabled()) {
+            return
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://transaction/$expenseId")).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, ANOMALY_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
             .build()
 
         notificationManager.notify(notificationId, notification)

@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
+import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +22,7 @@ class BudgetRepositoryStressTest {
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val budgetCalculator = mockk<BudgetCalculator>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
 
     private lateinit var repository: BudgetRepository
 
@@ -36,7 +38,14 @@ class BudgetRepositoryStressTest {
         coEvery { expenseDao.getExpensesBetweenFlow(any(), any()) } returns MutableStateFlow(emptyList())
         every { timeProvider.now() } returns System.currentTimeMillis()
 
-        repository = BudgetRepository(budgetDao, categoryDao, expenseDao, budgetCalculator, timeProvider)
+        repository = BudgetRepository(
+            budgetDao,
+            categoryDao,
+            expenseDao,
+            budgetCalculator,
+            timeProvider,
+            offsetEngine
+        )
     }
 
     // ============================================================================

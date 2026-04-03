@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.ui.screens.receiptscan
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri as AndroidUri
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,6 +31,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -64,6 +67,7 @@ import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import java.util.Currency
 import java.util.Date
+import android.provider.Settings
 
 private fun getCurrencySymbol(currencyCode: String?): String {
     return try { Currency.getInstance(currencyCode ?: "EUR").symbol } catch(e: Exception) { "€" }
@@ -80,6 +84,7 @@ fun ReceiptScanScreen(
     val context = LocalContext.current
     val scrollState = rememberScrollState()
     var showDebugViewer by remember { mutableStateOf(false) }
+    var showCameraDeniedCard by remember { mutableStateOf(false) }
 
     // Camera launcher
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -100,8 +105,11 @@ fun ReceiptScanScreen(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
+            showCameraDeniedCard = false
             val uri = viewModel.createTempPhotoUri()
             cameraLauncher.launch(uri)
+        } else {
+            showCameraDeniedCard = true
         }
     }
 
@@ -182,6 +190,14 @@ fun ReceiptScanScreen(
             when (state.step) {
                 ScanStep.CAPTURE -> CaptureStep(
                     imageUri = state.imageUri,
+                    showCameraDenied = showCameraDeniedCard,
+                    onOpenSettings = {
+                        val intent = Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            AndroidUri.fromParts("package", context.packageName, null)
+                        )
+                        context.startActivity(intent)
+                    },
                     onCameraClick = {
                         val hasCameraPermission = ContextCompat.checkSelfPermission(
                             context, Manifest.permission.CAMERA
@@ -221,6 +237,8 @@ fun ReceiptScanScreen(
 @Composable
 private fun CaptureStep(
     imageUri: Uri?,
+    showCameraDenied: Boolean,
+    onOpenSettings: () -> Unit,
     onCameraClick: () -> Unit,
     onGalleryClick: () -> Unit
 ) {
@@ -315,6 +333,38 @@ private fun CaptureStep(
     }
 
     Spacer(modifier = Modifier.height(16.dp))
+
+    if (showCameraDenied) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer
+            )
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Camera permission denied",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Enable camera permission in app settings to capture receipts.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(onClick = onOpenSettings) {
+                    Icon(Icons.Default.Settings, contentDescription = null)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Open Settings")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+    }
 
     // Tips
     Card(
@@ -901,6 +951,38 @@ private fun ReviewStep(
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
+                }
+            }
+        }
+    }
+
+    state.itemAnalysisError?.let { analysisError ->
+        Spacer(modifier = Modifier.height(10.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = analysisError,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                TextButton(onClick = {
+                    viewModel.clearItemAnalysisError()
+                    viewModel.analyzeReceiptItems()
+                }) {
+                    Text("Retry")
                 }
             }
         }

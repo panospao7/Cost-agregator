@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,6 +24,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.ui.components.common.EmptyStateType
+import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
+import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -30,11 +37,13 @@ import java.util.Locale
 @Composable
 fun LifestyleInflationScreen(
     onNavigateBack: () -> Unit,
-    viewModel: LifestyleInflationViewModel = hiltViewModel()
+    onNavigateToSavings: () -> Unit = {},
+    viewModel: LifestyleInflationViewModel = hiltViewModel(),
+    actionRegistry: ContextualActionRegistry = ContextualActionRegistry()
 ) {
     val report by viewModel.report.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
-    var selectedPeriod by remember { mutableStateOf(12) }
+    var selectedPeriod by rememberSaveable { mutableStateOf(12) }
     
     LaunchedEffect(selectedPeriod) {
         viewModel.analyze(selectedPeriod)
@@ -137,15 +146,51 @@ fun LifestyleInflationScreen(
                         }
                     }
                     
+                    // Savings CTA when inflation detected
+                    if (data.lifestyleInflationRate > 0.05 || data.lifestyleCreepDetected) {
+                        item {
+                            SavingsPromptCard(
+                                inflationRate = data.lifestyleInflationRate,
+                                onIncreaseSavings = onNavigateToSavings
+                            )
+                        }
+                    }
+                    
                     // Hedonic Adaptation
                     item {
                         HedonicAdaptationCard(score = data.hedonicAdaptationScore)
                     }
                 }
             } ?: run {
-                EmptyState(
-                    modifier = Modifier.fillMaxSize(),
-                    onRetry = { viewModel.analyze(selectedPeriod) }
+                // Enhanced empty state with contextual actions
+                val emptyStateActions by remember {
+                    derivedStateOf {
+                        actionRegistry.getActions(EmptyStateScreenKeys.LIFESTYLE)
+                    }
+                }
+                
+                EnhancedEmptyState(
+                    type = EmptyStateType.GENERIC,
+                    title = stringResource(R.string.lifestyle_no_data_title),
+                    message = stringResource(R.string.lifestyle_no_data_subtitle),
+                    actions = emptyStateActions,
+                    onActionClick = { action ->
+                        when (val actionType = action.action) {
+                            is EmptyStateActionType.NavigateToDestination -> {
+                                // Handle navigation
+                            }
+                            is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
+                            is EmptyStateActionType.OpenFeature -> {
+                                // Handle opening features
+                            }
+                        }
+                    },
+                    onDismissAction = { actionId ->
+                        actionRegistry.markCompleted(EmptyStateScreenKeys.LIFESTYLE, actionId)
+                    },
+                    actionLabel = stringResource(R.string.lifestyle_retry_button),
+                    onPrimaryClick = { viewModel.analyze(selectedPeriod) },
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
@@ -706,44 +751,59 @@ fun HedonicAdaptationCard(score: Double) {
 }
 
 @Composable
-fun EmptyState(
-    modifier: Modifier = Modifier,
-    onRetry: () -> Unit
+fun SavingsPromptCard(
+    inflationRate: Double,
+    onIncreaseSavings: () -> Unit
 ) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+    val numberFormat = NumberFormat.getPercentInstance(Locale.getDefault()).apply {
+        maximumFractionDigits = 1
+    }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
     ) {
-        Icon(
-            imageVector = Icons.Rounded.TrendingUp,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        )
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Text(
-            text = stringResource(R.string.lifestyle_no_data_title),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Text(
-            text = stringResource(R.string.lifestyle_no_data_subtitle),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 32.dp)
-        )
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        Button(onClick = onRetry) {
-            Text(stringResource(R.string.lifestyle_retry_button))
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Savings,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                
+                Spacer(modifier = Modifier.width(8.dp))
+                
+                Text(
+                    text = "Boost Your Savings",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = "Lifestyle inflation detected at ${numberFormat.format(inflationRate)}. " +
+                       "Consider redirecting some of that spending growth toward your savings goals.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+        Button(
+            onClick = onIncreaseSavings,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Rounded.Add, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Increase Savings Rate")
+        }
         }
     }
 }

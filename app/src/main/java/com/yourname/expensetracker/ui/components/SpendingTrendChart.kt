@@ -21,6 +21,8 @@ import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.core.entry.entryOf
 import com.yourname.expensetracker.domain.usecase.dashboard.SpendingTrendSeries
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
@@ -132,6 +134,15 @@ fun SpendingTrendChart(
                 else "€${String.format("%.0f", value)}"
             }
 
+            val currentValues = currentSeries.flatMap { it.data }
+            val allValues = allSeries.flatMap { it.data }
+            val minValue = allValues.minOrNull() ?: 0.0
+            val maxValue = allValues.maxOrNull() ?: 0.0
+            val currentValue = currentValues.lastOrNull() ?: 0.0
+            val chartSummary = remember(subtitle, minValue, maxValue, currentValue) {
+                "Spending trend chart for $subtitle. Current value €${String.format("%.0f", currentValue)}, minimum €${String.format("%.0f", minValue)}, maximum €${String.format("%.0f", maxValue)}."
+            }
+
             Chart(
                 chart = lineChart(lines = lineSpecs),
                 model = chartEntryModel,
@@ -149,6 +160,7 @@ fun SpendingTrendChart(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp)
+                    .semantics { contentDescription = chartSummary }
             )
         }
     }

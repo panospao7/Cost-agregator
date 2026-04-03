@@ -76,7 +76,7 @@ fun CategorizationDebugScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Categorization Debug") },
+                title = { Text(stringResource(R.string.debug_categorization_title)) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
@@ -184,7 +184,11 @@ private fun TraceView(trace: CategorizationDebugTrace) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Pre-Processing (Phases 2 & 3)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "${stringResource(R.string.debug_preprocessing)} (Phases 2 & 3)",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Text("Input: ${trace.inputMerchant}", fontFamily = FontFamily.Monospace)
                     Text("Normalized: ${trace.normalizedMerchant}", fontFamily = FontFamily.Monospace)
@@ -225,7 +229,7 @@ private fun TraceView(trace: CategorizationDebugTrace) {
                     modifier = Modifier.padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("Final Decision", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.debug_postprocessing), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
                     Spacer(modifier = Modifier.height(8.dp))
                     
                     if (trace.finalResult.matchType != MatchType.UNKNOWN) {
@@ -234,9 +238,9 @@ private fun TraceView(trace: CategorizationDebugTrace) {
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
-                        Text("Matched by: ${trace.finalResult.matchType}")
+                        Text("${stringResource(R.string.debug_match)}: ${trace.finalResult.matchType}")
                         Text(
-                            "Confidence: ${(trace.finalResult.confidence * 100).toInt()}%",
+                            "${stringResource(R.string.debug_confidence)}: ${(trace.finalResult.confidence * 100).toInt()}%",
                             fontWeight = FontWeight.Bold
                         )
                         Text("Explanation: ${trace.finalResult.explanation}", style = MaterialTheme.typography.bodySmall)
@@ -246,7 +250,7 @@ private fun TraceView(trace: CategorizationDebugTrace) {
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
-                        Text("All layers failed to find a match.")
+                        Text("${stringResource(R.string.debug_mismatch)}: All layers failed to find a match.")
                     }
                 }
             }
@@ -284,13 +288,17 @@ private fun LayerResultCard(result: LayerDebugResult) {
                     color = contentCol
                 )
                 if (result.matchFound) {
-                    Text("Result: ${result.categoryName}", color = contentCol)
-                    Text("Confidence: ${(result.confidence * 100).toInt()}%", color = contentCol)
+                    Text("${stringResource(R.string.debug_category_predicted)}: ${result.categoryName}", color = contentCol)
+                    Text("${stringResource(R.string.debug_confidence)}: ${(result.confidence * 100).toInt()}%", color = contentCol)
                     if (result.details.isNotBlank()) {
                         Text(result.details, style = MaterialTheme.typography.bodySmall, color = contentCol.copy(alpha = 0.8f))
                     }
                 } else {
-                    Text(result.details, style = MaterialTheme.typography.bodySmall, color = contentCol.copy(alpha = 0.7f))
+                    Text(
+                        "${stringResource(R.string.debug_category_actual)}: ${stringResource(R.string.debug_mismatch)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = contentCol.copy(alpha = 0.7f)
+                    )
                 }
             }
         }

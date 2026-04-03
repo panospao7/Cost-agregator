@@ -2,15 +2,22 @@ package com.yourname.expensetracker.domain.usecase.budget
 
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.model.Result
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
 class CalculateBudgetStatusUseCase @Inject constructor(
     private val budgetRepository: BudgetRepository
 ) {
-    operator fun invoke(): List<com.yourname.expensetracker.domain.budget.BudgetStatus> {
-        return emptyList()
+    suspend operator fun invoke(): Result<List<BudgetStatus>> {
+        return try {
+            Result.Success(budgetRepository.getBudgetStatuses().first())
+        } catch (e: Exception) {
+            Result.Error(e, "Failed to load budget status")
+        }
     }
     
     fun getBudgetHealth(): Flow<BudgetHealth> {

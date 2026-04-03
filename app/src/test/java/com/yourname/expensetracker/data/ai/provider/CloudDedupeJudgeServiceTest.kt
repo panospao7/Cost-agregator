@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DedupeCandidateSummary
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
@@ -50,10 +51,10 @@ class CloudDedupeJudgeServiceTest {
             )
         }
 
-        // With a mock/invalid key, the service may return null (safe behavior)
-        // The important thing is that it doesn't crash
-        if (result != null) {
-            assertTrue(result.verdict.name.isNotBlank())
+        // With a mock/invalid key, service may fail or succeed.
+        // The important thing is that it doesn't crash.
+        if (result is AiServiceResult.Success) {
+            assertTrue(result.value.verdict.name.isNotBlank())
         }
         // Test passes if we get here without exception, regardless of null result
     }

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
+import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -34,6 +35,7 @@ class BudgetRolloverTest {
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val budgetCalculator = mockk<BudgetCalculator>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
     
     private lateinit var budgetRepository: BudgetRepository
 
@@ -52,7 +54,8 @@ class BudgetRolloverTest {
             categoryDao,
             expenseDao,
             budgetCalculator,
-            timeProvider
+            timeProvider,
+            offsetEngine
         )
     }
 

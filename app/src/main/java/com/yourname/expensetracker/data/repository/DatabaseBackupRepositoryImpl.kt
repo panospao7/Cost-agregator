@@ -501,7 +501,18 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     override suspend fun resetDatabase(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             // Create safety backup first
-            createSafetyBackup()
+            val safetyBackupResult = createSafetyBackup()
+            if (safetyBackupResult.isFailure) {
+                val reason = safetyBackupResult.exceptionOrNull()?.message
+                    ?: "Unknown backup error"
+                Timber.e("Database reset aborted: safety backup failed: $reason")
+                return@withContext Result.failure(
+                    Exception(
+                        "Reset cancelled because safety backup failed. " +
+                            "Please free storage/permissions and retry. Details: $reason"
+                    )
+                )
+            }
             
             // Close database
             database.close()

@@ -20,18 +20,6 @@ object GroupsModule {
     @Provides
     @Singleton
     fun provideGroupsRepository(impl: GroupsRepositoryImpl): GroupsRepository = impl
-    
-    @Provides
-    @Singleton
-    fun provideSharedExpenseManager(manager: SharedExpenseManager): SharedExpenseManager {
-        return manager
-    }
-    
-    @Provides
-    @Singleton
-    fun provideSettlementCalculator(calculator: SettlementCalculator): SettlementCalculator {
-        return calculator
-    }
 
     @Provides
     fun provideDeleteGroupMemberUseCase(

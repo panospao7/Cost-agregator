@@ -21,6 +21,7 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["groupId"]),
+        Index(value = ["groupId", "isCurrentUser"]),
         Index(value = ["groupId", "name"], unique = true)
     ]
 )

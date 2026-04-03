@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanation
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
@@ -17,5 +19,6 @@ import javax.inject.Inject
  */
 class NoOpReviewExplanationService @Inject constructor() : ReviewExplanationService {
 
-    override suspend fun generate(input: ReviewExplanationInput): ReviewExplanation? = null
+    override suspend fun generate(input: ReviewExplanationInput): AiServiceResult<ReviewExplanation> =
+        AiServiceResult.Failure(AiServiceError.Disabled("Review explanation unavailable"))
 }

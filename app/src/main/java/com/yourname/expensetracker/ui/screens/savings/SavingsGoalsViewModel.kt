@@ -6,6 +6,10 @@ import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.savings.*
+import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
+import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsRecommendation
+import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
+import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -14,6 +18,9 @@ import javax.inject.Inject
 data class SavingsGoalsState(
     val goals: List<SavingsGoal> = emptyList(),
     val smartRecommendations: List<SmartRecommendation> = emptyList(),
+    val lifestyleRecommendation: LifestyleSavingsRecommendation? = null,
+    val sweepRecommendation: SavingsSweepRecommendation? = null,
+    val isSweepAvailable: Boolean = false,
     val streak: SavingsStreak? = null,
     val achievements: List<SavingsAchievement> = emptyList(),
     val userLevel: Int = 1,
@@ -35,7 +42,9 @@ data class SmartRecommendation(
 class SavingsGoalsViewModel @Inject constructor(
     private val savingsGoalRepository: SavingsGoalRepository,
     private val smartSavingsEngine: SmartSavingsEngine,
-    private val gamificationEngine: SavingsGamificationEngine
+    private val gamificationEngine: SavingsGamificationEngine,
+    private val lifestyleSavingsPromptUseCase: LifestyleSavingsPromptUseCase,
+    private val monthlySavingsSweepUseCase: MonthlySavingsSweepUseCase
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SavingsGoalsState())
@@ -44,6 +53,8 @@ class SavingsGoalsViewModel @Inject constructor(
     init {
         loadGoals()
         loadGamification()
+        loadLifestyleRecommendation()
+        checkSweepAvailability()
     }
 
     private fun loadGoals() {
@@ -105,6 +116,80 @@ class SavingsGoalsViewModel @Inject constructor(
             }
         }
     }
+    
+    private fun loadLifestyleRecommendation() {
+        viewModelScope.launch {
+            val recommendation = lifestyleSavingsPromptUseCase.evaluateAndPrompt()
+            _state.update {
+                it.copy(lifestyleRecommendation = recommendation)
+            }
+        }
+    }
+
+    /**
+     * Check if sweep recommendations are available (month-end window).
+     */
+    private fun checkSweepAvailability() {
+        val isAvailable = monthlySavingsSweepUseCase.shouldShowSweepPrompt()
+        _state.update { it.copy(isSweepAvailable = isAvailable) }
+        
+        if (isAvailable) {
+            computeSweepRecommendation()
+        }
+    }
+
+    /**
+     * Compute the monthly savings sweep recommendation.
+     */
+    fun computeSweepRecommendation() {
+        viewModelScope.launch {
+            val recommendation = monthlySavingsSweepUseCase.computeSweepRecommendation()
+            _state.update { it.copy(sweepRecommendation = recommendation) }
+        }
+    }
+
+    /**
+     * Accept the sweep recommendation and allocate to goals.
+     */
+    fun acceptSweepRecommendation() {
+        viewModelScope.launch {
+            val recommendation = _state.value.sweepRecommendation ?: return@launch
+            
+            // Apply allocations to goals
+            for (allocation in recommendation.goalAllocations) {
+                contributeToGoal(allocation.goalId, allocation.suggestedAllocation)
+            }
+            
+            // Clear the recommendation
+            _state.update { it.copy(sweepRecommendation = null) }
+            
+            // Refresh gamification
+            loadGamification()
+        }
+    }
+
+    /**
+     * Dismiss the sweep recommendation without applying.
+     */
+    fun dismissSweepRecommendation() {
+        viewModelScope.launch {
+            _state.update { it.copy(sweepRecommendation = null) }
+        }
+    }
+    
+    fun acceptLifestyleRecommendation(goalId: Long?) {
+        viewModelScope.launch {
+            lifestyleSavingsPromptUseCase.recordAcceptance(goalId)
+            _state.update { it.copy(lifestyleRecommendation = null) }
+        }
+    }
+    
+    fun dismissLifestyleRecommendation(reason: String? = null) {
+        viewModelScope.launch {
+            lifestyleSavingsPromptUseCase.recordDismissal(reason)
+            _state.update { it.copy(lifestyleRecommendation = null) }
+        }
+    }
 
     fun addGoal(name: String, targetAmount: Double, targetDate: Long?, protectionLevel: GoalProtectionLevel) {
         viewModelScope.launch {
@@ -145,5 +230,7 @@ class SavingsGoalsViewModel @Inject constructor(
     fun refresh() {
         loadGoals()
         loadGamification()
+        loadLifestyleRecommendation()
+        checkSweepAvailability()
     }
 }

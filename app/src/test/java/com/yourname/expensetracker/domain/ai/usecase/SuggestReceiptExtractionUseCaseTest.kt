@@ -8,6 +8,8 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiMode
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
@@ -128,7 +130,7 @@ class SuggestReceiptExtractionUseCaseTest {
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
         every { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { receiptAssistService.suggest(input) } returns suggestion
+        coEvery { receiptAssistService.suggest(input) } returns AiServiceResult.Success(suggestion)
 
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
@@ -154,8 +156,8 @@ class SuggestReceiptExtractionUseCaseTest {
         val receipt = makeReceipt(confidence = 0.2f)
         val input = makeInput().copy(imagePath = "receipt.jpg", imageMimeType = "image/jpeg")
         val receiptAssistService = object : ReceiptAssistService {
-            override suspend fun suggest(input: ReceiptAssistInput): ReceiptAssistSuggestion? {
-                return ReceiptAssistSuggestion(merchant = SuggestedValue("AB Βασιλόπουλος"))
+            override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
+                return AiServiceResult.Success(ReceiptAssistSuggestion(merchant = SuggestedValue("AB Βασιλόπουλος")))
             }
 
             override fun usedImageInput(input: ReceiptAssistInput): Boolean = true
@@ -204,7 +206,7 @@ class SuggestReceiptExtractionUseCaseTest {
             providerName = AppConfig.Ai.ON_DEVICE_PROVIDER_NAME,
             modelName = AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL
         )
-        coEvery { receiptAssistService.suggest(input) } returns suggestion
+        coEvery { receiptAssistService.suggest(input) } returns AiServiceResult.Success(suggestion)
 
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
@@ -219,14 +221,15 @@ class SuggestReceiptExtractionUseCaseTest {
     }
 
     @Test
-    fun `invoke stores FAILED artifact when provider returns null`() = runTest {
+    fun `invoke stores FAILED artifact when provider returns failure`() = runTest {
         val receipt = makeReceipt(confidence = 0.2f)
         val input = makeInput()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
         every { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { receiptAssistService.suggest(input) } returns null
+        coEvery { receiptAssistService.suggest(input) } returns
+            AiServiceResult.Failure(AiServiceError.Unknown("provider unavailable"))
 
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L

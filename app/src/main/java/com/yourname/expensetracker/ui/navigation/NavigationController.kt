@@ -7,10 +7,149 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import java.util.ArrayDeque
+
+data class NavigationControllerSnapshot(
+    val destination: NavigationDestination,
+    val backStack: List<NavigationDestination>,
+    val previousMainTab: Int?
+)
+
+private data class PersistedNavigationState(
+    val destinationToken: String,
+    val backStackTokens: List<String>,
+    val previousMainTab: Int?
+) {
+    companion object {
+        val Saver: Saver<PersistedNavigationState, Any> = listSaver(
+            save = {
+                listOf(
+                    it.destinationToken,
+                    it.backStackTokens,
+                    it.previousMainTab
+                )
+            },
+            restore = { restored ->
+                PersistedNavigationState(
+                    destinationToken = restored[0] as String,
+                    backStackTokens = restored[1] as List<String>,
+                    previousMainTab = restored[2] as Int?
+                )
+            }
+        )
+
+        fun fromDestination(destination: NavigationDestination): PersistedNavigationState {
+            return PersistedNavigationState(
+                destinationToken = destination.toSaveToken(),
+                backStackTokens = emptyList(),
+                previousMainTab = null
+            )
+        }
+
+        fun fromSnapshot(snapshot: NavigationControllerSnapshot): PersistedNavigationState {
+            return PersistedNavigationState(
+                destinationToken = snapshot.destination.toSaveToken(),
+                backStackTokens = snapshot.backStack.map { it.toSaveToken() },
+                previousMainTab = snapshot.previousMainTab
+            )
+        }
+    }
+}
+
+private fun NavigationDestination.toSaveToken(): String = when (this) {
+    is NavigationDestination.Home -> "home"
+    is NavigationDestination.Transactions -> "transactions"
+    is NavigationDestination.Analytics -> "analytics"
+    is NavigationDestination.Assistant -> "assistant"
+    is NavigationDestination.Review -> "review"
+    is NavigationDestination.Budget -> "budget"
+    is NavigationDestination.SpendingMap -> "spending_map"
+    is NavigationDestination.AddExpense -> "add_expense"
+    is NavigationDestination.ScanReceipt -> "scan_receipt"
+    is NavigationDestination.RecurringExpenses -> "recurring_expenses"
+    is NavigationDestination.ManualRecurringExpense -> "manual_recurring_expense"
+    is NavigationDestination.SavingsGoals -> "savings_goals"
+    is NavigationDestination.CarbonFootprint -> "carbon_footprint"
+    is NavigationDestination.WarrantyTracker -> "warranty_tracker"
+    is NavigationDestination.PriceProtection -> "price_protection"
+    is NavigationDestination.BillNegotiation -> "bill_negotiation"
+    is NavigationDestination.SmartSearch -> "smart_search"
+    is NavigationDestination.ReceiptMatching -> "receipt_matching"
+    is NavigationDestination.InvestmentPortfolio -> "investment_portfolio"
+    is NavigationDestination.BankConnections -> "bank_connections"
+    is NavigationDestination.BillReminders -> "bill_reminders"
+    is NavigationDestination.SpendingChallenges -> "spending_challenges"
+    is NavigationDestination.AdvancedAnalytics -> "advanced_analytics"
+    is NavigationDestination.CashFlowCalendar -> "cash_flow_calendar"
+    is NavigationDestination.LifestyleInflation -> "lifestyle_inflation"
+    is NavigationDestination.SplitTemplates -> "split_templates"
+    is NavigationDestination.VisualSplitEditor -> {
+        templateId?.let { "visual_split_editor:$it" } ?: "visual_split_editor"
+    }
+    is NavigationDestination.CurrencyManagement -> "currency_management"
+    is NavigationDestination.SubscriptionManagement -> "subscription_management"
+    is NavigationDestination.TaxConfiguration -> "tax_configuration"
+    is NavigationDestination.ExportOptions -> "export_options"
+    is NavigationDestination.SharedExpenseGroups -> "shared_expense_groups"
+    // Budget entity is intentionally not serialized; reopening null-budget route is safe.
+    is NavigationDestination.BudgetForecasting -> "budget_forecasting"
+    is NavigationDestination.AiSettings -> "ai_settings"
+    is NavigationDestination.CategoryManagement -> "category_management"
+}
+
+private fun destinationFromSaveToken(token: String): NavigationDestination? {
+    return when {
+        token == "home" -> NavigationDestination.Home
+        token == "transactions" -> NavigationDestination.Transactions
+        token == "analytics" -> NavigationDestination.Analytics
+        token == "assistant" -> NavigationDestination.Assistant
+        token == "review" -> NavigationDestination.Review
+        token == "budget" -> NavigationDestination.Budget
+        token == "spending_map" -> NavigationDestination.SpendingMap
+        token == "add_expense" -> NavigationDestination.AddExpense
+        token == "scan_receipt" -> NavigationDestination.ScanReceipt
+        token == "recurring_expenses" -> NavigationDestination.RecurringExpenses
+        token == "manual_recurring_expense" -> NavigationDestination.ManualRecurringExpense
+        token == "savings_goals" -> NavigationDestination.SavingsGoals
+        token == "carbon_footprint" -> NavigationDestination.CarbonFootprint
+        token == "warranty_tracker" -> NavigationDestination.WarrantyTracker
+        token == "price_protection" -> NavigationDestination.PriceProtection
+        token == "bill_negotiation" -> NavigationDestination.BillNegotiation
+        token == "smart_search" -> NavigationDestination.SmartSearch
+        token == "receipt_matching" -> NavigationDestination.ReceiptMatching
+        token == "investment_portfolio" -> NavigationDestination.InvestmentPortfolio
+        token == "bank_connections" -> NavigationDestination.BankConnections
+        token == "bill_reminders" -> NavigationDestination.BillReminders
+        token == "spending_challenges" -> NavigationDestination.SpendingChallenges
+        token == "advanced_analytics" -> NavigationDestination.AdvancedAnalytics
+        token == "cash_flow_calendar" -> NavigationDestination.CashFlowCalendar
+        token == "lifestyle_inflation" -> NavigationDestination.LifestyleInflation
+        token == "split_templates" -> NavigationDestination.SplitTemplates
+        token.startsWith("visual_split_editor") -> {
+            val templateId = token.substringAfter(':', "")
+                .takeIf { it.isNotBlank() }
+                ?.toLongOrNull()
+            NavigationDestination.VisualSplitEditor(templateId = templateId)
+        }
+        token == "currency_management" -> NavigationDestination.CurrencyManagement
+        token == "subscription_management" -> NavigationDestination.SubscriptionManagement
+        token == "tax_configuration" -> NavigationDestination.TaxConfiguration
+        token == "export_options" -> NavigationDestination.ExportOptions
+        token == "shared_expense_groups" -> NavigationDestination.SharedExpenseGroups
+        token == "budget_forecasting" -> NavigationDestination.BudgetForecasting()
+        token == "ai_settings" -> NavigationDestination.AiSettings
+        token == "category_management" -> NavigationDestination.CategoryManagement
+        else -> null
+    }
+}
 
 /**
  * Controller for managing navigation state and providing navigation actions.
@@ -23,14 +162,17 @@ import java.util.ArrayDeque
  * ```
  */
 class NavigationController(
-    private val currentDestination: MutableState<NavigationDestination>
+    private val currentDestination: MutableState<NavigationDestination>,
+    initialBackStack: List<NavigationDestination> = emptyList(),
+    initialPreviousMainTab: Int? = null,
+    private val onStateChanged: ((NavigationControllerSnapshot) -> Unit)? = null
 ) {
-    private val backStack = ArrayDeque<NavigationDestination>()
+    private val backStack = ArrayDeque(initialBackStack)
     private val _navigationEvents = MutableSharedFlow<NavigationEvent>(extraBufferCapacity = 1)
     val navigationEvents: SharedFlow<NavigationEvent> = _navigationEvents.asSharedFlow()
     
     // Track the previous main tab to return to when navigating back from feature screens
-    var previousMainTab: Int? = null
+    var previousMainTab: Int? = initialPreviousMainTab
         private set
     
     val destination: NavigationDestination
@@ -56,6 +198,7 @@ class NavigationController(
         
         currentDestination.value = destination
         _navigationEvents.tryEmit(NavigationEvent.NavigateTo(destination))
+        notifyStateChanged()
     }
     
     /**
@@ -67,6 +210,7 @@ class NavigationController(
             val previous = backStack.removeLast()
             currentDestination.value = previous
             _navigationEvents.tryEmit(NavigationEvent.NavigateBack)
+            notifyStateChanged()
             true
         } else {
             // No back stack entry, go to previous main tab or Home
@@ -83,6 +227,7 @@ class NavigationController(
         backStack.clear()
         currentDestination.value = NavigationDestination.Home
         _navigationEvents.tryEmit(NavigationEvent.NavigateTo(NavigationDestination.Home))
+        notifyStateChanged()
     }
     
     /**
@@ -101,6 +246,7 @@ class NavigationController(
             else -> NavigationDestination.Home
         }
         _navigationEvents.tryEmit(NavigationEvent.NavigateTo(currentDestination.value))
+        notifyStateChanged()
     }
     
     /**
@@ -159,6 +305,17 @@ class NavigationController(
      */
     fun clearBackStack() {
         backStack.clear()
+        notifyStateChanged()
+    }
+
+    private fun notifyStateChanged() {
+        onStateChanged?.invoke(
+            NavigationControllerSnapshot(
+                destination = currentDestination.value,
+                backStack = backStack.toList(),
+                previousMainTab = previousMainTab
+            )
+        )
     }
 }
 
@@ -196,8 +353,25 @@ fun ProvideNavigationController(
     initialDestination: NavigationDestination = NavigationDestination.Home,
     content: @Composable () -> Unit
 ) {
-    val currentDestination = remember { mutableStateOf(initialDestination) }
-    val navigationController = remember { NavigationController(currentDestination) }
+    var persistedState by rememberSaveable(stateSaver = PersistedNavigationState.Saver) {
+        mutableStateOf(PersistedNavigationState.fromDestination(initialDestination))
+    }
+    val restoredDestination = destinationFromSaveToken(persistedState.destinationToken) ?: initialDestination
+    val restoredBackStack = persistedState.backStackTokens.mapNotNull(::destinationFromSaveToken)
+
+    val currentDestination = remember {
+        mutableStateOf(restoredDestination)
+    }
+    val navigationController = remember {
+        NavigationController(
+            currentDestination = currentDestination,
+            initialBackStack = restoredBackStack,
+            initialPreviousMainTab = persistedState.previousMainTab,
+            onStateChanged = { snapshot ->
+                persistedState = PersistedNavigationState.fromSnapshot(snapshot)
+            }
+        )
+    }
     
     CompositionLocalProvider(
         LocalNavigationController provides navigationController

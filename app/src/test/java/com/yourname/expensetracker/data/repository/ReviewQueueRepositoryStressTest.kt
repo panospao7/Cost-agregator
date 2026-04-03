@@ -4,6 +4,7 @@ import android.content.Context
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
@@ -32,6 +33,7 @@ class ReviewQueueRepositoryStressTest {
     private val hybridClassifier = mockk<HybridExpenseClassifier>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
     private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
+    private val anomalyAlertOrchestrator = mockk<AnomalyAlertOrchestrator>(relaxed = true)
     private val parserRegistry = mockk<AppParserRegistry>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
@@ -84,6 +86,7 @@ class ReviewQueueRepositoryStressTest {
             hybridClassifier = hybridClassifier,
             classifier = classifier,
             budgetMonitor = budgetMonitor,
+            anomalyAlertOrchestrator = anomalyAlertOrchestrator,
             parserRegistry = parserRegistry,
             timeProvider = timeProvider,
             confidenceRouter = confidenceRouter

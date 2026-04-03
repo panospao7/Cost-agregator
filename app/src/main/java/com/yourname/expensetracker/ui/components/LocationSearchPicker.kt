@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.location.GeocodingBatchResult
+import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
 import kotlinx.coroutines.CancellationException
@@ -45,6 +47,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
+import com.yourname.expensetracker.ui.theme.Dimens
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -114,15 +117,22 @@ fun LocationSearchPicker(
                     val searchResults = withContext(Dispatchers.IO) {
                         geocodingService.searchMultiple(query, biasLat, biasLon, useGoogle = withGoogle)
                     }
-                    Log.d("LocationSearch", "<== Got ${searchResults.size} results")
-                    results = searchResults
+                    val resolvedResults = when (searchResults) {
+                        is GeocodingBatchResult.Success -> searchResults.results
+                        is GeocodingBatchResult.Failure -> {
+                            searchError = "Search unavailable (${searchResults.error})"
+                            emptyList()
+                        }
+                    }
+                    Log.d("LocationSearch", "<== Got ${resolvedResults.size} results")
+                    results = resolvedResults
                     // Auto-expand the map when results arrive so the user can see them
-                    if (searchResults.isNotEmpty()) showMap = true
-                    if (searchResults.isEmpty()) {
+                    if (resolvedResults.isNotEmpty()) showMap = true
+                    if (resolvedResults.isEmpty() && searchError == null) {
                         searchError = "No results found"
                         Log.d("LocationSearch", "    No results found for: $query")
                     } else {
-                        Log.d("LocationSearch", "    First result: ${searchResults.first().displayAddress}")
+                        Log.d("LocationSearch", "    First result: ${resolvedResults.firstOrNull()?.displayAddress}")
                     }
                 } catch (e: CancellationException) {
                     Log.d("LocationSearch", "    Search cancelled (debounce)")
@@ -162,7 +172,7 @@ fun LocationSearchPicker(
                 )
                 IconButton(
                     onClick = { onResult(null, null, null, null) },
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(Dimens.TouchTargetMin)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Clear,
@@ -342,7 +352,10 @@ fun LocationSearchPicker(
                         val resolved = withContext(Dispatchers.IO) {
                             geocodingService.reverseGeocode(lat, lon)
                         }
-                        pinResult = resolved ?: GeocodingResult(
+                        pinResult = when (resolved) {
+                            is GeocodingLookupResult.Success -> resolved.result
+                            is GeocodingLookupResult.Failure -> null
+                        } ?: GeocodingResult(
                             latitude = lat,
                             longitude = lon,
                             osmId = null,

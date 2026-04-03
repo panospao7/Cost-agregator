@@ -1,11 +1,9 @@
 package com.yourname.expensetracker.service
 
 import com.yourname.expensetracker.data.repository.RecommendationRepository
-import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,9 +22,15 @@ import javax.inject.Singleton
 @Singleton
 class RecommendationStateManager @Inject constructor(
     private val repository: RecommendationRepository,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @ApplicationScope private val applicationScope: CoroutineScope
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    /**
+     * App-owned scope injected via DI.
+     *
+     * This manager is a singleton and its refresh/dismiss operations are intentionally
+     * detached from UI lifecycles, but still structured under a single application scope.
+     */
+    private val scope: CoroutineScope = applicationScope
     
     private val _recommendations = MutableStateFlow<List<DashboardFollowThroughRecommendation>>(emptyList())
     

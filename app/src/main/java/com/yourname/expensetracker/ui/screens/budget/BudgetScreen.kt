@@ -9,7 +9,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.rounded.Analytics
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Refresh
@@ -37,6 +41,8 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
+import com.yourname.expensetracker.data.database.entity.BudgetTrend
+import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.budgetScale
@@ -122,10 +128,24 @@ fun BudgetScreen(
                     item { SuggestionsBanner(uiState.suggestions, categories, onAdd = { viewModel.addBudget(it) }) }
                 }
 
+                // F9: AI Budget Autopilot Banner
+                item {
+                    AutopilotBanner(
+                        recommendations = uiState.autopilotRecommendations,
+                        isLoading = uiState.autopilotLoading,
+                        onGenerate = { viewModel.generateAutopilotRecommendations() },
+                        onApply = { recommendation ->
+                            viewModel.applyAutopilotRecommendation(recommendation)
+                        },
+                        onApplyAll = { viewModel.applyAllAutopilotRecommendations() },
+                        onDismiss = { viewModel.dismissAllAutopilotRecommendations() }
+                    )
+                }
+
                 if (uiState.budgets.isEmpty()) {
                     item { EmptyBudgetsState { showAddDialog = true } }
                 } else {
-                    items(uiState.budgets, key = { it.budget.id }) { budgetStatus ->
+            items(uiState.budgets, key = { it.budget.id }) { budgetStatus ->
                         BudgetCard(
                             status = budgetStatus,
                             dateFormat = dateFormat,
@@ -334,6 +354,11 @@ fun BudgetCard(
     }
 
     val periodDateText = stringResource(R.string.budget_period_date_format, formattedPeriod, formattedDate)
+    
+    // F11: Check if we have adjusted spend info
+    val adjustedSpend = status.adjustedSpendBreakdown
+    val hasPendingReimbursements = adjustedSpend != null && adjustedSpend.pendingReimbursements > 0.01
+    val displaySpend = adjustedSpend?.effectiveSpend ?: status.spentAmount
 
     Card(
         modifier = Modifier
@@ -391,8 +416,14 @@ fun BudgetCard(
             Spacer(Modifier.height(16.dp))
 
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                // F11: Show adjusted spend if available
+                val spendText = if (adjustedSpend != null) {
+                    stringResource(R.string.budget_adjusted_spent_format, displaySpend)
+                } else {
+                    stringResource(R.string.budget_spent_format, status.spentAmount)
+                }
                 Text(
-                    text = stringResource(R.string.budget_spent_format, status.spentAmount),
+                    text = spendText,
                     fontWeight = FontWeight.Medium,
                     fontSize = 14.sp
                 )
@@ -410,6 +441,12 @@ fun BudgetCard(
                 color = progressColor,
                 trackColor = progressColor.copy(alpha = 0.2f)
             )
+
+            // F11: Show adjusted spend breakdown if available
+            if (adjustedSpend != null && adjustedSpend.pendingReimbursements > 0.01) {
+                Spacer(Modifier.height(8.dp))
+                AdjustedSpendBreakdownRow(adjustedSpend)
+            }
 
             if (status.percentUsed > 1f) {
                 Text(
@@ -453,6 +490,35 @@ fun BudgetCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * F11: Display the adjusted spend breakdown with pending reimbursements info.
+ */
+@Composable
+fun AdjustedSpendBreakdownRow(breakdown: com.yourname.expensetracker.domain.budget.AdjustedSpendBreakdown) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.Info,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = SemanticColors.PrimaryIndigo.copy(alpha = 0.7f)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = stringResource(
+                R.string.budget_pending_reimbursement_format,
+                breakdown.pendingReimbursements
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = SemanticColors.PrimaryIndigo.copy(alpha = 0.8f),
+            fontSize = 11.sp
+        )
     }
 }
 
@@ -683,6 +749,259 @@ fun CategorySelector(
                 onClick = { onSelect(category.id) },
                 label = { Text("${category.icon} ${category.name}") }
             )
+        }
+    }
+}
+
+// ==================== AUTOPILOT UI ====================
+
+@Composable
+fun AutopilotBanner(
+    recommendations: List<CategoryBudgetRecommendation>,
+    isLoading: Boolean,
+    onGenerate: () -> Unit,
+    onApply: (CategoryBudgetRecommendation) -> Unit,
+    onApplyAll: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val hasRecommendations = recommendations.isNotEmpty()
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hasRecommendations) 
+                SemanticColors.PrimaryIndigo.copy(alpha = 0.1f) 
+            else 
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ),
+        border = if (hasRecommendations) 
+            androidx.compose.foundation.BorderStroke(
+                1.dp, 
+                SemanticColors.PrimaryIndigo.copy(alpha = 0.3f)
+            ) 
+        else null
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoFixHigh,
+                        contentDescription = null,
+                        tint = if (hasRecommendations) 
+                            SemanticColors.PrimaryIndigo 
+                        else 
+                            MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "AI Budget Autopilot",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (hasRecommendations) 
+                                SemanticColors.PrimaryIndigo 
+                            else 
+                                MaterialTheme.colorScheme.onSurface
+                        )
+                        if (hasRecommendations) {
+                            Text(
+                                text = "${recommendations.size} adjustment${if (recommendations.size > 1) "s" else ""} recommended",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticColors.PrimaryIndigo.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
+                }
+                
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else if (hasRecommendations) {
+                    IconButton(onClick = { expanded = !expanded }) {
+                        Icon(
+                            imageVector = if (expanded) 
+                                Icons.Rounded.Close 
+                            else 
+                                androidx.compose.material.icons.Icons.Default.ExpandMore,
+                            contentDescription = if (expanded) "Collapse" else "Expand"
+                        )
+                    }
+                } else {
+                    Button(
+                        onClick = onGenerate,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SemanticColors.PrimaryIndigo
+                        )
+                    ) {
+                        Text("Analyze")
+                    }
+                }
+            }
+            
+            if (hasRecommendations && expanded) {
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                recommendations.take(3).forEach { recommendation ->
+                    AutopilotRecommendationItem(
+                        recommendation = recommendation,
+                        onApply = { onApply(recommendation) }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                
+                if (recommendations.size > 3) {
+                    Text(
+                        text = "+${recommendations.size - 3} more recommendations",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    ) {
+                        Text("Dismiss All")
+                    }
+                    Button(
+                        onClick = onApplyAll,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SemanticColors.SuccessGreen
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Apply All")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AutopilotRecommendationItem(
+    recommendation: CategoryBudgetRecommendation,
+    onApply: () -> Unit
+) {
+    val trendColor = when (recommendation.trend) {
+        BudgetTrend.INCREASING -> SemanticColors.DangerRed
+        BudgetTrend.DECREASING -> SemanticColors.SuccessGreen
+        BudgetTrend.STABLE -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    
+    val trendIcon = when (recommendation.trend) {
+        BudgetTrend.INCREASING -> "↑"
+        BudgetTrend.DECREASING -> "↓"
+        BudgetTrend.STABLE -> "→"
+    }
+    
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = recommendation.categoryName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = recommendation.reason,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "${trendIcon} ${String.format("%.0f", recommendation.confidence * 100)}% confidence",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = trendColor
+                    )
+                }
+            }
+            
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "€${String.format("%.0f", recommendation.currentBudget)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "→",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "€${String.format("%.0f", recommendation.recommendedBudget)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (recommendation.delta > 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                    )
+                }
+                Text(
+                    text = "${if (recommendation.delta > 0) "+" else ""}${String.format("%.1f", recommendation.deltaPercentage)}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (recommendation.delta > 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen
+                )
+                
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                TextButton(
+                    onClick = onApply,
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        "Apply",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
         }
     }
 }

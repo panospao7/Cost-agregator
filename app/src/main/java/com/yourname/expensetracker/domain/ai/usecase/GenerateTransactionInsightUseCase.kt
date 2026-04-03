@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
@@ -113,18 +114,20 @@ class GenerateTransactionInsightUseCase @Inject constructor(
         )
 
         Timber.d("GenerateTransactionInsightUseCase: Step 4 - Calling dashboardBriefingService.generate()...")
-        val briefing = dashboardBriefingService.generate(input)
-        
-        if (briefing != null) {
-            Timber.d("GenerateTransactionInsightUseCase: Step 4 SUCCESS - briefing text length: ${briefing.text.length}")
-            return baseEntity.copy(
-                status = AiArtifactStatus.READY,
-                summaryText = briefing.text.take(AppConfig.Ai.MAX_BRIEFING_LENGTH_CHARS),
-                updatedAt = timeProvider.now()
-            )
-        } else {
-            Timber.w("GenerateTransactionInsightUseCase: Step 4 FAILED - briefing was null/empty")
-            return null
+        return when (val briefingResult = dashboardBriefingService.generate(input)) {
+            is AiServiceResult.Success -> {
+                val briefing = briefingResult.value
+                Timber.d("GenerateTransactionInsightUseCase: Step 4 SUCCESS - briefing text length: ${briefing.text.length}")
+                baseEntity.copy(
+                    status = AiArtifactStatus.READY,
+                    summaryText = briefing.text.take(AppConfig.Ai.MAX_BRIEFING_LENGTH_CHARS),
+                    updatedAt = timeProvider.now()
+                )
+            }
+            is AiServiceResult.Failure -> {
+                Timber.w("GenerateTransactionInsightUseCase: Step 4 FAILED - ${briefingResult.error}")
+                null
+            }
         }
     }
 

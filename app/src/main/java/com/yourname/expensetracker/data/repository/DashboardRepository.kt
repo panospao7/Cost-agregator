@@ -105,21 +105,22 @@ class DashboardRepository @Inject constructor(
     private fun getDefaultConfig(): List<DashboardWidgetConfig> {
         return listOf(
             DashboardWidgetConfig("financial_weather", 0),
-            DashboardWidgetConfig("financial_health_score", 1),  // NEW: Game-like health score
-            DashboardWidgetConfig("totals_dashboard", 2),
-            DashboardWidgetConfig("no_spend_streak", 3),  // NEW: Gamification widget
-            DashboardWidgetConfig("safe_to_spend", 4),
-            DashboardWidgetConfig("financial_runway", 5),
-            DashboardWidgetConfig("monte_carlo_forecast", 6),
-            DashboardWidgetConfig("spending_pace", 7),
-            DashboardWidgetConfig("review_alert", 8),
-            DashboardWidgetConfig("spending_trend", 9),
-            DashboardWidgetConfig("insight", 10),
-            DashboardWidgetConfig("period_summary", 11),
-            DashboardWidgetConfig("budget_health", 12),
-            DashboardWidgetConfig("top_categories", 13),
-            DashboardWidgetConfig("recent_transactions", 14),
-            DashboardWidgetConfig("budget_block_party", 15)
+            DashboardWidgetConfig("money_radar", 1),  // NEW: Today's unified alerts (F4)
+            DashboardWidgetConfig("financial_health_score", 2),  // NEW: Game-like health score
+            DashboardWidgetConfig("totals_dashboard", 3),
+            DashboardWidgetConfig("no_spend_streak", 4),  // NEW: Gamification widget
+            DashboardWidgetConfig("safe_to_spend", 5),
+            DashboardWidgetConfig("financial_runway", 6),
+            DashboardWidgetConfig("monte_carlo_forecast", 7),
+            DashboardWidgetConfig("spending_pace", 8),
+            DashboardWidgetConfig("review_alert", 9),
+            DashboardWidgetConfig("spending_trend", 10),
+            DashboardWidgetConfig("insight", 11),
+            DashboardWidgetConfig("period_summary", 12),
+            DashboardWidgetConfig("budget_health", 13),
+            DashboardWidgetConfig("top_categories", 14),
+            DashboardWidgetConfig("recent_transactions", 15),
+            DashboardWidgetConfig("budget_block_party", 16)
         )
     }
 }

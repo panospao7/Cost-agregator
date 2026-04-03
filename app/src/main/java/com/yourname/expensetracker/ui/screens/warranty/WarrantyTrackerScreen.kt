@@ -8,6 +8,10 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,6 +23,13 @@ import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.ui.components.common.EmptyStateType
+import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
+import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
+import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
+import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -26,10 +37,22 @@ import java.util.*
 @Composable
 fun WarrantyTrackerScreen(
     onNavigateBack: () -> Unit,
-    viewModel: WarrantyTrackerViewModel = hiltViewModel()
+    onNavigateToScanReceipt: () -> Unit = {},
+    viewModel: WarrantyTrackerViewModel = hiltViewModel(),
+    actionRegistry: ContextualActionRegistry = androidx.compose.ui.platform.LocalContext.current.let {
+        // Get from DI in real implementation - using default for preview
+        ContextualActionRegistry()
+    }
 ) {
     val state by viewModel.state.collectAsState()
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
+
+    // Get contextual actions for empty state
+    val emptyStateActions by remember {
+        derivedStateOf {
+            actionRegistry.getActions(EmptyStateScreenKeys.WARRANTY)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -95,7 +118,64 @@ fun WarrantyTrackerScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // F1: Auto-detected summary card
+            if (state.autoDetectedWarranties.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = stringResource(R.string.warranty_auto_detected_count, state.autoDetectedWarranties.size),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                if (state.needsReviewCount > 0) {
+                                    Text(
+                                        text = stringResource(R.string.warranty_needs_review_count, state.needsReviewCount),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                        }
+                        if (state.needsReviewCount > 0) {
+                            Button(
+                                onClick = { viewModel.showNeedsReview() },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Text(stringResource(R.string.warranty_review_button))
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Filter Chips
             Row(
@@ -117,6 +197,21 @@ fun WarrantyTrackerScreen(
                     onClick = { viewModel.filterByStatus(WarrantyStatus.EXPIRED) },
                     label = { Text(stringResource(R.string.warranty_filter_expired)) }
                 )
+                // F1: Auto-detected filter chip
+                if (state.autoDetectedWarranties.isNotEmpty()) {
+                    FilterChip(
+                        selected = state.warranties == state.autoDetectedWarranties && state.selectedFilter == null,
+                        onClick = { viewModel.filterByAutoDetected() },
+                        label = { Text(stringResource(R.string.warranty_filter_auto)) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -130,7 +225,30 @@ fun WarrantyTrackerScreen(
                     CircularProgressIndicator()
                 }
             } else if (state.warranties.isEmpty()) {
-                EmptyWarrantyState()
+                // Enhanced empty state with contextual actions
+                EnhancedEmptyState(
+                    type = EmptyStateType.GENERIC,
+                    title = stringResource(R.string.warranty_empty_title),
+                    message = stringResource(R.string.warranty_empty_message),
+                    actions = emptyStateActions,
+                    onActionClick = { action ->
+                        when (val actionType = action.action) {
+                            is EmptyStateActionType.NavigateToDestination -> {
+                                if (actionType.destination == NavigationDestination.ScanReceipt) {
+                                    onNavigateToScanReceipt()
+                                }
+                            }
+                            is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
+                            is EmptyStateActionType.OpenFeature -> {
+                                // Handle opening feature
+                            }
+                        }
+                    },
+                    onDismissAction = { actionId ->
+                        actionRegistry.markCompleted(EmptyStateScreenKeys.WARRANTY, actionId)
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
             } else {
                 val filteredWarranties = state.selectedFilter?.let { filter ->
                     state.warranties.filter { it.status == filter }
@@ -144,7 +262,10 @@ fun WarrantyTrackerScreen(
                             warranty = warranty,
                             dateFormat = dateFormat,
                             onMarkClaimed = { viewModel.markAsClaimed(warranty.id) },
-                            onDelete = { viewModel.deleteWarranty(warranty) }
+                            onDelete = { viewModel.deleteWarranty(warranty) },
+                            // F1: Review callbacks
+                            onConfirm = { viewModel.confirmWarranty(warranty) },
+                            onReject = { viewModel.rejectAutoDetectedWarranty(warranty) }
                         )
                     }
                 }
@@ -193,14 +314,24 @@ private fun WarrantyCard(
     warranty: Warranty,
     dateFormat: SimpleDateFormat,
     onMarkClaimed: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    // F1: Review callbacks
+    onConfirm: () -> Unit = {},
+    onReject: () -> Unit = {}
 ) {
     val daysRemaining = (warranty.warrantyEndDate - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)
     val isExpiringSoon = daysRemaining in 0..30
     val isExpired = daysRemaining < 0
+    // F1: Check if auto-detected
+    val isAutoDetected = warranty.autoDetected
+    val needsReview = warranty.needsReview
 
     Card(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth(),
+        // F1: Different border for items needing review
+        border = if (needsReview) {
+            androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.error)
+        } else null
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
@@ -211,11 +342,25 @@ private fun WarrantyCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = warranty.productName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = warranty.productName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        // F1: Auto-detected badge
+                        if (isAutoDetected) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = stringResource(R.string.warranty_badge_auto_detected),
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                     Text(
                         text = warranty.merchantName,
                         style = MaterialTheme.typography.bodySmall,
@@ -223,7 +368,24 @@ private fun WarrantyCard(
                     )
                 }
                 
-                if (isExpiringSoon) {
+                // F1: Needs review badge
+                if (needsReview) {
+                    Badge(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(
+                            stringResource(R.string.warranty_badge_needs_review),
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                } else if (isExpiringSoon) {
                     Badge(
                         containerColor = if (isExpired) 
                             MaterialTheme.colorScheme.error 
@@ -248,6 +410,15 @@ private fun WarrantyCard(
                 style = MaterialTheme.typography.bodyMedium
             )
 
+            // F1: Show extraction confidence for auto-detected warranties
+            if (isAutoDetected) {
+                Text(
+                    text = stringResource(R.string.warranty_confidence_format, warranty.extractionConfidence.toInt()),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             warranty.supportPhone?.let {
                 Text(
                     text = stringResource(R.string.warranty_support_phone, it),
@@ -256,7 +427,34 @@ private fun WarrantyCard(
                 )
             }
 
-            if (warranty.status == WarrantyStatus.ACTIVE) {
+            // F1: Review actions for warranties needing review
+            if (needsReview) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onConfirm,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(stringResource(R.string.warranty_action_confirm))
+                    }
+                    OutlinedButton(
+                        onClick = onReject,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(stringResource(R.string.warranty_action_reject))
+                    }
+                }
+            } else if (warranty.status == WarrantyStatus.ACTIVE) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -269,35 +467,6 @@ private fun WarrantyCard(
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun EmptyWarrantyState() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                imageVector = Icons.Default.Shield,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = stringResource(R.string.warranty_empty_title),
-                style = MaterialTheme.typography.titleMedium
-            )
-            Text(
-                text = stringResource(R.string.warranty_empty_message),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }

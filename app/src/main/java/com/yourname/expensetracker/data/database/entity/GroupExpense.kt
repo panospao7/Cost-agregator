@@ -35,7 +35,8 @@ import androidx.room.PrimaryKey
         Index(value = ["groupId"]),
         Index(value = ["expenseId"]),
         Index(value = ["paidById"]),
-        Index(value = ["groupId", "date"])
+        Index(value = ["groupId", "date"]),
+        Index(value = ["isReimbursable"])  // Index for budget offset queries
     ]
 )
 data class GroupExpense(
@@ -49,7 +50,13 @@ data class GroupExpense(
     val totalAmount: Double,       // Total amount
     @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",
     @ColumnInfo(defaultValue = "EQUAL") val splitType: SplitType = SplitType.EQUAL, // How to split
-    val customSplitsJson: String? = null // JSON map of memberId -> amount/percentage for custom splits
+    val customSplitsJson: String? = null, // JSON map of memberId -> amount/percentage for custom splits
+
+    // F11: Shared Expenses Budget Offset - Reimbursement tracking
+    @ColumnInfo(defaultValue = "0") val isReimbursable: Boolean = false,  // Whether this expense is eligible for reimbursement
+    @ColumnInfo(defaultValue = "0.0") val reimbursedAmount: Double = 0.0,  // Amount already reimbursed to payer
+    val settledAt: Long? = null,  // When the expense was fully settled (null = pending)
+    val myShareAmount: Double? = null  // Pre-calculated share for current user (for quick lookup)
 )
 
 enum class SplitType {

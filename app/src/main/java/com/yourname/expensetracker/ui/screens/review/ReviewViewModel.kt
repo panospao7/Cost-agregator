@@ -260,7 +260,12 @@ class ReviewViewModel @Inject constructor(
 
     fun rejectReview(reviewId: Long) {
         viewModelScope.launch {
-            reviewQueueRepository.rejectReview(reviewId)
+            try {
+                reviewQueueRepository.rejectReview(reviewId)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to reject review $reviewId")
+                _errorMessage.value = "Failed to reject review: ${e.message ?: "Unknown error"}"
+            }
         }
     }
 

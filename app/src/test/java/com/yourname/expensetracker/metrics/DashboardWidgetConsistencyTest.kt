@@ -10,6 +10,13 @@ import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
+import com.yourname.expensetracker.domain.forecasting.StressForecastResult
+import com.yourname.expensetracker.domain.forecasting.StressHorizon
+import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
+import com.yourname.expensetracker.domain.health.FinancialHealthResult
+import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
+import com.yourname.expensetracker.domain.health.HealthTrend
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
@@ -20,10 +27,14 @@ import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
+import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
+import com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarData
+import com.yourname.expensetracker.domain.usecase.dashboard.UrgencyLevel
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
+import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -69,13 +80,49 @@ class DashboardWidgetConsistencyTest {
         val monteCarloSimulator = mockk<com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator>(relaxed = true)
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
         val healthCalculator = mockk<com.yourname.expensetracker.domain.health.FinancialHealthCalculator>(relaxed = true)
+        val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
+        coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns FinancialHealthResult(
+            overallScore = 50,
+            savingsRateScore = 50,
+            runwayScore = 50,
+            budgetAdherenceScore = 50,
+            billReliabilityScore = 50,
+            factorContributions = emptyList(),
+            trend = HealthTrend.STABLE,
+            recommendation = null
+        )
+        val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
+        coEvery { lifestyleSavingsPromptUseCase.evaluateAndPrompt() } returns null
+        val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
+        coEvery { computeMoneyRadarUseCase.compute() } returns MoneyRadarData(
+            urgencyScore = 0,
+            urgencyLevel = UrgencyLevel.GREEN,
+            dueBills = emptyList(),
+            anomalyAlerts = emptyList(),
+            budgetRisk = null,
+            topReasons = emptyList(),
+            primaryCta = null
+        )
+        val stressForecastEngine = mockk<FinancialStressForecastEngine>(relaxed = true)
+        coEvery { stressForecastEngine.computeStressForecast() } returns StressForecastResult(
+            horizons = listOf(
+                StressHorizon(30, 0.0, 0.0, 0.0, StressRiskLevel.LOW, 0.0, 0.0, 0.0)
+            ),
+            overallRiskLevel = StressRiskLevel.LOW,
+            earliestCrunchDate = null,
+            recommendations = emptyList()
+        )
 
         computeUseCase = ComputeDashboardWidgetsUseCase(
             insightsEngine = insightsEngine,
             synthesisEngine = SynthesisEngine(timeProvider),
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
-            healthCalculator = healthCalculator
+            healthCalculator = healthCalculator,
+            healthScoreV2 = healthScoreV2,
+            lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
+            computeMoneyRadarUseCase = computeMoneyRadarUseCase,
+            stressForecastEngine = stressForecastEngine
         )
     }
 

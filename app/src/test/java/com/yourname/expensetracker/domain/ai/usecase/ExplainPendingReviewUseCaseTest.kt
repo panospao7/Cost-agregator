@@ -8,6 +8,8 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanation
@@ -173,14 +175,15 @@ class ExplainPendingReviewUseCaseTest {
     // ── provider returns null ─────────────────────────────────────────────────
 
     @Test
-    fun `invoke stores FAILED artifact when provider returns null`() = runTest {
+    fun `invoke stores FAILED artifact when provider returns failure`() = runTest {
         val review = makePendingReview()
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery {
             aiArtifactRepository.getLatest(any(), any())
         } returns null
-        coEvery { reviewExplanationService.generate(any()) } returns null
+        coEvery { reviewExplanationService.generate(any()) } returns
+            AiServiceResult.Failure(AiServiceError.Unknown("provider unavailable"))
 
         val slot = slot<AiArtifactEntity>()
         // Capture the last upsert call
@@ -208,7 +211,7 @@ class ExplainPendingReviewUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { reviewExplanationService.generate(any()) } returns explanation
+        coEvery { reviewExplanationService.generate(any()) } returns AiServiceResult.Success(explanation)
 
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
@@ -234,9 +237,8 @@ class ExplainPendingReviewUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any(), any()) } returns makeInput(reviewId = 42L)
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { reviewExplanationService.generate(any()) } returns ReviewExplanation(
-            headline = "H", body = "B"
-        )
+        coEvery { reviewExplanationService.generate(any()) } returns
+            AiServiceResult.Success(ReviewExplanation(headline = "H", body = "B"))
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
@@ -251,7 +253,8 @@ class ExplainPendingReviewUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { reviewExplanationService.generate(any()) } returns ReviewExplanation("H", "B")
+        coEvery { reviewExplanationService.generate(any()) } returns
+            AiServiceResult.Success(ReviewExplanation("H", "B"))
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
@@ -277,7 +280,8 @@ class ExplainPendingReviewUseCaseTest {
             modelName = AppConfig.Ai.ON_DEVICE_REVIEW_MODEL
         )
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { reviewExplanationService.generate(any()) } returns ReviewExplanation("H", "B")
+        coEvery { reviewExplanationService.generate(any()) } returns
+            AiServiceResult.Success(ReviewExplanation("H", "B"))
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
@@ -322,7 +326,8 @@ class ExplainPendingReviewUseCaseTest {
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
         every { inputBuilder.build(any(), any()) } returns makeInput()
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
-        coEvery { reviewExplanationService.generate(any()) } returns ReviewExplanation("H", "B")
+        coEvery { reviewExplanationService.generate(any()) } returns
+            AiServiceResult.Success(ReviewExplanation("H", "B"))
         val captured = mutableListOf<AiArtifactEntity>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 

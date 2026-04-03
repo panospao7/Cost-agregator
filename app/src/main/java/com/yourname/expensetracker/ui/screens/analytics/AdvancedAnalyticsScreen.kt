@@ -68,8 +68,7 @@ fun AdvancedAnalyticsScreen(
                             item {
                                 Text(
                                     text = stringResource(R.string.analytics_insights),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold
+                                    style = MaterialTheme.typography.headlineSmall
                                 )
                             }
                             
@@ -82,8 +81,7 @@ fun AdvancedAnalyticsScreen(
                             item {
                                 Text(
                                     text = stringResource(R.string.analytics_top_categories),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold
+                                    style = MaterialTheme.typography.headlineSmall
                                 )
                             }
                             
@@ -112,8 +110,7 @@ private fun CashflowOverviewCard(data: AnalyticsDashboardData) {
         ) {
             Text(
                 text = stringResource(R.string.analytics_cashflow_overview),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
+                style = MaterialTheme.typography.headlineSmall
             )
             
             Spacer(modifier = Modifier.height(16.dp))
@@ -154,8 +151,7 @@ private fun CashflowItem(label: String, value: String, color: androidx.compose.u
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.headlineSmall,
             color = color
         )
     }
@@ -198,8 +194,7 @@ private fun InsightCard(insight: DashboardInsight) {
             Column {
                 Text(
                     text = insight.title.asString(),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.titleMedium
                 )
                 Text(
                     text = insight.description,
@@ -227,8 +222,7 @@ private fun CategoryCard(category: com.yourname.expensetracker.domain.analytics.
             Column {
                 Text(
                     text = category.categoryName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.titleLarge
                 )
                 Text(
                     text = stringResource(R.string.analytics_percent_of_total_format, String.format("%.1f", category.percentage)),
@@ -238,8 +232,7 @@ private fun CategoryCard(category: com.yourname.expensetracker.domain.analytics.
             
             Text(
                 text = currencyFormat.format(category.amount),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                style = MaterialTheme.typography.titleLarge
             )
         }
     }
