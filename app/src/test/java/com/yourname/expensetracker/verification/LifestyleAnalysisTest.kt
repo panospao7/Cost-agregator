@@ -118,6 +118,30 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
         assertApproxEquals(0.0, report.incomeElasticity, 0.0)
     }
 
+    @Test
+    fun `income_elasticity_zero_and_negative_income_change`() = runTest {
+        // Case A: zero income change should avoid divide-by-zero and yield neutral elasticity
+        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
+                income("2026-02-05", 1000.0), spend("2026-02-10", 550.0, "Grocer")
+            )
+        )
+        val zeroIncomeChange = detector.analyzeLifestyleInflation(monthsToAnalyze = 3)
+        assertApproxEquals(0.0, zeroIncomeChange.incomeElasticity, 0.0001)
+
+        // Case B: negative income change with spending decrease should produce finite, stable elasticity
+        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+            listOf(
+                income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
+                income("2026-02-05", 900.0), spend("2026-02-10", 450.0, "Grocer")
+            )
+        )
+        val negativeIncomeChange = detector.analyzeLifestyleInflation(monthsToAnalyze = 3)
+        assertApproxEquals(1.0, negativeIncomeChange.incomeElasticity, 0.0001)
+        assertTrue(negativeIncomeChange.incomeElasticity.isFinite())
+    }
+
     private fun income(date: String, amount: Double): Expense = Expense(
         id = amount.toLong(),
         amount = amount,

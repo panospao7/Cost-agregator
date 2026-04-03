@@ -127,6 +127,51 @@ class SharedExpenseTest {
         assertTrue(balances.isEmpty())
     }
 
+    @Test
+    fun `shared_expense_single_member_equal_split_no_debt`() = kotlinx.coroutines.test.runTest {
+        val soloMember = listOf(GroupMember(id = 1L, groupId = 1L, name = "Solo"))
+        coEvery { memberDao.getMembersForGroupOnce(1L) } returns soloMember
+        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
+            expense(total = 100.0, paidBy = 1L, splitType = SplitType.EQUAL)
+        )
+
+        val balances = manager.calculateBalances(1L)
+        val settlements = settlementCalculator.calculateSettlements(balances)
+
+        assertApproxEquals(100.0, balances.getValue(1L).paid, 0.0001)
+        assertApproxEquals(100.0, balances.getValue(1L).shouldPay, 0.0001)
+        assertApproxEquals(0.0, balances.getValue(1L).netBalance, 0.0001)
+        assertTrue(settlements.isEmpty())
+    }
+
+    @Test
+    fun `shared_expense_large_group_settlement_min_txn_invariant`() = kotlinx.coroutines.test.runTest {
+        val members10 = (1L..10L).map { id -> GroupMember(id = id, groupId = 1L, name = "M$id") }
+
+        coEvery { memberDao.getMembersForGroupOnce(1L) } returns members10
+        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
+            expense(total = 1000.0, paidBy = 1L, splitType = SplitType.EQUAL)
+        )
+
+        val balances = manager.calculateBalances(1L)
+        val settlements = settlementCalculator.calculateSettlements(balances)
+
+        // 10-way equal split: each should pay 100, payer paid 1000 => 9 debtors owe payer 100 each.
+        assertEquals(9, settlements.size)
+        assertApproxEquals(900.0, settlements.sumOf { it.amount }, 0.0001)
+        assertTrue(settlements.all { it.toMemberId == 1L })
+        assertTrue(settlements.all { it.amount > 0.0 })
+
+        val netSum = balances.values.sumOf { it.netBalance }
+        assertApproxEquals(0.0, netSum, 0.0001)
+
+        // Conservation: total owed by debtors equals total owed to creditors
+        val totalOwedByDebtors = balances.values.filter { it.netBalance < 0 }.sumOf { -it.netBalance }
+        val totalOwedToCreditors = balances.values.filter { it.netBalance > 0 }.sumOf { it.netBalance }
+        assertApproxEquals(totalOwedByDebtors, totalOwedToCreditors, 0.0001)
+        assertApproxEquals(totalOwedByDebtors, settlements.sumOf { it.amount }, 0.0001)
+    }
+
     private fun expense(
         total: Double,
         paidBy: Long,

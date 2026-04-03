@@ -253,7 +253,7 @@ class BudgetForecastingEngine @Inject constructor(
      * Calculate seasonal adjustment factor.
      */
     private fun calculateSeasonalFactor(historicalData: HistoricalData): Double {
-        val calendar = Calendar.getInstance()
+        val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val currentMonth = calendar.get(Calendar.MONTH)
         
         // Simple seasonal factor (can be expanded)

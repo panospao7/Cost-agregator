@@ -109,6 +109,32 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         assertTrue(forecast.overspendProbability in 0.0..1.0)
     }
 
+    @Test
+    fun `seasonal_adjustment_uses_timeprovider_not_system_clock`() = runTest {
+        // December path must be driven by injected timeProvider.
+        val decemberNow = LocalDate.of(2026, 12, 15)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        every { timeProvider.now() } returns decemberNow
+
+        val budget = Budget(categoryId = 1L, amount = 2000.0, period = BudgetPeriod.MONTHLY, startDate = decemberNow)
+        val sixMonthsFlat = listOf(
+            exp("2026-06-10", 100.0),
+            exp("2026-07-10", 100.0),
+            exp("2026-08-10", 100.0),
+            exp("2026-09-10", 100.0),
+            exp("2026-10-10", 100.0),
+            exp("2026-11-10", 100.0)
+        )
+        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns sixMonthsFlat
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // STABLE trend + >=6 months history => seasonal factor applies.
+        assertApproxEquals(120.0, forecast.predictedSpending, 0.01)
+    }
+
     private fun exp(date: String, amount: Double) =
         com.yourname.expensetracker.data.database.entity.Expense(
             amount = amount,

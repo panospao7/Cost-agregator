@@ -24,6 +24,7 @@ import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.data.repository.SpendingSummary
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
+import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
 import com.yourname.expensetracker.domain.analytics.AnomalyDetector
 import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
@@ -448,6 +449,39 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         assertTrue(!lifestyle.lifestyleCreepDetected)
         assertTrue(lifestyle.monthlyData.isEmpty())
         assertTrue(balances.isEmpty())
+    }
+
+    @Test
+    fun `half_open_interval_enforced_at_all_analytics_entry_points`() = runTest {
+        val start = ms(2026, 3, 1)
+        val end = ms(2026, 4, 1)
+        every { timeProvider.now() } returns ms(2026, 3, 20)
+
+        val expenses = listOf(
+            purchase(1, "2026-03-01", 1, 100.0), // included (start boundary)
+            purchase(2, "2026-03-15", 2, 50.0),  // included
+            purchase(3, "2026-04-01", 1, 900.0)  // excluded (end boundary)
+        )
+        mockAnalyticsDaoByRange(expenses)
+
+        val insights = insightsEngine.generateInsights(categories, expenses)
+        val totals = totalsEngine.getDailyTotalsForRange(start, end).sumOf { it.totalAmount }
+        val advanced = advancedEngine.getCategoryAnalytics(
+            PeriodRange(AnalyticsPeriod.CUSTOM, start, end, "Mar 2026", null)
+        ).sumOf { it.totalSpent }
+
+        val dashboard = AdvancedAnalyticsDashboard(
+            expenseDao = expenseDao,
+            expenseRepository = expenseRepository,
+            timeProvider = timeProvider
+        ).generateDashboardData(start, end).totalSpent
+
+        val expected = 150.0
+        assertApproxEquals(expected, insights.monthlyComparison.currentTotal, 0.0001)
+        assertApproxEquals(expected, totals, 0.0001)
+        assertApproxEquals(expected, advanced, 0.0001)
+        // Dashboard uses raw amount, but period boundaries must still be [start,end)
+        assertApproxEquals(expected, dashboard, 0.0001)
     }
 
     private fun purchase(

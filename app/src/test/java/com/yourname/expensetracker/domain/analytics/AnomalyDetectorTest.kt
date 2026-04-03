@@ -3,8 +3,12 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 import java.util.Calendar
 
 class AnomalyDetectorTest {
@@ -33,6 +37,71 @@ class AnomalyDetectorTest {
         )
 
         assertTrue("No anomaly expected when effective amounts are in-range", anomalies.isEmpty())
+    }
+
+    @Test
+    fun `anomaly_detector_false_positive_guard_on_tight_distribution`() {
+        val month = monthPeriodFor(ms(2026, 4, 10))
+        val category = Category(id = 7L, name = "Groceries", icon = "cart", color = "#00FF00")
+
+        val amounts = listOf(100.0, 101.0, 99.5, 100.5, 99.8, 100.2, 101.1, 99.9)
+        val expenses = amounts.mapIndexed { idx, amount ->
+            Expense(
+                id = (idx + 1).toLong(),
+                amount = amount,
+                merchant = "Grocer",
+                transactionType = TransactionType.PURCHASE,
+                date = ms(2026, 4, idx + 1),
+                categoryId = 7L
+            )
+        }
+
+        val anomalies = detector.detect(
+            monthPeriod = month,
+            categoryMap = mapOf(7L to category),
+            allExpenses = expenses
+        )
+
+        assertTrue("Tight distribution should not produce false positives", anomalies.isEmpty())
+    }
+
+    @Test
+    fun `anomaly_detector_false_negative_guard_for_extreme_contextual_outlier`() {
+        val month = monthPeriodFor(ms(2026, 4, 15))
+        val category = Category(id = 8L, name = "Transport", icon = "bus", color = "#0000FF")
+
+        // Four Wednesday-morning transactions in same context, one extreme outlier.
+        val base = listOf(12.0, 13.0, 14.0)
+        val contextual = base.mapIndexed { idx, amount ->
+            Expense(
+                id = (100 + idx).toLong(),
+                amount = amount,
+                merchant = "Metro",
+                transactionType = TransactionType.PURCHASE,
+                date = msAt(2026, 4, 1 + (idx * 7), 9, 0), // consecutive Wednesdays, 09:00
+                categoryId = 8L
+            )
+        } + Expense(
+            id = 199L,
+            amount = 120.0,
+            merchant = "Metro",
+            transactionType = TransactionType.PURCHASE,
+            date = msAt(2026, 4, 22, 9, 0),
+            categoryId = 8L
+        ) + listOf(
+            // add more in-category samples to ensure well-sampled category
+            Expense(id = 200L, amount = 11.5, merchant = "Metro", transactionType = TransactionType.PURCHASE, date = msAt(2026, 4, 2, 14, 0), categoryId = 8L),
+            Expense(id = 201L, amount = 12.5, merchant = "Metro", transactionType = TransactionType.PURCHASE, date = msAt(2026, 4, 3, 18, 0), categoryId = 8L)
+        )
+
+        val anomalies = detector.detect(
+            monthPeriod = month,
+            categoryMap = mapOf(8L to category),
+            allExpenses = contextual
+        )
+
+        assertTrue("Extreme contextual outlier should be detected", anomalies.any { it.expense.id == 199L })
+        assertEquals(1, anomalies.count { it.expense.id == 199L })
     }
 
     private fun sharedExpense(id: Long, amount: Double, myShareAmount: Double, date: Long): Expense =
@@ -65,4 +134,17 @@ class AnomalyDetectorTest {
             endMs = end
         )
     }
+
+    private fun ms(year: Int, month: Int, day: Int): Long =
+        LocalDate.of(year, month, day)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+
+    private fun msAt(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long =
+        LocalDate.of(year, month, day)
+            .atTime(LocalTime.of(hour, minute))
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
 }

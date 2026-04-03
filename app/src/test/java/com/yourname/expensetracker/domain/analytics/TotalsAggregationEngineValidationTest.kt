@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyTotal
@@ -431,6 +432,22 @@ class TotalsAggregationEngineValidationTest {
         // Then: Single category should have 100%
         assertEquals(1, result.size)
         assertEquals(100.0f, result[0].percentageOfTotal, 0.01f)
+    }
+
+    @Test
+    fun `category_percentage_rounding_sum_invariant`() = runTest {
+        val categoryResults = listOf(
+            CategoryTotalResult(id = 1, name = "A", icon = "a", color = "#111111", total = 33.33, txCount = 1),
+            CategoryTotalResult(id = 2, name = "B", icon = "b", color = "#222222", total = 33.33, txCount = 1),
+            CategoryTotalResult(id = 3, name = "C", icon = "c", color = "#333333", total = 33.33, txCount = 1)
+        )
+        coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
+
+        val result = engine.getCategoryBreakdown(createDate(2024, 4, 1), createDate(2024, 5, 1), "April 2024")
+        val roundedPercentSum = result.sumOf { kotlin.math.round(it.percentageOfTotal * 100) / 100.0 }
+
+        // Rounded percentages should preserve the 100% invariant within small float tolerance.
+        assertApproxEquals(100.0, roundedPercentSum, 0.05)
     }
 
     // ========== SCENARIO 6: Period Status Determination ==========
