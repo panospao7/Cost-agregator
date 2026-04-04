@@ -56,8 +56,8 @@ Use **Check Bug Sources** table to find likely causes
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v52
-- 528+ Kotlin files
+- Database version: v68
+- 560+ Kotlin files
 - 77 screen files (32 navigable routes)
 - 6 bottom tabs: Home, Activity/Transactions, Review, Plan/Budget, Analytics, Map
 - NavigationDestination pattern in UI, deep links for all tabs
@@ -153,7 +153,7 @@ data/
 ├── repository/                   # Data access (single source of truth)
 ├── location/                    # Geocoding services (NEW)
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v52)
+│   ├── AppDatabase.kt          # Room database (v68)
 │   ├── entity/                  # Room entities (EXPANDED)
 │   │   ├── Expense.kt
 │   │   ├── Budget.kt
@@ -231,7 +231,7 @@ FinancialWeatherRepository
 |-----------|------|---------|
 | Application | `ExpenseTrackerApp.kt` | Hilt setup, lifecycle |
 | Main Activity | `ui/MainActivity.kt` | Navigation, bottom bar |
-| Database | `data/database/AppDatabase.kt` | Room DB v52 |
+| Database | `data/database/AppDatabase.kt` | Room DB v68 |
 
 ### Core Engines
 | Engine | File | Purpose |
@@ -335,7 +335,7 @@ di/
 
 ## Database Schema
 
-### Version: v52 (Current)
+### Version: v68 (Current)
 
 ### Key Entities
 ```
@@ -377,7 +377,7 @@ notification_processing_log (NEW)
 
 ### Key Indices
 ```
--- Updated indices for v52 schema
+-- Updated indices for v68 schema
 ```
 
 ---
@@ -784,4 +784,74 @@ Refer to the testing sections above for updated locations and test plans.
 
 ---
 
-This document reflects the current architecture state following migrations up to v52 and the new modular, extensible architecture with 6 bottom tabs, DI expansion, and a substantially expanded data model.
+## Feature Wave Addendum (F1–F15)
+
+This section documents the latest 15-feature integration wave and its cross-layer architecture.
+
+### End-to-End Data Flow (Feature Wave)
+
+```text
+Notifications / Receipts / Manual Entries / Dashboard Triggers
+                │
+                ▼
+     Domain Engines + Use Cases (F1..F15)
+                │
+                ▼
+      Repositories + Services + Orchestrators
+                │
+                ▼
+     Room Entities / DAOs (AppDatabase v68)
+                │
+                ▼
+       UI Cards / Screens / Assistant Sheet
+```
+
+### F1–F15 Architecture Mapping
+
+| Feature | Primary Flow | Key Domain / Use Case | Key Data + DB |
+|---|---|---|---|
+| **F1 Receipt → Warranty Pipeline** | Scanned receipt → warranty extraction → persisted warranty | `AutoCreateWarrantyFromReceiptUseCase`, `WarrantyTextExtractor` | `WarrantyDao`, `warranties` table |
+| **F2 Notification → Subscription Detection** | Transaction stream → recurring pattern detection → candidate surfaced | `NotificationSubscriptionDetector`, `SubscriptionManagerEngine` | `SubscriptionCandidateDao`, `subscription_candidates` |
+| **F3 Monte Carlo → Budget Linking** | Forecast simulation → budget impact insights | `GetMonteCarloBudgetImpactUseCase`, `MonteCarloSpendingSimulator` | Budget/expense DAOs + forecast models |
+| **F4 Today's Money Radar Widget** | Home aggregation → radar widget model → dashboard render | `ComputeDashboardWidgetsUseCase` | `MoneyRadarWidget`, dashboard config |
+| **F5 Financial Health Score 2.0** | Health computation → trend snapshot persistence | `FinancialHealthScoreV2` | `HealthScoreHistoryDao`, `health_score_history` |
+| **F6 Smart Savings Sweeps** | Month-end underspend → safe sweep plan generation | `MonthlySavingsSweepUseCase` | `SavingsSweepPlanDao`, `savings_sweep_plan` |
+| **F7 Anomaly → Real-Time Alerts** | Analytics anomaly detection → alert orchestration + cooldown | `AnomalyDetector`, `AnomalyAlertOrchestrator` | `AnomalyAlertDao`, `anomaly_alerts` |
+| **F8 Financial Stress Forecast (30/60/90d)** | Forward stress simulation → snapshot + risk levels | `FinancialStressForecastEngine` | `StressForecastSnapshotDao`, `stress_forecast_snapshots` |
+| **F9 AI Budget Autopilot** | Trend analysis → recommendation → application event | `BudgetAutopilotEngine` | `budget_adjustment_recommendations`, `budget_adjustment_events` |
+| **F10 Contextual Empty States** | No-data contexts → contextual CTA rendering | Empty-state strategy components | `EnhancedEmptyState`, `EmptyStateAction` |
+| **F11 Shared Expenses → Budget Offset** | Shared spend + reimbursements → effective budget pressure | `SharedExpenseBudgetOffsetEngine` | `group_expenses` reimbursement columns |
+| **F12 Lifestyle Inflation → Savings Goals** | Lifestyle drift signal → prompt + savings guidance | `LifestyleSavingsPromptUseCase`, `LifestyleInflationDetector` | `prompt_states` |
+| **F13 Spending Personality Profile** | Spending behavior analysis → profile classification | `SpendingPersonalityClassifier` | `SpendingPersonalityProfileDao`, `spending_personality_profiles` |
+| **F14 Email Receipt Ingestion** | Email parser → receipt linkage → normalized source tracking | `EmailReceiptIngestionService`, `EmailReceiptParser` | `EmailReceiptDao`, `email_receipt_sources` |
+| **F15 Conversational Finance Assistant** | Assistant query → AI context/results → UI card/sheet | Assistant orchestration in `AssistantViewModel` | `ai_chat_sessions`, `ai_chat_messages`, AI artifacts |
+
+### DI Module Updates (Feature Wave)
+
+- `DatabaseModule`: migration chain extended to **MIGRATION_67_68**.
+- `DaoModule`: feature DAOs bound for anomaly/health/sweep/subscription/stress/personality/email/budget adjustment paths.
+- `SubscriptionModule`: subscription detection + management wiring.
+- `EmptyStateModule`: contextual empty-state behavior bindings.
+- Existing `AiModule`, `SecurityModule`, `NetworkModule`, `GroupsModule` reused by F1/F9/F11/F14/F15 integration points.
+
+### Migration History (Recent)
+
+| Migration | Feature / Purpose |
+|---|---|
+| 53→54 | F1 receipt→warranty auto-detection fields |
+| 54→55 | F11 shared expense reimbursement/budget-offset fields |
+| 55→56 | F12 prompt state persistence |
+| 56→57 | F5 health score history table |
+| 57→58 | F6 savings sweep planning table |
+| 58→59 | F2 subscription candidate detection table |
+| 59→60 | Health score schema replay safety |
+| 60→61 | F9 budget autopilot recommendation/event tables |
+| 61→62 | F8 stress forecast snapshot table |
+| 62→63 | F13 spending personality profile table |
+| 63→64 | Stress snapshot replay safety |
+| 64→65 | F14 email receipt source table |
+| 65→66 | Email-ingested receipt nullable image path |
+| 66→67 | Warranty deduplication hardening |
+| **67→68** | **Migration repair pass: rebuild anomaly/feature-wave tables to canonical schemas, fix malformed zero-column tables, preserve data when structure is valid** |
+
+This document reflects the current architecture state following migrations up to v68, including the full F1–F15 feature wave and migration hardening for existing devices.

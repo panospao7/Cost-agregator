@@ -59,7 +59,7 @@ import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
         StressForecastSnapshot::class,
         EmailReceiptSource::class
     ],
-    version = 67,
+    version = 68,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -2985,6 +2985,431 @@ abstract class AppDatabase : RoomDatabase() {
                 } finally {
                     database.endTransaction()
                 }
+            }
+        }
+
+        // Migration 67 -> 68: Repair missing/malformed late-feature tables.
+        //
+        // Why:
+        // - Some upgrade paths could leave new tables in an invalid state
+        //   (e.g. anomaly_alerts reported with 0 columns / 0 indices on device).
+        // - Some create statements in older migrations also drifted from current
+        //   entity contracts (nullable/default/index mismatch).
+        //
+        // Strategy:
+        // - Rebuild the affected tables to match the current Room schema exactly.
+        // - Preserve data when source table has the full expected column set.
+        // - Recreate canonical indices every time.
+        val MIGRATION_67_68 = object : androidx.room.migration.Migration(67, 68) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    repairTable(
+                        database = database,
+                        tableName = "anomaly_alerts",
+                        canonicalColumns = listOf(
+                            "id", "expenseId", "merchant", "category", "amount",
+                            "anomalyReason", "severity", "alertedAt", "dismissed",
+                            "dismissedAt", "userFeedback"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS anomaly_alerts (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                expenseId INTEGER NOT NULL,
+                                merchant TEXT NOT NULL,
+                                category TEXT,
+                                amount REAL NOT NULL,
+                                anomalyReason TEXT NOT NULL,
+                                severity TEXT NOT NULL,
+                                alertedAt INTEGER NOT NULL,
+                                dismissed INTEGER NOT NULL DEFAULT 0,
+                                dismissedAt INTEGER,
+                                userFeedback TEXT
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_anomaly_alerts_expenseId ON anomaly_alerts (expenseId)",
+                            "CREATE INDEX IF NOT EXISTS index_anomaly_alerts_merchant_alertedAt ON anomaly_alerts (merchant, alertedAt)",
+                            "CREATE INDEX IF NOT EXISTS index_anomaly_alerts_severity_alertedAt ON anomaly_alerts (severity, alertedAt)",
+                            "CREATE INDEX IF NOT EXISTS index_anomaly_alerts_dismissed_alertedAt ON anomaly_alerts (dismissed, alertedAt)"
+                        )
+                    )
+
+                    repairTable(
+                        database = database,
+                        tableName = "prompt_states",
+                        canonicalColumns = listOf(
+                            "id", "promptType", "createdAt", "userAction", "actionDetails", "acknowledgedAt"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS prompt_states (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                promptType TEXT NOT NULL,
+                                createdAt INTEGER NOT NULL,
+                                userAction TEXT,
+                                actionDetails TEXT,
+                                acknowledgedAt INTEGER DEFAULT 0
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_prompt_states_promptType_createdAt ON prompt_states (promptType, createdAt)",
+                            "CREATE INDEX IF NOT EXISTS index_prompt_states_promptType_userAction ON prompt_states (promptType, userAction)"
+                        )
+                    )
+
+                    repairTable(
+                        database = database,
+                        tableName = "health_score_history",
+                        canonicalColumns = listOf(
+                            "id", "overallScore", "savingsRateScore", "runwayScore",
+                            "budgetAdherenceScore", "billReliabilityScore", "savingsRateWeight",
+                            "runwayWeight", "budgetAdherenceWeight", "billReliabilityWeight",
+                            "periodStart", "periodEnd", "calculatedAt", "trend",
+                            "recommendation", "isSynced"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS health_score_history (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                overallScore INTEGER NOT NULL,
+                                savingsRateScore INTEGER NOT NULL,
+                                runwayScore INTEGER NOT NULL,
+                                budgetAdherenceScore INTEGER NOT NULL,
+                                billReliabilityScore INTEGER NOT NULL,
+                                savingsRateWeight REAL NOT NULL DEFAULT 0.30,
+                                runwayWeight REAL NOT NULL DEFAULT 0.25,
+                                budgetAdherenceWeight REAL NOT NULL DEFAULT 0.25,
+                                billReliabilityWeight REAL NOT NULL DEFAULT 0.20,
+                                periodStart INTEGER NOT NULL,
+                                periodEnd INTEGER NOT NULL,
+                                calculatedAt INTEGER NOT NULL DEFAULT 0,
+                                trend TEXT NOT NULL DEFAULT 'STABLE',
+                                recommendation TEXT,
+                                isSynced INTEGER NOT NULL DEFAULT 0
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_health_score_history_calculatedAt ON health_score_history (calculatedAt)",
+                            "CREATE INDEX IF NOT EXISTS index_health_score_history_overallScore ON health_score_history (overallScore)",
+                            "CREATE INDEX IF NOT EXISTS index_health_score_history_periodStart_periodEnd ON health_score_history (periodStart, periodEnd)"
+                        )
+                    )
+
+                    repairTable(
+                        database = database,
+                        tableName = "savings_sweep_plan",
+                        canonicalColumns = listOf(
+                            "id", "goalId", "monthEnd", "totalUnderspend", "riskBuffer",
+                            "safeSweepAmount", "allocatedAmount", "allocationPercentage",
+                            "status", "actionedAt", "notes", "confidence", "computedAt"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS savings_sweep_plan (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                goalId INTEGER NOT NULL,
+                                monthEnd INTEGER NOT NULL,
+                                totalUnderspend REAL NOT NULL,
+                                riskBuffer REAL NOT NULL,
+                                safeSweepAmount REAL NOT NULL,
+                                allocatedAmount REAL NOT NULL,
+                                allocationPercentage REAL NOT NULL,
+                                status TEXT NOT NULL,
+                                actionedAt INTEGER,
+                                notes TEXT,
+                                confidence REAL NOT NULL,
+                                computedAt INTEGER NOT NULL,
+                                FOREIGN KEY(goalId) REFERENCES savings_goals(id) ON DELETE CASCADE
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_savings_sweep_plan_goalId ON savings_sweep_plan (goalId)",
+                            "CREATE INDEX IF NOT EXISTS index_savings_sweep_plan_monthEnd_status ON savings_sweep_plan (monthEnd, status)",
+                            "CREATE INDEX IF NOT EXISTS index_savings_sweep_plan_computedAt ON savings_sweep_plan (computedAt)"
+                        )
+                    )
+
+                    repairTable(
+                        database = database,
+                        tableName = "subscription_candidates",
+                        canonicalColumns = listOf(
+                            "id", "merchant", "canonicalMerchant", "averageAmount", "currency",
+                            "detectedInterval", "confidence", "transactionCount", "firstSeen",
+                            "lastSeen", "estimatedAnnualCost", "isConverted",
+                            "convertedSubscriptionId", "userAction", "createdAt", "updatedAt"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS subscription_candidates (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                merchant TEXT NOT NULL,
+                                canonicalMerchant TEXT NOT NULL,
+                                averageAmount REAL NOT NULL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                detectedInterval TEXT NOT NULL,
+                                confidence REAL NOT NULL,
+                                transactionCount INTEGER NOT NULL,
+                                firstSeen INTEGER NOT NULL,
+                                lastSeen INTEGER NOT NULL,
+                                estimatedAnnualCost REAL NOT NULL,
+                                isConverted INTEGER NOT NULL DEFAULT 0,
+                                convertedSubscriptionId INTEGER,
+                                userAction TEXT NOT NULL DEFAULT 'pending',
+                                createdAt INTEGER NOT NULL,
+                                updatedAt INTEGER NOT NULL
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_subscription_candidates_canonicalMerchant ON subscription_candidates (canonicalMerchant)",
+                            "CREATE INDEX IF NOT EXISTS index_subscription_candidates_isConverted ON subscription_candidates (isConverted)",
+                            "CREATE INDEX IF NOT EXISTS index_subscription_candidates_confidence ON subscription_candidates (confidence)"
+                        )
+                    )
+
+                    repairTable(
+                        database = database,
+                        tableName = "budget_adjustment_recommendations",
+                        canonicalColumns = listOf(
+                            "id", "budgetId", "categoryId", "categoryName", "currentBudget",
+                            "recommendedBudget", "delta", "deltaPercentage", "reason",
+                            "confidence", "trend", "status", "generatedAt", "expiresAt",
+                            "appliedAt", "dismissedAt"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS budget_adjustment_recommendations (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                budgetId INTEGER NOT NULL,
+                                categoryId INTEGER,
+                                categoryName TEXT NOT NULL,
+                                currentBudget REAL NOT NULL,
+                                recommendedBudget REAL NOT NULL,
+                                delta REAL NOT NULL,
+                                deltaPercentage REAL NOT NULL,
+                                reason TEXT NOT NULL,
+                                confidence REAL NOT NULL,
+                                trend TEXT NOT NULL,
+                                status TEXT NOT NULL,
+                                generatedAt INTEGER NOT NULL,
+                                expiresAt INTEGER,
+                                appliedAt INTEGER,
+                                dismissedAt INTEGER,
+                                FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE CASCADE,
+                                FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_budget_adjustment_recommendations_budgetId ON budget_adjustment_recommendations (budgetId)",
+                            "CREATE INDEX IF NOT EXISTS index_budget_adjustment_recommendations_categoryId ON budget_adjustment_recommendations (categoryId)",
+                            "CREATE INDEX IF NOT EXISTS index_budget_adjustment_recommendations_status_generatedAt ON budget_adjustment_recommendations (status, generatedAt)",
+                            "CREATE INDEX IF NOT EXISTS index_budget_adjustment_recommendations_generatedAt ON budget_adjustment_recommendations (generatedAt)"
+                        )
+                    )
+
+                    repairTable(
+                        database = database,
+                        tableName = "budget_adjustment_events",
+                        canonicalColumns = listOf(
+                            "id", "budgetId", "previousAmount", "newAmount", "delta",
+                            "reason", "confidence", "appliedAt", "appliedBy"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS budget_adjustment_events (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                budgetId INTEGER NOT NULL,
+                                previousAmount REAL NOT NULL,
+                                newAmount REAL NOT NULL,
+                                delta REAL NOT NULL,
+                                reason TEXT NOT NULL,
+                                confidence REAL NOT NULL,
+                                appliedAt INTEGER NOT NULL,
+                                appliedBy TEXT NOT NULL,
+                                FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE CASCADE
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_budget_adjustment_events_budgetId ON budget_adjustment_events (budgetId)",
+                            "CREATE INDEX IF NOT EXISTS index_budget_adjustment_events_appliedAt ON budget_adjustment_events (appliedAt)",
+                            "CREATE INDEX IF NOT EXISTS index_budget_adjustment_events_budgetId_appliedAt ON budget_adjustment_events (budgetId, appliedAt)"
+                        )
+                    )
+
+                    repairTable(
+                        database = database,
+                        tableName = "spending_personality_profiles",
+                        canonicalColumns = listOf(
+                            "id", "personalityType", "confidence", "featureScoresJson",
+                            "explanationJson", "coachingTipsJson", "lastUpdated",
+                            "analysisPeriodStart", "analysisPeriodEnd", "transactionCount",
+                            "isViewed", "viewedAt", "isActive"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS spending_personality_profiles (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                personalityType TEXT NOT NULL,
+                                confidence REAL NOT NULL,
+                                featureScoresJson TEXT NOT NULL DEFAULT '{}',
+                                explanationJson TEXT NOT NULL DEFAULT '[]',
+                                coachingTipsJson TEXT NOT NULL DEFAULT '[]',
+                                lastUpdated INTEGER NOT NULL,
+                                analysisPeriodStart INTEGER NOT NULL,
+                                analysisPeriodEnd INTEGER NOT NULL,
+                                transactionCount INTEGER NOT NULL,
+                                isViewed INTEGER NOT NULL DEFAULT 0,
+                                viewedAt INTEGER,
+                                isActive INTEGER NOT NULL DEFAULT 1
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_lastUpdated ON spending_personality_profiles (lastUpdated)",
+                            "CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_personalityType ON spending_personality_profiles (personalityType)"
+                        )
+                    )
+
+                    repairTable(
+                        database = database,
+                        tableName = "stress_forecast_snapshots",
+                        canonicalColumns = listOf(
+                            "id", "overallRiskLevel", "days30ProjectedBalance", "days30MinBalance",
+                            "days30ProbabilityOfCrunch", "days30RiskLevel", "days30RecurringObligations",
+                            "days30ExpectedIncome", "days30DiscretionaryBuffer", "days60ProjectedBalance",
+                            "days60MinBalance", "days60ProbabilityOfCrunch", "days60RiskLevel",
+                            "days60RecurringObligations", "days60ExpectedIncome", "days60DiscretionaryBuffer",
+                            "days90ProjectedBalance", "days90MinBalance", "days90ProbabilityOfCrunch",
+                            "days90RiskLevel", "days90RecurringObligations", "days90ExpectedIncome",
+                            "days90DiscretionaryBuffer", "earliestCrunchDate", "recommendationsJson",
+                            "currentBalance", "computedAt", "isSynced"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS stress_forecast_snapshots (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                overallRiskLevel TEXT NOT NULL,
+                                days30ProjectedBalance REAL NOT NULL,
+                                days30MinBalance REAL NOT NULL,
+                                days30ProbabilityOfCrunch REAL NOT NULL,
+                                days30RiskLevel TEXT NOT NULL,
+                                days30RecurringObligations REAL NOT NULL,
+                                days30ExpectedIncome REAL NOT NULL,
+                                days30DiscretionaryBuffer REAL NOT NULL,
+                                days60ProjectedBalance REAL NOT NULL,
+                                days60MinBalance REAL NOT NULL,
+                                days60ProbabilityOfCrunch REAL NOT NULL,
+                                days60RiskLevel TEXT NOT NULL,
+                                days60RecurringObligations REAL NOT NULL,
+                                days60ExpectedIncome REAL NOT NULL,
+                                days60DiscretionaryBuffer REAL NOT NULL,
+                                days90ProjectedBalance REAL NOT NULL,
+                                days90MinBalance REAL NOT NULL,
+                                days90ProbabilityOfCrunch REAL NOT NULL,
+                                days90RiskLevel TEXT NOT NULL,
+                                days90RecurringObligations REAL NOT NULL,
+                                days90ExpectedIncome REAL NOT NULL,
+                                days90DiscretionaryBuffer REAL NOT NULL,
+                                earliestCrunchDate INTEGER,
+                                recommendationsJson TEXT,
+                                currentBalance REAL NOT NULL,
+                                computedAt INTEGER NOT NULL DEFAULT 0,
+                                isSynced INTEGER NOT NULL DEFAULT 0
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_computedAt ON stress_forecast_snapshots (computedAt)",
+                            "CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_overallRiskLevel ON stress_forecast_snapshots (overallRiskLevel)",
+                            "CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_days30RiskLevel ON stress_forecast_snapshots (days30RiskLevel)",
+                            "CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_days60RiskLevel ON stress_forecast_snapshots (days60RiskLevel)",
+                            "CREATE INDEX IF NOT EXISTS index_stress_forecast_snapshots_days90RiskLevel ON stress_forecast_snapshots (days90RiskLevel)"
+                        )
+                    )
+
+                    repairTable(
+                        database = database,
+                        tableName = "email_receipt_sources",
+                        canonicalColumns = listOf(
+                            "id", "receiptId", "emailSender", "emailSubject", "emailMessageId",
+                            "parsedAt", "provider", "confidence", "fingerprint"
+                        ),
+                        createTableSql = """
+                            CREATE TABLE IF NOT EXISTS email_receipt_sources (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                receiptId INTEGER NOT NULL,
+                                emailSender TEXT NOT NULL,
+                                emailSubject TEXT NOT NULL,
+                                emailMessageId TEXT NOT NULL DEFAULT '',
+                                parsedAt INTEGER NOT NULL,
+                                provider TEXT NOT NULL,
+                                confidence REAL NOT NULL,
+                                fingerprint TEXT NOT NULL DEFAULT '',
+                                FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE
+                            )
+                        """.trimIndent(),
+                        indexSql = listOf(
+                            "CREATE INDEX IF NOT EXISTS index_email_receipt_sources_receiptId ON email_receipt_sources (receiptId)",
+                            "CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources (emailMessageId)",
+                            "CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources (provider, parsedAt)",
+                            "CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources (fingerprint)"
+                        )
+                    )
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+
+            private fun repairTable(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+                tableName: String,
+                canonicalColumns: List<String>,
+                createTableSql: String,
+                indexSql: List<String>
+            ) {
+                val tempName = "${tableName}_tmp_67_68"
+                val exists = tableExists(database, tableName)
+
+                var oldColumns: Set<String> = emptySet()
+                if (exists) {
+                    database.execSQL("DROP TABLE IF EXISTS `$tempName`")
+                    database.execSQL("ALTER TABLE `$tableName` RENAME TO `$tempName`")
+                    oldColumns = readColumnNames(database, tempName)
+                }
+
+                database.execSQL(createTableSql)
+
+                if (exists && oldColumns.containsAll(canonicalColumns.toSet())) {
+                    val columnList = canonicalColumns.joinToString(", ") { "`$it`" }
+                    database.execSQL(
+                        "INSERT INTO `$tableName` ($columnList) " +
+                            "SELECT $columnList FROM `$tempName`"
+                    )
+                }
+
+                if (exists) {
+                    database.execSQL("DROP TABLE IF EXISTS `$tempName`")
+                }
+
+                indexSql.forEach { database.execSQL(it) }
+            }
+
+            private fun tableExists(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+                tableName: String
+            ): Boolean {
+                database.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '$tableName' LIMIT 1"
+                ).use { cursor ->
+                    return cursor.moveToFirst()
+                }
+            }
+
+            private fun readColumnNames(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+                tableName: String
+            ): Set<String> {
+                val names = mutableSetOf<String>()
+                database.query("PRAGMA table_info(`$tableName`)").use { cursor ->
+                    val nameIndex = cursor.getColumnIndex("name")
+                    if (nameIndex < 0) return names
+                    while (cursor.moveToNext()) {
+                        names += cursor.getString(nameIndex)
+                    }
+                }
+                return names
             }
         }
     }

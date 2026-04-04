@@ -6,7 +6,7 @@
 
 ---
 
-## FILES COVERED: 528+ Total Kotlin Files
+## FILES COVERED: 560+ Total Kotlin Files
 
 | Segment | Files | Description | Status |
 |---------|-------|-------------|--------|
@@ -763,6 +763,245 @@ When analyzing a specific feature, check files in this order:
 - ✅ Dynamic contentDescriptions
 - ✅ Redundant speech removed
 - ✅ Color contrast improved (TextMuted 60% → 80%)
+
+---
+
+## SEGMENT 36: F1 RECEIPT → WARRANTY PIPELINE
+
+**Description:** Automatically extracts warranty metadata from scanned/email receipts and persists lifecycle-ready records.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt` | Warranty auto-create orchestration |
+| `domain/receipt/WarrantyTextExtractor.kt` | Warranty signal extraction |
+| `data/repository/WarrantyTrackerRepository.kt` | Repository persistence and updates |
+| `data/database/entity/Warranty.kt` | Warranty entity |
+| `data/database/dao/WarrantyDao.kt` | Warranty queries |
+
+### Migration Notes
+- 53→54: warranty auto-detection fields.
+- 66→67: unique warranty per `receiptId` hardening.
+
+---
+
+## SEGMENT 37: F2 NOTIFICATION → SUBSCRIPTION DETECTION
+
+**Description:** Detects recurring charges from transaction streams and stores reviewable subscription candidates.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/subscription/NotificationSubscriptionDetector.kt` | Candidate detection |
+| `domain/subscription/SubscriptionManagerEngine.kt` | Candidate lifecycle and conversion |
+| `data/database/entity/SubscriptionCandidate.kt` | Candidate entity |
+| `data/database/dao/SubscriptionCandidateDao.kt` | Candidate queries |
+| `ui/screens/subscription/SubscriptionManagementViewModel.kt` | UI state and actions |
+
+### Migration Notes
+- 58→59: created `subscription_candidates`.
+
+---
+
+## SEGMENT 38: F3 MONTE CARLO → BUDGET LINKING
+
+**Description:** Connects stochastic forecasts to budget impact analysis.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/forecasting/MonteCarloSpendingSimulator.kt` | Forecast simulation engine |
+| `domain/model/budget/MonteCarloBudgetImpact.kt` | Budget impact model |
+| `domain/usecase/budget/GetMonteCarloBudgetImpactUseCase.kt` | Use case integration |
+
+---
+
+## SEGMENT 39: F4 TODAY'S MONEY RADAR WIDGET
+
+**Description:** Home/dashboard widget for high-signal daily spending visibility.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `ui/components/dashboard/MoneyRadarWidget.kt` | Widget UI |
+| `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` | Widget computation |
+| `ui/mappers/DashboardWidgetUiMapper.kt` | Domain-to-UI mapping |
+
+---
+
+## SEGMENT 40: F5 FINANCIAL HEALTH SCORE 2.0
+
+**Description:** Composite health scoring with historical trend persistence.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/health/FinancialHealthScoreV2.kt` | Scoring engine |
+| `data/database/entity/HealthScoreHistory.kt` | History entity |
+| `data/database/dao/HealthScoreHistoryDao.kt` | History queries |
+| `ui/components/health/FinancialHealthScoreV2Widget.kt` | Score widget |
+
+### Migration Notes
+- 56→57 and 59→60: `health_score_history` rollout/replay.
+
+---
+
+## SEGMENT 41: F6 SMART SAVINGS SWEEPS
+
+**Description:** Calculates month-end safe sweep plans and persists user action states.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/usecase/savings/MonthlySavingsSweepUseCase.kt` | Sweep planning use case |
+| `data/database/entity/SavingsSweepPlan.kt` | Sweep plan entity |
+| `data/database/dao/SavingsSweepPlanDao.kt` | Sweep plan DAO |
+
+### Migration Notes
+- 57→58: created `savings_sweep_plan`.
+
+---
+
+## SEGMENT 42: F7 ANOMALY → REAL-TIME ALERTS
+
+**Description:** Persists anomaly alerts for cooldown, dedupe, and user-feedback loops.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/analytics/AnomalyDetector.kt` | Anomaly detection |
+| `domain/alerts/AnomalyAlertOrchestrator.kt` | Alert orchestration |
+| `data/database/entity/AnomalyAlert.kt` | Alert entity |
+| `data/database/dao/AnomalyAlertDao.kt` | Alert DAO |
+
+### Migration Notes
+- 67→68: repaired malformed `anomaly_alerts` states on upgraded devices.
+
+---
+
+## SEGMENT 43: F8 FINANCIAL STRESS FORECAST (30/60/90D)
+
+**Description:** Multi-horizon stress projections with persisted risk snapshots.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/forecasting/FinancialStressForecastEngine.kt` | Forecast engine |
+| `data/database/entity/StressForecastSnapshot.kt` | Snapshot entity |
+| `data/database/dao/StressForecastSnapshotDao.kt` | Snapshot DAO |
+| `ui/components/FinancialStressForecastCard.kt` | Forecast card |
+
+### Migration Notes
+- 61→62 and 63→64: `stress_forecast_snapshots` rollout/replay.
+
+---
+
+## SEGMENT 44: F9 AI BUDGET AUTOPILOT
+
+**Description:** Creates budget adjustment recommendations and tracks applied events.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/budget/BudgetAutopilotEngine.kt` | Autopilot recommendation engine |
+| `data/database/dao/BudgetAdjustmentDao.kt` | DAO for recommendation/event flows |
+| `data/database/entity/BudgetAdjustmentRecommendation.kt` | Recommendation + event entities |
+
+### Migration Notes
+- 60→61: created `budget_adjustment_recommendations` and `budget_adjustment_events`.
+
+---
+
+## SEGMENT 45: F10 CONTEXTUAL EMPTY STATES
+
+**Description:** Reusable contextual empty states with feature-specific CTAs.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `ui/components/common/EnhancedEmptyState.kt` | Main component |
+| `ui/components/emptystate/EmptyStateAction.kt` | Action model |
+| `di/EmptyStateModule.kt` | Empty-state dependency wiring |
+
+---
+
+## SEGMENT 46: F11 SHARED EXPENSES → BUDGET OFFSET
+
+**Description:** Offsets budget pressure using reimbursement-aware shared expense flows.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/groups/SharedExpenseBudgetOffsetEngine.kt` | Budget offset logic |
+| `domain/groups/SharedExpenseManager.kt` | Shared expense operations |
+| `ui/screens/groups/SharedExpenseGroupsViewModel.kt` | UI orchestration |
+
+### Migration Notes
+- 54→55: reimbursement tracking in `group_expenses`.
+
+---
+
+## SEGMENT 47: F12 LIFESTYLE INFLATION → SAVINGS GOALS
+
+**Description:** Lifestyle inflation detection with anti-nag prompt persistence linked to savings actions.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/lifestyle/LifestyleInflationDetector.kt` | Inflation detection |
+| `domain/usecase/savings/LifestyleSavingsPromptUseCase.kt` | Prompt logic |
+| `data/database/entity/PromptState.kt` | Prompt state entity |
+| `data/database/dao/PromptStateDao.kt` | Prompt state DAO |
+
+### Migration Notes
+- 55→56: created `prompt_states`.
+
+---
+
+## SEGMENT 48: F13 SPENDING PERSONALITY PROFILE
+
+**Description:** Behavior-based classification and persistence for profile-driven coaching.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `domain/analytics/SpendingPersonalityClassifier.kt` | Classifier |
+| `data/database/entity/SpendingPersonalityProfileEntity.kt` | Profile entity |
+| `data/database/dao/SpendingPersonalityProfileDao.kt` | Profile DAO |
+
+### Migration Notes
+- 62→63: created `spending_personality_profiles`.
+
+---
+
+## SEGMENT 49: F14 EMAIL RECEIPT INGESTION
+
+**Description:** Ingests and normalizes provider email receipts into the receipt pipeline.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `data/email/EmailReceiptIngestionService.kt` | Ingestion orchestrator |
+| `data/email/provider/EmailReceiptParser.kt` | Provider parsing |
+| `data/database/entity/EmailReceiptSource.kt` | Email-source entity |
+| `data/database/dao/EmailReceiptDao.kt` | Email source DAO |
+
+### Migration Notes
+- 64→65: created `email_receipt_sources`.
+- 65→66: nullable `imagePath` for email-only receipts.
+
+---
+
+## SEGMENT 50: F15 CONVERSATIONAL FINANCE ASSISTANT
+
+**Description:** Conversational assistant surface for finance Q&A and guided actions.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `ui/screens/assistant/AssistantViewModel.kt` | Assistant orchestration |
+| `ui/screens/assistant/AssistantSheet.kt` | Assistant surface |
+| `ui/components/ai/AssistantResultCard.kt` | Result rendering |
 
 ---
 
@@ -1717,6 +1956,27 @@ di/
 | 44→45 | Investment Tracking |
 | 45→46 | Bank API Integration |
 | **46→47** | **Enhanced Split Transactions (Phase 5)** |
+| 47→48 | isBusinessExpense index alignment |
+| 48→49 | scanned_receipts default-value normalization |
+| 49→50 | broad schema/default normalization pass |
+| 50→51 | index drift cleanup |
+| 51→52 | group expense payer FK contract fix |
+| 52→53 | performance composite indices |
+| 53→54 | F1 Receipt → Warranty pipeline fields |
+| 54→55 | F11 Shared Expenses → Budget Offset fields |
+| 55→56 | F12 prompt_states table |
+| 56→57 | F5 health_score_history table |
+| 57→58 | F6 savings_sweep_plan table |
+| 58→59 | F2 subscription_candidates table |
+| 59→60 | F5 replay safety for health score table |
+| 60→61 | F9 budget adjustment recommendation/event tables |
+| 61→62 | F8 stress_forecast_snapshots table |
+| 62→63 | F13 spending_personality_profiles table |
+| 63→64 | F8 replay safety for stress table |
+| 64→65 | F14 email_receipt_sources table |
+| 65→66 | Email receipt imagePath nullable support |
+| 66→67 | Warranty dedup hardening |
+| **67→68** | **Migration repair pass for malformed late-feature tables (incl. anomaly_alerts crash fix)** |
 
 ---
 
@@ -1770,8 +2030,23 @@ di/
 | **33** | **Error Handling & Typed Errors** | **~3** | **✅ Stable** |
 | **34** | **Performance Optimization** | **~4** | **✅ Stable** |
 | **35** | **Accessibility** | **~5** | **✅ Stable** |
+| **36** | **F1 Receipt → Warranty Pipeline** | **~9** | **✅ Stable** |
+| **37** | **F2 Notification → Subscription Detection** | **~11** | **✅ Stable** |
+| **38** | **F3 Monte Carlo → Budget Linking** | **~4** | **✅ Stable** |
+| **39** | **F4 Today’s Money Radar Widget** | **~3** | **✅ Stable** |
+| **40** | **F5 Financial Health Score 2.0** | **~5** | **✅ Stable** |
+| **41** | **F6 Smart Savings Sweeps** | **~3** | **✅ Stable** |
+| **42** | **F7 Anomaly → Real-Time Alerts** | **~4** | **✅ Stable** |
+| **43** | **F8 Financial Stress Forecast (30/60/90d)** | **~4** | **✅ Stable** |
+| **44** | **F9 AI Budget Autopilot** | **~3** | **✅ Stable** |
+| **45** | **F10 Contextual Empty States** | **~4** | **✅ Stable** |
+| **46** | **F11 Shared Expenses → Budget Offset** | **~4** | **✅ Stable** |
+| **47** | **F12 Lifestyle Inflation → Savings Goals** | **~4** | **✅ Stable** |
+| **48** | **F13 Spending Personality Profile** | **~3** | **✅ Stable** |
+| **49** | **F14 Email Receipt Ingestion** | **~4** | **✅ Stable** |
+| **50** | **F15 Conversational Finance Assistant** | **~3** | **✅ Stable** |
 
-**Total Files:** 528+ Kotlin files across 35 segments
+**Total Files:** 560+ Kotlin files across 50 segments
 
 ### Phase 3+ Future Enhancements
 
@@ -1805,8 +2080,8 @@ di/
 | **TOTAL** | **169** | **62** | **150+** |
 
 ### Key Metrics
-- **Database Version**: v31 → v52
-- **Kotlin Files**: 280+ → 528+
+- **Database Version**: v31 → v68
+- **Kotlin Files**: 280+ → 560+
 - **Screen Files**: ~40 → 77
 - **Test Files**: ~10 → 60+
 - **DI Modules**: 6 → 11
@@ -1815,3 +2090,9 @@ di/
 
 ### All Segment Status: ✅ STABLE
 All previous warnings (⚠️) have been resolved. The codebase is production-ready.
+
+### Migration Reliability Fixes (Apr 2026)
+- ✅ Fixed migration crash: malformed `anomaly_alerts` table state (`0 columns / 0 indices`) on some upgraded devices
+- ✅ Added **MIGRATION_67_68** to rebuild late-feature tables to canonical schemas and re-create indices
+- ✅ Covered tables: `anomaly_alerts`, `prompt_states`, `health_score_history`, `savings_sweep_plan`, `subscription_candidates`, `budget_adjustment_recommendations`, `budget_adjustment_events`, `stress_forecast_snapshots`, `spending_personality_profiles`, `email_receipt_sources`
+- ✅ Data preserved when legacy tables already contain full canonical column sets
