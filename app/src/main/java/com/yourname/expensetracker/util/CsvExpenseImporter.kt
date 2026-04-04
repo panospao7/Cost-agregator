@@ -167,5 +167,6 @@ fun AppDatabase.Companion.getInstance(context: Context): AppDatabase {
         context,
         AppDatabase::class.java,
         "expense_tracker_db"
-    ).build()
+    ).addMigrations(*AppDatabase.ALL_MIGRATIONS)
+        .build()
 }

@@ -1,0 +1,8 @@
+BASE=ee4d1480fce258ac125c5dae5dd741331e306b50
+HEAD=1456749931da6fe59e671e10ef51108651411030
+START_SUBJECT=add 14 critical edge case and integration tests
+HEAD_SUBJECT=fix dashboard widgets not loading + create production documentation
+COMMITS=5
+FILES_CHANGED=223
+INSERTIONS=66805
+DELETIONS=2326

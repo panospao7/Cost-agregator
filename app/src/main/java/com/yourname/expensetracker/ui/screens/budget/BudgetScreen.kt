@@ -47,6 +47,9 @@ import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.budgetScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -58,10 +61,26 @@ fun BudgetScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val categories by viewModel.categories.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
     
     var showAddDialog by remember { mutableStateOf(false) }
     var editingBudget by remember { mutableStateOf<BudgetStatus?>(null) }
-    val dateFormat = remember { SimpleDateFormat("MMM dd", Locale.getDefault()) }
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshBudgets()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshBudgets()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
@@ -90,7 +109,7 @@ fun BudgetScreen(
             ErrorBanner(
                 message = uiState.error!!,
                 onDismiss = { viewModel.clearError() },
-                onRetry = { viewModel.refreshSuggestions() }
+                onRetry = { viewModel.refreshBudgets() }
             )
         }
         
@@ -148,7 +167,6 @@ fun BudgetScreen(
             items(uiState.budgets, key = { it.budget.id }) { budgetStatus ->
                         BudgetCard(
                             status = budgetStatus,
-                            dateFormat = dateFormat,
                             onEdit = { editingBudget = budgetStatus },
                             onToggle = { isActive -> viewModel.toggleBudget(budgetStatus.budget.id, isActive) },
                             onDelete = { viewModel.deleteBudget(it) },
@@ -312,7 +330,6 @@ fun SummaryItem(label: String, count: Int, color: Color) {
 @Composable
 fun BudgetCard(
     status: BudgetStatus,
-    dateFormat: SimpleDateFormat,
     onEdit: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onDelete: (Budget) -> Unit,
@@ -345,16 +362,48 @@ fun BudgetCard(
         )
     }
     
-    val formattedDate = remember(status.budget.startDate) {
-        DateFormatterUtils.monthDay().format(Date(status.budget.startDate))
-    }
-    
-    val formattedPeriod = remember(status.budget.period) {
-        status.budget.period.name.lowercase().replaceFirstChar { it.titlecase(java.util.Locale.getDefault()) }
+    val rangeDateFormat = remember { DateFormatterUtils.monthDay() }
+    val monthYearFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
+    val periodMode = remember(status.budget.periodMode) { status.budget.periodMode.uppercase(Locale.getDefault()) }
+    val periodLabel = remember(status.budget.period) {
+        status.budget.period.name.lowercase().replaceFirstChar { it.titlecase(Locale.getDefault()) }
     }
 
-    val periodDateText = stringResource(R.string.budget_period_date_format, formattedPeriod, formattedDate)
-    
+    val rangeStartLabel = remember(status.periodStart) {
+        rangeDateFormat.format(Date(status.periodStart))
+    }
+    val displayEnd = remember(status.periodStart, status.periodEnd) {
+        (status.periodEnd - 1L).coerceAtLeast(status.periodStart)
+    }
+    val rangeEndLabel = remember(displayEnd) {
+        rangeDateFormat.format(Date(displayEnd))
+    }
+    val periodDescription = remember(status.periodStart, status.periodEnd, status.budget.period, periodMode) {
+        if (periodMode == "CALENDAR" && status.budget.period == BudgetPeriod.MONTHLY) {
+            "${monthYearFormat.format(Date(status.periodStart))} (Calendar)"
+        } else if (periodMode == "ROLLING") {
+            val rollingLabel = when (status.budget.period) {
+                BudgetPeriod.MONTHLY -> "Rolling 30d"
+                BudgetPeriod.WEEKLY -> "Rolling 7d"
+                else -> "Rolling $periodLabel"
+            }
+            "$rangeStartLabel - $rangeEndLabel ($rollingLabel)"
+        } else {
+            "$rangeStartLabel - $rangeEndLabel (Calendar $periodLabel)"
+        }
+    }
+
+    val nowMs = System.currentTimeMillis()
+    val totalPeriodMs = remember(status.periodStart, status.periodEnd) {
+        (status.periodEnd - status.periodStart).coerceAtLeast(1L)
+    }
+    val elapsedPeriodMs = remember(status.periodStart, status.periodEnd, nowMs) {
+        (nowMs - status.periodStart).coerceIn(0L, totalPeriodMs)
+    }
+    val periodProgress = remember(totalPeriodMs, elapsedPeriodMs) {
+        (elapsedPeriodMs.toFloat() / totalPeriodMs.toFloat()).coerceIn(0f, 1f)
+    }
+
     // F11: Check if we have adjusted spend info
     val adjustedSpend = status.adjustedSpendBreakdown
     val hasPendingReimbursements = adjustedSpend != null && adjustedSpend.pendingReimbursements > 0.01
@@ -392,7 +441,7 @@ fun BudgetCard(
                         fontSize = 18.sp
                     )
                     Text(
-                        periodDateText,
+                        periodDescription,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -441,6 +490,32 @@ fun BudgetCard(
                 color = progressColor,
                 trackColor = progressColor.copy(alpha = 0.2f)
             )
+
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { periodProgress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = SemanticColors.PrimaryIndigo,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = rangeStartLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = rangeEndLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             // F11: Show adjusted spend breakdown if available
             if (adjustedSpend != null && adjustedSpend.pendingReimbursements > 0.01) {
@@ -640,6 +715,7 @@ fun AddEditBudgetDialog(
     var amount by remember { mutableStateOf(initialBudget?.amount?.toString() ?: "") }
     var selectedCategory by remember { mutableStateOf(initialBudget?.categoryId) }
     var period by remember { mutableStateOf(initialBudget?.period ?: BudgetPeriod.MONTHLY) }
+    var periodMode by remember { mutableStateOf(initialBudget?.periodMode ?: "ROLLING") }
     var rollover by remember { mutableStateOf(initialBudget?.rollover ?: false) }
 
     AlertDialog(
@@ -689,6 +765,20 @@ fun AddEditBudgetDialog(
                     }
                 }
 
+                Text("Period mode", style = MaterialTheme.typography.labelMedium)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = periodMode == "ROLLING",
+                        onClick = { periodMode = "ROLLING" },
+                        label = { Text("Rolling") }
+                    )
+                    FilterChip(
+                        selected = periodMode == "CALENDAR",
+                        onClick = { periodMode = "CALENDAR" },
+                        label = { Text("Calendar") }
+                    )
+                }
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = rollover, onCheckedChange = { rollover = it })
                     Text(stringResource(R.string.budget_rollover_label), style = MaterialTheme.typography.bodyMedium)
@@ -704,11 +794,13 @@ fun AddEditBudgetDialog(
                             categoryId = selectedCategory,
                             amount = amt,
                             period = period,
+                            periodMode = periodMode,
                             rollover = rollover
                         ) ?: Budget(
                             categoryId = selectedCategory,
                             amount = amt,
                             period = period,
+                            periodMode = periodMode,
                             startDate = System.currentTimeMillis(),
                             rollover = rollover
                         )

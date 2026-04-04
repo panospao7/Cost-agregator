@@ -33,6 +33,7 @@ data class Budget(
     val categoryId: Long?,              // null = overall budget
     val amount: Double,
     val period: BudgetPeriod,
+    @ColumnInfo(defaultValue = "'ROLLING'") val periodMode: String = "ROLLING", // ROLLING | CALENDAR
     val startDate: Long,                // anchor date for period calculation
     @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
     @ColumnInfo(defaultValue = "0.75") val notifyAtWarning: Float = 0.75f, // first alert threshold (75%)

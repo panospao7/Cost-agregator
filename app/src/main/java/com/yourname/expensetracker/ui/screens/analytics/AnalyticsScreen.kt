@@ -57,6 +57,7 @@ import com.yourname.expensetracker.domain.location.TravelInsight
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.components.analytics.PersonalityProfileCard
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
+import kotlin.math.roundToInt
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1321,11 +1322,13 @@ fun YearOverYearCard(yoy: YearOverYearComparison) {
                 )
 
                 val yoyEntryModel = remember(yoy.deltaByMonth) {
+                    fun Double.toChartAmount(): Float = ((this * 100).roundToInt() / 100f)
+
                     val currentEntries = yoy.deltaByMonth.mapIndexed { i, (_, current, _) ->
-                        entryOf(i.toFloat(), current.toFloat())
+                        FloatEntry(x = i.toFloat(), y = current.toChartAmount())
                     }
                     val priorEntries = yoy.deltaByMonth.mapIndexed { i, (_, _, prior) ->
-                        entryOf(i.toFloat(), prior.toFloat())
+                        FloatEntry(x = i.toFloat(), y = prior.toChartAmount())
                     }
                     entryModelOf(currentEntries, priorEntries)
                 }

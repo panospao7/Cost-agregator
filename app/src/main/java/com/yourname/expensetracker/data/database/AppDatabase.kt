@@ -59,7 +59,7 @@ import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
         StressForecastSnapshot::class,
         EmailReceiptSource::class
     ],
-    version = 68,
+    version = 69,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -3412,5 +3412,87 @@ abstract class AppDatabase : RoomDatabase() {
                 return names
             }
         }
+
+        // Migration 68 -> 69: Add budget period mode support.
+        // Existing budgets default to CALENDAR to preserve established behavior.
+        val MIGRATION_68_69 = object : androidx.room.migration.Migration(68, 69) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE budgets ADD COLUMN periodMode TEXT NOT NULL DEFAULT 'ROLLING'")
+                database.execSQL("UPDATE budgets SET periodMode = 'CALENDAR'")
+            }
+        }
+
+        /**
+         * Canonical migration registry used by every database builder path.
+         *
+         * Keeping this list centralized prevents subtle drift where one code path
+         * forgets to register a migration (which can surface as upgrade/downgrade
+         * crashes on startup depending on the on-device schema version).
+         */
+        val ALL_MIGRATIONS: Array<androidx.room.migration.Migration> = arrayOf(
+            MIGRATION_6_7,
+            MIGRATION_7_8,
+            MIGRATION_8_9,
+            MIGRATION_9_10,
+            MIGRATION_10_11,
+            MIGRATION_11_12,
+            MIGRATION_12_13,
+            MIGRATION_13_14,
+            MIGRATION_14_15,
+            MIGRATION_15_16,
+            MIGRATION_16_17,
+            MIGRATION_17_18,
+            MIGRATION_18_19,
+            MIGRATION_19_20,
+            MIGRATION_20_21,
+            MIGRATION_21_22,
+            MIGRATION_22_23,
+            MIGRATION_23_24,
+            MIGRATION_24_25,
+            MIGRATION_25_26,
+            MIGRATION_26_27,
+            MIGRATION_27_28,
+            MIGRATION_28_29,
+            MIGRATION_29_30,
+            MIGRATION_30_31,
+            MIGRATION_31_32,
+            MIGRATION_32_33,
+            MIGRATION_33_34,
+            MIGRATION_34_35,
+            MIGRATION_35_36,
+            MIGRATION_36_37,
+            MIGRATION_37_38,
+            MIGRATION_38_39,
+            MIGRATION_39_40,
+            MIGRATION_40_41,
+            MIGRATION_41_42,
+            MIGRATION_42_43,
+            MIGRATION_43_44,
+            MIGRATION_44_45,
+            MIGRATION_45_46,
+            MIGRATION_46_47,
+            MIGRATION_47_48,
+            MIGRATION_48_49,
+            MIGRATION_49_50,
+            MIGRATION_50_51,
+            MIGRATION_51_52,
+            MIGRATION_52_53,
+            MIGRATION_53_54,
+            MIGRATION_54_55,
+            MIGRATION_55_56,
+            MIGRATION_56_57,
+            MIGRATION_57_58,
+            MIGRATION_58_59,
+            MIGRATION_59_60,
+            MIGRATION_60_61,
+            MIGRATION_61_62,
+            MIGRATION_62_63,
+            MIGRATION_63_64,
+            MIGRATION_64_65,
+            MIGRATION_65_66,
+            MIGRATION_66_67,
+            MIGRATION_67_68,
+            MIGRATION_68_69
+        )
     }
 }

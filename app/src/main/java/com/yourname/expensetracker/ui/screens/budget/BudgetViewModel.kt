@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -32,7 +33,8 @@ class BudgetViewModel @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val categoryRepository: CategoryRepository,
     private val offsetEngine: SharedExpenseBudgetOffsetEngine,
-    private val autopilotEngine: BudgetAutopilotEngine
+    private val autopilotEngine: BudgetAutopilotEngine,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -49,7 +51,7 @@ class BudgetViewModel @Inject constructor(
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<BudgetUiState> = combine(
-        budgetRepository.getBudgetStatuses(),
+        _refreshTrigger.flatMapLatest { budgetRepository.getBudgetStatuses() },
         _refreshTrigger.flatMapLatest { flow { emit(budgetRepository.getSuggestions()) } },
         _manualState,
         _autopilotRecommendations,
@@ -191,6 +193,11 @@ class BudgetViewModel @Inject constructor(
     }
 
     fun refreshSuggestions() {
+        _refreshTrigger.value += 1
+    }
+
+    fun refreshBudgets() {
+        timeProvider.now()
         _refreshTrigger.value += 1
     }
 

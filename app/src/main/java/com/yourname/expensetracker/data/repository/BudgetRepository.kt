@@ -54,7 +54,9 @@ class BudgetRepository @Inject constructor(
             val categoryMap = categories.associateBy { it.id }
             
             budgets.map { budget ->
-                val window = budgetCalculator.calculatePeriodWindow(budget.period, budget.startDate)
+                val now = timeProvider.now()
+                val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
+                val window = PeriodRange(periodStart, periodEnd)
                 
                 fun getSpentInRange(start: Long, end: Long): Double {
                     return purchases
@@ -110,8 +112,8 @@ class BudgetRepository @Inject constructor(
                     remainingAmount = remaining,
                     percentUsed = percent,
                     healthStatus = health,
-                    periodStart = window.start,
-                    periodEnd = window.end
+                    periodStart = periodStart,
+                    periodEnd = periodEnd
                 )
             }
         }

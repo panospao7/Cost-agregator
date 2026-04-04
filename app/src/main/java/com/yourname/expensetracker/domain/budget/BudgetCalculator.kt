@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.domain.budget
 
+import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,6 +36,30 @@ import javax.inject.Singleton
 class BudgetCalculator @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
+
+    fun calculatePeriodRange(budget: Budget, now: Long = timeProvider.now()): Pair<Long, Long> {
+        return when (budget.periodMode.uppercase()) {
+            "ROLLING" -> {
+                val start = budget.startDate
+                val end = when (budget.period) {
+                    BudgetPeriod.MONTHLY -> TimePeriodUtils.addDays(start, 30)
+                    BudgetPeriod.WEEKLY -> TimePeriodUtils.addDays(start, 7)
+                    else -> calculatePeriodWindowForTime(budget.period, budget.startDate, now).end
+                }
+                start to end
+            }
+            else -> {
+                when (budget.period) {
+                    BudgetPeriod.MONTHLY -> TimePeriodUtils.getMonthRange(now)
+                    BudgetPeriod.WEEKLY -> TimePeriodUtils.getWeekRange(now)
+                    else -> {
+                        val window = calculatePeriodWindowForTime(budget.period, budget.startDate, now)
+                        window.start to window.end
+                    }
+                }
+            }
+        }
+    }
 
     fun calculatePeriodWindow(period: BudgetPeriod, anchorDate: Long): PeriodRange {
         return calculatePeriodWindowForTime(period, anchorDate, timeProvider.now())
