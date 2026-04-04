@@ -26,6 +26,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -512,7 +513,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
 
         // ── Check for Lifestyle Savings Opportunity ─────────────────────────
-        val lifestyleRecommendation = lifestyleSavingsPromptUseCase.evaluateAndPrompt()
+        val lifestyleRecommendation = runCatching {
+            withTimeout(3000L) {
+                lifestyleSavingsPromptUseCase.evaluateAndPrompt()
+            }
+        }
+            .onFailure { Timber.e(it, "Failed to evaluate lifestyle savings prompt") }
+            .getOrNull()
         val lifestyleWidget: DashboardWidget.LifestyleSavingsPrompt? = lifestyleRecommendation?.let {
             DashboardWidget.LifestyleSavingsPrompt(
                 inflationRate = it.inflationRate,

@@ -5,8 +5,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.UiText
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
@@ -27,11 +26,7 @@ class LifestyleInflationDetector @Inject constructor(
         val startDate = endDate - (monthsToAnalyze * 30L * 24 * 60 * 60 * 1000)
         
         // Get all expenses in the period
-        val expensesFlow = expenseDao.getExpensesBetweenFlow(startDate, endDate)
-        val expenses = mutableListOf<Expense>()
-        expensesFlow.collect { expenseList ->
-            expenses.addAll(expenseList)
-        }
+        val expenses = expenseDao.getExpensesBetweenFlow(startDate, endDate).first()
         
         // Separate income and spending
         val incomeByMonth = mutableMapOf<YearMonth, Double>()

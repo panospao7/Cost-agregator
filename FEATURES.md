@@ -1053,4 +1053,14 @@ CarbonFootprintScreen(onNavigateBack = { /* navigation */ })
 
 *Last updated: March 31, 2026*  
 *Version: 47*  
-*Total Features: 28*
+*Total Features: 28 (core) + 15 (advanced) = 43 total features*
+
+## Current State (v68) Summary
+- Core features (Stable): 28
+- Advanced integrations (F1–F15): 15 (Beta)
+- Total features: 43
+- Codebase: 528+ Kotlin files
+- Screens: 77 screens
+- Database version: v68
+- Migrations: v52 → v68
+- Dependencies and requirements: Kotlin, AndroidX, Room, Hilt, Jetpack Compose, and related Android SDKs

@@ -106,21 +106,25 @@ class DashboardRepository @Inject constructor(
         return listOf(
             DashboardWidgetConfig("financial_weather", 0),
             DashboardWidgetConfig("money_radar", 1),  // NEW: Today's unified alerts (F4)
-            DashboardWidgetConfig("financial_health_score", 2),  // NEW: Game-like health score
-            DashboardWidgetConfig("totals_dashboard", 3),
-            DashboardWidgetConfig("no_spend_streak", 4),  // NEW: Gamification widget
-            DashboardWidgetConfig("safe_to_spend", 5),
-            DashboardWidgetConfig("financial_runway", 6),
-            DashboardWidgetConfig("monte_carlo_forecast", 7),
-            DashboardWidgetConfig("spending_pace", 8),
-            DashboardWidgetConfig("review_alert", 9),
-            DashboardWidgetConfig("spending_trend", 10),
-            DashboardWidgetConfig("insight", 11),
-            DashboardWidgetConfig("period_summary", 12),
-            DashboardWidgetConfig("budget_health", 13),
-            DashboardWidgetConfig("top_categories", 14),
-            DashboardWidgetConfig("recent_transactions", 15),
-            DashboardWidgetConfig("budget_block_party", 16)
+            DashboardWidgetConfig("financial_stress_forecast", 2),
+            DashboardWidgetConfig("lifestyle_savings_prompt", 3),
+            DashboardWidgetConfig("savings_sweep_prompt", 4),
+            DashboardWidgetConfig("financial_health_score_v2", 5),
+            DashboardWidgetConfig("financial_health_score", 6),  // NEW: Game-like health score
+            DashboardWidgetConfig("totals_dashboard", 7),
+            DashboardWidgetConfig("no_spend_streak", 8),  // NEW: Gamification widget
+            DashboardWidgetConfig("safe_to_spend", 9),
+            DashboardWidgetConfig("financial_runway", 10),
+            DashboardWidgetConfig("monte_carlo_forecast", 11),
+            DashboardWidgetConfig("spending_pace", 12),
+            DashboardWidgetConfig("review_alert", 13),
+            DashboardWidgetConfig("spending_trend", 14),
+            DashboardWidgetConfig("insight", 15),
+            DashboardWidgetConfig("period_summary", 16),
+            DashboardWidgetConfig("budget_health", 17),
+            DashboardWidgetConfig("top_categories", 18),
+            DashboardWidgetConfig("recent_transactions", 19),
+            DashboardWidgetConfig("budget_block_party", 20)
         )
     }
 }

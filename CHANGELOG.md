@@ -1,4 +1,18 @@
-# Changelog
+## [2.0.0] - 2026-04-04
+### 🎉 Release: ExpenseTracker v2.0.0 (DB v68)
+
+- Database Version: v68
+- Total Features: 43 (28 core features + 15 advanced integrations F1–F15)
+- Audit/Fixes: 49 audit fixes included
+- Bug Fixes: 32 tangible fixes across modules
+- Tests: 120 tests added, all passing
+- Migration: v52 → v68 (major schema revision with data preservation where possible)
+- Breaking changes: None
+- Known issues: See KNOWN_ISSUES.md
+- This release adds a comprehensive set of features across core expense management and advanced AI-assisted integrations.
+- See the accompanying documentation in FEATURES.md for a complete feature map.
+---
+
 
 All notable changes to the ExpenseTracker project will be documented in this file.
 

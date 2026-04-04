@@ -222,6 +222,25 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                if (state.widgets.isEmpty()) {
+                    item(span = { GridItemSpan(2) }) {
+                        BentoCard {
+                            Text(
+                                text = stringResource(R.string.empty_title_generic),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = SemanticColors.TextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.empty_message_generic),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = SemanticColors.TextSecondary
+                            )
+                        }
+                    }
+                }
+
                 items(
                     items = state.widgets,
                     key = { HomeViewModel.getWidgetId(it) },
