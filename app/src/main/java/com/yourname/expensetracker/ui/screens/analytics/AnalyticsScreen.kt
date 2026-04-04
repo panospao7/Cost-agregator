@@ -60,6 +60,12 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import kotlin.math.roundToInt
 import java.util.Locale
 
+private fun Double.toSafeChartAmount(): Float {
+    if (!isFinite()) return 0f
+    val rounded = ((this * 100.0).roundToInt() / 100.0).toFloat()
+    return if (rounded.isFinite()) rounded else 0f
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnalyticsScreen(
@@ -432,7 +438,11 @@ fun EnhancedCategoryItem(
             if (item.sparklineData.size > 1) {
                 Spacer(modifier = Modifier.height(12.dp))
                 val chartModel = remember(item.category.id, item.sparklineData) {
-                    entryModelOf(item.sparklineData.mapIndexed { index, value -> FloatEntry(index.toFloat(), value.toFloat()) })
+                    entryModelOf(
+                        item.sparklineData.mapIndexed { index, value ->
+                            FloatEntry(index.toFloat(), value.toSafeChartAmount())
+                        }
+                    )
                 }
                 Chart(
                     chart = lineChart(),
@@ -629,7 +639,7 @@ fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>) {
                 hourOfDayPattern.find { it.first == h }?.second ?: 0.0
             }
             val chartEntryModel = remember(hourOfDayPattern) {
-                entryModelOf(allHours.mapIndexed { i, v -> entryOf(i.toFloat(), v.toFloat()) })
+                entryModelOf(allHours.mapIndexed { i, v -> entryOf(i.toFloat(), v.toSafeChartAmount()) })
             }
             val string12am = stringResource(R.string.analytics_chart_12am)
             val string12pm = stringResource(R.string.analytics_chart_12pm)
@@ -813,8 +823,10 @@ fun SpendingChartBento(state: AnalyticsState) {
                     state.dailyTotals.entries.sortedBy { it.key }
                 }
                 val chartEntryModel = remember(sortedEntries) {
-                    val entries = sortedEntries.mapIndexed { index, entry ->
-                        entryOf(index.toFloat(), entry.value.toFloat())
+                    val values = sortedEntries.map { it.value.toSafeChartAmount() }
+                    val safeValues = if (values.size < 2) values + 0f else values
+                    val entries = safeValues.mapIndexed { index, value ->
+                        entryOf(index.toFloat(), value)
                     }
                     entryModelOf(entries)
                 }
@@ -859,8 +871,10 @@ fun DayOfWeekChartBento(dayOfWeekPattern: List<DayOfWeekInsight>) {
                     dayOfWeekPattern.sortedBy { it.dayIndex }
                 }
                 val chartEntryModel = remember(sorted) {
-                    val entries = sorted.mapIndexed { index, insight ->
-                        entryOf(index.toFloat(), insight.totalSpent.toFloat())
+                    val values = sorted.map { it.totalSpent.toSafeChartAmount() }
+                    val safeValues = if (values.size < 2) values + 0f else values
+                    val entries = safeValues.mapIndexed { index, value ->
+                        entryOf(index.toFloat(), value)
                     }
                     entryModelOf(entries)
                 }
@@ -1351,13 +1365,17 @@ fun YearOverYearCard(yoy: YearOverYearComparison) {
                 )
 
                 val yoyEntryModel = remember(yoy.deltaByMonth) {
-                    fun Double.toChartAmount(): Float = ((this * 100).roundToInt() / 100f)
-
-                    val currentEntries = yoy.deltaByMonth.mapIndexed { i, (_, current, _) ->
-                        FloatEntry(x = i.toFloat(), y = current.toChartAmount())
+                    val safeData = if (yoy.deltaByMonth.size < 2) {
+                        yoy.deltaByMonth + Triple("", 0.0, 0.0)
+                    } else {
+                        yoy.deltaByMonth
                     }
-                    val priorEntries = yoy.deltaByMonth.mapIndexed { i, (_, _, prior) ->
-                        FloatEntry(x = i.toFloat(), y = prior.toChartAmount())
+
+                    val currentEntries = safeData.mapIndexed { i, (_, current, _) ->
+                        FloatEntry(x = i.toFloat(), y = current.toSafeChartAmount())
+                    }
+                    val priorEntries = safeData.mapIndexed { i, (_, _, prior) ->
+                        FloatEntry(x = i.toFloat(), y = prior.toSafeChartAmount())
                     }
                     entryModelOf(currentEntries, priorEntries)
                 }
