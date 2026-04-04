@@ -22,8 +22,8 @@ import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUse
 import com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCase
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
-import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -82,7 +82,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         settingsFlow = kotlinx.coroutines.flow.MutableStateFlow(AiSettings(aiEnabled = true))
         
         val categorizeReceiptItemsUseCase = mockk<CategorizeReceiptItemsUseCase>(relaxed = true)
-        val itemCategorizationDao = mockk<com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao>(relaxed = true)
+        val itemCategorizationRepository = mockk<ReceiptItemCategorizationRepository>(relaxed = true)
 
         every { timeProvider.now() } returns System.currentTimeMillis()
         every { categoryRepository.allCategories } returns flowOf(emptyList())
@@ -98,7 +98,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             suggestReceiptExtractionUseCase,
             suggestCategoryFallbackUseCase,
             categorizeReceiptItemsUseCase,
-            itemCategorizationDao,
+            itemCategorizationRepository,
             aiArtifactRepository,
             aiRuntimeDiagnostics,
             receiptOcrService

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.database.dao
 
 import androidx.room.*
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import kotlinx.coroutines.flow.Flow
 
@@ -42,10 +43,10 @@ interface PendingReviewDao {
     suspend fun deleteByRawId(rawId: Long)
 
     @Query("UPDATE pending_reviews SET status = :status WHERE id = :id")
-    suspend fun updateStatus(id: Long, status: String)
+    suspend fun updateStatus(id: Long, status: PendingReviewStatus)
 
-    @Query("UPDATE pending_reviews SET status = :status WHERE id = :id AND status = 'PENDING'")
-    suspend fun updateStatusIfPending(id: Long, status: String): Int
+    @Query("UPDATE pending_reviews SET status = :newStatus WHERE id = :id AND status = :expectedStatus")
+    suspend fun transitionStatus(id: Long, expectedStatus: PendingReviewStatus, newStatus: PendingReviewStatus): Int
 
     @Query("SELECT * FROM pending_reviews ORDER BY createdAt DESC")
     fun getAllFlow(): Flow<List<PendingReview>>
@@ -65,15 +66,265 @@ interface PendingReviewDao {
     @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' AND suggestedDate >= :startDate AND suggestedDate < :endDate")
     suspend fun getPendingReviewsInDateRange(startDate: Long, endDate: Long): List<PendingReview>
 
-    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' AND suggestedMerchant LIKE '%' || :merchantPattern || '%' AND suggestedDate >= :startDate AND suggestedDate < :endDate")
-    suspend fun getPendingReviewsByMerchantAndDateRange(merchantPattern: String, startDate: Long, endDate: Long): List<PendingReview>
+    @Query("""
+        SELECT * FROM pending_reviews
+        WHERE status = 'PENDING'
+          AND suggestedMerchantKey = :merchantKey
+          AND suggestedDate >= :startDate
+          AND suggestedDate < :endDate
+    """)
+    suspend fun getPendingReviewsByMerchantKeyAndDateRange(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long
+    ): List<PendingReview>
 
-    @Query("SELECT * FROM pending_reviews WHERE suggestedMerchant = :merchantName AND status = 'PENDING'")
-    suspend fun getPendingByMerchant(merchantName: String): List<PendingReview>
+    @Query("""
+        SELECT * FROM pending_reviews
+        WHERE status = 'PENDING'
+          AND suggestedMerchant = :merchantName
+          AND suggestedMerchantKey IS NULL
+          AND suggestedDate >= :startDate
+          AND suggestedDate < :endDate
+    """)
+    suspend fun getPendingReviewsByMerchantNameAndDateRange(
+        merchantName: String,
+        startDate: Long,
+        endDate: Long
+    ): List<PendingReview>
 
-    @Query("UPDATE pending_reviews SET suggestedCategoryId = :categoryId WHERE suggestedMerchant = :merchantName AND status = 'PENDING'")
-    suspend fun bulkUpdateCategoryByMerchant(merchantName: String, categoryId: Long)
+    @Transaction
+    suspend fun getPendingReviewsByMerchantAndDateRange(
+        merchantKey: String,
+        merchantName: String,
+        startDate: Long,
+        endDate: Long
+    ): List<PendingReview> {
+        val keyed = getPendingReviewsByMerchantKeyAndDateRange(merchantKey, startDate, endDate)
+        if (keyed.isNotEmpty()) return keyed
+        return getPendingReviewsByMerchantNameAndDateRange(merchantName, startDate, endDate)
+    }
 
-    @Query("UPDATE pending_reviews SET suggestedMerchant = :newMerchant WHERE suggestedMerchant = :oldMerchant AND status = 'PENDING'")
-    suspend fun bulkRenameMerchant(oldMerchant: String, newMerchant: String)
+    @Query("""
+        SELECT * FROM pending_reviews
+        WHERE status = 'PENDING'
+          AND suggestedMerchantKey = :merchantKey
+    """)
+    suspend fun getPendingByMerchantKey(merchantKey: String): List<PendingReview>
+
+    @Query("""
+        SELECT * FROM pending_reviews
+        WHERE status = 'PENDING'
+          AND suggestedMerchant = :merchantName
+          AND suggestedMerchantKey IS NULL
+    """)
+    suspend fun getPendingByMerchantName(merchantName: String): List<PendingReview>
+
+    @Transaction
+    suspend fun getPendingByMerchant(merchantKey: String, merchantName: String): List<PendingReview> {
+        val keyed = getPendingByMerchantKey(merchantKey)
+        if (keyed.isNotEmpty()) return keyed
+        return getPendingByMerchantName(merchantName)
+    }
+
+    @Query("""
+        UPDATE pending_reviews
+        SET suggestedCategoryId = :categoryId
+        WHERE status = 'PENDING'
+          AND suggestedMerchantKey = :merchantKey
+    """)
+    suspend fun bulkUpdateCategoryByMerchantKey(merchantKey: String, categoryId: Long)
+
+    @Query("""
+        UPDATE pending_reviews
+        SET suggestedCategoryId = :categoryId
+        WHERE status = 'PENDING'
+          AND suggestedMerchant = :merchantName
+          AND suggestedMerchantKey IS NULL
+    """)
+    suspend fun bulkUpdateCategoryByMerchantName(merchantName: String, categoryId: Long)
+
+    @Transaction
+    suspend fun bulkUpdateCategoryByMerchant(merchantKey: String, merchantName: String, categoryId: Long) {
+        bulkUpdateCategoryByMerchantKey(merchantKey, categoryId)
+        bulkUpdateCategoryByMerchantName(merchantName, categoryId)
+    }
+
+    @Query("""
+        UPDATE pending_reviews
+        SET suggestedMerchant = :newMerchant,
+            suggestedMerchantKey = :newMerchantKey
+        WHERE status = 'PENDING'
+          AND suggestedMerchantKey = :oldMerchantKey
+    """)
+    suspend fun bulkRenameMerchantByKey(
+        oldMerchantKey: String,
+        newMerchant: String,
+        newMerchantKey: String
+    )
+
+    @Query("""
+        UPDATE pending_reviews
+        SET suggestedMerchant = :newMerchant,
+            suggestedMerchantKey = :newMerchantKey
+        WHERE status = 'PENDING'
+          AND suggestedMerchant = :oldMerchant
+          AND suggestedMerchantKey IS NULL
+    """)
+    suspend fun bulkRenameMerchantByName(
+        oldMerchant: String,
+        newMerchant: String,
+        newMerchantKey: String
+    )
+
+    @Transaction
+    suspend fun bulkRenameMerchant(
+        oldMerchantKey: String,
+        oldMerchant: String,
+        newMerchant: String,
+        newMerchantKey: String
+    ) {
+        bulkRenameMerchantByKey(oldMerchantKey, newMerchant, newMerchantKey)
+        bulkRenameMerchantByName(oldMerchant, newMerchant, newMerchantKey)
+    }
+
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1
+            FROM pending_reviews
+            WHERE status = 'PENDING'
+              AND suggestedMerchantKey = :merchantKey
+              AND suggestedDate >= :startDate
+              AND suggestedDate < :endDate
+              AND suggestedAmount BETWEEN :minAmount AND :maxAmount
+              AND UPPER(suggestedCurrency) = UPPER(:currency)
+        )
+    """)
+    suspend fun hasPendingDuplicateByMerchantKeyInRange(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String
+    ): Boolean
+
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1
+            FROM pending_reviews
+            WHERE status = 'PENDING'
+              AND suggestedMerchant = :merchantName
+              AND suggestedMerchantKey IS NULL
+              AND suggestedDate >= :startDate
+              AND suggestedDate < :endDate
+              AND suggestedAmount BETWEEN :minAmount AND :maxAmount
+              AND UPPER(suggestedCurrency) = UPPER(:currency)
+        )
+    """)
+    suspend fun hasPendingDuplicateByMerchantNameInRange(
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String
+    ): Boolean
+
+    @Transaction
+    suspend fun hasPendingDuplicateInRange(
+        merchantKey: String,
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String
+    ): Boolean {
+        return hasPendingDuplicateByMerchantKeyInRange(
+            merchantKey = merchantKey,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = currency
+        ) || hasPendingDuplicateByMerchantNameInRange(
+            merchantName = merchantName,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = currency
+        )
+    }
+
+    @Query("""
+        SELECT *
+        FROM pending_reviews
+        WHERE status = 'PENDING'
+          AND suggestedMerchantKey = :merchantKey
+          AND suggestedDate >= :startDate
+          AND suggestedDate < :endDate
+          AND suggestedAmount BETWEEN :minAmount AND :maxAmount
+          AND UPPER(suggestedCurrency) = UPPER(:currency)
+        ORDER BY createdAt DESC
+        LIMIT 1
+    """)
+    suspend fun getPendingDuplicateCandidateByMerchantKeyInRange(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String
+    ): PendingReview?
+
+    @Query("""
+        SELECT *
+        FROM pending_reviews
+        WHERE status = 'PENDING'
+          AND suggestedMerchant = :merchantName
+          AND suggestedMerchantKey IS NULL
+          AND suggestedDate >= :startDate
+          AND suggestedDate < :endDate
+          AND suggestedAmount BETWEEN :minAmount AND :maxAmount
+          AND UPPER(suggestedCurrency) = UPPER(:currency)
+        ORDER BY createdAt DESC
+        LIMIT 1
+    """)
+    suspend fun getPendingDuplicateCandidateByMerchantNameInRange(
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String
+    ): PendingReview?
+
+    @Transaction
+    suspend fun getPendingDuplicateCandidateInRange(
+        merchantKey: String,
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String
+    ): PendingReview? {
+        return getPendingDuplicateCandidateByMerchantKeyInRange(
+            merchantKey = merchantKey,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = currency
+        ) ?: getPendingDuplicateCandidateByMerchantNameInRange(
+            merchantName = merchantName,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = currency
+        )
+    }
 }

@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
-import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable

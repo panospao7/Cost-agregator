@@ -23,6 +23,7 @@ import org.junit.Test
 class SpendingMapViewModelStressTest : ViewModelTestUtils() {
 
     private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository
     private lateinit var locationResolver: LocationResolver
     private lateinit var locationProvider: com.yourname.expensetracker.domain.location.ForegroundLocationProvider
     private lateinit var merchantLocationRepository: com.yourname.expensetracker.data.repository.MerchantLocationRepository
@@ -36,6 +37,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
     override fun setup() {
         super.setup()
         expenseRepository = mockk(relaxed = true)
+        categoryRepository = mockk(relaxed = true)
         locationResolver = mockk(relaxed = true)
         locationProvider = mockk(relaxed = true)
         merchantLocationRepository = mockk(relaxed = true)
@@ -45,9 +47,11 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
 
         every { expenseRepository.getLocatedExpenses() } returns flowOf(emptyList())
         every { expenseRepository.getUnlocatedExpensesFlow(any()) } returns flowOf(emptyList())
+        every { categoryRepository.allCategories } returns flowOf(emptyList())
 
         viewModel = SpendingMapViewModel(
             expenseRepository,
+            categoryRepository,
             locationResolver,
             locationProvider,
             merchantLocationRepository,

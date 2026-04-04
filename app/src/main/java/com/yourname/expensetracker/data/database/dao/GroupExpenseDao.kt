@@ -26,6 +26,9 @@ interface GroupExpenseDao {
     
     @Query("SELECT * FROM group_expenses WHERE groupId = :groupId ORDER BY date DESC")
     suspend fun getExpensesForGroupOnce(groupId: Long): List<GroupExpense>
+
+    @Query("SELECT * FROM group_expenses WHERE groupId IN (:groupIds) ORDER BY groupId, date DESC")
+    suspend fun getExpensesForGroups(groupIds: List<Long>): List<GroupExpense>
     
     @Query("SELECT * FROM group_expenses WHERE expenseId = :expenseId LIMIT 1")
     suspend fun getGroupExpenseForExpense(expenseId: Long): GroupExpense?

@@ -11,6 +11,8 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedPriority
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel as EntityGoalProtection
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
+import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority as DomainPlannedPriority
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel as DomainGoalProtection
 import kotlinx.coroutines.flow.Flow
@@ -26,32 +28,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import timber.log.Timber
-
-enum class WeatherState {
-    CLEAR_SKIES,      // 🌤️ Comfortable buffer
-    PARTLY_CLOUDY,    // ⛅ Moderate, watch spending
-    CLOUDY,           // ☁️ Tight, limited discretionary
-    RAINY,            // 🌧️ Multiple bills, over pace
-    STORMY,           // ⛈️ Budget danger, immediate action
-    UNKNOWN
-}
-
-data class FinancialWeather(
-    val state: WeatherState,
-    val headline: String,
-    val summary: String,
-    val icon: String, // Emoji
-    val riskLevel: Int, // 0-100
-    val totalCommitted: Double,
-    val totalLikely: Double,
-    val predictedDiscretionary: Double,
-    val discretionaryBudget: Double,
-    val pastSpendingPoints: List<Double> = emptyList(),
-    val projectedSpendingPoints: List<Double> = emptyList(),
-    val upcomingItems: List<UpcomingItem> = emptyList(),
-    val totalRecurringCount: Int = 0,
-    val details: List<NarrativeSection> = emptyList()
-)
 
 @Singleton
 @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -248,11 +224,26 @@ class FinancialWeatherRepository @Inject constructor(
         return items.sortedBy { it.date }
     }
 
-    fun getAllRecurringPatterns(): Flow<List<com.yourname.expensetracker.data.database.entity.ManualRecurringExpense>> {
-        return recurringExpenseRepository.getAllFlow()
-    }
+    fun getAllRecurringPatterns(): Flow<List<RecurringPattern>> =
+        recurringExpenseRepository.getAllFlow().map { entities ->
+            entities.map { entity ->
+                RecurringPattern(
+                    id = entity.id,
+                    merchantName = entity.merchant,
+                    averageAmount = entity.amount,
+                    currency = entity.currency,
+                    frequency = entity.frequency,
+                    nextExpectedDate = entity.nextDate,
+                    confidence = 1.0f,
+                    periodVarianceDays = 0,
+                    amountVariancePercent = 0.0,
+                    previousDates = emptyList()
+                )
+            }
+        }
 
-    fun getAllPlannedExpenses(): Flow<List<com.yourname.expensetracker.data.database.entity.PlannedExpense>> {
-        return plannedExpenseRepository.getAllPlannedExpenses()
-    }
+    fun getAllPlannedExpenses(): Flow<List<PlannedExpense>> =
+        plannedExpenseRepository.getAllPlannedExpenses().map { entities ->
+            entities.map { it.toDomain() }
+        }
 }

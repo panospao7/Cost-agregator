@@ -24,6 +24,7 @@ import androidx.room.PrimaryKey
         Index(value = ["receiptId"]),
         Index(value = ["emailMessageId"], unique = true),
         Index(value = ["provider", "parsedAt"]),
+        Index(value = ["parsedAt"]),
         Index(name = "index_email_receipt_fingerprint", value = ["fingerprint"])
     ]
 )
@@ -37,8 +38,8 @@ data class EmailReceiptSource(
     
     val emailSubject: String,
     
-    @ColumnInfo(defaultValue = "") 
-    val emailMessageId: String,
+    @ColumnInfo(defaultValue = "NULL")
+    val emailMessageId: String? = null,
     
     val parsedAt: Long,
     

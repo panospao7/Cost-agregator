@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyTotal
 import com.yourname.expensetracker.data.database.dao.WeeklyTotal
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
@@ -22,7 +23,10 @@ import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
-import com.yourname.expensetracker.data.repository.SpendingSummary
+import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
+import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
+import com.yourname.expensetracker.domain.model.dashboard.DashboardCategory
+import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
@@ -71,6 +75,7 @@ import java.time.ZoneId
 
 class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
+    private val database = mockk<AppDatabase>(relaxed = true)
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var spendingPaceCalculator: SpendingPaceCalculator
     private lateinit var insightsEngine: InsightsEngine
@@ -90,6 +95,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         mockCategories(categories)
 
         expenseRepository = ExpenseRepository(
+            database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),
@@ -218,8 +224,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         val compiled = useCase.compute(
             ProcessedDashboardData(
                 data = DashboardData(
-                    expenses = expenses,
-                    categories = categories,
+                    expenses = expenses.map { it.toDashboardExpense() },
+                    categories = categories.map { it.toDashboardCategory() },
                     budgetStatuses = budgetStatuses,
                     pendingCount = 0,
                     weather = weather,
@@ -231,8 +237,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                     totalSpent = monthSpent,
                     previousTotalSpent = null,
                     changePercent = null,
-                    dailyHistory = emptyList(),
-                    previousDailyHistory = emptyList(),
+                    dailyHistory = emptyList<Float>(),
+                    previousDailyHistory = emptyList<Float>(),
                     transactionCount = expenses.count { it.transactionType == TransactionType.PURCHASE }
                 ),
                 categoryBreakdown = listOf(
@@ -544,6 +550,31 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             .atStartOfDay(ZoneId.systemDefault())
             .toInstant()
             .toEpochMilli()
+
+    private fun Expense.toDashboardExpense(): DashboardExpense = DashboardExpense(
+        id = id,
+        amount = amount,
+        effectiveAmount = effectiveAmount,
+        merchant = merchant,
+        transactionType = when (transactionType) {
+            TransactionType.PURCHASE -> DashboardTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DashboardTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DashboardTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DashboardTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DashboardTransactionType.UNKNOWN
+        },
+        date = date,
+        categoryId = categoryId,
+        isNotMine = isNotMine,
+        isManualEntry = isManualEntry
+    )
+
+    private fun Category.toDashboardCategory(): DashboardCategory = DashboardCategory(
+        id = id,
+        name = name,
+        icon = icon,
+        color = color
+    )
 
     private fun mockAnalyticsDaoByRange(expenses: List<Expense>) {
         fun inRange(start: Long, end: Long): List<Expense> = expenses.filter { it.date in start until end }

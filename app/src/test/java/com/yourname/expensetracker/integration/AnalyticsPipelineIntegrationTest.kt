@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.integration
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
@@ -27,6 +28,8 @@ import java.time.ZoneId
 import java.util.Calendar
 
 class AnalyticsPipelineIntegrationTest {
+
+    private val database = mockk<AppDatabase>(relaxed = true)
 
     // ============================================================================
     // SECTION 1: SPENDING TREND CALCULATION PIPELINE
@@ -440,6 +443,7 @@ class AnalyticsPipelineIntegrationTest {
         coEvery { expenseDao.getAverageDailySpend(any(), any()) } returns 0.0
 
         val repository = ExpenseRepository(
+            database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),

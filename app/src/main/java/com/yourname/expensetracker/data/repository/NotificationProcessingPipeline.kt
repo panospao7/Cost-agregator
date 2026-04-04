@@ -161,6 +161,7 @@ class NotificationProcessingPipeline @Inject constructor(
                         suggestedAmount = oversizedCandidate.amount,
                         suggestedCurrency = oversizedCandidate.currency,
                         suggestedMerchant = oversizedCandidate.merchantHint ?: "Unknown",
+                        suggestedMerchantKey = MerchantKeyGenerator.generate(oversizedCandidate.merchantHint ?: "Unknown"),
                         suggestedType = TransactionType.UNKNOWN.name,
                         suggestedCategoryId = null,
                         suggestedDate = notification.timestamp,
@@ -297,6 +298,7 @@ class NotificationProcessingPipeline @Inject constructor(
             return fromAt?.takeIf { it.isNotBlank() }
         }
 
+        // Kept for deterministic unit tests.
         internal fun hasNearDuplicatePendingReview(
             existing: List<PendingReview>,
             amount: Double,
@@ -308,6 +310,7 @@ class NotificationProcessingPipeline @Inject constructor(
                     abs(review.suggestedAmount - amount) < 0.01
             }
         }
+
     }
 
     private suspend fun handleAutoAccept(
@@ -318,11 +321,17 @@ class NotificationProcessingPipeline @Inject constructor(
         fullText: String,
         routingResult: com.yourname.expensetracker.domain.intelligence.RoutingResult
     ): com.yourname.expensetracker.data.database.model.ExpenseWithCategory? {
+        val expenseDate = parsed.date ?: notification.timestamp
+        val merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
+        val dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, expenseDate)
+
         val isDuplicate = expenseDao.isDuplicate(
             amount = parsed.amount,
             merchant = correctedMerchant,
-            date = notification.timestamp,
-            windowMs = 300_000
+            date = expenseDate,
+            windowMs = 300_000,
+            merchantKey = merchantKey,
+            dedupeKey = dedupeKey
         )
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
@@ -360,19 +369,18 @@ class NotificationProcessingPipeline @Inject constructor(
             null
         }
 
-        val expenseDate = parsed.date ?: notification.timestamp
         val expense = Expense(
             amount = parsed.amount,
             currency = parsed.currency,
             merchant = correctedMerchant,
-            merchantKey = MerchantKeyGenerator.generate(correctedMerchant),
+            merchantKey = merchantKey,
             transactionType = parsed.type,
             date = expenseDate,
             rawNotificationId = rawId,
             categoryId = categoryId,
             paymentMethod = PaymentMethod.CARD,
             isManualEntry = false,
-            dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, expenseDate),
+            dedupeKey = dedupeKey,
             transferDirection = direction,
             transferAccountName = accountName,
             latitude = deviceGps?.first,
@@ -451,11 +459,17 @@ class NotificationProcessingPipeline @Inject constructor(
         fullText: String,
         routingResult: com.yourname.expensetracker.domain.intelligence.RoutingResult
     ) {
+        val reviewDate = parsed.date ?: notification.timestamp
+        val merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
+        val dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, reviewDate)
+
         val isDuplicate = expenseDao.isDuplicate(
             amount = parsed.amount,
             merchant = correctedMerchant,
-            date = notification.timestamp,
-            windowMs = 300_000
+            date = reviewDate,
+            windowMs = 300_000,
+            merchantKey = merchantKey,
+            dedupeKey = dedupeKey
         )
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
@@ -463,12 +477,17 @@ class NotificationProcessingPipeline @Inject constructor(
             classifier.train(fullText, isTransaction = true)
             return
         }
-        val nearbyPending = pendingReviewDao.getPendingReviewsByMerchantAndDateRange(
-            merchantPattern = correctedMerchant,
-            startDate = notification.timestamp - 300_000,
-            endDate = notification.timestamp + 300_000
+
+        val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRange(
+            merchantKey = merchantKey,
+            merchantName = correctedMerchant,
+            startDate = reviewDate - 300_000,
+            endDate = reviewDate + 300_000,
+            minAmount = parsed.amount - 0.01,
+            maxAmount = parsed.amount + 0.01,
+            currency = parsed.currency
         )
-        if (hasNearDuplicatePendingReview(nearbyPending, parsed.amount, parsed.currency)) {
+        if (hasPendingDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
             classifier.train(fullText, isTransaction = true)
@@ -508,13 +527,14 @@ class NotificationProcessingPipeline @Inject constructor(
             suggestedAmount = parsed.amount,
             suggestedCurrency = parsed.currency,
             suggestedMerchant = correctedMerchant,
+            suggestedMerchantKey = merchantKey,
             suggestedType = parsed.type.name,
             suggestedCategoryId = suggestedCategoryId,
             confidence = routingResult.adjustedConfidence,
             packageName = notification.packageName,
             notificationTitle = notification.title,
             notificationText = notification.text ?: notification.bigText,
-            suggestedDate = parsed.date,
+            suggestedDate = reviewDate,
             suggestedDirection = direction?.name,
             suggestedAccountName = accountName,
             suggestedLatitude = deviceGpsForReview?.first,
@@ -537,40 +557,57 @@ class NotificationProcessingPipeline @Inject constructor(
     private suspend fun detectAndSaveSubscriptionCandidate(merchant: String, categoryId: Long?) {
         try {
             // Skip if this merchant already has a pending candidate
-            if (subscriptionCandidateDao.hasPendingCandidate(merchant)) {
+            val merchantPendingSet = subscriptionCandidateDao
+                .getPendingCanonicalMerchants(listOf(merchant))
+                .toSet()
+            if (merchant in merchantPendingSet) {
                 Timber.d("Skipping subscription detection for $merchant: already has pending candidate")
                 return
             }
 
             // Fetch recent transactions for this merchant
             val since = timeProvider.now() - (SUBSCRIPTION_LOOKBACK_DAYS * TimePeriodUtils.DAY_IN_MILLIS)
-            val recentExpenses = expenseDao.getRecentExpensesForMerchant(merchant, since)
+            val recentExpenses = expenseDao.getRecentExpensesWithCategoryForMerchant(merchant, since)
 
             if (recentExpenses.size < NotificationSubscriptionDetector.MIN_TRANSACTIONS) {
                 Timber.d("Not enough transactions for $merchant: ${recentExpenses.size}")
                 return
             }
 
-            // Convert to ExpenseWithCategory for the detector
-            val expensesWithCategory = recentExpenses.map { expense ->
-                com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-                    expense = expense,
-                    category = categoryId?.let { database.categoryDao().getById(it) }
-                )
+            val fallbackCategory = categoryId
+                ?.takeIf { it > 0 }
+                ?.let { database.categoryDao().getById(it) }
+
+            val expensesWithCategory = if (fallbackCategory == null) {
+                recentExpenses
+            } else {
+                recentExpenses.map { expenseWithCategory ->
+                    if (expenseWithCategory.category != null || expenseWithCategory.expense.categoryId != null) {
+                        expenseWithCategory
+                    } else {
+                        expenseWithCategory.copy(category = fallbackCategory)
+                    }
+                }
             }
 
             // Run subscription detection
             val candidates = subscriptionDetector.detectSubscriptions(expensesWithCategory)
 
-            // Save high-confidence candidates (avoid duplicates for same merchant)
-            candidates.firstOrNull()?.let { candidate ->
-                // Double-check no pending candidate exists for this canonical merchant
-                if (!subscriptionCandidateDao.hasPendingCandidate(candidate.canonicalMerchant)) {
-                    val entity = subscriptionDetector.toEntity(candidate)
-                    subscriptionCandidateDao.insert(entity)
-                    Timber.i("Saved subscription candidate for ${candidate.canonicalMerchant} " +
-                            "(${candidate.detectedInterval}, confidence=${"%.2f".format(candidate.confidence)})")
-                }
+            if (candidates.isEmpty()) return
+
+            // Save high-confidence candidates while avoiding per-candidate EXISTS queries.
+            val candidateMerchants = candidates.map { it.canonicalMerchant }.distinct()
+            val existingPending = subscriptionCandidateDao
+                .getPendingCanonicalMerchants(candidateMerchants)
+                .toHashSet()
+
+            candidates.firstOrNull { it.canonicalMerchant !in existingPending }?.let { candidate ->
+                val entity = subscriptionDetector.toEntity(candidate)
+                subscriptionCandidateDao.insert(entity)
+                Timber.i(
+                    "Saved subscription candidate for ${candidate.canonicalMerchant} " +
+                        "(${candidate.detectedInterval}, confidence=${"%.2f".format(candidate.confidence)})"
+                )
             }
         } catch (e: Exception) {
             Timber.w(e, "Error detecting subscription candidate for: $merchant")

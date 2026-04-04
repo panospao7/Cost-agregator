@@ -73,7 +73,7 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         }
 
         // 5. Build input
-        val input = inputBuilder.build(receipt)
+        val input = inputBuilder.build(receipt, settings)
         if (input.lineItems.isEmpty()) {
             Timber.d("No line items found for receipt $receiptId")
             return CategorizationResult.Error

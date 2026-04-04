@@ -9,6 +9,7 @@ import androidx.room.Transaction
 import androidx.room.Update
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupMember
+import com.yourname.expensetracker.data.database.model.ExpenseGroupWithDetails
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -47,6 +48,10 @@ interface ExpenseGroupDao {
     
     @Query("SELECT * FROM expense_groups WHERE isActive = 1 ORDER BY createdAt DESC")
     suspend fun getActive(): List<ExpenseGroup>
+
+    @Transaction
+    @Query("SELECT * FROM expense_groups WHERE isActive = 1 ORDER BY createdAt DESC")
+    suspend fun getActiveWithDetails(): List<ExpenseGroupWithDetails>
     
     @Query("SELECT * FROM expense_groups WHERE id = :groupId LIMIT 1")
     suspend fun getById(groupId: Long): ExpenseGroup?

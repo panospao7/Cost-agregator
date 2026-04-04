@@ -2,10 +2,18 @@ package com.yourname.expensetracker.data.database.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 
-@Entity(tableName = "manual_recurring_expenses")
+@Entity(
+    tableName = "manual_recurring_expenses",
+    indices = [
+        Index(value = ["isActive", "nextDate"]),
+        Index(value = ["isSubscription", "isActive", "nextDate"]),
+        Index(value = ["merchant"])
+    ]
+)
 data class ManualRecurringExpense(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,

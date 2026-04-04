@@ -21,7 +21,9 @@ import com.yourname.expensetracker.data.database.dao.LocationCluster
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.database.dao.MonthlyTotal
 import com.yourname.expensetracker.data.database.dao.WeeklyTotal
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import androidx.room.withTransaction
 import androidx.sqlite.db.SimpleSQLiteQuery
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -42,6 +44,7 @@ enum class OwnershipFilter {
 
 @Singleton
 class ExpenseRepository @Inject constructor(
+    private val database: AppDatabase,
     private val expenseDao: ExpenseDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val pendingReviewDao: PendingReviewDao,
@@ -280,14 +283,15 @@ class ExpenseRepository @Inject constructor(
             // Update all approved expenses with this name
             val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
             val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-            expenseDao.updateMerchantForMerchant(oldMerchantKey, newMerchant, newMerchantKey)
-            // Also update any pending reviews with this name
-            pendingReviewDao.bulkRenameMerchant(oldMerchant, newMerchant)
+            database.withTransaction {
+                expenseDao.updateMerchantForMerchant(oldMerchantKey, newMerchant, newMerchantKey)
+                // Also update any pending reviews with this name
+                pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)
+            }
         } else {
             // Just update this single record
             val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-            expenseDao.updateMerchant(expense.id, newMerchant)
-            expenseDao.updateMerchantKey(expense.id, newMerchantKey)
+            expenseDao.updateMerchantAndKey(expense.id, newMerchant, newMerchantKey)
         }
         
         // Catch the rename for future auto-correction

@@ -1,12 +1,8 @@
 package com.yourname.expensetracker.ui.components.emptystate
 
-import androidx.compose.ui.graphics.vector.ImageVector
-import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * Singleton registry that manages contextual actions for empty states across the app.
@@ -14,8 +10,7 @@ import javax.inject.Singleton
  * This registry allows screens to register available actions for empty states,
  * track which actions have been completed, and retrieve actions by screen key.
  */
-@Singleton
-class ContextualActionRegistry @Inject constructor() {
+class ContextualActionRegistry {
     private val actions = mutableMapOf<String, List<EmptyStateAction>>()
     private val completedActionsMap = mutableMapOf<String, Set<String>>()
     private val _completedActions = MutableStateFlow<Set<String>>(emptySet())

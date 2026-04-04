@@ -112,6 +112,11 @@ class ReceiptOcrService @Inject constructor(
         }
     }
 
+    /**
+     * Platform-agnostic URI reference overload used by domain abstractions.
+     */
+    suspend fun processUri(uriRef: String): OcrResult = processUri(Uri.parse(uriRef))
+
     private fun validateFileSize(uri: Uri) {
         val fileSize = context.contentResolver.openFileDescriptor(uri, "r")?.use {
             it.statSize

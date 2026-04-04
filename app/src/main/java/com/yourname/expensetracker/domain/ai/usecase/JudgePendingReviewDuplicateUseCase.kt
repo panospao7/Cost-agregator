@@ -41,7 +41,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
             return DedupeJudgeGenerationResult.Disabled("AI duplicate assist is disabled.")
         }
 
-        val buildResult = inputBuilder.build(item)
+        val buildResult = inputBuilder.build(item, settings)
         if (buildResult is DedupeJudgeBuildResult.NotNeeded) {
             return DedupeJudgeGenerationResult.NotNeeded(buildResult.reason)
         }

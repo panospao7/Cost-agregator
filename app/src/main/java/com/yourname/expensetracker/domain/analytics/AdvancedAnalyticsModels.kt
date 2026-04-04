@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.analytics
 
-import androidx.compose.runtime.Immutable
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
@@ -15,7 +14,6 @@ enum class AnalyticsPeriod {
 /**
  * Represents a time range for analytics calculations.
  */
-@Immutable
 data class PeriodRange(
     val period: AnalyticsPeriod,
     val startMs: Long,
@@ -27,7 +25,6 @@ data class PeriodRange(
 /**
  * Enhanced category analytics with budget context and trends.
  */
-@Immutable
 data class EnhancedCategoryAnalytics(
     val category: Category,
     val period: PeriodRange,
@@ -73,7 +70,6 @@ enum class CategoryTrendDirection {
 /**
  * Enhanced merchant analytics with loyalty and price trends.
  */
-@Immutable
 data class EnhancedMerchantAnalytics(
     val merchant: String,
     val period: PeriodRange,
@@ -122,7 +118,6 @@ enum class MerchantConsistencyRating {
 /**
  * Spending pattern analysis results.
  */
-@Immutable
 data class SpendingPatternAnalysis(
     val period: PeriodRange,
     
@@ -141,7 +136,6 @@ data class SpendingPatternAnalysis(
     val detectedPatterns: List<DetectedPattern>
 )
 
-@Immutable
 data class DayOfWeekStats(
     val dayName: String,
     val dayIndex: Int,
@@ -151,7 +145,6 @@ data class DayOfWeekStats(
     val percentageOfWeek: Float
 )
 
-@Immutable
 data class WeekendWeekdayComparison(
     val weekdayTotal: Double,
     val weekdayCount: Int,
@@ -171,7 +164,6 @@ enum class TimeSlot {
     LATE_NIGHT       // 0-6
 }
 
-@Immutable
 data class DetectedPattern(
     val type: SpendingPatternType,
     val description: String,
@@ -192,7 +184,6 @@ enum class SpendingPatternType {
 /**
  * Statistical insights for a period.
  */
-@Immutable
 data class StatisticalInsights(
     val period: PeriodRange,
     
@@ -221,7 +212,6 @@ data class StatisticalInsights(
     val daysWithoutSpending: Int
 )
 
-@Immutable
 data class HistogramBin(
     val rangeStart: Double,
     val rangeEnd: Double,
@@ -230,7 +220,6 @@ data class HistogramBin(
     val percentage: Float
 )
 
-@Immutable
 data class TransactionPercentiles(
     val p10: Double,
     val p25: Double,

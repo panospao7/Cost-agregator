@@ -5,9 +5,13 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.ReviewQueueRepository
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
+import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
@@ -18,13 +22,17 @@ class DedupeJudgeInputBuilderTest {
 
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var reviewQueueRepository: ReviewQueueRepository
+    private lateinit var aiPolicy: AiPolicy
     private lateinit var builder: DedupeJudgeInputBuilder
 
     @Before
     fun setup() {
         expenseRepository = mockk()
         reviewQueueRepository = mockk()
-        builder = DedupeJudgeInputBuilder(expenseRepository, reviewQueueRepository)
+        aiPolicy = mockk()
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.DEDUPE_JUDGE) } returns true
+        every { aiPolicy.shouldRedact(any(), AiCapability.DEDUPE_JUDGE) } returns false
+        builder = DedupeJudgeInputBuilder(expenseRepository, reviewQueueRepository, aiPolicy)
     }
 
     @Test
@@ -36,7 +44,7 @@ class DedupeJudgeInputBuilderTest {
         )
         coEvery { reviewQueueRepository.getPendingReviewsByMerchant("Lidl") } returns emptyList()
 
-        val result = builder.build(PendingReviewWithReceipt(review, null))
+        val result = builder.build(PendingReviewWithReceipt(review, null), AiSettings())
 
         assertTrue(result is DedupeJudgeBuildResult.Ready)
     }

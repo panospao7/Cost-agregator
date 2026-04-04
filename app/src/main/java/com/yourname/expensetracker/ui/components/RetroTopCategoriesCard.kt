@@ -26,8 +26,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.analytics.CategoryTrendDirection
+import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import androidx.compose.ui.res.stringResource
@@ -49,7 +49,7 @@ import java.util.Date
 fun RetroTopCategoriesCard(
     categories: List<CategorySpending>,
     categoryTrends: Map<Long, CategoryTrendInfo> = emptyMap(),
-    transactions: List<Expense> = emptyList(),
+    transactions: List<DashboardExpense> = emptyList(),
     modifier: Modifier = Modifier,
     onCategoryClick: ((CategorySpending) -> Unit)? = null,
     onViewAllTransactions: (() -> Unit)? = null
@@ -411,7 +411,7 @@ private fun RetroBlockProgressBar(
 private fun RetroCategoryDetailDialog(
     category: CategorySpending,
     trendInfo: CategoryTrendInfo?,
-    transactions: List<Expense> = emptyList(),
+    transactions: List<DashboardExpense> = emptyList(),
     onDismiss: () -> Unit,
     onViewAll: (() -> Unit)? = null
 ) {
@@ -646,7 +646,7 @@ private fun RetroToggleButton(
 
 @Composable
 private fun RetroTransactionsSection(
-    transactions: List<Expense>,
+    transactions: List<DashboardExpense>,
     visibleCount: Int,
     onShowMore: () -> Unit
 ) {

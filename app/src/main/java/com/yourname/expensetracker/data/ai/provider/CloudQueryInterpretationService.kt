@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
+import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
@@ -14,7 +15,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
@@ -22,20 +22,19 @@ import kotlinx.coroutines.delay
 @Singleton
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudQueryInterpretationService @Inject constructor(
-    private val secureKeyStorage: SecureKeyStorage
+    private val secureKeyStorage: SecureKeyStorage,
+    @CloudAiHttpClient private val client: OkHttpClient
 ) : QueryInterpretationService {
 
     private var apiKeyOverride: String? = null
 
+    // Secondary constructor for tests
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
+
     // Secondary constructor for testing
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage) {
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient()) {
         this.apiKeyOverride = apiKeyOverride
     }
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(AppConfig.Ai.QUERY_INTERPRETATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .readTimeout(AppConfig.Ai.QUERY_INTERPRETATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .build()
 
     private val promptHelper = OnDeviceQueryInterpretationService()
 
@@ -51,11 +50,12 @@ class CloudQueryInterpretationService @Inject constructor(
         }
 
         val requestBody = buildRequestBody(input)
-        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL}:generateContent?key=$apiKey"
+        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
             .post(requestBody.toRequestBody(JSON_MEDIA_TYPE))
             .header("Content-Type", "application/json")
+            .header("x-goog-api-key", apiKey)
             .build()
 
         val maxRetries = 2

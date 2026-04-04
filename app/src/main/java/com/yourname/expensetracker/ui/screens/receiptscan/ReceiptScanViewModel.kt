@@ -6,8 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
-import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
@@ -138,7 +138,7 @@ class ReceiptScanViewModel @Inject constructor(
     private val suggestReceiptExtractionUseCase: SuggestReceiptExtractionUseCase,
     private val suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase,
     private val categorizeReceiptItemsUseCase: CategorizeReceiptItemsUseCase,
-    private val itemCategorizationDao: ReceiptItemCategorizationDao,
+    private val receiptItemCategorizationRepository: ReceiptItemCategorizationRepository,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
     private val receiptOcrService: ReceiptOcrService
@@ -1000,7 +1000,7 @@ class ReceiptScanViewModel @Inject constructor(
                 when (result) {
                     is com.yourname.expensetracker.domain.ai.model.CategorizationResult.Success -> {
                         // Load the stored categorizations
-                        val items = itemCategorizationDao.getByReceiptId(receiptId)
+                        val items = receiptItemCategorizationRepository.getByReceiptId(receiptId)
                         _state.update { 
                             it.copy(
                                 itemCategorizations = items,
@@ -1049,7 +1049,7 @@ class ReceiptScanViewModel @Inject constructor(
             val now = timeProvider.now()
             
             // Update in database
-            itemCategorizationDao.updateUserCorrection(
+            receiptItemCategorizationRepository.updateUserCorrection(
                 itemId = item.id,
                 categoryId = category?.id,
                 categoryName = category?.name,
@@ -1058,7 +1058,7 @@ class ReceiptScanViewModel @Inject constructor(
             
             // Reload items
             val receiptId = _state.value.receiptId ?: return@launch
-            val updatedItems = itemCategorizationDao.getByReceiptId(receiptId)
+            val updatedItems = receiptItemCategorizationRepository.getByReceiptId(receiptId)
             
             _state.update { it.copy(itemCategorizations = updatedItems) }
         }

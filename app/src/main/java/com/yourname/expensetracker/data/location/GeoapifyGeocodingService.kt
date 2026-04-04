@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONException
@@ -59,7 +60,7 @@ class GeoapifyGeocodingService @Inject constructor(
         }
 
         val url = buildUrl(query, biasLat, biasLon, limit)
-        Log.d(TAG, "==> Geoapify request: $url")
+        Log.d(TAG, "==> Geoapify request ${buildSafeLogRoute(query, biasLat, biasLon, limit)}")
 
         val request = Request.Builder()
             .url(url)
@@ -122,20 +123,32 @@ class GeoapifyGeocodingService @Inject constructor(
     }
 
     private fun buildUrl(query: String, biasLat: Double?, biasLon: Double?, limit: Int): String {
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val sb = StringBuilder(AppConfig.Location.GEOAPIFY_BASE_URL)
-        sb.append("/v1/geocode/search?text=$encoded")
-        sb.append("&format=json")
-        sb.append("&limit=$limit")
-        sb.append("&lang=en")
-        // Bias toward Greece but allow worldwide results
-        if (biasLat != null && biasLon != null) {
-            sb.append("&bias=proximity:$biasLon,$biasLat")
+        val baseUrl = "${AppConfig.Location.GEOAPIFY_BASE_URL}/v1/geocode/search".toHttpUrl()
+        return baseUrl.newBuilder()
+            .addQueryParameter("text", query)
+            .addQueryParameter("format", "json")
+            .addQueryParameter("limit", limit.toString())
+            .addQueryParameter("lang", "en")
+            .addQueryParameter(
+                "bias",
+                if (biasLat != null && biasLon != null) {
+                    "proximity:$biasLon,$biasLat"
+                } else {
+                    "countrycode:gr"
+                }
+            )
+            .addQueryParameter("apiKey", apiKey)
+            .build()
+            .toString()
+    }
+
+    private fun buildSafeLogRoute(query: String, biasLat: Double?, biasLon: Double?, limit: Int): String {
+        val bias = if (biasLat != null && biasLon != null) {
+            "proximity:$biasLon,$biasLat"
         } else {
-            sb.append("&bias=countrycode:gr")
+            "countrycode:gr"
         }
-        sb.append("&apiKey=$apiKey")
-        return sb.toString()
+        return "/v1/geocode/search?text=<redacted:${query.length}>&format=json&limit=$limit&lang=en&bias=$bias"
     }
 
     private fun parseResults(body: String): List<GeocodingResult> {

@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
-import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.components.common.EmptyStateType
 import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry

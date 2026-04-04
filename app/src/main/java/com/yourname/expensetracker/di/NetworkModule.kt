@@ -31,4 +31,15 @@ object NetworkModule {
             .readTimeout(20, TimeUnit.SECONDS)
             .build()
     }
+
+    @Provides
+    @Singleton
+    @CloudAiHttpClient
+    fun provideCloudAiOkHttpClient(): OkHttpClient {
+        return OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
+            .writeTimeout(45, TimeUnit.SECONDS)
+            .build()
+    }
 }

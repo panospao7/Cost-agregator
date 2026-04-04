@@ -1,11 +1,10 @@
 package com.yourname.expensetracker.domain.usecase.receipt
 
-import android.net.Uri
-import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
+import com.yourname.expensetracker.domain.receipt.ReceiptSource
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
 import javax.inject.Inject
 
@@ -19,9 +18,11 @@ class ProcessReceiptUseCase @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer,
     private val categorizationEngine: CategorizationEngine
 ) {
-    suspend operator fun invoke(imageUri: Uri): Result<ProcessedReceipt> {
+    suspend operator fun invoke(source: ReceiptSource): Result<ProcessedReceipt> {
         return try {
-            val ocrResult = ocrService.processUri(imageUri)
+            val ocrResult = when (source) {
+                is ReceiptSource.UriRef -> ocrService.processUri(source.value)
+            }
             
             val parsed = receiptParser.parse(ocrResult.fullText)
             

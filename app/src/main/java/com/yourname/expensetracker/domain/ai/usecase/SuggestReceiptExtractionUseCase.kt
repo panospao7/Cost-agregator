@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.model.ReceiptAssistAttemptDetail
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
@@ -79,7 +80,8 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
                     return ReceiptAssistGenerationResult.Success(
                         suggestion = it,
                         fromCache = true,
-                        usedImageInput = existing.explanationText?.contains("Image-aware cloud assist") == true
+                        usedImageInput = it.usedImageInput ||
+                            (existing.explanationText?.contains("Image-aware cloud assist") == true)
                     )
                 }
         }
@@ -108,10 +110,10 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
 
         return try {
             val serviceResult = receiptAssistService.suggest(input)
-            val usedImageInput = receiptAssistService.usedImageInput(input)
             when (serviceResult) {
                 is AiServiceResult.Success -> {
                     val suggestion = serviceResult.value
+                    val usedImageInput = suggestion.usedImageInput
                     if (suggestion.isEmpty()) {
                         aiArtifactRepository.upsert(
                             baseEntity.copy(
@@ -243,6 +245,8 @@ private fun ReceiptAssistSuggestion.toPayloadJson(): String {
         date?.let { put("date", it.toJson()) }
         taxAmount?.let { put("taxAmount", it.toJson()) }
         put("notes", JSONArray(notes))
+        put("usedImageInput", usedImageInput)
+        put("attemptDetails", JSONArray(attemptDetails.map { it.toJson() }))
     }.toString()
 }
 
@@ -262,9 +266,21 @@ private fun String.toReceiptAssistSuggestionOrNull(): ReceiptAssistSuggestion? {
             total = root.optJSONObject("total")?.toSuggestedDouble(),
             date = root.optJSONObject("date")?.toSuggestedLong(),
             taxAmount = root.optJSONObject("taxAmount")?.toSuggestedDouble(),
-            notes = root.optJSONArray("notes").toStringList()
+            notes = root.optJSONArray("notes").toStringList(),
+            usedImageInput = root.optBoolean("usedImageInput", false),
+            attemptDetails = root.optJSONArray("attemptDetails").toAttemptDetailsList()
         )
     }.getOrNull()
+}
+
+private fun ReceiptAssistAttemptDetail.toJson(): JSONObject {
+    return JSONObject().apply {
+        put("attemptNumber", attemptNumber)
+        put("method", method)
+        put("success", success)
+        confidence?.let { put("confidence", it) }
+        errorMessage?.let { put("errorMessage", it) }
+    }
 }
 
 private fun JSONObject.toSuggestedString() = com.yourname.expensetracker.domain.ai.model.SuggestedValue(
@@ -295,6 +311,24 @@ private fun JSONArray?.toStringList(): List<String> {
             optString(index)
                 .takeIf { it.isNotBlank() }
                 ?.let(::add)
+        }
+    }
+}
+
+private fun JSONArray?.toAttemptDetailsList(): List<ReceiptAssistAttemptDetail> {
+    if (this == null) return emptyList()
+    return buildList(length()) {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                ReceiptAssistAttemptDetail(
+                    attemptNumber = item.optInt("attemptNumber", index + 1),
+                    method = item.optString("method", "UNKNOWN"),
+                    success = item.optBoolean("success", false),
+                    confidence = if (item.has("confidence") && !item.isNull("confidence")) item.optDouble("confidence").toFloat() else null,
+                    errorMessage = item.optString("errorMessage").takeIf { it.isNotBlank() }
+                )
+            )
         }
     }
 }

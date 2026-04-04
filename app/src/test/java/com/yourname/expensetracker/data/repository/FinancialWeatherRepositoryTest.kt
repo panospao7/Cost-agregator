@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.*
@@ -89,7 +90,7 @@ class FinancialWeatherRepositoryTest {
             pacePercentage = 50.0f,
             paceStatus = PaceStatus.ON_PACE
         )
-        coEvery { insightsEngine.getSpendingPaceSuspend(any()) } returns spendingPace
+        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns spendingPace
 
         val capturedPastSum = slot<List<Double>>()
         every { synthesisEngine.synthesize(
@@ -126,7 +127,7 @@ class FinancialWeatherRepositoryTest {
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
-        coEvery { insightsEngine.getSpendingPaceSuspend(any()) } returns SpendingPace(
+        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
             currentMonthSpent = 0.0,
             daysElapsed = 15,
             daysInMonth = 31,
@@ -210,7 +211,7 @@ class FinancialWeatherRepositoryTest {
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
-        coEvery { insightsEngine.getSpendingPaceSuspend(any()) } returns SpendingPace(
+        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
             currentMonthSpent = 0.0,
             daysElapsed = 1,
             daysInMonth = 31,

@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.ui.mappers.toUi
 import com.yourname.expensetracker.R

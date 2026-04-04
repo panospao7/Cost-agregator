@@ -71,16 +71,11 @@ class ReviewQueueRepository @Inject constructor(
     ): Result<Long> {
         val review = pendingReviewDao.getById(reviewId) ?: return Result.Error(message = context.getString(R.string.debug_error_review_not_found))
 
-        // Atomically check and update status to prevent double-processing
-        val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING")
-        if (rowsUpdated == 0) return Result.Error(message = context.getString(R.string.debug_error_review_already_processed))
-
         val amount: Double = finalAmount ?: review.suggestedAmount
         val merchant: String = finalMerchant ?: review.suggestedMerchant
         val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
 
         if (amount > 1000000.0) {
-            pendingReviewDao.updateStatus(reviewId, "PENDING")
             return Result.Error(message = context.getString(R.string.debug_error_amount_exceeds_limit))
         }
 
@@ -118,22 +113,26 @@ class ReviewQueueRepository @Inject constructor(
             resolvedAddress = finalAddress
         )
 
-        // Wrap all DB mutations in a single Room transaction for atomicity
-        val expenseId = database.withTransaction {
-            // Insert expense
+        val txAlreadyProcessed = -2L
+        val txDuplicate = -1L
+
+        val txnResult = database.withTransaction {
+            val rowsUpdated = pendingReviewDao.transitionStatus(
+                id = reviewId,
+                expectedStatus = PendingReviewStatus.PENDING,
+                newStatus = PendingReviewStatus.PROCESSING
+            )
+            if (rowsUpdated == 0) {
+                return@withTransaction txAlreadyProcessed
+            }
+
             val id = expenseDao.insertAtomic(expense)
-            
             if (id > 0) {
-                // All related updates must succeed together
                 review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
                 sourceStatsDao.incrementAccepted(review.packageName)
                 sourceStatsDao.decrementPending(review.packageName)
-
-                review.scannedReceiptId?.let { receiptId ->
-                    scannedReceiptDao.linkToExpense(receiptId, id)
-                }
-
-                pendingReviewDao.updateStatus(reviewId, "APPROVED")
+                review.scannedReceiptId?.let { receiptId -> scannedReceiptDao.linkToExpense(receiptId, id) }
+                pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED)
 
                 val correction = UserCorrection(
                     packageName = review.packageName,
@@ -155,44 +154,20 @@ class ReviewQueueRepository @Inject constructor(
                     notificationText = review.notificationText
                 )
                 userCorrectionDao.insert(correction)
-            }
-            
-            id // Return expenseId from transaction
-        }
-
-        if (expenseId > 0) {
-            // External operations outside DB transaction
-            budgetMonitor.checkBudgets()
-
-            // Check for anomalies and alert
-            val enrichedExpense = expense.copy(id = expenseId)
-            val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-                expense = enrichedExpense,
-                category = categoryId?.let { database.categoryDao().getById(it) }
-            )
-            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
-
-            try { classifier.retrainFromCorrections() } catch (e: Exception) {
-                Timber.e(e, "Failed to retrain classifier")
-            }
-
-            if (categoryId != null) {
-                merchantCategoryRepository.learnPattern(merchant, categoryId)
-            }
-
-            if (finalMerchant != null && finalMerchant != review.suggestedMerchant) {
-                merchantNormalizer.learnMerchantAlias(review.suggestedMerchant, finalMerchant)
-            }
-
-            confidenceRouter.invalidateSourceStatsCache(review.packageName)
-            return Result.Success(expenseId)
-        } else {
-            database.withTransaction {
+                id
+            } else {
                 sourceStatsDao.incrementDuplicate(review.packageName)
                 sourceStatsDao.decrementPending(review.packageName)
-                pendingReviewDao.updateStatus(reviewId, "DUPLICATE")
+                pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
+                txDuplicate
             }
+        }
 
+        if (txnResult == txAlreadyProcessed) {
+            return Result.Error(message = context.getString(R.string.debug_error_review_already_processed))
+        }
+
+        if (txnResult == txDuplicate) {
             val fullText = listOfNotNull(
                 review.notificationTitle,
                 review.notificationText
@@ -202,14 +177,47 @@ class ReviewQueueRepository @Inject constructor(
             confidenceRouter.invalidateSourceStatsCache(review.packageName)
             return Result.Duplicate
         }
+
+        // External operations outside DB transaction
+        budgetMonitor.checkBudgets()
+
+        // Check for anomalies and alert
+        val enrichedExpense = expense.copy(id = txnResult)
+        val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+            expense = enrichedExpense,
+            category = categoryId?.let { database.categoryDao().getById(it) }
+        )
+        anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+
+        try { classifier.retrainFromCorrections() } catch (e: Exception) {
+            Timber.e(e, "Failed to retrain classifier")
+        }
+
+        if (categoryId != null) {
+            merchantCategoryRepository.learnPattern(merchant, categoryId)
+        }
+
+        if (finalMerchant != null && finalMerchant != review.suggestedMerchant) {
+            merchantNormalizer.learnMerchantAlias(review.suggestedMerchant, finalMerchant)
+        }
+
+        confidenceRouter.invalidateSourceStatsCache(review.packageName)
+        return Result.Success(txnResult)
     }
 
     suspend fun rejectReview(reviewId: Long) {
         val review = pendingReviewDao.getById(reviewId) ?: return
-        val rowsUpdated = pendingReviewDao.updateStatusIfPending(reviewId, "REJECTED")
-        if (rowsUpdated == 0) return
 
-        database.withTransaction {
+        val rejected = database.withTransaction {
+            val rowsUpdated = pendingReviewDao.transitionStatus(
+                id = reviewId,
+                expectedStatus = PendingReviewStatus.PENDING,
+                newStatus = PendingReviewStatus.REJECTED
+            )
+            if (rowsUpdated == 0) {
+                return@withTransaction false
+            }
+
             review.rawNotificationId?.let { id -> rawNotificationDao.markRelevance(id, false) }
             sourceStatsDao.incrementRejected(review.packageName)
             sourceStatsDao.decrementPending(review.packageName)
@@ -230,7 +238,10 @@ class ReviewQueueRepository @Inject constructor(
                 notificationText = review.notificationText
             )
             userCorrectionDao.insert(correction)
+            true
         }
+
+        if (!rejected) return
 
         try { classifier.retrainFromCorrections() } catch (e: Exception) {
             Timber.e(e, "Failed to retrain classifier")
@@ -327,6 +338,7 @@ class ReviewQueueRepository @Inject constructor(
                     suggestedAmount = 0.0,
                     suggestedCurrency = "EUR",
                     suggestedMerchant = "Unknown",
+                    suggestedMerchantKey = MerchantKeyGenerator.generate("Unknown"),
                     suggestedType = TransactionType.PURCHASE.name,
                     suggestedCategoryId = null,
                     confidence = 1.0f,
@@ -367,14 +379,18 @@ class ReviewQueueRepository @Inject constructor(
     }
 
     suspend fun updatePendingReviewCategoryBulk(merchantName: String, categoryId: Long) {
-        pendingReviewDao.bulkUpdateCategoryByMerchant(merchantName, categoryId)
+        val merchantKey = MerchantKeyGenerator.generate(merchantName)
+        pendingReviewDao.bulkUpdateCategoryByMerchant(merchantKey, merchantName, categoryId)
     }
 
     suspend fun updatePendingReviewMerchantBulk(oldMerchant: String, newMerchant: String) {
-        pendingReviewDao.bulkRenameMerchant(oldMerchant, newMerchant)
+        val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
+        val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
+        pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)
     }
 
     suspend fun getPendingReviewsByMerchant(merchantName: String): List<PendingReview> {
-        return pendingReviewDao.getPendingByMerchant(merchantName)
+        val merchantKey = MerchantKeyGenerator.generate(merchantName)
+        return pendingReviewDao.getPendingByMerchant(merchantKey, merchantName)
     }
 }

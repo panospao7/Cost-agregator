@@ -27,7 +27,7 @@ import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.budget.BudgetRecommendation
 import com.yourname.expensetracker.domain.budget.RecommendationPriority
-import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.NumberFormat
 import java.util.Locale

@@ -5,6 +5,8 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
+import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -14,6 +16,7 @@ import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.jvm.JvmName
 import timber.log.Timber
 
 // === Engine ===
@@ -741,6 +744,32 @@ class InsightsEngine @Inject constructor(
         }
         
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
+    }
+
+    @JvmName("getSpendingPaceSuspendDashboard")
+    suspend fun getSpendingPaceSuspend(expenses: List<DashboardExpense>): SpendingPace {
+        return getSpendingPaceSuspend(expenses.map { it.toEntityExpense() })
+    }
+
+    private fun DashboardExpense.toEntityExpense(): Expense {
+        val txType = when (transactionType) {
+            DashboardTransactionType.PURCHASE -> TransactionType.PURCHASE
+            DashboardTransactionType.WITHDRAWAL -> TransactionType.WITHDRAWAL
+            DashboardTransactionType.TRANSFER -> TransactionType.TRANSFER
+            DashboardTransactionType.DEPOSIT -> TransactionType.DEPOSIT
+            DashboardTransactionType.UNKNOWN -> TransactionType.UNKNOWN
+        }
+        return Expense(
+            id = id,
+            amount = amount,
+            merchant = merchant,
+            transactionType = txType,
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            isManualEntry = isManualEntry,
+            merchantKey = com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate(merchant)
+        )
     }
 
     private fun fmt(amount: Double): String = String.format(java.util.Locale.getDefault(), "%.2f", amount)

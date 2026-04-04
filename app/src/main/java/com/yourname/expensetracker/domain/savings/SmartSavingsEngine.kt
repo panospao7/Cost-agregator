@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.savings
 
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
@@ -48,22 +49,23 @@ class SmartSavingsEngine @Inject constructor(
         val budgetSurplus = calculateBudgetSurplus(budgetStatuses)
         
         // Calculate 2: Spending pace analysis
-        val spendingPace = analyzeSpendingPace()
+        val spendingPace = analyzeSpendingPace(timeHorizon)
         
         // Calculate 3: Monte Carlo simulation
-        val monteCarloResult = runMonteCarloSimulation(goal, now)
+        val monteCarloResult = runMonteCarloSimulation(goal, now, timeHorizon)
         
         // Combine recommendations with weights
         val safeAmount = calculateWeightedSafeAmount(
             budgetSurplus = budgetSurplus,
             spendingPace = spendingPace,
-            monteCarloResult = monteCarloResult
+            monteCarloResult = monteCarloResult,
+            timeHorizon = timeHorizon
         )
         
         return SavingsRecommendation(
             safeAmount = safeAmount,
             confidence = calculateConfidence(budgetSurplus, spendingPace, monteCarloResult),
-            impact = generateImpactMessage(safeAmount, goal),
+            impact = generateImpactMessage(safeAmount, goal, timeHorizon),
             source = determinePrimarySource(budgetSurplus, spendingPace, monteCarloResult)
         )
     }
@@ -79,7 +81,7 @@ class SmartSavingsEngine @Inject constructor(
         return totalSurplus
     }
     
-    private suspend fun analyzeSpendingPace(): Double {
+    private suspend fun analyzeSpendingPace(timeHorizon: TimeHorizon): Double {
         val now = timeProvider.now()
         val calendar = java.util.Calendar.getInstance().apply { timeInMillis = now }
         val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
@@ -95,10 +97,10 @@ class SmartSavingsEngine @Inject constructor(
         }.timeInMillis
         
         val expenses = expenseRepository.getExpensesBetween(monthStart, now)
-        var totalSpent = 0.0
-        for (expense in expenses) {
-            totalSpent += expense.amount
-        }
+        val totalSpent = expenses
+            .asSequence()
+            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .sumOf { it.effectiveAmount }
         
         // Calculate days elapsed and month length
         
@@ -107,23 +109,45 @@ class SmartSavingsEngine @Inject constructor(
         val projectedMonthTotal = averageDailySpending * daysInMonth
         
         // Get typical monthly spending from history
-        val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
-        val last3MonthsExpenses = expenseRepository.getExpensesBetween(threeMonthsAgo, now)
-        var total3MonthSpending = 0.0
-        for (expense in last3MonthsExpenses) {
-            total3MonthSpending += expense.amount
+        val historyDays = when (timeHorizon) {
+            TimeHorizon.WEEK -> 28L
+            TimeHorizon.MONTH -> 90L
+            TimeHorizon.QUARTER -> 365L
         }
-        val avgMonthlySpending = total3MonthSpending / 3.0
+        val horizonMonths = when (timeHorizon) {
+            TimeHorizon.WEEK -> 0.25
+            TimeHorizon.MONTH -> 1.0
+            TimeHorizon.QUARTER -> 3.0
+        }
+
+        val historyStart = now - (historyDays * 24 * 60 * 60 * 1000)
+        val historyExpenses = expenseRepository.getExpensesBetween(historyStart, now)
+            .asSequence()
+            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .toList()
+
+        val totalHistorySpending = historyExpenses.sumOf { it.effectiveAmount }
+        val monthlyBaselineSpending = if (historyDays > 0) {
+            totalHistorySpending / historyDays.toDouble() * 30.0
+        } else {
+            0.0
+        }
+        val horizonBaselineSpending = monthlyBaselineSpending * horizonMonths
+        val projectedHorizonTotal = projectedMonthTotal * horizonMonths
         
         // If projected spending is less than average, we can save the difference
-        return if (projectedMonthTotal < avgMonthlySpending) {
-            (avgMonthlySpending - projectedMonthTotal) * 0.3 // Conservative 30%
+        return if (projectedHorizonTotal < horizonBaselineSpending) {
+            (horizonBaselineSpending - projectedHorizonTotal) * 0.3 // Conservative 30%
         } else {
             0.0
         }
     }
     
-    private suspend fun runMonteCarloSimulation(goal: SavingsGoal, now: Long): Double {
+    private suspend fun runMonteCarloSimulation(
+        goal: SavingsGoal,
+        now: Long,
+        timeHorizon: TimeHorizon
+    ): Double {
         // Calculate current spending to date
         val calendar = java.util.Calendar.getInstance()
         calendar.timeInMillis = now
@@ -136,10 +160,10 @@ class SmartSavingsEngine @Inject constructor(
         }.timeInMillis
         
         val expenses = expenseRepository.getExpensesBetween(monthStart, now)
-        var spentToDate = 0.0
-        for (expense in expenses) {
-            spentToDate += expense.amount
-        }
+        val spentToDate = expenses
+            .asSequence()
+            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .sumOf { it.effectiveAmount }
         
         // Assume no known upcoming expenses for this calculation
         val knownUpcoming = 0.0
@@ -152,8 +176,14 @@ class SmartSavingsEngine @Inject constructor(
         )
         
         return result?.percentile50?.let { projectedSpending ->
+            val horizonMultiplier = when (timeHorizon) {
+                TimeHorizon.WEEK -> 0.25
+                TimeHorizon.MONTH -> 1.0
+                TimeHorizon.QUARTER -> 3.0
+            }
+
             // If projected spending is under control, suggest saving 20% of discretionary
-            val discretionary = 500.0 // Assume €500 discretionary (customizable)
+            val discretionary = 500.0 * horizonMultiplier // Assume €500/month discretionary baseline
             val remaining = discretionary - (projectedSpending * 0.3) // 30% of projected
             if (remaining > 0) remaining * 0.2 else 0.0
         } ?: 0.0
@@ -162,16 +192,22 @@ class SmartSavingsEngine @Inject constructor(
     private fun calculateWeightedSafeAmount(
         budgetSurplus: Double,
         spendingPace: Double,
-        monteCarloResult: Double
+        monteCarloResult: Double,
+        timeHorizon: TimeHorizon
     ): Double {
-        // Weighted combination (conservative approach)
-        // Budget surplus: 40%
-        // Spending pace: 30%
-        // Monte Carlo: 30%
-        val weighted = budgetSurplus * 0.4 + spendingPace * 0.3 + monteCarloResult * 0.3
+        // Weighted combination adjusted by time horizon
+        val (budgetWeight, paceWeight, monteCarloWeight, cap) = when (timeHorizon) {
+            TimeHorizon.WEEK -> HorizonWeights(0.30, 0.45, 0.25, 75.0)
+            TimeHorizon.MONTH -> HorizonWeights(0.40, 0.30, 0.30, 200.0)
+            TimeHorizon.QUARTER -> HorizonWeights(0.35, 0.20, 0.45, 500.0)
+        }
+
+        val weighted =
+            budgetSurplus * budgetWeight +
+            spendingPace * paceWeight +
+            monteCarloResult * monteCarloWeight
         
-        // Cap at €200 per recommendation to be safe
-        return minOf(weighted, 200.0).coerceAtLeast(0.0)
+        return minOf(weighted, cap).coerceAtLeast(0.0)
     }
     
     private fun calculateConfidence(
@@ -189,9 +225,24 @@ class SmartSavingsEngine @Inject constructor(
         }
     }
     
-    private fun generateImpactMessage(amount: Double, goal: SavingsGoal): String {
+    private fun generateImpactMessage(
+        amount: Double,
+        goal: SavingsGoal,
+        timeHorizon: TimeHorizon
+    ): String {
         val remaining = goal.targetAmount - goal.currentAmount
-        val daysToGoal = if (amount > 0) (remaining / amount * 30).toInt() else Int.MAX_VALUE
+        if (remaining <= 0) return "Goal already reached"
+
+        val horizonDays = when (timeHorizon) {
+            TimeHorizon.WEEK -> 7.0
+            TimeHorizon.MONTH -> 30.0
+            TimeHorizon.QUARTER -> 90.0
+        }
+        val daysToGoal = if (amount > 0) {
+            kotlin.math.ceil((remaining / amount) * horizonDays).toInt()
+        } else {
+            Int.MAX_VALUE
+        }
         
         return when {
             daysToGoal <= 30 -> "You'll reach your goal in $daysToGoal days!"
@@ -211,6 +262,13 @@ class SmartSavingsEngine @Inject constructor(
             else -> RecommendationSource.MONTE_CARLO
         }
     }
+
+    private data class HorizonWeights(
+        val budgetWeight: Double,
+        val paceWeight: Double,
+        val monteCarloWeight: Double,
+        val cap: Double
+    )
     
     enum class TimeHorizon {
         WEEK, MONTH, QUARTER

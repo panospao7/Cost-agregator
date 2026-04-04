@@ -2,13 +2,11 @@ package com.yourname.expensetracker.ui.screens.subscription
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
-import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
-import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
-import com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
+import com.yourname.expensetracker.data.database.entity.SubscriptionUsage
+import com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -22,8 +20,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import java.text.NumberFormat
-import java.util.Locale
 import javax.inject.Inject
 
 /**
@@ -60,10 +56,7 @@ data class PriceChangeInfo(
 
 @HiltViewModel
 class SubscriptionManagementViewModel @Inject constructor(
-    private val subscriptionDao: ManualRecurringExpenseDao,
-    private val priceHistoryDao: SubscriptionPriceHistoryDao,
-    private val usageDao: SubscriptionUsageDao,
-    private val candidateDao: SubscriptionCandidateDao,
+    private val repository: SubscriptionManagementRepository,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
     
@@ -82,13 +75,13 @@ class SubscriptionManagementViewModel @Inject constructor(
                 coroutineScope {
                     // Load active subscriptions
                     val subscriptionsDeferred = async {
-                        val allSubscriptions = subscriptionDao.getAllActiveSubscriptions()
+                        val allSubscriptions = repository.getAllActiveSubscriptions()
                         allSubscriptions.map { subscription ->
                             async {
                                 val subscriptionId = subscription.id ?: 0L
                                 if (subscriptionId == 0L) return@async null
                                 
-                                val priceHistory = priceHistoryDao
+                                val priceHistory = repository
                                     .getPriceHistoryForSubscription(subscriptionId)
                                     .first()
                                 
@@ -108,7 +101,7 @@ class SubscriptionManagementViewModel @Inject constructor(
                     
                     // Load detected candidates
                     val candidatesDeferred = async {
-                        candidateDao.getPendingCandidates()
+                        repository.getPendingCandidates()
                     }
                     
                     val subscriptionInfos = subscriptionsDeferred.await()
@@ -157,7 +150,7 @@ class SubscriptionManagementViewModel @Inject constructor(
         }
 
         val windowStart = timeProvider.now() - lookbackWindowMs
-        val usageCount = usageDao.getUsageCountSince(subscriptionId, windowStart)
+        val usageCount = repository.getUsageCountSince(subscriptionId, windowStart)
         
         // Calculate cost per use with frequency context
         val periodCost = when (subscription.frequency) {
@@ -204,11 +197,11 @@ class SubscriptionManagementViewModel @Inject constructor(
     fun recordUsage(subscriptionId: Long) {
         viewModelScope.launch {
             try {
-                val usage = com.yourname.expensetracker.data.database.entity.SubscriptionUsage(
+                val usage = SubscriptionUsage(
                     subscriptionId = subscriptionId,
                     usedAt = timeProvider.now()
                 )
-                usageDao.insert(usage)
+                repository.insertUsage(usage)
                 
                 // Reload to update usage stats
                 loadSubscriptions()
@@ -226,10 +219,10 @@ class SubscriptionManagementViewModel @Inject constructor(
     fun toggleSubscriptionStatus(subscriptionId: Long) {
         viewModelScope.launch {
             try {
-                val subscription = subscriptionDao.getById(subscriptionId)
+                val subscription = repository.getSubscriptionById(subscriptionId)
                 subscription?.let {
                     val updated = it.copy(isActive = !it.isActive)
-                    subscriptionDao.update(updated)
+                    repository.updateSubscription(updated)
                     loadSubscriptions()
                 }
             } catch (e: Exception) {
@@ -246,7 +239,7 @@ class SubscriptionManagementViewModel @Inject constructor(
     fun deleteSubscription(subscriptionId: Long) {
         viewModelScope.launch {
             try {
-                subscriptionDao.deleteById(subscriptionId)
+                repository.deleteSubscriptionById(subscriptionId)
                 loadSubscriptions()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -278,7 +271,7 @@ class SubscriptionManagementViewModel @Inject constructor(
                     isActive = true
                 )
                 
-                val id = subscriptionDao.insert(subscription)
+                val id = repository.insertSubscription(subscription)
                 
                 // Record initial price
                 val priceHistory = SubscriptionPriceHistory(
@@ -286,7 +279,7 @@ class SubscriptionManagementViewModel @Inject constructor(
                     amount = amount,
                     changeReason = "Initial subscription"
                 )
-                priceHistoryDao.insert(priceHistory)
+                repository.insertPriceHistory(priceHistory)
                 
                 loadSubscriptions()
             } catch (e: Exception) {
@@ -354,7 +347,7 @@ class SubscriptionManagementViewModel @Inject constructor(
                     isActive = true
                 )
                 
-                val subscriptionId = subscriptionDao.insert(subscription)
+                val subscriptionId = repository.insertSubscription(subscription)
                 
                 // Record initial price
                 val priceHistory = SubscriptionPriceHistory(
@@ -362,10 +355,10 @@ class SubscriptionManagementViewModel @Inject constructor(
                     amount = candidate.averageAmount,
                     changeReason = "Auto-detected from notifications"
                 )
-                priceHistoryDao.insert(priceHistory)
+                repository.insertPriceHistory(priceHistory)
                 
                 // Mark candidate as converted
-                candidateDao.markAsConverted(candidate.id, subscriptionId, timeProvider.now())
+                repository.markCandidateAsConverted(candidate.id, subscriptionId, timeProvider.now())
                 
                 loadSubscriptions()
             } catch (e: Exception) {
@@ -382,7 +375,7 @@ class SubscriptionManagementViewModel @Inject constructor(
     fun rejectCandidate(candidateId: Long) {
         viewModelScope.launch {
             try {
-                candidateDao.markAsRejected(candidateId, timeProvider.now())
+                repository.markCandidateAsRejected(candidateId, timeProvider.now())
                 loadSubscriptions()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(

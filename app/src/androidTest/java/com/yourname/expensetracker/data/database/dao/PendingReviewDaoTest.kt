@@ -84,7 +84,11 @@ class PendingReviewDaoTest {
         val rawId = insertRawNotification()
         val id = pendingReviewDao.insert(makeReview(rawId))
 
-        val rows = pendingReviewDao.updateStatusIfPending(id, "APPROVED")
+        val rows = pendingReviewDao.transitionStatus(
+            id,
+            PendingReviewStatus.PENDING,
+            PendingReviewStatus.APPROVED
+        )
         assertEquals(1, rows)
 
         val review = pendingReviewDao.getById(id)
@@ -96,8 +100,16 @@ class PendingReviewDaoTest {
         val rawId = insertRawNotification()
         val id = pendingReviewDao.insert(makeReview(rawId))
 
-        pendingReviewDao.updateStatusIfPending(id, "APPROVED")
-        val rows = pendingReviewDao.updateStatusIfPending(id, "REJECTED")
+        pendingReviewDao.transitionStatus(
+            id,
+            PendingReviewStatus.PENDING,
+            PendingReviewStatus.APPROVED
+        )
+        val rows = pendingReviewDao.transitionStatus(
+            id,
+            PendingReviewStatus.PENDING,
+            PendingReviewStatus.REJECTED
+        )
         assertEquals(0, rows) // Already APPROVED, not PENDING
     }
 
@@ -108,7 +120,7 @@ class PendingReviewDaoTest {
         val id1 = pendingReviewDao.insert(makeReview(rawId1))
         pendingReviewDao.insert(makeReview(rawId2))
 
-        pendingReviewDao.updateStatus(id1, "APPROVED")
+        pendingReviewDao.updateStatus(id1, PendingReviewStatus.APPROVED)
 
         val pending = pendingReviewDao.getPending()
         assertEquals(1, pending.size)
@@ -121,7 +133,7 @@ class PendingReviewDaoTest {
         val id1 = pendingReviewDao.insert(makeReview(rawId1))
         pendingReviewDao.insert(makeReview(rawId2))
 
-        pendingReviewDao.updateStatus(id1, "REJECTED")
+        pendingReviewDao.updateStatus(id1, PendingReviewStatus.REJECTED)
         pendingReviewDao.clearResolved()
 
         val all = pendingReviewDao.getAllFlow().first()

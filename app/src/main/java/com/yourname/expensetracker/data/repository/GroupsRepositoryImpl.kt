@@ -23,11 +23,23 @@ class GroupsRepositoryImpl @Inject constructor(
 
     override suspend fun getActiveGroupsWithDetails(): List<GroupDetailsAggregate> = withContext(Dispatchers.IO) {
         val groups = groupDao.getActive()
+        if (groups.isEmpty()) {
+            return@withContext emptyList()
+        }
+
+        val groupIds = groups.map { it.id }
+        val membersByGroupId = memberDao
+            .getAllForGroups(groupIds)
+            .groupBy { it.groupId }
+        val expensesByGroupId = groupExpenseDao
+            .getExpensesForGroups(groupIds)
+            .groupBy { it.groupId }
+
         groups.map { group ->
             GroupDetailsAggregate(
                 group = group,
-                members = memberDao.getAllForGroup(group.id),
-                expenses = groupExpenseDao.getExpensesForGroupOnce(group.id)
+                members = membersByGroupId[group.id].orEmpty(),
+                expenses = expensesByGroupId[group.id].orEmpty()
             )
         }
     }

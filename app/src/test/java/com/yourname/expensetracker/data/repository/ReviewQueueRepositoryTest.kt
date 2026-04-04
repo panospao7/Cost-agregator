@@ -95,7 +95,13 @@ class ReviewQueueRepositoryTest {
         )
         
         coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
-        coEvery { pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING") } returns 1
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId,
+                PendingReviewStatus.PENDING,
+                PendingReviewStatus.PROCESSING
+            )
+        } returns 1
         coEvery { expenseDao.insertAtomic(any()) } returns 100L
 
         // Act
@@ -106,7 +112,7 @@ class ReviewQueueRepositoryTest {
         assertEquals(100L, (result as Result.Success).data)
         
         coVerify { expenseDao.insertAtomic(match { it.merchant == "Test Merchant" && it.amount == 50.0 }) }
-        coVerify { pendingReviewDao.updateStatus(reviewId, "APPROVED") }
+        coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
         coVerify { userCorrectionDao.insert(any()) }
         coVerify { classifier.retrainFromCorrections() }
     }
@@ -130,7 +136,13 @@ class ReviewQueueRepositoryTest {
         )
         
         coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
-        coEvery { pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING") } returns 1
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId,
+                PendingReviewStatus.PENDING,
+                PendingReviewStatus.PROCESSING
+            )
+        } returns 1
         // Atomic insert returns -1 when duplicate constraint is triggered
         coEvery { expenseDao.insertAtomic(any()) } returns -1L
 
@@ -139,7 +151,7 @@ class ReviewQueueRepositoryTest {
 
         // Assert
         assertEquals(Result.Duplicate, result)
-        coVerify { pendingReviewDao.updateStatus(reviewId, "DUPLICATE") }
+        coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE) }
         coVerify(exactly = 0) { expenseDao.insert(any()) }
     }
 
@@ -162,15 +174,13 @@ class ReviewQueueRepositoryTest {
         )
         
         coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
-        coEvery { pendingReviewDao.updateStatusIfPending(reviewId, "PROCESSING") } returns 1
-
         // Act
         val result = repository.approveReview(reviewId)
 
         // Assert
         assertTrue(result is Result.Error)
         assertEquals("Amount exceeds limit", (result as Result.Error).message)
-        coVerify { pendingReviewDao.updateStatus(reviewId, "PENDING") } // Revert status
+        coVerify(exactly = 0) { pendingReviewDao.transitionStatus(any(), any(), any()) }
     }
 
     @Test
@@ -192,7 +202,13 @@ class ReviewQueueRepositoryTest {
         )
         
         coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
-        coEvery { pendingReviewDao.updateStatusIfPending(reviewId, "REJECTED") } returns 1
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId,
+                PendingReviewStatus.PENDING,
+                PendingReviewStatus.REJECTED
+            )
+        } returns 1
 
         // Act
         repository.rejectReview(reviewId)

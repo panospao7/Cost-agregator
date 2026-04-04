@@ -3,9 +3,11 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -43,16 +45,16 @@ class BudgetForecastingEngine @Inject constructor(
     ): BudgetForecast = withContext(Dispatchers.IO) {
         val now = timeProvider.now()
         
-        // Calculate period dates
-        val periodStart = now
-        val periodEnd = now + (forecastPeriodDays * 24 * 60 * 60 * 1000L)
+        // Calculate active budget period window and elapsed segment for spent-to-date.
+        val (periodStart, periodEnd) = calculateCurrentBudgetPeriodRange(budget, now)
+        val elapsedEnd = now.coerceAtMost(periodEnd)
+        val spentToDate = getSpentAmount(budget, periodStart, elapsedEnd)
         
         // Get historical spending data for this budget's category
         val historicalData = getHistoricalSpendingData(budget)
         
         // Calculate predicted spending using multiple factors
         val predictedSpending = calculatePredictedSpending(
-            budget = budget,
             historicalData = historicalData,
             forecastPeriodDays = forecastPeriodDays
         )
@@ -61,17 +63,22 @@ class BudgetForecastingEngine @Inject constructor(
         val confidence = calculateConfidence(historicalData)
         
         // Determine risk level
-        val riskLevel = determineRiskLevel(budget, predictedSpending, confidence)
+        val riskLevel = determineRiskLevel(
+            budget = budget,
+            predictedSpending = predictedSpending,
+            confidence = confidence,
+            spentToDate = spentToDate
+        )
         
         // Calculate overspend probability
         val overspendProbability = calculateOverspendProbability(
             budgetAmount = budget.amount,
             predictedSpending = predictedSpending,
+            spentToDate = spentToDate,
             confidence = confidence
         )
         
         // Calculate predicted remaining
-        val spentToDate = getSpentAmount(budget, periodStart)
         val predictedRemaining = budget.amount - spentToDate - predictedSpending
         
         val forecast = BudgetForecast(
@@ -101,13 +108,17 @@ class BudgetForecastingEngine @Inject constructor(
         
         // Get expenses for this budget's category
         val expenses = if (budget.categoryId != null) {
-            expenseDao.getExpensesByTypeBetween(
-                threeMonthsAgo, 
-                now, 
-                "PURCHASE"
-            ).filter { it.categoryId == budget.categoryId }
+            expenseDao.getExpensesByCategory(
+                categoryId = budget.categoryId,
+                startDate = threeMonthsAgo,
+                endDate = now
+            )
         } else {
-            expenseDao.getExpensesBetween(threeMonthsAgo, now)
+            expenseDao.getExpensesByTypeBetween(
+                startDate = threeMonthsAgo,
+                endDate = now,
+                type = "PURCHASE"
+            )
         }
         
         // Group by month
@@ -115,11 +126,12 @@ class BudgetForecastingEngine @Inject constructor(
         for (expense in expenses) {
             val monthKey = getMonthKey(expense.date)
             val current = monthlyTotals[monthKey] ?: 0.0
-            monthlyTotals[monthKey] = current + expense.amount
+            monthlyTotals[monthKey] = current + expense.effectiveAmount
         }
         
         // Calculate statistics
-        val values = monthlyTotals.values.toList()
+        val sortedMonthKeys = monthlyTotals.keys.sorted()
+        val values = sortedMonthKeys.map { monthlyTotals[it] ?: 0.0 }
         val average = if (values.isNotEmpty()) values.sum() / values.size else 0.0
         
         var variance = 0.0
@@ -154,7 +166,6 @@ class BudgetForecastingEngine @Inject constructor(
      * Calculate predicted spending using historical patterns.
      */
     private fun calculatePredictedSpending(
-        budget: Budget,
         historicalData: HistoricalData,
         forecastPeriodDays: Int
     ): Double {
@@ -175,9 +186,6 @@ class BudgetForecastingEngine @Inject constructor(
             val seasonalFactor = calculateSeasonalFactor(historicalData)
             prediction *= seasonalFactor
         }
-        
-        // Cap at budget amount
-        prediction = min(prediction, budget.amount)
         
         return max(prediction, 0.0)
     }
@@ -212,9 +220,9 @@ class BudgetForecastingEngine @Inject constructor(
     private fun determineRiskLevel(
         budget: Budget,
         predictedSpending: Double,
-        confidence: Double
+        confidence: Double,
+        spentToDate: Double
     ): ForecastRiskLevel {
-        val spentToDate = getSpentAmountSync(budget)
         val remaining = budget.amount - spentToDate
         
         // Calculate percentage of remaining budget that will be used
@@ -234,9 +242,11 @@ class BudgetForecastingEngine @Inject constructor(
     private fun calculateOverspendProbability(
         budgetAmount: Double,
         predictedSpending: Double,
+        spentToDate: Double,
         confidence: Double
     ): Double {
-        val buffer = budgetAmount - predictedSpending
+        val projectedTotal = spentToDate + predictedSpending
+        val buffer = budgetAmount - projectedTotal
         val probability = when {
             buffer < 0 -> 1.0 // Already predicted to exceed
             buffer < budgetAmount * 0.1 -> 0.8 // Very tight
@@ -268,20 +278,100 @@ class BudgetForecastingEngine @Inject constructor(
     /**
      * Get amount already spent in current period.
      */
-    private suspend fun getSpentAmount(budget: Budget, periodStart: Long): Double {
-        val periodEnd = timeProvider.now()
-        val totalSpent = expenseDao.getTotalSpentBetween(periodStart, periodEnd) ?: 0.0
-        
-        // If budget is category-specific, we need to filter (simplified here)
-        return totalSpent
+    private suspend fun getSpentAmount(budget: Budget, periodStart: Long, periodEnd: Long): Double {
+        if (periodEnd <= periodStart) return 0.0
+
+        return if (budget.categoryId != null) {
+            expenseDao.getCategorySpentInPeriod(
+                categoryId = budget.categoryId,
+                startMs = periodStart,
+                endMs = periodEnd
+            )
+        } else {
+            expenseDao.getTotalSpentBetween(periodStart, periodEnd) ?: 0.0
+        }
     }
-    
-    /**
-     * Synchronous version for risk calculation.
-     */
-    private fun getSpentAmountSync(budget: Budget): Double {
-        // Simplified - in real implementation would need to query
-        return 0.0
+
+    private fun calculateCurrentBudgetPeriodRange(budget: Budget, now: Long): Pair<Long, Long> {
+        return if (budget.periodMode.equals("CALENDAR", ignoreCase = true)) {
+            when (budget.period) {
+                BudgetPeriod.DAILY -> TimePeriodUtils.getStartOfDay(now) to TimePeriodUtils.getEndOfDay(now)
+                BudgetPeriod.WEEKLY -> TimePeriodUtils.getWeekRange(now)
+                BudgetPeriod.MONTHLY -> TimePeriodUtils.getMonthRange(now)
+                BudgetPeriod.YEARLY -> TimePeriodUtils.getYearRange(now)
+            }
+        } else {
+            val calendar = Calendar.getInstance().apply { timeInMillis = now }
+            val startOfToday = TimePeriodUtils.getStartOfDay(now)
+            val anchorCal = Calendar.getInstance().apply { timeInMillis = budget.startDate }
+
+            when (budget.period) {
+                BudgetPeriod.DAILY -> {
+                    val start = startOfToday
+                    val end = TimePeriodUtils.getEndOfDay(start)
+                    start to end
+                }
+
+                BudgetPeriod.WEEKLY -> {
+                    val cal = Calendar.getInstance().apply { timeInMillis = startOfToday }
+                    val anchorDayOfWeek = anchorCal.get(Calendar.DAY_OF_WEEK)
+                    while (cal.get(Calendar.DAY_OF_WEEK) != anchorDayOfWeek) {
+                        cal.add(Calendar.DAY_OF_YEAR, -1)
+                    }
+                    val start = cal.timeInMillis
+                    cal.add(Calendar.WEEK_OF_YEAR, 1)
+                    start to cal.timeInMillis
+                }
+
+                BudgetPeriod.MONTHLY -> {
+                    val cal = Calendar.getInstance().apply { timeInMillis = startOfToday }
+                    val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+
+                    cal.set(Calendar.DAY_OF_MONTH, 1)
+                    val evalDay = calendar.get(Calendar.DAY_OF_MONTH)
+                    val adjustedAnchorDay = anchorDay.coerceAtMost(
+                        calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    )
+
+                    if (evalDay < adjustedAnchorDay) {
+                        cal.add(Calendar.MONTH, -1)
+                    }
+
+                    val monthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(monthMax))
+                    val start = cal.timeInMillis
+
+                    cal.add(Calendar.MONTH, 1)
+                    val nextMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(nextMonthMax))
+                    start to cal.timeInMillis
+                }
+
+                BudgetPeriod.YEARLY -> {
+                    val cal = Calendar.getInstance().apply { timeInMillis = startOfToday }
+                    val anchorMonth = anchorCal.get(Calendar.MONTH)
+                    val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
+
+                    val currentMonth = cal.get(Calendar.MONTH)
+                    val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+                    val passedAnniversary = currentMonth > anchorMonth ||
+                        (currentMonth == anchorMonth && currentDay >= anchorDay)
+
+                    if (!passedAnniversary) {
+                        cal.add(Calendar.YEAR, -1)
+                    }
+
+                    cal.set(Calendar.MONTH, anchorMonth)
+                    cal.set(
+                        Calendar.DAY_OF_MONTH,
+                        anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+                    )
+                    val start = cal.timeInMillis
+                    cal.add(Calendar.YEAR, 1)
+                    start to cal.timeInMillis
+                }
+            }
+        }
     }
     
     private fun getMonthKey(timestamp: Long): String {

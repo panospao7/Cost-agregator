@@ -60,12 +60,30 @@ interface MerchantNormalizationDao {
     suspend fun getAliasesForCanonical(canonicalId: Long): List<MerchantAlias>
     
     @Query("""
-        SELECT * FROM merchant_aliases 
-        WHERE normalizedKey LIKE '%' || :query || '%'
+        SELECT * FROM merchant_aliases
+        WHERE normalizedKey >= :prefixStart
+          AND normalizedKey < :prefixEndExclusive
         ORDER BY occurrenceCount DESC
         LIMIT :limit
     """)
-    suspend fun searchAliases(query: String, limit: Int = 20): List<MerchantAlias>
+    suspend fun searchAliasesByPrefixRange(
+        prefixStart: String,
+        prefixEndExclusive: String,
+        limit: Int = 20
+    ): List<MerchantAlias>
+
+    /**
+     * Index-friendly prefix search using a range scan on normalizedKey.
+     * This avoids LIKE-pattern scans and keeps lookups on the normalizedKey index.
+     */
+    suspend fun searchAliasesByPrefix(prefix: String, limit: Int = 20): List<MerchantAlias> {
+        if (prefix.isBlank()) return emptyList()
+        return searchAliasesByPrefixRange(
+            prefixStart = prefix,
+            prefixEndExclusive = "$prefix\uFFFF",
+            limit = limit
+        )
+    }
     
     @Query("DELETE FROM merchant_aliases WHERE lastUsedAt < :olderThan")
     suspend fun deleteUnusedAliasesOlderThan(olderThan: Long): Int

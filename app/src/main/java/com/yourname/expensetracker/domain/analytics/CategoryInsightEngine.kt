@@ -9,6 +9,16 @@ import javax.inject.Singleton
 @Singleton
 class CategoryInsightEngine @Inject constructor() {
 
+    companion object {
+        private val FALLBACK_CATEGORY = Category(
+            id = -1,
+            name = "Uncategorized",
+            icon = "❓",
+            color = "#9E9E9E",
+            isDefault = true
+        )
+    }
+
     fun calculate(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod?,
@@ -38,7 +48,7 @@ class CategoryInsightEngine @Inject constructor() {
         val categoryTotals = currentExpenses.groupBy { it.categoryId }
         
         return categoryTotals.map { (categoryId, expenses) ->
-            val category = categoryMap[categoryId]
+            val category = categoryId?.let { categoryMap[it] } ?: FALLBACK_CATEGORY
             val currentTotal = expenses.sumOf { it.effectiveAmount }
             val currentCount = expenses.size
             
@@ -55,7 +65,7 @@ class CategoryInsightEngine @Inject constructor() {
             } else 0f
             
             CategoryInsight(
-                category = category!!,
+                category = category,
                 currentTotal = currentTotal,
                 currentCount = currentCount,
                 previousTotal = previousTotal,

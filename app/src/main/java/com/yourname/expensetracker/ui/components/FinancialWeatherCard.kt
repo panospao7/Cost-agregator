@@ -18,11 +18,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.UpcomingItem
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
-import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.domain.model.dashboard.WeatherState
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.text.SimpleDateFormat

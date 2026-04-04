@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
+import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.CategorizedReceiptItem
 import com.yourname.expensetracker.domain.ai.model.CategorySuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
@@ -17,20 +18,19 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
-import java.util.concurrent.TimeUnit
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudReceiptItemCategorizationService @Inject constructor(
-    private val secureKeyStorage: SecureKeyStorage
+    private val secureKeyStorage: SecureKeyStorage,
+    @CloudAiHttpClient private val client: OkHttpClient
 ) : ReceiptItemCategorizationService {
-    
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(AppConfig.Ai.RECEIPT_ASSIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .readTimeout(AppConfig.Ai.RECEIPT_ASSIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .build()
+
+    // Secondary constructor for tests
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     
@@ -49,19 +49,22 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                 val requestBody = buildRequestBody(prompt)
                 
                 val request = Request.Builder()
-                    .url("${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL}:generateContent?key=$apiKey")
+                    .url("${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ITEM_CATEGORIZATION_CLOUD_MODEL}:generateContent")
                     .post(requestBody.toRequestBody(jsonMediaType))
+                    .header("Content-Type", "application/json")
+                    .header("x-goog-api-key", apiKey)
                     .build()
                 
-                val response = client.newCall(request).execute()
-                val body = response.body?.string()
-                
-                if (!response.isSuccessful || body == null) {
-                    Timber.e("CloudReceiptItemCategorizationService: Cloud AI request failed: ${response.code}")
-                    return@withContext null
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.string()
+
+                    if (!response.isSuccessful || body == null) {
+                        Timber.e("CloudReceiptItemCategorizationService: Cloud AI request failed: ${response.code}")
+                        return@withContext null
+                    }
+
+                    parseResponse(body, input)
                 }
-                
-                parseResponse(body, input)
             } catch (e: Exception) {
                 Timber.e(e, "CloudReceiptItemCategorizationService: Error calling cloud AI for receipt item categorization")
                 null
@@ -70,16 +73,27 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     }
     
     private fun buildPrompt(input: ReceiptItemCategorizationInput): String {
+        val safeMerchant = if (input.redactBeforeCloud) {
+            sanitizeCloudText(input.merchant, 80, "merchant")
+        } else {
+            input.merchant
+        }
+
         val categoriesList = input.userCategories.joinToString(", ") { "${it.name} (id: ${it.id})" }
         
         val itemsList = input.lineItems.joinToString("\n") { item ->
-            "- ${item.description}: €${item.totalPrice}"
+            val safeDescription = if (input.redactBeforeCloud) {
+                sanitizeCloudText(item.description, 80, "item")
+            } else {
+                item.description
+            }
+            "- $safeDescription: €${item.totalPrice}"
         }
         
         return """
 You are a receipt item categorization assistant. Categorize each item below.
 
-Store: ${input.merchant}
+Store: $safeMerchant
 Available categories: $categoriesList
 
 Items:
@@ -244,5 +258,37 @@ Output JSON format:
         }
         
         return text.substring(start, end)
+    }
+
+    private fun sanitizeCloudText(raw: String, maxChars: Int, fallbackPrefix: String): String {
+        val trimmed = raw.trim().take(maxChars)
+        val redacted = trimmed
+            .replace(EMAIL_REGEX, "[REDACTED_EMAIL]")
+            .replace(IBAN_REGEX, "[REDACTED_IBAN]")
+            .replace(CARD_REGEX, "[REDACTED_CARD]")
+            .replace(PHONE_REGEX, "[REDACTED_PHONE]")
+            .replace(LONG_NUMBER_REGEX, "[REDACTED_NUMBER]")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(maxChars)
+
+        return if (redacted.isBlank()) {
+            "${fallbackPrefix}_${trimmed.sha256Prefix()}"
+        } else {
+            redacted
+        }
+    }
+
+    private fun String.sha256Prefix(length: Int = 12): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
+        return digest.joinToString(separator = "") { "%02x".format(it) }.take(length)
+    }
+
+    private companion object {
+        private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
+        private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")
+        private val CARD_REGEX = Regex("""\b(?:\d[ -]?){13,19}\b""")
+        private val PHONE_REGEX = Regex("""\+?\d[\d\s().-]{6,}\d""")
+        private val LONG_NUMBER_REGEX = Regex("""\b\d{10,}\b""")
     }
 }

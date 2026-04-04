@@ -33,10 +33,12 @@ object SavingsModule {
     @Singleton
     fun provideAutomatedSavingsRuleEngine(
         expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
+        categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
         savingsGoalRepository: com.yourname.expensetracker.data.repository.SavingsGoalRepository,
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
     ): AutomatedSavingsRuleEngine = AutomatedSavingsRuleEngine(
         expenseRepository,
+        categoryRepository,
         savingsGoalRepository,
         timeProvider
     )

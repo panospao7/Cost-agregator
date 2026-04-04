@@ -73,7 +73,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
     @Test
     fun `invoke returns NotNeeded when builder says not needed`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
-        coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.NotNeeded("not needed")
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.NotNeeded("not needed")
 
         val result = useCase(makeItem())
 
@@ -83,7 +83,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
     @Test
     fun `invoke stores READY artifact on success`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
-        coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
             DedupeJudgeSuggestion(
@@ -108,7 +108,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
     @Test
     fun `invoke stores ON_DEVICE metadata when local dedupe provider succeeds`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
-        coEvery { inputBuilder.build(any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
         coEvery {
             aiCapabilityRouter.decide(AiCapability.DEDUPE_JUDGE, any(), any())
         } returns AiRouteDecision(

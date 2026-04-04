@@ -41,7 +41,7 @@ enum class RiskLevel {
 }
 
 data class WeatherNarrative(
-    val state: com.yourname.expensetracker.data.repository.WeatherState,
+    val state: com.yourname.expensetracker.domain.model.dashboard.WeatherState,
     val icon: String,
     val headline: String,
     val summary: String,

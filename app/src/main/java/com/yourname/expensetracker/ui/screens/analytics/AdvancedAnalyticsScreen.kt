@@ -18,7 +18,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsDashboardData
 import com.yourname.expensetracker.domain.analytics.DashboardInsight
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.ui.components.asString
 import java.text.NumberFormat
 import java.util.Locale
 

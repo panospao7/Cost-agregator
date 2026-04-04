@@ -1,10 +1,10 @@
 package com.yourname.expensetracker.domain.budget
 
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.text.DomainTextKeys
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -62,7 +62,7 @@ class BudgetRecommendationEngine @Inject constructor() {
             recommendations.add(
                 BudgetRecommendation(
                     type = RecommendationType.REDUCE_SPENDING,
-                    title = UiText.from(R.string.domain_budget_reduce_urgent),
+                    title = UiText.fromKey(DomainTextKeys.BUDGET_REDUCE_URGENT),
                     description = "You're at risk of exceeding your budget. Consider cutting non-essential expenses for the remainder of the period.",
                     priority = if (forecast.overspendProbability > 0.8) RecommendationPriority.CRITICAL 
                              else RecommendationPriority.HIGH,
@@ -73,7 +73,7 @@ class BudgetRecommendationEngine @Inject constructor() {
             recommendations.add(
                 BudgetRecommendation(
                     type = RecommendationType.PAUSE_NON_ESSENTIAL,
-                    title = UiText.from(R.string.domain_budget_pause_non_essential),
+                    title = UiText.fromKey(DomainTextKeys.BUDGET_PAUSE_NON_ESSENTIAL),
                     description = "Delay discretionary purchases like dining out, entertainment, and shopping until next period.",
                     priority = RecommendationPriority.HIGH,
                     suggestedActions = listOf(
@@ -91,7 +91,7 @@ class BudgetRecommendationEngine @Inject constructor() {
             recommendations.add(
                 BudgetRecommendation(
                     type = RecommendationType.REVIEW_SUBSCRIPTIONS,
-                    title = UiText.from(R.string.domain_budget_review_subscriptions),
+                    title = UiText.fromKey(DomainTextKeys.BUDGET_REVIEW_SUBSCRIPTIONS),
                     description = "You're on track to use most of your budget. Review subscriptions and recurring expenses for potential savings.",
                     priority = RecommendationPriority.MEDIUM,
                     suggestedActions = listOf(
@@ -108,7 +108,7 @@ class BudgetRecommendationEngine @Inject constructor() {
             recommendations.add(
                 BudgetRecommendation(
                     type = RecommendationType.GENERAL_ADVICE,
-                    title = UiText.from(R.string.domain_budget_build_history),
+                    title = UiText.fromKey(DomainTextKeys.BUDGET_BUILD_HISTORY),
                     description = "We don't have enough data to make accurate predictions yet. Keep tracking expenses for better forecasts.",
                     priority = RecommendationPriority.LOW
                 )
@@ -120,7 +120,7 @@ class BudgetRecommendationEngine @Inject constructor() {
             recommendations.add(
                 BudgetRecommendation(
                     type = RecommendationType.GENERAL_ADVICE,
-                    title = UiText.from(R.string.domain_budget_early_warning),
+                    title = UiText.fromKey(DomainTextKeys.BUDGET_EARLY_WARNING),
                     description = "Your spending rate suggests you may exceed budget. Consider spreading expenses more evenly.",
                     priority = RecommendationPriority.MEDIUM
                 )
@@ -132,7 +132,7 @@ class BudgetRecommendationEngine @Inject constructor() {
             recommendations.add(
                 BudgetRecommendation(
                     type = RecommendationType.INCREASE_BUDGET,
-                    title = UiText.from(R.string.domain_budget_increase),
+                    title = UiText.fromKey(DomainTextKeys.BUDGET_INCREASE),
                     description = "You're consistently exceeding this budget. Consider increasing the limit or creating additional budgets.",
                     priority = RecommendationPriority.LOW
                 )
@@ -140,7 +140,7 @@ class BudgetRecommendationEngine @Inject constructor() {
         }
         
         // Sort by priority
-        return recommendations.sortedBy { it.priority.ordinal }
+        return recommendations.sortedByDescending { it.priority.ordinal }
     }
     
     /**

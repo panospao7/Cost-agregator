@@ -4,6 +4,10 @@ import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionServi
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.delay
@@ -19,6 +23,8 @@ class WarrantyTrackerRepository @Inject constructor(
     private val returnWindowDao: ReturnWindowDao,
     private val scannedReceiptDao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao,
     private val cloudExtractionService: CloudWarrantyExtractionService,
+    private val aiSettingsRepository: AiSettingsRepository,
+    private val aiPolicy: AiPolicy,
     private val timeProvider: TimeProvider
 ) {
     private companion object {
@@ -109,7 +115,12 @@ class WarrantyTrackerRepository @Inject constructor(
     
     // AI extraction
     suspend fun extractWarrantyFromReceipt(receipt: ScannedReceipt): Warranty? {
-        return cloudExtractionService.extractWarranty(receipt)
+        val settings = aiSettingsRepository.settings().first()
+        if (!aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION)) {
+            return null
+        }
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.RECEIPT_EXTRACTION)
+        return cloudExtractionService.extractWarranty(receipt, shouldRedact)
     }
     
     // Extract return window from warranty extraction result

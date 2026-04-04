@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.*
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.ProcessingResult
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
@@ -14,6 +15,7 @@ import org.junit.Test
 
 class NotificationRepositoryStressTest {
 
+    private val database = mockk<AppDatabase>(relaxed = true)
     private val dao = mockk<RawNotificationDao>(relaxed = true)
     private val blockedPackageDao = mockk<BlockedPackageDao>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
@@ -51,6 +53,7 @@ class NotificationRepositoryStressTest {
         coEvery { pendingReviewDao.deleteByRawId(any()) } returns Unit
 
         repository = NotificationRepository(
+            database,
             dao,
             blockedPackageDao,
             expenseDao,

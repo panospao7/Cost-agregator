@@ -129,4 +129,13 @@ interface SubscriptionCandidateDao {
         )
     """)
     suspend fun hasPendingCandidate(canonicalMerchant: String): Boolean
+
+    @Query("""
+        SELECT canonicalMerchant
+        FROM subscription_candidates
+        WHERE canonicalMerchant IN (:canonicalMerchants)
+          AND isConverted = 0
+          AND userAction = 'pending'
+    """)
+    suspend fun getPendingCanonicalMerchants(canonicalMerchants: List<String>): List<String>
 }

@@ -19,9 +19,13 @@ import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
+import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
+import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
+import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.NavigationTargetResolver
@@ -52,7 +56,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
     private lateinit var dashboardRepository: DashboardRepository
     private lateinit var categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository
     private lateinit var plannedExpenseRepository: com.yourname.expensetracker.data.repository.PlannedExpenseRepository
-    private lateinit var analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository
+    private lateinit var analyticsRepository: DashboardAnalyticsRepository
     private lateinit var computeDashboardWidgetsUseCase: ComputeDashboardWidgetsUseCase
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
@@ -100,8 +104,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
                     categories = emptyList(),
                     budgetStatuses = emptyList(),
                     pendingCount = 0,
-                    weather = com.yourname.expensetracker.data.repository.FinancialWeather(
-                        state = com.yourname.expensetracker.data.repository.WeatherState.UNKNOWN,
+                    weather = FinancialWeather(
+                        state = WeatherState.UNKNOWN,
                         headline = "",
                         summary = "",
                         icon = "",
@@ -115,7 +119,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
                     plannedExpenses = emptyList(),
                     goals = emptyList()
                 ),
-                summary = com.yourname.expensetracker.data.repository.SpendingSummary(
+                summary = SpendingSummary(
                     totalSpent = 0.0,
                     previousTotalSpent = null,
                     changePercent = null,
@@ -461,8 +465,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         ))
         assertEquals("financial_weather", HomeViewModel.getWidgetId(
             DashboardWidget.FinancialWeatherWidget(
-                com.yourname.expensetracker.data.repository.FinancialWeather(
-                    com.yourname.expensetracker.data.repository.WeatherState.UNKNOWN, "", "", "", 0, 0.0, 0.0, 0.0, 0.0
+                FinancialWeather(
+                    WeatherState.UNKNOWN, "", "", "", 0, 0.0, 0.0, 0.0, 0.0
                 )
             )
         ))

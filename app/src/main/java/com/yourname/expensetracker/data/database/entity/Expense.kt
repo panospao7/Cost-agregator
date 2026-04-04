@@ -25,6 +25,7 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
     ],
     indices = [
         Index(value = ["rawNotificationId"]),
+        Index(value = ["date"]),
         Index(value = ["transactionType", "date"]),
         Index(value = ["transactionType", "categoryId", "date"]),
         Index(value = ["categoryId", "date"]),
@@ -35,6 +36,7 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
         Index(value = ["latitude", "longitude"]),     // Location queries (v28)
         Index(value = ["latitude", "backfillAttempts", "date"]), // Backfill queue optimization
         Index(value = ["merchantKey"]),                // Unified merchant identity key (v32)
+        Index(value = ["merchantKey", "date", "amount"]), // Duplicate checks by key + time + amount
         Index(value = ["isBusinessExpense"])         // Business expense queries (v41)
     ]
 )

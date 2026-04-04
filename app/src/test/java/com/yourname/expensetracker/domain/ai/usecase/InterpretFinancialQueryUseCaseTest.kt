@@ -61,7 +61,7 @@ class InterpretFinancialQueryUseCaseTest {
             rawQuery = "total this month",
             currentTimeMs = 1000L
         )
-        coEvery { inputBuilder.build(any(), any()) } returns built
+        coEvery { inputBuilder.build(any(), any(), any()) } returns built
         val structured = FinancialQueryInterpretationResult.Structured(
             com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent(
                 rawQuery = "total this month",
@@ -86,7 +86,7 @@ class InterpretFinancialQueryUseCaseTest {
             rawQuery = "top merchants this month",
             currentTimeMs = 1000L
         )
-        coEvery { inputBuilder.build(any(), any()) } returns built
+        coEvery { inputBuilder.build(any(), any(), any()) } returns built
         coEvery { categoryRepository.getAll() } returns listOf(
             Category(id = 1L, name = "Groceries", icon = "G", color = "#00FF00")
         )
@@ -110,7 +110,7 @@ class InterpretFinancialQueryUseCaseTest {
             rawQuery = "show groceries this month",
             currentTimeMs = 1000L
         )
-        coEvery { inputBuilder.build(any(), any()) } returns built
+        coEvery { inputBuilder.build(any(), any(), any()) } returns built
         coEvery { categoryRepository.getAll() } returns listOf(
             Category(id = 7L, name = "Groceries", icon = "G", color = "#00FF00")
         )

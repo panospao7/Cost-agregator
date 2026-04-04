@@ -11,7 +11,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "bank_connections",
     indices = [
-        Index(value = ["bankId"]),
+        Index(value = ["bankId"], unique = true),
         Index(value = ["isActive"]),
         Index(value = ["lastSync"])
     ]
@@ -23,9 +23,10 @@ data class BankConnection(
     val bankName: String,          // Display name (e.g., "National Bank of Greece")
     val countryCode: String,       // ISO country code
     
-    // API credentials (encrypted in production)
+    // API credentials (AES-GCM payload: "enc:v1:<ivBase64>:<ciphertextBase64>")
     val accessToken: String? = null,
     val refreshToken: String? = null,
+    @ColumnInfo(defaultValue = "0") val tokenEncryptionVersion: Int = 0,
     val tokenExpiry: Long? = null,
     
     // Connection status

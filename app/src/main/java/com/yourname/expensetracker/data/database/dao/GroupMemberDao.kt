@@ -47,6 +47,9 @@ interface GroupMemberDao {
     // One-shot variants for single operations
     @Query("SELECT * FROM group_members WHERE groupId = :groupId ORDER BY name")
     suspend fun getAllForGroup(groupId: Long): List<GroupMember>
+
+    @Query("SELECT * FROM group_members WHERE groupId IN (:groupIds) ORDER BY groupId, name")
+    suspend fun getAllForGroups(groupIds: List<Long>): List<GroupMember>
     
     @Query("SELECT * FROM group_members WHERE id = :memberId LIMIT 1")
     suspend fun getById(memberId: Long): GroupMember?

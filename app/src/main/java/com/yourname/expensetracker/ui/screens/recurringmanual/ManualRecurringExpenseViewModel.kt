@@ -2,8 +2,8 @@ package com.yourname.expensetracker.ui.screens.recurringmanual
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -31,7 +31,7 @@ data class ManualRecurringExpenseUiState(
 
 @HiltViewModel
 class ManualRecurringExpenseViewModel @Inject constructor(
-    private val dao: ManualRecurringExpenseDao,
+    private val recurringExpenseRepository: ManualRecurringExpenseRepository,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
     
@@ -47,7 +47,7 @@ class ManualRecurringExpenseViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true)
             
             try {
-                val expenses = dao.getAll()
+                val expenses = recurringExpenseRepository.getAll()
                 val activeExpenses = expenses.filter { it.isActive }
                 
                 // Calculate monthly total
@@ -101,7 +101,7 @@ class ManualRecurringExpenseViewModel @Inject constructor(
                     isSubscription = false,
                     isActive = true
                 )
-                dao.insert(expense)
+                recurringExpenseRepository.insert(expense)
                 loadRecurringExpenses()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -117,7 +117,7 @@ class ManualRecurringExpenseViewModel @Inject constructor(
     fun toggleStatus(id: Long, currentStatus: Boolean) {
         viewModelScope.launch {
             try {
-                dao.setActiveStatus(id, !currentStatus)
+                recurringExpenseRepository.setActiveStatus(id, !currentStatus)
                 loadRecurringExpenses()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -133,7 +133,7 @@ class ManualRecurringExpenseViewModel @Inject constructor(
     fun deleteExpense(id: Long) {
         viewModelScope.launch {
             try {
-                dao.deleteById(id)
+                recurringExpenseRepository.deleteById(id)
                 loadRecurringExpenses()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -150,7 +150,7 @@ class ManualRecurringExpenseViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val nextDate = calculateNextDate(expense.nextDate, expense.frequency)
-                dao.updateNextDate(expense.id, nextDate)
+                recurringExpenseRepository.updateNextDate(expense.id, nextDate)
                 loadRecurringExpenses()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(

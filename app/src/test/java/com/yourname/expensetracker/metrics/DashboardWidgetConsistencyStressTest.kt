@@ -4,6 +4,11 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
+import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
+import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
+import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
+import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
 import com.yourname.expensetracker.domain.forecasting.StressForecastResult
 import com.yourname.expensetracker.domain.forecasting.StressHorizon
@@ -47,7 +52,7 @@ class DashboardWidgetConsistencyStressTest {
     fun setup() {
         every { timeProvider.now() } returns ts(2024, 5, 15)
         val insightsEngine = mockk<com.yourname.expensetracker.domain.analytics.InsightsEngine>(relaxed = true)
-        coEvery { insightsEngine.getSpendingPaceSuspend(any()) } returns SpendingPace(
+        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
             currentMonthSpent = 500.0,
             daysElapsed = 15,
             daysInMonth = 30,
@@ -140,7 +145,7 @@ class DashboardWidgetConsistencyStressTest {
             )
         }
         val expectedMonthSpent = expenses.sumOf { it.effectiveAmount }
-        val processedData = processedDataFrom(expectedMonthSpent, expenses)
+        val processedData = processedDataFrom(expectedMonthSpent, expenses.map { it.toDashboardExpense() })
 
         val result = computeUseCase.compute(processedData)
         val periodSummary = result.allWidgets.filterIsInstance<com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget.PeriodSummary>().single()
@@ -149,15 +154,15 @@ class DashboardWidgetConsistencyStressTest {
 
     private fun processedDataFrom(
         monthSpent: Double,
-        expenses: List<Expense>
+        expenses: List<DashboardExpense>
     ): com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData {
         val data = com.yourname.expensetracker.domain.usecase.dashboard.DashboardData(
             expenses = expenses,
             categories = emptyList(),
             budgetStatuses = emptyList(),
             pendingCount = 0,
-            weather = com.yourname.expensetracker.data.repository.FinancialWeather(
-                state = com.yourname.expensetracker.data.repository.WeatherState.UNKNOWN,
+            weather = FinancialWeather(
+                state = WeatherState.UNKNOWN,
                 headline = "",
                 summary = "",
                 icon = "",
@@ -171,7 +176,7 @@ class DashboardWidgetConsistencyStressTest {
             plannedExpenses = emptyList(),
             goals = emptyList()
         )
-        val summary = com.yourname.expensetracker.data.repository.SpendingSummary(
+        val summary = SpendingSummary(
             totalSpent = monthSpent,
             previousTotalSpent = null,
             changePercent = null,
@@ -185,4 +190,22 @@ class DashboardWidgetConsistencyStressTest {
             categoryBreakdown = emptyList()
         )
     }
+
+    private fun Expense.toDashboardExpense(): DashboardExpense = DashboardExpense(
+        id = id,
+        amount = amount,
+        effectiveAmount = effectiveAmount,
+        merchant = merchant,
+        transactionType = when (transactionType) {
+            TransactionType.PURCHASE -> DashboardTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DashboardTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DashboardTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DashboardTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DashboardTransactionType.UNKNOWN
+        },
+        date = date,
+        categoryId = categoryId,
+        isNotMine = isNotMine,
+        isManualEntry = isManualEntry
+    )
 }

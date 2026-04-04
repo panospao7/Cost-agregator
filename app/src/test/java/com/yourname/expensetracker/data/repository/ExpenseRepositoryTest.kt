@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.UserCorrection
@@ -21,6 +22,7 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExpenseRepositoryTest {
 
+    private val database = mockk<AppDatabase>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
@@ -35,6 +37,7 @@ class ExpenseRepositoryTest {
         every { expenseDao.getAllFlow(any()) } returns flowOf(emptyList())
 
         repository = ExpenseRepository(
+            database,
             expenseDao,
             userCorrectionDao,
             pendingReviewDao,
@@ -93,14 +96,13 @@ class ExpenseRepositoryTest {
             date = System.currentTimeMillis()
         )
         
-        coEvery { expenseDao.updateMerchant(expenseId, newMerchant) } just runs
+        coEvery { expenseDao.updateMerchantAndKey(expenseId, newMerchant, MerchantKeyGenerator.generate(newMerchant)) } just runs
         
         // Act
         repository.updateExpenseMerchant(expense, newMerchant)
         
         // Assert
-        coVerify { expenseDao.updateMerchant(expenseId, newMerchant) }
-        coVerify { expenseDao.updateMerchantKey(expenseId, MerchantKeyGenerator.generate(newMerchant)) }
+        coVerify { expenseDao.updateMerchantAndKey(expenseId, newMerchant, MerchantKeyGenerator.generate(newMerchant)) }
         coVerify { merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant) }
         coVerify { merchantCategoryRepository.learnPattern(newMerchant, 1L) }
     }
@@ -127,9 +129,15 @@ class ExpenseRepositoryTest {
                 MerchantKeyGenerator.generate(newMerchant)
             )
         }
-        coVerify { pendingReviewDao.bulkRenameMerchant(oldMerchant, newMerchant) }
-        coVerify(exactly = 0) { expenseDao.updateMerchant(expense.id, any()) }
-        coVerify(exactly = 0) { expenseDao.updateMerchantKey(expense.id, any()) }
+        coVerify {
+            pendingReviewDao.bulkRenameMerchant(
+                MerchantKeyGenerator.generate(oldMerchant),
+                oldMerchant,
+                newMerchant,
+                MerchantKeyGenerator.generate(newMerchant)
+            )
+        }
+        coVerify(exactly = 0) { expenseDao.updateMerchantAndKey(expense.id, any(), any()) }
     }
 
     @Test
@@ -146,10 +154,9 @@ class ExpenseRepositoryTest {
 
         repository.updateExpenseMerchant(expense, merchant, applyToAll = false)
 
-        coVerify(exactly = 0) { expenseDao.updateMerchant(any(), any()) }
-        coVerify(exactly = 0) { expenseDao.updateMerchantKey(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.updateMerchantAndKey(any(), any(), any()) }
         coVerify(exactly = 0) { expenseDao.updateMerchantForMerchant(any(), any(), any()) }
-        coVerify(exactly = 0) { pendingReviewDao.bulkRenameMerchant(any(), any()) }
+        coVerify(exactly = 0) { pendingReviewDao.bulkRenameMerchant(any(), any(), any(), any()) }
         coVerify(exactly = 0) { merchantNormalizer.learnMerchantAlias(any(), any()) }
     }
 

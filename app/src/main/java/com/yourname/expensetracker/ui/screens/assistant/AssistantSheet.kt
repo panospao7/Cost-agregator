@@ -38,7 +38,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
-import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.components.ai.AiChatBubble
 import com.yourname.expensetracker.ui.components.ai.AiInsightsCard
 import com.yourname.expensetracker.ui.components.ai.AiRecommendationCard

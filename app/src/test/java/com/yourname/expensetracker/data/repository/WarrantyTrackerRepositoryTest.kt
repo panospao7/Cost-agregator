@@ -4,8 +4,13 @@ import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionServi
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.*
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -17,17 +22,28 @@ class WarrantyTrackerRepositoryTest {
     private lateinit var repository: WarrantyTrackerRepository
     private val warrantyDao: WarrantyDao = mockk()
     private val returnWindowDao: ReturnWindowDao = mockk()
+    private val scannedReceiptDao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao = mockk(relaxed = true)
     private val cloudExtractionService: CloudWarrantyExtractionService = mockk()
+    private val aiSettingsRepository: AiSettingsRepository = mockk()
+    private val aiPolicy: AiPolicy = mockk()
     private val timeProvider = FakeTimeProvider(1_700_000_000_000L)
+    private val settingsFlow = MutableStateFlow(AiSettings())
 
     @Before
     fun setup() {
         repository = WarrantyTrackerRepository(
             warrantyDao,
             returnWindowDao,
+            scannedReceiptDao,
             cloudExtractionService,
+            aiSettingsRepository,
+            aiPolicy,
             timeProvider
         )
+
+        every { aiSettingsRepository.settings() } returns settingsFlow
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_EXTRACTION) } returns false
     }
 
     @Test
@@ -69,7 +85,7 @@ class WarrantyTrackerRepositoryTest {
             warrantyEndDate = 2000
         )
         
-        coEvery { cloudExtractionService.extractWarranty(receipt) } returns expectedWarranty
+        coEvery { cloudExtractionService.extractWarranty(receipt, false) } returns expectedWarranty
 
         val result = repository.extractWarrantyFromReceipt(receipt)
         

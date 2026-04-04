@@ -229,7 +229,7 @@ class ReceiptRepositoryStressTest {
             confidence = 0.8f
         )
 
-        coEvery { ocrService.processUri(any()) } returns ocrResult
+        coEvery { ocrService.processUri(any<Uri>()) } returns ocrResult
         every { receiptParser.parse(any()) } returns parsed
         every { receiptParser.lineItemsToJson(any()) } returns "[]"
         coEvery { merchantNormalizer.normalize(any(), any(), any()) } returns MerchantLookupResult(

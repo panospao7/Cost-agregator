@@ -2,9 +2,8 @@ package com.yourname.expensetracker.ui.screens.export
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.database.dao.CategoryDao
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.repository.ExportDataRepository
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
@@ -49,8 +48,7 @@ data class ExportFormat(
 
 @HiltViewModel
 class ExportOptionsViewModel @Inject constructor(
-    private val expenseDao: ExpenseDao,
-    private val categoryDao: CategoryDao,
+    private val exportDataRepository: ExportDataRepository,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
     
@@ -70,7 +68,7 @@ class ExportOptionsViewModel @Inject constructor(
     private fun loadExpenseCount() {
         viewModelScope.launch {
             try {
-                val expenses = expenseDao.getExpensesBetween(
+                val expenses = exportDataRepository.getExpensesBetween(
                     _uiState.value.startDate,
                     _uiState.value.endDate
                 )
@@ -120,13 +118,13 @@ class ExportOptionsViewModel @Inject constructor(
             
             try {
                 // Get expenses in date range
-                val expenses = expenseDao.getExpensesBetween(
+                val expenses = exportDataRepository.getExpensesBetween(
                     _uiState.value.startDate,
                     _uiState.value.endDate
                 )
                 
                 // Get categories
-                val categories = categoryDao.getAll().associate { it.id to it.name }
+                val categories = exportDataRepository.getCategoryNameMap()
                 
                 // Generate export based on selected format
                 val exportData = when (_uiState.value.selectedFormat) {

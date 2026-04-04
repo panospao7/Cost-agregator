@@ -8,9 +8,11 @@ import androidx.room.PrimaryKey
 
 enum class PendingReviewStatus {
     PENDING,
+    PROCESSING,
     APPROVED,
     REJECTED,
-    MODIFIED
+    MODIFIED,
+    DUPLICATE
 }
 
 @Entity(
@@ -33,7 +35,9 @@ enum class PendingReviewStatus {
         Index(value = ["rawNotificationId"]),
         Index(value = ["scannedReceiptId"]),
         Index(value = ["status"]),
-        Index(value = ["status", "createdAt"])
+        Index(value = ["status", "createdAt"]),
+        Index(value = ["suggestedMerchantKey"]),
+        Index(value = ["status", "suggestedMerchantKey", "suggestedDate"])
     ]
 )
 data class PendingReview(
@@ -43,6 +47,7 @@ data class PendingReview(
     val suggestedAmount: Double,
     val suggestedCurrency: String,
     val suggestedMerchant: String,
+    val suggestedMerchantKey: String? = null,
     val suggestedType: String,          // TransactionType name
     val suggestedCategoryId: Long?,
     val suggestedDate: Long? = null,    // Added in v11 to preserve parsed date

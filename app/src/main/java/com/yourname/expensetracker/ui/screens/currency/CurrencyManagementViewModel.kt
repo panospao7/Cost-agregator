@@ -2,7 +2,7 @@ package com.yourname.expensetracker.ui.screens.currency
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.database.dao.ExchangeRateDao
+import com.yourname.expensetracker.data.repository.CurrencyDataRepository
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
@@ -47,7 +47,7 @@ data class ExchangeRateInfo(
 
 @HiltViewModel
 class CurrencyManagementViewModel @Inject constructor(
-    private val exchangeRateDao: ExchangeRateDao,
+    private val currencyDataRepository: CurrencyDataRepository,
     private val currencyConverter: CurrencyConverter,
     private val currencyRatesRepository: CurrencyRatesRepository,
     private val settingsRepository: CurrencySettingsRepository
@@ -94,7 +94,7 @@ class CurrencyManagementViewModel @Inject constructor(
                 
                 // Load exchange rates
                 val homeCurrency = _uiState.value.homeCurrency
-                val rates = exchangeRateDao.getAllRatesForBase(homeCurrency).first()
+                val rates = currencyDataRepository.getAllRatesForBase(homeCurrency).first()
                     .map { rate ->
                         ExchangeRateInfo(
                             fromCurrency = rate.fromCurrency,

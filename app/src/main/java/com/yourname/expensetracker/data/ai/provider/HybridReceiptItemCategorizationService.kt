@@ -2,8 +2,10 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
+import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
 import kotlinx.coroutines.flow.first
@@ -15,7 +17,8 @@ import javax.inject.Singleton
 class HybridReceiptItemCategorizationService @Inject constructor(
     private val onDeviceService: OnDeviceReceiptItemCategorizationService,
     private val cloudService: CloudReceiptItemCategorizationService,
-    private val aiSettingsRepository: AiSettingsRepository
+    private val aiSettingsRepository: AiSettingsRepository,
+    private val aiPolicy: AiPolicy
 ) : ReceiptItemCategorizationService {
     
     override suspend fun categorizeItems(input: ReceiptItemCategorizationInput): ReceiptItemCategorizationResult? {
@@ -32,8 +35,8 @@ class HybridReceiptItemCategorizationService @Inject constructor(
         input: ReceiptItemCategorizationInput,
         settings: AiSettings
     ): ReceiptItemCategorizationResult? {
-        // Try cloud first if enabled
-        if (settings.allowCloudAi) {
+        // Try cloud first only when policy allows this capability
+        if (aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_ITEM_CATEGORIZATION)) {
             try {
                 val cloudResult = cloudService.categorizeItems(input)
                 if (cloudResult != null) {

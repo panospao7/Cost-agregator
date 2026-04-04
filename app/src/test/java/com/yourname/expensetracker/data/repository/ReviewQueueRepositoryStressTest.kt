@@ -52,11 +52,11 @@ class ReviewQueueRepositoryStressTest {
         coEvery { pendingReviewDao.getPendingFlow(any()) } returns MutableStateFlow(emptyList())
         coEvery { pendingReviewDao.getPendingCountFlow() } returns MutableStateFlow(0)
         coEvery { pendingReviewDao.getById(any()) } returns null
-        coEvery { pendingReviewDao.updateStatusIfPending(any(), any()) } returns 0
+        coEvery { pendingReviewDao.transitionStatus(any(), any(), any()) } returns 0
         coEvery { pendingReviewDao.getPending() } returns emptyList()
-        coEvery { pendingReviewDao.getPendingByMerchant(any()) } returns emptyList()
-        coEvery { pendingReviewDao.bulkUpdateCategoryByMerchant(any(), any()) } returns Unit
-        coEvery { pendingReviewDao.bulkRenameMerchant(any(), any()) } returns Unit
+        coEvery { pendingReviewDao.getPendingByMerchant(any(), any()) } returns emptyList()
+        coEvery { pendingReviewDao.bulkUpdateCategoryByMerchant(any(), any(), any()) } returns Unit
+        coEvery { pendingReviewDao.bulkRenameMerchant(any(), any(), any(), any()) } returns Unit
         coEvery { rawNotificationDao.getById(any()) } returns null
         coEvery { expenseDao.insertAtomic(any()) } returns 1L
         coEvery { expenseDao.getAllFlow(any()) } returns MutableStateFlow(emptyList())
@@ -138,12 +138,25 @@ class ReviewQueueRepositoryStressTest {
     @Test
     fun `stress - updatePendingReviewCategoryBulk calls DAO`() = runTest {
         repository.updatePendingReviewCategoryBulk("Test Merchant", 1)
-        coVerify { pendingReviewDao.bulkUpdateCategoryByMerchant("Test Merchant", 1) }
+        coVerify {
+            pendingReviewDao.bulkUpdateCategoryByMerchant(
+                com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate("Test Merchant"),
+                "Test Merchant",
+                1
+            )
+        }
     }
 
     @Test
     fun `stress - updatePendingReviewMerchantBulk calls DAO`() = runTest {
         repository.updatePendingReviewMerchantBulk("Old", "New")
-        coVerify { pendingReviewDao.bulkRenameMerchant("Old", "New") }
+        coVerify {
+            pendingReviewDao.bulkRenameMerchant(
+                com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate("Old"),
+                "Old",
+                "New",
+                com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate("New")
+            )
+        }
     }
 }

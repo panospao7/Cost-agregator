@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyType
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
+import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,7 +17,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.IOException
-import java.util.concurrent.TimeUnit
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,18 +27,14 @@ import javax.inject.Singleton
  */
 @Singleton
 class CloudWarrantyExtractionService @Inject constructor(
-    private val secureKeyStorage: SecureKeyStorage
+    private val secureKeyStorage: SecureKeyStorage,
+    @CloudAiHttpClient private val client: OkHttpClient
 ) {
     private var apiKeyOverride: String? = null
-    
-    internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage) {
+
+    internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient()) {
         this.apiKeyOverride = apiKeyOverride
     }
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .build()
 
     /**
      * CRITICAL: API key is now retrieved from secure storage at runtime.
@@ -46,13 +43,16 @@ class CloudWarrantyExtractionService @Inject constructor(
     private val apiKey: String
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
-    suspend fun extractWarranty(receipt: ScannedReceipt): Warranty? = withContext(Dispatchers.IO) {
+    suspend fun extractWarranty(
+        receipt: ScannedReceipt,
+        shouldRedactBeforeCloud: Boolean
+    ): Warranty? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {
             Timber.d("CloudWarrantyExtractionService: Gemini API key missing, skipping.")
             return@withContext null
         }
 
-        val prompt = buildPrompt(receipt)
+        val prompt = buildPrompt(receipt, shouldRedactBeforeCloud)
         
         try {
             val requestBody = JSONObject().apply {
@@ -71,11 +71,12 @@ class CloudWarrantyExtractionService @Inject constructor(
                 })
             }
 
-            val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey"
+            val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/gemini-2.0-flash:generateContent"
             val request = Request.Builder()
                 .url(url)
                 .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
                 .header("Content-Type", "application/json")
+                .header("x-goog-api-key", apiKey)
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -96,14 +97,17 @@ class CloudWarrantyExtractionService @Inject constructor(
         }
     }
 
-    private fun buildPrompt(receipt: ScannedReceipt): String {
+    private fun buildPrompt(receipt: ScannedReceipt, shouldRedactBeforeCloud: Boolean): String {
+        val safeReceiptText = sanitizeReceiptText(receipt.rawOcrText, shouldRedactBeforeCloud)
+        val safeMerchant = sanitizeMerchant(receipt.parsedMerchant, shouldRedactBeforeCloud)
+
         return """
             Analyze this receipt and extract warranty information.
             
             Receipt Text:
-            ${receipt.rawOcrText}
+            $safeReceiptText
             
-            Merchant: ${receipt.parsedMerchant ?: "Unknown"}
+            Merchant: $safeMerchant
             Total Amount: ${receipt.parsedTotal ?: "Unknown"}
             Date: ${receipt.parsedDate ?: "Unknown"}
             
@@ -151,11 +155,14 @@ class CloudWarrantyExtractionService @Inject constructor(
                 .getString("text")
 
             // Extract JSON from the text (it might be wrapped in markdown)
-            val jsonPattern = """\{[^{}]*\}""".toRegex()
-            val jsonMatch = jsonPattern.find(content)?.value
+            val jsonMatch = extractFirstJsonObject(content)
             
             if (jsonMatch == null) {
-                Timber.w("No JSON found in response: $content")
+                Timber.w(
+                    "No JSON found in response (contentLength=%d, contentHash=%s)",
+                    content.length,
+                    content.sha256Prefix()
+                )
                 return null
             }
 
@@ -187,9 +194,37 @@ class CloudWarrantyExtractionService @Inject constructor(
                 notes = warrantyJson.optString("returnConditions").takeIf { it.isNotBlank() }
             )
         } catch (e: Exception) {
-            Timber.e(e, "Error parsing warranty response: $responseBody")
+            val parseErrorCode = e::class.simpleName ?: "ParseError"
+            Timber.e(
+                e,
+                "Error parsing warranty response (errorCode=%s, bodyLength=%d, bodyHash=%s)",
+                parseErrorCode,
+                responseBody.length,
+                responseBody.sha256Prefix()
+            )
             null
         }
+    }
+
+    private fun sanitizeMerchant(rawMerchant: String?, shouldRedact: Boolean): String {
+        val merchant = rawMerchant?.trim().takeUnless { it.isNullOrBlank() } ?: "Unknown"
+        if (!shouldRedact) return merchant.take(80)
+        return "merchant_${merchant.sha256Prefix()}"
+    }
+
+    private fun sanitizeReceiptText(rawText: String, shouldRedact: Boolean): String {
+        val trimmed = rawText.trim().take(AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI)
+        if (!shouldRedact) return trimmed
+
+        return trimmed
+            .replace(EMAIL_REGEX, "[REDACTED_EMAIL]")
+            .replace(IBAN_REGEX, "[REDACTED_IBAN]")
+            .replace(CARD_REGEX, "[REDACTED_CARD]")
+            .replace(PHONE_REGEX, "[REDACTED_PHONE]")
+            .replace(LONG_NUMBER_REGEX, "[REDACTED_NUMBER]")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI)
     }
 
     private fun parseWarrantyType(type: String): WarrantyType {
@@ -198,5 +233,71 @@ class CloudWarrantyExtractionService @Inject constructor(
         } catch (e: IllegalArgumentException) {
             WarrantyType.MANUFACTURER
         }
+    }
+
+    private fun extractFirstJsonObject(text: String): String? {
+        extractFencedJsonObject(text)?.let { return it }
+
+        var start = -1
+        var depth = 0
+        var inString = false
+        var isEscaped = false
+
+        for (index in text.indices) {
+            val ch = text[index]
+
+            if (start == -1) {
+                if (ch == '{') {
+                    start = index
+                    depth = 1
+                }
+                continue
+            }
+
+            if (inString) {
+                if (isEscaped) {
+                    isEscaped = false
+                } else if (ch == '\\') {
+                    isEscaped = true
+                } else if (ch == '"') {
+                    inString = false
+                }
+                continue
+            }
+
+            when (ch) {
+                '"' -> inString = true
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        return text.substring(start, index + 1)
+                    }
+                }
+            }
+        }
+
+        return null
+    }
+
+    private fun extractFencedJsonObject(text: String): String? {
+        val fencedMatch = JSON_FENCE_REGEX.find(text) ?: return null
+        val fencedBody = fencedMatch.groupValues.getOrNull(1)?.trim().orEmpty()
+        if (fencedBody.isBlank()) return null
+        return extractFirstJsonObject(fencedBody)
+    }
+
+    private companion object {
+        private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
+        private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
+        private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")
+        private val CARD_REGEX = Regex("""\b(?:\d[ -]?){13,19}\b""")
+        private val PHONE_REGEX = Regex("""\+?\d[\d\s().-]{6,}\d""")
+        private val LONG_NUMBER_REGEX = Regex("""\b\d{10,}\b""")
+    }
+
+    private fun String.sha256Prefix(): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
+        return digest.take(6).joinToString("") { "%02x".format(it) }
     }
 }

@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.database.entity.TransferDirection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,6 +17,8 @@ data class TransferInsights(
     val autoDetectedIncoming: Int = 0,
     val autoDetectedOutgoing: Int = 0,
     val unknownDirections: Int = 0,
+    val correctDetections: Int = 0,
+    val totalDetections: Int = 0,
     val accuracyPercentage: Float = 0f,
     val detectionRate: Float = 0f,
     val topIncomingSources: List<String> = emptyList(),
@@ -49,8 +53,8 @@ class TransferDirectionAnalytics @Inject constructor() {
     private val _insights = MutableStateFlow(TransferInsights())
     val insights: StateFlow<TransferInsights> = _insights.asStateFlow()
 
-    private val incomingSources = mutableMapOf<String, Int>()
-    private val outgoingDestinations = mutableMapOf<String, Int>()
+    private val incomingSources = ConcurrentHashMap<String, Int>()
+    private val outgoingDestinations = ConcurrentHashMap<String, Int>()
 
     /**
      * Record a successful auto-detection.
@@ -60,78 +64,87 @@ class TransferDirectionAnalytics @Inject constructor() {
         accountName: String?,
         wasCorrect: Boolean = true
     ) {
-        val current = _insights.value
-        val newTotal = current.totalTransfers + 1
-
-        val newIncoming = if (direction == TransferDirection.INCOMING) {
-            current.autoDetectedIncoming + 1
-        } else {
-            current.autoDetectedIncoming
-        }
-
-        val newOutgoing = if (direction == TransferDirection.OUTGOING) {
-            current.autoDetectedOutgoing + 1
-        } else {
-            current.autoDetectedOutgoing
-        }
-
         // Track source/destination
         accountName?.let { name ->
             when (direction) {
                 TransferDirection.INCOMING -> {
-                    incomingSources[name] = incomingSources.getOrDefault(name, 0) + 1
+                    incomingSources.merge(name, 1, Int::plus)
                 }
                 TransferDirection.OUTGOING -> {
-                    outgoingDestinations[name] = outgoingDestinations.getOrDefault(name, 0) + 1
+                    outgoingDestinations.merge(name, 1, Int::plus)
                 }
             }
         }
 
-        val detected = newIncoming + newOutgoing
-        val newDetectionRate = if (newTotal > 0) {
-            (detected.toFloat() / newTotal) * 100
-        } else 0f
+        _insights.update { current ->
+            val newTotalTransfers = current.totalTransfers + 1
+            val newIncoming = if (direction == TransferDirection.INCOMING) {
+                current.autoDetectedIncoming + 1
+            } else {
+                current.autoDetectedIncoming
+            }
+            val newOutgoing = if (direction == TransferDirection.OUTGOING) {
+                current.autoDetectedOutgoing + 1
+            } else {
+                current.autoDetectedOutgoing
+            }
+            val newTotalDetections = current.totalDetections + 1
+            val newCorrectDetections = if (wasCorrect) {
+                current.correctDetections + 1
+            } else {
+                current.correctDetections
+            }
 
-        val correctDetections = if (wasCorrect) detected else detected - 1
-        val newAccuracy = if (detected > 0) {
-            (correctDetections.toFloat() / detected) * 100
-        } else 0f
+            val newDetectionRate = if (newTotalTransfers > 0) {
+                (newTotalDetections.toFloat() / newTotalTransfers) * 100f
+            } else {
+                0f
+            }
+            val newAccuracy = if (newTotalDetections > 0) {
+                (newCorrectDetections.toFloat() / newTotalDetections) * 100f
+            } else {
+                0f
+            }
 
-        _insights.value = current.copy(
-            totalTransfers = newTotal,
-            autoDetectedIncoming = newIncoming,
-            autoDetectedOutgoing = newOutgoing,
-            detectionRate = newDetectionRate,
-            accuracyPercentage = newAccuracy,
-            topIncomingSources = incomingSources.entries
-                .sortedByDescending { it.value }
-                .take(5)
-                .map { it.key },
-            topOutgoingDestinations = outgoingDestinations.entries
-                .sortedByDescending { it.value }
-                .take(5)
-                .map { it.key }
-        )
+            current.copy(
+                totalTransfers = newTotalTransfers,
+                autoDetectedIncoming = newIncoming,
+                autoDetectedOutgoing = newOutgoing,
+                totalDetections = newTotalDetections,
+                correctDetections = newCorrectDetections,
+                detectionRate = newDetectionRate,
+                accuracyPercentage = newAccuracy,
+                topIncomingSources = incomingSources.entries
+                    .sortedByDescending { it.value }
+                    .take(5)
+                    .map { it.key },
+                topOutgoingDestinations = outgoingDestinations.entries
+                    .sortedByDescending { it.value }
+                    .take(5)
+                    .map { it.key }
+            )
+        }
     }
 
     /**
      * Record a transfer with unknown direction (detection failed).
      */
     fun recordUnknownDirection() {
-        val current = _insights.value
-        val newTotal = current.totalTransfers + 1
-        val newUnknown = current.unknownDirections + 1
+        _insights.update { current ->
+            val newTotal = current.totalTransfers + 1
+            val newUnknown = current.unknownDirections + 1
+            val newDetectionRate = if (newTotal > 0) {
+                (current.totalDetections.toFloat() / newTotal) * 100f
+            } else {
+                0f
+            }
 
-        val detected = current.autoDetectedIncoming + current.autoDetectedOutgoing
-        val newDetectionRate = if (newTotal > 0) {
-            (detected.toFloat() / newTotal) * 100
-        } else 0f
-
-        _insights.value = current.copy(
-            totalTransfers = newTotal,
-            unknownDirections = newUnknown,
-            detectionRate = newDetectionRate
-        )
+            current.copy(
+                totalTransfers = newTotal,
+                unknownDirections = newUnknown,
+                detectionRate = newDetectionRate
+            )
+        }
     }
 
     /**
@@ -140,15 +153,19 @@ class TransferDirectionAnalytics @Inject constructor() {
     fun recordUserCorrection(fromDirection: TransferDirection?, toDirection: TransferDirection) {
         // This indicates the auto-detection was wrong
         // Adjust accuracy calculation
-        val current = _insights.value
-        val detected = current.autoDetectedIncoming + current.autoDetectedOutgoing
+        if (fromDirection == null) return
 
-        if (detected > 0 && fromDirection != null) {
-            val correctDetections = (detected * current.accuracyPercentage / 100) - 1
-            val newAccuracy = (correctDetections / detected) * 100
+        _insights.update { current ->
+            if (current.totalDetections <= 0) {
+                return@update current
+            }
 
-            _insights.value = current.copy(
-                accuracyPercentage = newAccuracy.coerceAtLeast(0f)
+            val correctedCount = (current.correctDetections - 1).coerceAtLeast(0)
+            val newAccuracy = (correctedCount.toFloat() / current.totalDetections.toFloat()) * 100f
+
+            current.copy(
+                correctDetections = correctedCount,
+                accuracyPercentage = newAccuracy
             )
         }
     }

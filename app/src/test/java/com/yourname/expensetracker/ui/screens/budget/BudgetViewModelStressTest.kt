@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -38,6 +39,7 @@ class BudgetViewModelStressTest {
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var offsetEngine: SharedExpenseBudgetOffsetEngine
     private lateinit var autopilotEngine: BudgetAutopilotEngine
+    private lateinit var timeProvider: TimeProvider
     private lateinit var viewModel: BudgetViewModel
 
     @Before
@@ -48,11 +50,12 @@ class BudgetViewModelStressTest {
         categoryRepository = mockk(relaxed = true)
         offsetEngine = mockk(relaxed = true)
         autopilotEngine = mockk(relaxed = true)
+        timeProvider = mockk(relaxed = true)
         
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         
-        viewModel = BudgetViewModel(budgetRepository, categoryRepository, offsetEngine, autopilotEngine)
+        viewModel = BudgetViewModel(budgetRepository, categoryRepository, offsetEngine, autopilotEngine, timeProvider)
     }
 
     @After

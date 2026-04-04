@@ -4,6 +4,7 @@ import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.DailyTotal
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
@@ -32,6 +33,7 @@ import java.time.ZoneId
 
 class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
 
+    private val database = mockk<AppDatabase>(relaxed = true)
     private lateinit var repository: ExpenseRepository
     private lateinit var insightsEngine: InsightsEngine
     private lateinit var advancedAnalyticsEngine: AdvancedAnalyticsEngine
@@ -43,6 +45,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         super.setUp()
 
         repository = ExpenseRepository(
+            database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),

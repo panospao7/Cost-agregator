@@ -39,8 +39,14 @@ interface BankConnectionDao {
     @Query("UPDATE bank_connections SET lastSync = :timestamp, lastSyncStatus = :status WHERE id = :id")
     suspend fun updateSyncStatus(id: Long, timestamp: Long, status: SyncStatus)
     
-    @Query("UPDATE bank_connections SET accessToken = :token, tokenExpiry = :expiry WHERE id = :id")
-    suspend fun updateToken(id: Long, token: String, expiry: Long)
+    @Query("UPDATE bank_connections SET accessToken = :accessToken, refreshToken = :refreshToken, tokenEncryptionVersion = :encryptionVersion, tokenExpiry = :expiry WHERE id = :id")
+    suspend fun updateToken(
+        id: Long,
+        accessToken: String,
+        refreshToken: String?,
+        encryptionVersion: Int,
+        expiry: Long
+    )
     
     @Query("SELECT COUNT(*) FROM bank_connections WHERE isActive = 1 AND isConnected = 1")
     suspend fun getConnectedCount(): Int

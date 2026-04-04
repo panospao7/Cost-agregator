@@ -15,6 +15,8 @@ import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.NavigationTargetResolverImpl
 import com.yourname.expensetracker.data.repository.WidgetStyleRepositoryImpl
+import com.yourname.expensetracker.data.speech.AndroidSpeechInputGateway
+import com.yourname.expensetracker.domain.naturallanguage.SpeechInputGateway
 import com.yourname.expensetracker.domain.widget.service.WidgetStyleRepository
 import dagger.Module
 import dagger.Provides
@@ -80,6 +82,12 @@ object ServiceModule {
     fun provideWidgetStyleRepository(
         impl: WidgetStyleRepositoryImpl
     ): WidgetStyleRepository = impl
+
+    @Provides
+    @Singleton
+    fun provideSpeechInputGateway(
+        impl: AndroidSpeechInputGateway
+    ): SpeechInputGateway = impl
 
     @Provides
     @Singleton

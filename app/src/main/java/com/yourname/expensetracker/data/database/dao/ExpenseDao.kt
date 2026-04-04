@@ -93,6 +93,17 @@ interface ExpenseDao {
         ORDER BY date ASC
     """)
     suspend fun getRecentExpensesForMerchant(merchant: String, since: Long): List<Expense>
+
+    @Transaction
+    @Query("""
+        SELECT * FROM expenses
+        WHERE merchant = :merchant
+        AND date >= :since
+        AND transactionType = 'PURCHASE'
+        AND isNotMine = 0
+        ORDER BY date ASC
+    """)
+    suspend fun getRecentExpensesWithCategoryForMerchant(merchant: String, since: Long): List<ExpenseWithCategory>
     
     @Query("SELECT SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0 ELSE amount END) FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0")
     fun getTotalSpentFlow(): Flow<Double?>
@@ -114,6 +125,9 @@ interface ExpenseDao {
 
     @Query("UPDATE expenses SET merchant = :merchant WHERE id = :expenseId")
     suspend fun updateMerchant(expenseId: Long, merchant: String)
+
+    @Query("UPDATE expenses SET merchant = :merchant, merchantKey = :merchantKey WHERE id = :expenseId")
+    suspend fun updateMerchantAndKey(expenseId: Long, merchant: String, merchantKey: String)
 
     @Query("UPDATE expenses SET transactionType = :type WHERE id = :expenseId")
     suspend fun updateTransactionType(expenseId: Long, type: String)
@@ -144,27 +158,144 @@ interface ExpenseDao {
 
     @Query("""
         SELECT EXISTS(
-            SELECT 1 FROM expenses 
-            WHERE ABS(amount - :amount) < 0.01
-            AND ABS(date - :date) <= :windowMs
-            AND (
-                -- Exact match
-                merchant = :merchant 
-                OR 
-                -- Case-insensitive match
-                UPPER(merchant) = UPPER(:merchant)
-                OR
-                -- Normalized match (remove spaces)
-                UPPER(REPLACE(merchant, ' ', '')) = UPPER(REPLACE(:merchant, ' ', ''))
-                OR
-                -- Substring match
-                merchant LIKE '%' || :merchant || '%'
-                OR
-                :merchant LIKE '%' || merchant || '%'
-            )
+            SELECT 1 FROM expenses
+            WHERE dedupeKey = :dedupeKey
+            LIMIT 1
         )
     """)
-    suspend fun isDuplicate(amount: Double, merchant: String, date: Long, windowMs: Long = 300000): Boolean
+    suspend fun existsByDedupeKey(dedupeKey: String): Boolean
+
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM expenses
+            WHERE merchantKey = :merchantKey
+              AND date >= :startDate
+              AND date < :endDate
+              AND amount BETWEEN :minAmount AND :maxAmount
+            LIMIT 1
+        )
+    """)
+    suspend fun existsByMerchantKeyInRange(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double
+    ): Boolean
+
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM expenses
+            WHERE merchant = :merchant
+              AND date >= :startDate
+              AND date < :endDate
+              AND amount BETWEEN :minAmount AND :maxAmount
+            LIMIT 1
+        )
+    """)
+    suspend fun existsByMerchantInRange(
+        merchant: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double
+    ): Boolean
+
+    @Transaction
+    suspend fun isDuplicate(
+        amount: Double,
+        merchant: String,
+        date: Long,
+        windowMs: Long = 300000,
+        merchantKey: String? = null,
+        dedupeKey: String? = null
+    ): Boolean {
+        if (!dedupeKey.isNullOrBlank() && existsByDedupeKey(dedupeKey)) {
+            return true
+        }
+
+        val startDate = date - windowMs
+        val endDate = date + windowMs + 1
+        val minAmount = amount - 0.01
+        val maxAmount = amount + 0.01
+
+        val normalizedMerchantKey = merchantKey?.takeIf { it.isNotBlank() }
+        return if (normalizedMerchantKey != null) {
+            existsByMerchantKeyInRange(
+                merchantKey = normalizedMerchantKey,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount
+            )
+        } else {
+            existsByMerchantInRange(
+                merchant = merchant,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount
+            )
+        }
+    }
+
+    @Query("""
+        SELECT * FROM expenses
+        WHERE merchantKey = :merchantKey
+          AND date >= :startDate
+          AND date < :endDate
+          AND amount BETWEEN :minAmount AND :maxAmount
+        ORDER BY date DESC
+        LIMIT 1
+    """)
+    suspend fun getDuplicateCandidateByMerchantKeyInRange(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double
+    ): Expense?
+
+    @Query("""
+        SELECT * FROM expenses
+        WHERE merchant = :merchant
+          AND date >= :startDate
+          AND date < :endDate
+          AND amount BETWEEN :minAmount AND :maxAmount
+        ORDER BY date DESC
+        LIMIT 1
+    """)
+    suspend fun getDuplicateCandidateByMerchantInRange(
+        merchant: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double
+    ): Expense?
+
+    @Transaction
+    suspend fun getDuplicateCandidateForImport(
+        merchantKey: String,
+        merchant: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double
+    ): Expense? {
+        return getDuplicateCandidateByMerchantKeyInRange(
+            merchantKey = merchantKey,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount
+        ) ?: getDuplicateCandidateByMerchantInRange(
+            merchant = merchant,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount
+        )
+    }
     @Query("""
         SELECT COALESCE(SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
                               WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
@@ -189,11 +320,44 @@ interface ExpenseDao {
 
     // === Merchant Search for Manual Entry ===
     @Query("""
-        SELECT merchant, categoryId, AVG(amount) as avgAmount, COUNT(*) as txCount
-        FROM expenses
-        WHERE UPPER(merchant) LIKE '%' || UPPER(:query) || '%'
-        GROUP BY merchantKey
-        ORDER BY txCount DESC
+        WITH filtered AS (
+            SELECT *
+            FROM expenses
+            WHERE UPPER(merchant) LIKE '%' || UPPER(:query) || '%'
+              AND merchantKey IS NOT NULL
+        ),
+        stats AS (
+            SELECT merchantKey,
+                   AVG(amount) AS avgAmount,
+                   COUNT(*) AS txCount,
+                   MAX(date) AS latestDate
+            FROM filtered
+            GROUP BY merchantKey
+        ),
+        latest AS (
+            SELECT f.merchantKey,
+                   f.merchant,
+                   f.categoryId,
+                   f.date,
+                   f.id
+            FROM filtered f
+            JOIN stats s
+              ON s.merchantKey = f.merchantKey
+             AND s.latestDate = f.date
+            WHERE f.id = (
+                SELECT MAX(f2.id)
+                FROM filtered f2
+                WHERE f2.merchantKey = f.merchantKey
+                  AND f2.date = f.date
+            )
+        )
+        SELECT l.merchant AS merchant,
+               l.categoryId AS categoryId,
+               s.avgAmount AS avgAmount,
+               s.txCount AS txCount
+        FROM stats s
+        JOIN latest l ON l.merchantKey = s.merchantKey
+        ORDER BY s.txCount DESC, s.latestDate DESC
         LIMIT 10
     """)
     suspend fun searchMerchants(query: String): List<MerchantSuggestion>

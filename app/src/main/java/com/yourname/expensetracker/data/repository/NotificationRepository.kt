@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BlockedPackageDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
@@ -28,6 +30,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class NotificationRepository @Inject constructor(
+    private val database: AppDatabase,
     private val dao: RawNotificationDao,
     private val blockedPackageDao: BlockedPackageDao,
     private val expenseDao: ExpenseDao,
@@ -103,12 +106,14 @@ class NotificationRepository @Inject constructor(
         blockedPackageDao.getAllFlow()
 
     suspend fun delete(notification: RawNotification) {
-        val pendingReview = pendingReviewDao.getByRawId(notification.id)
-        if (pendingReview != null && pendingReview.status == PendingReviewStatus.PENDING) {
-            sourceStatsDao.decrementPending(notification.packageName)
+        database.withTransaction {
+            val pendingReview = pendingReviewDao.getByRawId(notification.id)
+            if (pendingReview != null && pendingReview.status == PendingReviewStatus.PENDING) {
+                sourceStatsDao.decrementPending(notification.packageName)
+            }
+            pendingReviewDao.deleteByRawId(notification.id)
+            dao.delete(notification)
         }
-        pendingReviewDao.deleteByRawId(notification.id)
-        dao.delete(notification)
     }
 
     // === Classifier Management ===
@@ -118,11 +123,13 @@ class NotificationRepository @Inject constructor(
 
     // === Bulk operations ===
     suspend fun deleteAll() {
-        dao.deleteAll()
-        expenseDao.deleteAll()
-        pendingReviewDao.deleteAll()
-        userCorrectionDao.deleteAll()
-        sourceStatsDao.resetAllPendingCounts()
+        database.withTransaction {
+            dao.deleteAll()
+            expenseDao.deleteAll()
+            pendingReviewDao.deleteAll()
+            userCorrectionDao.deleteAll()
+            sourceStatsDao.resetAllPendingCounts()
+        }
     }
 
     suspend fun resetSourceStats() {
@@ -137,13 +144,15 @@ class NotificationRepository @Inject constructor(
     }
 
     suspend fun restoreDebugSnapshot(snapshot: DebugNotificationsSnapshot) {
-        dao.deleteAll()
-        sourceStatsDao.deleteAll()
-        if (snapshot.notifications.isNotEmpty()) {
-            dao.insertAll(snapshot.notifications)
-        }
-        if (snapshot.sourceStats.isNotEmpty()) {
-            sourceStatsDao.insertAll(snapshot.sourceStats)
+        database.withTransaction {
+            dao.deleteAll()
+            sourceStatsDao.deleteAll()
+            if (snapshot.notifications.isNotEmpty()) {
+                dao.insertAll(snapshot.notifications)
+            }
+            if (snapshot.sourceStats.isNotEmpty()) {
+                sourceStatsDao.insertAll(snapshot.sourceStats)
+            }
         }
     }
 

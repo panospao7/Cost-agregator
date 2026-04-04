@@ -1,15 +1,10 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.repository.FinancialWeather
-import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
@@ -20,12 +15,16 @@ import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.model.dashboard.DomainBlockStatus
+import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
+import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
+import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.DomainDayBudgetStatus
 import com.yourname.expensetracker.domain.model.dashboard.DomainExpenseSummary
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.text.DashboardTextKeys
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import javax.inject.Inject
@@ -63,12 +62,12 @@ sealed class DashboardWidget {
     ) : DashboardWidget()
 
     data class BudgetHealthWidget(
-        val statuses: List<BudgetStatus>,
+        val statuses: List<com.yourname.expensetracker.domain.budget.BudgetStatus>,
         val summary: UiText?
     ) : DashboardWidget()
 
     data class RecentTransactions(
-        val expenses: List<Expense>
+        val expenses: List<DashboardExpense>
     ) : DashboardWidget()
 
     data class NaturalLanguageInsight(
@@ -218,9 +217,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
 
         val purchases = expenses.filter {
-            it.transactionType == TransactionType.PURCHASE && !it.isNotMine
+            it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine
         }
-        val deposits = expenses.filter { it.transactionType == TransactionType.DEPOSIT }
+        val deposits = expenses.filter { it.transactionType == DashboardTransactionType.DEPOSIT }
 
         val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.effectiveAmount }
         val todayPurchases = purchases.filter { it.date >= todayStart }
@@ -241,11 +240,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val safeToSpend = weather.discretionaryBudget
         val totalBudgetAmount = overallBudget?.budget?.amount ?: 0.0
 
+        val expenseEntitiesForEngines = expenses.map { it.toEntityExpense() }
+
         // ── Financial Runway ─────────────────────────────────────────────────
         val currentDayIdx = TimePeriodUtils.daysBetween(monthStart, now).coerceAtLeast(0)
 
         val currentPace = try {
-            insightsEngine.getSpendingPaceSuspend(expenses)
+            insightsEngine.getSpendingPaceSuspend(expenseEntitiesForEngines)
         } catch (e: Exception) {
             Timber.e(e, "Failed to calculate spending pace")
             SpendingPace(
@@ -319,7 +320,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // ── Block Party ──────────────────────────────────────────────────────
         val domainBlocks = synthesisEngine.calculateBlockPartyData(
             forecast = forecast,
-            expenses = expenses,
+            expenses = expenseEntitiesForEngines,
             dailySpending = summary.dailyHistory,
             budgetLimit = totalBudgetAmount
         )
@@ -430,7 +431,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val trendSeriesCal = java.util.Calendar.getInstance()
         val trendSeries = mutableListOf<SpendingTrendSeries>()
         val purchasesByMonth = expenses
-            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .filter { it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine }
             .groupBy { expense ->
                 trendSeriesCal.timeInMillis = expense.date
                 Pair(trendSeriesCal.get(java.util.Calendar.YEAR), trendSeriesCal.get(java.util.Calendar.MONTH))
@@ -481,8 +482,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         val exceeded = budgetStatuses.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
         val budgetSummary = if (budgetStatuses.isNotEmpty()) {
-            if (exceeded > 0) UiText.from(R.string.widget_budget_exceeded_format, exceeded) 
-            else UiText.from(R.string.widget_all_budgets_on_track)
+            if (exceeded > 0) UiText.fromKey(DashboardTextKeys.WIDGET_BUDGET_EXCEEDED_FORMAT, exceeded)
+            else UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK)
         } else null
 
         // ── Calculate No-Spend Streak Data ────────────────────────────────────
@@ -492,12 +493,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         // ── Calculate Financial Health Score ───────────────────────────────────
         val healthScore = healthCalculator.calculateHealthScores(
-            expenses = expenses,
+            expenses = expenseEntitiesForEngines,
             budgetStatuses = budgetStatuses,
             pendingReviews = pendingCount,
-            todayStreak = calculateStreakForPeriod(expenses, todayStart, now),
-            weekStreak = calculateStreakForPeriod(expenses, weekStart, now),
-            monthStreak = calculateStreakForPeriod(expenses, monthStart, now),
+            todayStreak = calculateStreakForPeriod(expenseEntitiesForEngines, todayStart, now),
+            weekStreak = calculateStreakForPeriod(expenseEntitiesForEngines, weekStart, now),
+            monthStreak = calculateStreakForPeriod(expenseEntitiesForEngines, monthStart, now),
             noSpendStreak = currentStreak
         )
 
@@ -612,11 +613,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             val diff = monthSpent - previousMonthTotal
             return when {
                 diff < 0 -> Pair(
-                    UiText.from(R.string.widget_insight_spent_less_format, -diff),
+                    UiText.fromKey(DashboardTextKeys.WIDGET_INSIGHT_SPENT_LESS_FORMAT, -diff),
                     "📉"
                 )
                 diff > previousMonthTotal * 0.2 -> Pair(
-                    UiText.from(R.string.widget_insight_spent_higher_format, diff),
+                    UiText.fromKey(DashboardTextKeys.WIDGET_INSIGHT_SPENT_HIGHER_FORMAT, diff),
                     "📈"
                 )
                 else -> null
@@ -624,7 +625,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
         if (txCount > 0 && todaySpent > 0) {
             return Pair(
-                UiText.from(R.string.widget_insight_today_spent_format, todaySpent, txCount),
+                UiText.fromKey(DashboardTextKeys.WIDGET_INSIGHT_TODAY_SPENT_FORMAT, todaySpent, txCount),
                 "💡"
             )
         }
@@ -637,30 +638,38 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
      */
     private fun calculateStreakData(
         calendar: java.util.Calendar,
-        expenses: List<Expense>,
+        expenses: List<DashboardExpense>,
         startOfMonth: Long
     ): Triple<Int, Int, Int> {
         val now = calendar.timeInMillis
         val oneDayMs = TimePeriodUtils.DAY_IN_MILLIS
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+        val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
         
-        // Get all expense dates
-        val expenseDates = expenses
-            .filter { it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE }
-            .map { it.date }
+        // Track unique PURCHASE days owned by the user.
+        val purchaseDays = expenses
+            .filter {
+                it.transactionType == DashboardTransactionType.PURCHASE &&
+                    !it.isNotMine
+            }
+            .map { TimePeriodUtils.getStartOfDay(it.date) }
             .distinct()
-            .sortedDescending()
+            .sorted()
+
+        // Explicit empty-history handling: no purchases yet => streak spans elapsed month days.
+        if (purchaseDays.isEmpty()) {
+            val elapsedDaysThisMonth = dayOfMonth.coerceAtLeast(0)
+            return Triple(elapsedDaysThisMonth, elapsedDaysThisMonth, elapsedDaysThisMonth)
+        }
         
-        // Calculate current streak (from today backward)
+        // Calculate current streak (from today backward), bounded by app-history start.
+        val oldestPurchaseDay = purchaseDays.first()
         var currentStreak = 0
-        var checkDate = now
+        var checkDate = todayStart
+        val purchaseDaySet = purchaseDays.toHashSet()
         
-        while (true) {
-            val dayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(checkDate)
-            val dayEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfDay(checkDate)
-            
-            val hasExpense = expenseDates.any { it >= dayStart && it < dayEnd }
-            
-            if (!hasExpense) {
+        while (checkDate >= oldestPurchaseDay) {
+            if (!purchaseDaySet.contains(checkDate)) {
                 currentStreak++
                 checkDate -= oneDayMs
             } else {
@@ -668,43 +677,19 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             }
         }
         
-        // Calculate personal best (max streak ever)
+        // Calculate personal best (max no-spend gap between purchase days).
         var personalBest = currentStreak
-        var tempStreak = 0
-        var lastDate: Long? = null
-        
-        val sortedDates = expenseDates.sortedDescending()
-        
-        for (date in sortedDates) {
-            if (lastDate == null) {
-                lastDate = date
-                continue
+        for (index in 1 until purchaseDays.size) {
+            val gapDays = TimePeriodUtils.daysBetween(purchaseDays[index - 1], purchaseDays[index]) - 1
+            if (gapDays > personalBest) {
+                personalBest = gapDays
             }
-            
-            val daysBetween = ((lastDate - date) / oneDayMs).toInt()
-            
-            if (daysBetween > 1) {
-                // Gap found - count the streak
-                tempStreak = daysBetween - 1
-                if (tempStreak > personalBest) {
-                    personalBest = tempStreak
-                }
-            }
-            
-            lastDate = date
         }
         
-        // Calculate days without spending this month
-        val (_, endOfMonthExclusive) = com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now)
-        val totalDaysInMonth = com.yourname.expensetracker.domain.util.TimePeriodUtils.getDaysInMonth(now)
-        
-        val expenseDaysThisMonth = expenseDates
-            .filter { it >= startOfMonth && it < endOfMonthExclusive }
-            .map { com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(it) }
-            .distinct()
-            .count()
-        
-        val daysWithoutSpendingThisMonth = totalDaysInMonth - expenseDaysThisMonth
+        // Month metric should only include elapsed days (not future days).
+        val expenseDaysThisMonth = purchaseDays.count { it >= startOfMonth && it <= todayStart }
+        val elapsedDaysThisMonth = dayOfMonth.coerceAtLeast(0)
+        val daysWithoutSpendingThisMonth = (elapsedDaysThisMonth - expenseDaysThisMonth).coerceAtLeast(0)
         
         return Triple(currentStreak, personalBest.coerceAtLeast(currentStreak), daysWithoutSpendingThisMonth)
     }
@@ -717,35 +702,55 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         periodStart: Long,
         periodEnd: Long
     ): Int {
-        val periodExpenses = expenses.filter { it.date >= periodStart && it.date < periodEnd }
-        if (periodExpenses.isEmpty()) return 0
-        
-        // Get unique days with expenses in this period
-        val expenseDays = periodExpenses
-            .map { com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(it.date) }
-            .distinct()
-            .sortedDescending()
-        
-        if (expenseDays.isEmpty()) return 0
-        
-        // Calculate current streak (consecutive days without spending ending today)
-        var streak = 0
-        val today = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(periodEnd)
-        
-        // Check if today has no expenses
-        if (!expenseDays.contains(today)) {
-            streak = 1
-            
-            // Check previous days
-            val oneDayMs = TimePeriodUtils.DAY_IN_MILLIS
-            var checkDay = today - oneDayMs
-            
-            while (!expenseDays.contains(checkDay) && checkDay >= periodStart) {
-                streak++
-                checkDay -= oneDayMs
+        val periodStartDay = TimePeriodUtils.getStartOfDay(periodStart)
+        val today = TimePeriodUtils.getStartOfDay(periodEnd)
+        if (today < periodStartDay) return 0
+
+        val elapsedDays = TimePeriodUtils.daysBetween(periodStartDay, today).coerceAtLeast(0) + 1
+
+        val expenseDays = expenses
+            .asSequence()
+            .filter {
+                it.transactionType == TransactionType.PURCHASE &&
+                    !it.isNotMine &&
+                    it.date >= periodStart &&
+                    it.date < periodEnd
             }
+            .map { TimePeriodUtils.getStartOfDay(it.date) }
+            .toSet()
+
+        // No expenses in elapsed period => max possible no-spend streak.
+        if (expenseDays.isEmpty()) return elapsedDays
+
+        var streak = 0
+        var checkDay = today
+        val oneDayMs = TimePeriodUtils.DAY_IN_MILLIS
+        while (checkDay >= periodStartDay && !expenseDays.contains(checkDay)) {
+            streak++
+            checkDay -= oneDayMs
         }
         
         return streak
+    }
+
+    private fun DashboardExpense.toEntityExpense(): com.yourname.expensetracker.data.database.entity.Expense {
+        val txType = when (transactionType) {
+            DashboardTransactionType.PURCHASE -> com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
+            DashboardTransactionType.WITHDRAWAL -> com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL
+            DashboardTransactionType.TRANSFER -> com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER
+            DashboardTransactionType.DEPOSIT -> com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT
+            DashboardTransactionType.UNKNOWN -> com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN
+        }
+        return com.yourname.expensetracker.data.database.entity.Expense(
+            id = id,
+            amount = amount,
+            merchant = merchant,
+            transactionType = txType,
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            isManualEntry = isManualEntry,
+            merchantKey = com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate(merchant)
+        )
     }
 }

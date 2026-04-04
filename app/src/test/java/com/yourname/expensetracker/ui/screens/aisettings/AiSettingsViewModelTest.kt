@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
+import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -30,6 +31,7 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
     private lateinit var getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase
+    private lateinit var secureKeyStorage: SecureKeyStorage
     private lateinit var settingsFlow: MutableStateFlow<AiSettings>
     private lateinit var viewModel: AiSettingsViewModel
 
@@ -40,6 +42,7 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         getAiRuntimeStatusUseCase = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
         syncProactiveBriefingWorkUseCase = mockk(relaxed = true)
+        secureKeyStorage = mockk(relaxed = true)
         settingsFlow = MutableStateFlow(AiSettings(aiEnabled = true, allowOnDeviceAi = true))
 
         every { aiSettingsRepository.settings() } returns settingsFlow
@@ -55,7 +58,8 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
             aiSettingsRepository = aiSettingsRepository,
             getAiRuntimeStatusUseCase = getAiRuntimeStatusUseCase,
             aiRuntimeDiagnostics = aiRuntimeDiagnostics,
-            syncProactiveBriefingWorkUseCase = syncProactiveBriefingWorkUseCase
+            syncProactiveBriefingWorkUseCase = syncProactiveBriefingWorkUseCase,
+            secureKeyStorage = secureKeyStorage
         )
     }
 

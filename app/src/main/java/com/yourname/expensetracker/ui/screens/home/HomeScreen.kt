@@ -34,7 +34,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.rounded.*
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.BuildConfig
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
@@ -55,7 +54,8 @@ import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.model.UiText
-import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending as DomainCategorySpending
 import androidx.compose.ui.res.stringResource
@@ -1067,7 +1067,7 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
 }
 
 @Composable
-fun RecentExpenseRow(expense: Expense, categoryColor: Color? = null) {
+fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
     val manualEntryLabel = stringResource(R.string.a11y_expense_manual)
     val expenseDesc = stringResource(
         R.string.a11y_expense_item_format,

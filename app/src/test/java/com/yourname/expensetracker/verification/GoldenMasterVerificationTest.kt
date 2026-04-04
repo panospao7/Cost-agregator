@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.dao.MonthlyTotal
 import com.yourname.expensetracker.data.database.dao.WeeklyTotal
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
@@ -118,6 +119,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
 
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var budgetForecastingEngine: BudgetForecastingEngine
+    private val database = mockk<AppDatabase>(relaxed = true)
 
     private lateinit var smartSavingsEngine: SmartSavingsEngine
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
@@ -133,6 +135,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         mockAnalyticsDaoByRange(allTransactions)
 
         repository = ExpenseRepository(
+            database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
+import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
@@ -20,9 +21,11 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.SocketTimeoutException
 import javax.net.ssl.SSLException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.delay
+import kotlin.random.Random
+import java.util.UUID
 import timber.log.Timber
 
 /**
@@ -31,13 +34,12 @@ import timber.log.Timber
  */
 @Singleton
 class CloudDedupeJudgeService @Inject constructor(
-    private val secureKeyStorage: SecureKeyStorage
+    private val secureKeyStorage: SecureKeyStorage,
+    @CloudAiHttpClient private val client: OkHttpClient
 ) : DedupeJudgeService {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(AppConfig.Ai.DEDUPE_JUDGE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .readTimeout(AppConfig.Ai.DEDUPE_JUDGE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .build()
+    // Secondary constructor for tests
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
 
     /**
      * CRITICAL: API key is now retrieved from secure storage at runtime.
@@ -53,45 +55,96 @@ class CloudDedupeJudgeService @Inject constructor(
         }
 
         val requestBody = buildRequestBody(input)
-        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL}:generateContent?key=$apiKey"
+        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
             .post(requestBody.toRequestBody(JSON_MEDIA_TYPE))
             .header("Content-Type", "application/json")
+            .header("x-goog-api-key", apiKey)
             .build()
 
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Timber.w(
-                        "CloudDedupeJudgeService: HTTP ${response.code} ${response.body?.string()?.take(200)}"
-                    )
-                    return@use AiServiceResult.Failure(
-                        AiServiceError.HttpError(response.code, response.body?.string()?.take(200))
-                    )
+        for (attempt in 1..MAX_RETRY_ATTEMPTS) {
+            try {
+                val outcome = client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val correlationId = newCorrelationId()
+                        val errorClass = "HTTP_${response.code}"
+                        if (isRetryableHttpStatus(response.code) && attempt < MAX_RETRY_ATTEMPTS) {
+                            Timber.w(
+                                "CloudDedupeJudgeService: retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
+                                response.code,
+                                errorClass,
+                                correlationId,
+                                attempt,
+                                MAX_RETRY_ATTEMPTS
+                            )
+                            null
+                        } else {
+                            Timber.w(
+                                "CloudDedupeJudgeService: HTTP %d class=%s correlationId=%s",
+                                response.code,
+                                errorClass,
+                                correlationId
+                            )
+                            AiServiceResult.Failure(
+                                AiServiceError.HttpError(
+                                    response.code,
+                                    "errorClass=$errorClass correlationId=$correlationId"
+                                )
+                            )
+                        }
+                    } else {
+                        val body = response.body?.string()
+                            ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                        val parsed = parseResponse(body)
+                            ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable dedupe verdict in response"))
+                        AiServiceResult.Success(parsed)
+                    }
                 }
-                val body = response.body?.string()
-                    ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
-                val parsed = parseResponse(body)
-                    ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable dedupe verdict in response"))
-                AiServiceResult.Success(parsed)
+
+                if (outcome != null) return outcome
+            } catch (e: SocketTimeoutException) {
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    Timber.w(
+                        e,
+                        "CloudDedupeJudgeService: timeout, retrying (%d/%d)",
+                        attempt,
+                        MAX_RETRY_ATTEMPTS
+                    )
+                } else {
+                    Timber.w(e, "CloudDedupeJudgeService: timeout")
+                    return AiServiceResult.Failure(AiServiceError.Timeout)
+                }
+            } catch (e: SSLException) {
+                Timber.w(e, "CloudDedupeJudgeService: SSL failure")
+                return AiServiceResult.Failure(AiServiceError.SslError)
+            } catch (e: IOException) {
+                val retryable = e.isConnectionReset()
+                if (retryable && attempt < MAX_RETRY_ATTEMPTS) {
+                    Timber.w(
+                        e,
+                        "CloudDedupeJudgeService: connection reset, retrying (%d/%d)",
+                        attempt,
+                        MAX_RETRY_ATTEMPTS
+                    )
+                } else {
+                    Timber.w(e, "CloudDedupeJudgeService: network failure")
+                    return AiServiceResult.Failure(AiServiceError.Offline)
+                }
+            } catch (e: JSONException) {
+                Timber.w(e, "CloudDedupeJudgeService: parse failure")
+                return AiServiceResult.Failure(AiServiceError.ParseError(e.message))
+            } catch (e: Exception) {
+                Timber.w(e, "CloudDedupeJudgeService: parse failure")
+                return AiServiceResult.Failure(AiServiceError.Unknown(e.message))
             }
-        } catch (e: SocketTimeoutException) {
-            Timber.w(e, "CloudDedupeJudgeService: timeout")
-            AiServiceResult.Failure(AiServiceError.Timeout)
-        } catch (e: SSLException) {
-            Timber.w(e, "CloudDedupeJudgeService: SSL failure")
-            AiServiceResult.Failure(AiServiceError.SslError)
-        } catch (e: IOException) {
-            Timber.w(e, "CloudDedupeJudgeService: network failure")
-            AiServiceResult.Failure(AiServiceError.Offline)
-        } catch (e: JSONException) {
-            Timber.w(e, "CloudDedupeJudgeService: parse failure")
-            AiServiceResult.Failure(AiServiceError.ParseError(e.message))
-        } catch (e: Exception) {
-            Timber.w(e, "CloudDedupeJudgeService: parse failure")
-            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                delay(backoffDelayMs(attempt))
+            }
         }
+
+        return AiServiceResult.Failure(AiServiceError.Unknown("Retry attempts exhausted"))
     }
 
     private fun buildRequestBody(input: DedupeJudgeInput): String {
@@ -178,20 +231,111 @@ class CloudDedupeJudgeService @Inject constructor(
             matchedTargetType = suggestion.optString("matchedTargetType").trim()
                 .takeIf { it.isNotBlank() && it != "null" }
                 ?.let { AiTargetType.valueOf(it) },
-            matchedTargetId = if (suggestion.has("matchedTargetId") && !suggestion.isNull("matchedTargetId")) suggestion.optLong("matchedTargetId") else null,
-            confidence = if (suggestion.has("confidence") && !suggestion.isNull("confidence")) suggestion.optDouble("confidence").toFloat() else null,
+            matchedTargetId = suggestion.optStrictLongStrictOrNull("matchedTargetId"),
+            confidence = suggestion.optFiniteDoubleStrictOrNull("confidence")?.toFloat(),
             rationale = suggestion.optString("rationale").trim().ifBlank { null }
         )
     }
 
     private fun extractFirstJsonObject(text: String): String? {
-        val start = text.indexOf('{')
-        val end = text.lastIndexOf('}')
-        if (start == -1 || end <= start) return null
-        return text.substring(start, end + 1)
+        extractFencedJsonObject(text)?.let { return it }
+
+        var start = -1
+        var depth = 0
+        var inString = false
+        var isEscaped = false
+
+        for (index in text.indices) {
+            val ch = text[index]
+
+            if (start == -1) {
+                if (ch == '{') {
+                    start = index
+                    depth = 1
+                }
+                continue
+            }
+
+            if (inString) {
+                if (isEscaped) {
+                    isEscaped = false
+                } else if (ch == '\\') {
+                    isEscaped = true
+                } else if (ch == '"') {
+                    inString = false
+                }
+                continue
+            }
+
+            when (ch) {
+                '"' -> inString = true
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        return text.substring(start, index + 1)
+                    }
+                }
+            }
+        }
+
+        return null
     }
+
+    private fun extractFencedJsonObject(text: String): String? {
+        val fencedMatch = JSON_FENCE_REGEX.find(text) ?: return null
+        val fencedBody = fencedMatch.groupValues.getOrNull(1)?.trim().orEmpty()
+        if (fencedBody.isBlank()) return null
+        return extractFirstJsonObject(fencedBody)
+    }
+
+    private fun JSONObject.optFiniteDoubleStrictOrNull(key: String): Double? {
+        if (!has(key) || isNull(key)) return null
+        val raw = opt(key)
+        val number = raw as? Number
+            ?: throw JSONException("Expected numeric '$key' but was ${raw?.javaClass?.simpleName ?: "null"}")
+        val value = number.toDouble()
+        if (!value.isFinite()) {
+            throw JSONException("Non-finite numeric '$key': $value")
+        }
+        return value
+    }
+
+    private fun JSONObject.optStrictLongStrictOrNull(key: String): Long? {
+        if (!has(key) || isNull(key)) return null
+        val raw = opt(key)
+        val number = raw as? Number
+            ?: throw JSONException("Expected integer '$key' but was ${raw?.javaClass?.simpleName ?: "null"}")
+        val asDouble = number.toDouble()
+        if (!asDouble.isFinite()) {
+            throw JSONException("Non-finite integer '$key': $asDouble")
+        }
+        val asLong = number.toLong()
+        if (asLong.toDouble() != asDouble) {
+            throw JSONException("Expected whole-number '$key' but was $asDouble")
+        }
+        return asLong
+    }
+
+    private fun isRetryableHttpStatus(code: Int): Boolean = code in 500..599
+
+    private fun IOException.isConnectionReset(): Boolean =
+        message?.contains("connection reset", ignoreCase = true) == true
+
+    private fun backoffDelayMs(attempt: Int): Long {
+        val exponential = (BASE_RETRY_BACKOFF_MS shl (attempt - 1)).coerceAtMost(MAX_RETRY_BACKOFF_MS)
+        val jitter = Random.nextLong(0, RETRY_JITTER_MS + 1)
+        return exponential + jitter
+    }
+
+    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private const val MAX_RETRY_ATTEMPTS = 3
+        private const val BASE_RETRY_BACKOFF_MS = 250L
+        private const val MAX_RETRY_BACKOFF_MS = 1_500L
+        private const val RETRY_JITTER_MS = 200L
+        private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
     }
 }

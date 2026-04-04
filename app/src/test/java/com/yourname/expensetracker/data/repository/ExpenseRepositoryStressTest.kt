@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
@@ -17,6 +18,7 @@ import org.junit.Test
 
 class ExpenseRepositoryStressTest {
 
+    private val database = mockk<AppDatabase>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
@@ -33,9 +35,10 @@ class ExpenseRepositoryStressTest {
         coEvery { expenseDao.getAllFlow(any()) } returns MutableStateFlow(emptyList())
         coEvery { expenseDao.getAllWithCategoryFlow(any()) } returns MutableStateFlow(emptyList())
         coEvery { userCorrectionDao.insert(any()) } returns 1L
-        coEvery { pendingReviewDao.bulkRenameMerchant(any(), any()) } returns Unit
+        coEvery { pendingReviewDao.bulkRenameMerchant(any(), any(), any(), any()) } returns Unit
 
         repository = ExpenseRepository(
+            database,
             expenseDao,
             userCorrectionDao,
             pendingReviewDao,

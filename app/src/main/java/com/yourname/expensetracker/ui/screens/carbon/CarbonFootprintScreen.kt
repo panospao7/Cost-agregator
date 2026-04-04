@@ -27,7 +27,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.components.common.EmptyStateType
 import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry

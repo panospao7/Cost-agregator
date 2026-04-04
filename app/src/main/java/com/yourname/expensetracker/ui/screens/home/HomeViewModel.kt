@@ -30,6 +30,7 @@ import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowTh
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -107,7 +108,7 @@ class HomeViewModel @Inject constructor(
     private val dashboardRepository: DashboardRepository,
     private val categoryRepository: CategoryRepository,
     private val plannedExpenseRepository: PlannedExpenseRepository,
-    private val analyticsRepository: com.yourname.expensetracker.data.repository.AnalyticsRepository,
+    private val analyticsRepository: DashboardAnalyticsRepository,
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val computeDashboardWidgetsUseCase: ComputeDashboardWidgetsUseCase,
     private val aiSettingsRepository: AiSettingsRepository,

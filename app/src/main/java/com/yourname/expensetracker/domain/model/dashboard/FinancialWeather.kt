@@ -1,0 +1,30 @@
+package com.yourname.expensetracker.domain.model.dashboard
+
+import com.yourname.expensetracker.domain.model.NarrativeSection
+import com.yourname.expensetracker.domain.model.UpcomingItem
+
+enum class WeatherState {
+    CLEAR_SKIES,
+    PARTLY_CLOUDY,
+    CLOUDY,
+    RAINY,
+    STORMY,
+    UNKNOWN
+}
+
+data class FinancialWeather(
+    val state: WeatherState,
+    val headline: String,
+    val summary: String,
+    val icon: String,
+    val riskLevel: Int,
+    val totalCommitted: Double,
+    val totalLikely: Double,
+    val predictedDiscretionary: Double,
+    val discretionaryBudget: Double,
+    val pastSpendingPoints: List<Double> = emptyList(),
+    val projectedSpendingPoints: List<Double> = emptyList(),
+    val upcomingItems: List<UpcomingItem> = emptyList(),
+    val totalRecurringCount: Int = 0,
+    val details: List<NarrativeSection> = emptyList()
+)

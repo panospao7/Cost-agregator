@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
+import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
@@ -13,21 +14,20 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.UUID
 import timber.log.Timber
 
 @Singleton
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudCategorizationAssistService @Inject constructor(
-    private val secureKeyStorage: SecureKeyStorage
+    private val secureKeyStorage: SecureKeyStorage,
+    @CloudAiHttpClient private val client: OkHttpClient
 ) : CategorizationAssistService {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(AppConfig.Ai.CATEGORIZATION_ASSIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .readTimeout(AppConfig.Ai.CATEGORIZATION_ASSIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .build()
+    // Secondary constructor for tests
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
 
     private val apiKey: String
         get() = secureKeyStorage.getGeminiKey() ?: ""
@@ -39,18 +39,24 @@ class CloudCategorizationAssistService @Inject constructor(
         }
 
         val requestBody = buildRequestBody(input)
-        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL}:generateContent?key=$apiKey"
+        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
             .post(requestBody.toRequestBody(JSON_MEDIA_TYPE))
             .header("Content-Type", "application/json")
+            .header("x-goog-api-key", apiKey)
             .build()
 
         return try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
+                    val correlationId = newCorrelationId()
+                    val errorClass = "HTTP_${response.code}"
                     Timber.w(
-                        "CloudCategorizationAssistService: HTTP ${response.code} ${response.body?.string()?.take(200)}"
+                        "CloudCategorizationAssistService: HTTP %d class=%s correlationId=%s",
+                        response.code,
+                        errorClass,
+                        correlationId
                     )
                     return@use null
                 }
@@ -207,4 +213,6 @@ class CloudCategorizationAssistService @Inject constructor(
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
+
+    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 }

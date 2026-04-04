@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.BankConnection
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.SyncFrequency
 import com.yourname.expensetracker.data.database.entity.SyncStatus
+import com.yourname.expensetracker.data.security.BankTokenCipher
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -101,8 +102,9 @@ class BankApiIntegration @Inject constructor(
             countryCode = bank.countryCode,
             isConnected = true,
             isActive = true,
-            accessToken = "demo_token_$bankId", // Would be real token
-            refreshToken = "demo_refresh_$bankId",
+            accessToken = BankTokenCipher.encryptIfNeeded("demo_token_$bankId"), // Would be real token
+            refreshToken = BankTokenCipher.encryptIfNeeded("demo_refresh_$bankId"),
+            tokenEncryptionVersion = 1,
             tokenExpiry = timeProvider.now() + (30 * 24 * 60 * 60 * 1000L) // 30 days
         )
     }
@@ -177,7 +179,7 @@ class BankApiIntegration @Inject constructor(
      */
     private suspend fun refreshToken(connection: BankConnection): Boolean {
         // In real implementation, this would use refresh_token to get new access_token
-        return connection.refreshToken != null
+        return BankTokenCipher.decryptIfNeeded(connection.refreshToken) != null
     }
     
     /**

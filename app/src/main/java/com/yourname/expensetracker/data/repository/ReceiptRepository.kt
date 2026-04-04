@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import android.content.Context
 import android.net.Uri
+import androidx.room.withTransaction
 import java.util.Date
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
@@ -21,6 +22,8 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.debug.DebugData
+import com.yourname.expensetracker.domain.debug.DebugIssueDetector
 import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
@@ -32,7 +35,6 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -61,6 +63,11 @@ class ReceiptRepository @Inject constructor(
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
     private val warrantyUseCase: AutoCreateWarrantyFromReceiptUseCase
 ) {
+    private companion object {
+        private const val STATEMENT_DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000L // 24h
+        private const val AMOUNT_TOLERANCE = 0.01
+    }
+
     val allReceipts: Flow<List<ScannedReceipt>> = scannedReceiptDao.getAllFlow()
 
     /**
@@ -140,12 +147,14 @@ class ReceiptRepository @Inject constructor(
 
             // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
             if (autoCreateReview) {
+                val suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant"
                 val review = PendingReview(
                     rawNotificationId = null,
                     scannedReceiptId = receiptId,
                     suggestedAmount = parsed.total ?: 0.0,
                     suggestedCurrency = parsed.currency,
-                    suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant",
+                    suggestedMerchant = suggestedMerchant,
+                    suggestedMerchantKey = MerchantKeyGenerator.generate(suggestedMerchant),
                     suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
                     suggestedDate = parsed.date, // Preserving the date found by parser
                     confidence = parsed.confidence,
@@ -185,6 +194,7 @@ class ReceiptRepository @Inject constructor(
                     suggestedAmount = 0.0,
                     suggestedCurrency = "EUR",
                     suggestedMerchant = "Parsing Failed",
+                    suggestedMerchantKey = MerchantKeyGenerator.generate("Parsing Failed"),
                     suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
                     suggestedCategoryId = null, // No category for failed parse
                     confidence = 0f,
@@ -284,19 +294,22 @@ class ReceiptRepository @Inject constructor(
             locationSource = locationSource
         )
 
-        val expenseId = expenseDao.insertAtomic(expense)
+        val expenseId = database.withTransaction {
+            val id = expenseDao.insertAtomic(expense)
+            if (id > 0) {
+                scannedReceiptDao.linkToExpense(receiptId, id)
+            }
+            id
+        }
 
         if (expenseId <= 0) {
             return com.yourname.expensetracker.domain.model.Result.Duplicate
         }
 
-        // 4. Link receipt to expense
-        scannedReceiptDao.linkToExpense(receiptId, expenseId)
-
-        // 5. Check budgets
+        // 4. Check budgets
         budgetMonitor.checkBudgets()
 
-        // 6. Check for anomalies and alert
+        // 5. Check for anomalies and alert
         val enrichedExpense = expense.copy(id = expenseId)
         val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
             expense = enrichedExpense,
@@ -304,7 +317,7 @@ class ReceiptRepository @Inject constructor(
         )
         anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
 
-        // 7. Learn merchant → category mapping
+        // 6. Learn merchant → category mapping
         if (finalCategoryId != null) {
             try {
                 hybridClassifier.learnFromCorrection(
@@ -346,7 +359,7 @@ class ReceiptRepository @Inject constructor(
         val successCount: Int,
         val failureCount: Int,
         val errors: List<String>,
-        val debugData: com.yourname.expensetracker.ui.screens.debug.DebugData? = null
+        val debugData: DebugData? = null
     )
 
     /**
@@ -397,7 +410,7 @@ class ReceiptRepository @Inject constructor(
         
         if (parsedTransactions.isEmpty()) {
             parsingLogs.add("No transactions found in bank statement")
-            val debugData = com.yourname.expensetracker.ui.screens.debug.DebugData(
+            val debugData = DebugData(
                 rawText = ocrResult.fullText,
                 parsedTransactions = emptyList(),
                 parsingLogs = parsingLogs,
@@ -421,10 +434,6 @@ class ReceiptRepository @Inject constructor(
         )
         val receiptId = scannedReceiptDao.insert(receiptRecord)
 
-        // Fetch duplicates context once before the loop
-        val allExpenses = expenseDao.getAllFlow(1000).first()
-        val allPendingReviews = pendingReviewDao.getPending(500).map { it.review }
-
         // 4. Create a PendingReview for EACH transaction found
         var successCount = 0
         val errors = mutableListOf<String>()
@@ -441,30 +450,52 @@ class ReceiptRepository @Inject constructor(
                 )
 
                 val transactionDate = tx.date ?: timeProvider.now()
-                
-                // 1. Check for duplicates in Expense table (Unified logic)
-                val expenseDuplicate = crossSourceDeduplication.findExpenseDuplicate(
-                    amount = tx.amount,
-                    merchant = normalizedMerchant,
-                    date = transactionDate,
-                    expenses = allExpenses
+                val merchantKey = MerchantKeyGenerator.generate(normalizedMerchant)
+                val startDate = transactionDate - STATEMENT_DEDUPE_WINDOW_MS
+                val endDate = transactionDate + STATEMENT_DEDUPE_WINDOW_MS + 1
+                val minAmount = tx.amount - AMOUNT_TOLERANCE
+                val maxAmount = tx.amount + AMOUNT_TOLERANCE
+
+                // 1. Check duplicates via indexed, DB-side window queries (no capped snapshots).
+                val hasExpenseDuplicate = hasExpenseDuplicateInRange(
+                    merchantKey = merchantKey,
+                    merchantName = normalizedMerchant,
+                    startDate = startDate,
+                    endDate = endDate,
+                    minAmount = minAmount,
+                    maxAmount = maxAmount
                 )
-                
-                if (expenseDuplicate != null) {
-                    val existingSource = if (expenseDuplicate.rawNotificationId != null) "notification" else "other"
-                    parsingLogs.add("SKIP: Duplicate in Expenses from $existingSource for ${tx.merchant} €${tx.amount}")
+
+                if (hasExpenseDuplicate) {
+                    parsingLogs.add("SKIP: Duplicate in Expenses for ${tx.merchant} €${tx.amount}")
                     return@forEach
                 }
 
                 // 2. Check for duplicates in PendingReview table (Review Zone Expansion)
-                val pendingReviewDuplicate = crossSourceDeduplication.findPendingReviewDuplicate(
-                    amount = tx.amount,
-                    merchant = normalizedMerchant,
-                    date = transactionDate,
-                    pendingReviews = allPendingReviews
+                val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRange(
+                    merchantKey = merchantKey,
+                    merchantName = normalizedMerchant,
+                    startDate = startDate,
+                    endDate = endDate,
+                    minAmount = minAmount,
+                    maxAmount = maxAmount,
+                    currency = tx.currency
                 )
-                
-                if (pendingReviewDuplicate != null) {
+
+                if (hasPendingDuplicate) {
+                    val pendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRange(
+                        merchantKey = merchantKey,
+                        merchantName = normalizedMerchant,
+                        startDate = startDate,
+                        endDate = endDate,
+                        minAmount = minAmount,
+                        maxAmount = maxAmount,
+                        currency = tx.currency
+                    ) ?: run {
+                        parsingLogs.add("SKIP: Pending review duplicate exists for ${tx.merchant} €${tx.amount}")
+                        return@forEach
+                    }
+
                     val resolution = crossSourceDeduplication.resolvePendingReviewDuplicate(
                         existingReview = pendingReviewDuplicate,
                         newSource = "statement"
@@ -492,6 +523,7 @@ class ReceiptRepository @Inject constructor(
                     suggestedAmount = tx.amount,
                     suggestedCurrency = tx.currency,
                     suggestedMerchant = normalizedMerchant,
+                    suggestedMerchantKey = MerchantKeyGenerator.generate(normalizedMerchant),
                     suggestedType = tx.type.name,
                     suggestedCategoryId = classification.categoryId.takeIf { id -> id > 0 },
                     suggestedDate = tx.date ?: timeProvider.now(),
@@ -515,7 +547,7 @@ class ReceiptRepository @Inject constructor(
         }
         
         // Detect issues automatically
-        val issues = com.yourname.expensetracker.ui.screens.debug.DebugIssueDetector.detectIssues(
+        val issues = DebugIssueDetector.detectIssues(
             context = context,
             rawText = ocrResult.fullText,
             transactions = parsedTransactions,
@@ -523,7 +555,7 @@ class ReceiptRepository @Inject constructor(
         )
         
         // Create debug data
-        val debugData = com.yourname.expensetracker.ui.screens.debug.DebugData(
+        val debugData = DebugData(
             rawText = ocrResult.fullText,
             parsedTransactions = parsedTransactions,
             parsingLogs = parsingLogs,
@@ -533,6 +565,29 @@ class ReceiptRepository @Inject constructor(
         )
 
         return BatchResult(successCount, parsedTransactions.size - successCount, errors, debugData)
+    }
+
+    private suspend fun hasExpenseDuplicateInRange(
+        merchantKey: String,
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double
+    ): Boolean {
+        return expenseDao.existsByMerchantKeyInRange(
+            merchantKey = merchantKey,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount
+        ) || expenseDao.existsByMerchantInRange(
+            merchant = merchantName,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount
+        )
     }
 
     suspend fun clearAllScannedReceipts() {

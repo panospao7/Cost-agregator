@@ -3,9 +3,8 @@ package com.yourname.expensetracker.domain.usecase.expense
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import javax.inject.Inject
 
 class DetectDuplicateExpenseUseCase @Inject constructor(
@@ -19,11 +18,20 @@ class DetectDuplicateExpenseUseCase @Inject constructor(
         date: Long,
         windowMs: Long = 300_000
     ): DuplicateCheckResult {
-        val expenses = expenseRepository.getAllExpenses().first()
-        
-        val nearbyExpenses = expenses.filter { expense ->
-            kotlin.math.abs(expense.date - date) < windowMs
-        }
+        val startDate = date - windowMs
+        val endDateExclusive = date + windowMs + 1
+        val targetMerchantKey = MerchantKeyGenerator.generate(merchant)
+
+        val nearbyExpenses = expenseRepository.getExpensesBetween(startDate, endDateExclusive)
+            .asSequence()
+            // Optional pre-filter: amount band for faster candidate pruning
+            .filter { expense -> kotlin.math.abs(expense.amount - amount) <= 0.01 }
+            // Optional pre-filter: canonical merchant key if available on both rows
+            .filter { expense ->
+                val existingKey = expense.merchantKey
+                existingKey == null || existingKey == targetMerchantKey
+            }
+            .toList()
         
         val duplicate = crossSourceDeduplication.findExpenseDuplicate(
             amount = amount,

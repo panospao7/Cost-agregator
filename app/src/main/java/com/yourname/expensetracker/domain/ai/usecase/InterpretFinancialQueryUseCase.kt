@@ -37,7 +37,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             )
         }
 
-        val input = inputBuilder.build(rawQuery, conversationHistory)
+        val input = inputBuilder.build(rawQuery, settings, conversationHistory)
 
         val providerResult = runCatching {
             queryInterpretationService.interpret(input)
@@ -51,7 +51,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             is FinancialQueryInterpretationResult.Structured -> providerResult
             is FinancialQueryInterpretationResult.Clarification -> {
                 // If provider returns another clarification, try local fallback as safety net
-                val fallbackResult = localFallbackInterpret(input.rawQuery, input.currentTimeMs)
+                val fallbackResult = localFallbackInterpret(rawQuery, input.currentTimeMs)
                 // Only use fallback if it produces a structured result
                 if (fallbackResult is FinancialQueryInterpretationResult.Structured) {
                     fallbackResult
@@ -60,7 +60,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
                 }
             }
             is FinancialQueryInterpretationResult.Unsupported ->
-                localFallbackInterpret(input.rawQuery, input.currentTimeMs)
+                localFallbackInterpret(rawQuery, input.currentTimeMs)
         }
     }
 

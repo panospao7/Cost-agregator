@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.logic
 
 import com.yourname.expensetracker.R
-import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.model.FinancialForecast
 import com.yourname.expensetracker.domain.model.RiskLevel
 import com.yourname.expensetracker.domain.model.WeatherNarrative
@@ -10,6 +9,7 @@ import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import javax.inject.Inject
 import javax.inject.Singleton
 

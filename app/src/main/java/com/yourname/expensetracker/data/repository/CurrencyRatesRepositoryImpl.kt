@@ -3,7 +3,8 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
-import kotlinx.coroutines.Dispatchers
+import com.yourname.expensetracker.di.IoDispatcher
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.w3c.dom.Element
 import java.net.HttpURLConnection
@@ -17,7 +18,8 @@ import javax.xml.parsers.DocumentBuilderFactory
 @Singleton
 class CurrencyRatesRepositoryImpl @Inject constructor(
     private val currencyConverter: CurrencyConverter,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : CurrencyRatesRepository {
 
     companion object {
@@ -31,7 +33,7 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
         )
     }
 
-    override suspend fun refresh(homeCurrency: String): Int = withContext(Dispatchers.IO) {
+    override suspend fun refresh(homeCurrency: String): Int = withContext(ioDispatcher) {
         val connection = (URL(ECB_DAILY_RATES_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = TIMEOUT_MS

@@ -40,7 +40,17 @@ data class ReceiptAssistSuggestion(
     val total: SuggestedValue<Double>? = null,
     val date: SuggestedValue<Long>? = null,
     val taxAmount: SuggestedValue<Double>? = null,
-    val notes: List<String> = emptyList()
+    val notes: List<String> = emptyList(),
+    val usedImageInput: Boolean = false,
+    val attemptDetails: List<ReceiptAssistAttemptDetail> = emptyList()
+)
+
+data class ReceiptAssistAttemptDetail(
+    val attemptNumber: Int,
+    val method: String,
+    val success: Boolean,
+    val confidence: Float? = null,
+    val errorMessage: String? = null
 )
 
 sealed interface AiServiceResult<out T> {

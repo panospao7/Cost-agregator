@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
 import com.yourname.expensetracker.data.database.entity.MerchantAlias
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -57,7 +58,7 @@ class MerchantNormalizationRepository @Inject constructor(
         dao.getAliasesForCanonical(canonicalId)
 
     suspend fun searchAliases(query: String, limit: Int = 20): List<MerchantAlias> =
-        dao.searchAliases(query, limit)
+        dao.searchAliasesByPrefix(MerchantKeyGenerator.generate(query), limit)
 
     suspend fun deleteUnusedAliasesOlderThan(olderThan: Long): Int =
         dao.deleteUnusedAliasesOlderThan(olderThan)

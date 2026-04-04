@@ -50,6 +50,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import okhttp3.OkHttpClient
 import javax.inject.Singleton
 
 @Module
@@ -196,14 +197,17 @@ abstract class AiModule {
         @Provides
         @Singleton
         fun provideCloudReceiptItemCategorizationService(
-            secureKeyStorage: SecureKeyStorage
-        ): CloudReceiptItemCategorizationService = CloudReceiptItemCategorizationService(secureKeyStorage)
+            secureKeyStorage: SecureKeyStorage,
+            @CloudAiHttpClient cloudAiClient: OkHttpClient
+        ): CloudReceiptItemCategorizationService =
+            CloudReceiptItemCategorizationService(secureKeyStorage, cloudAiClient)
 
         @Provides
         @Singleton
         fun provideCloudWarrantyExtractionService(
-            secureKeyStorage: SecureKeyStorage
+            secureKeyStorage: SecureKeyStorage,
+            @CloudAiHttpClient cloudAiClient: OkHttpClient
         ): com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService = 
-            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage)
+            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage, cloudAiClient)
     }
 }

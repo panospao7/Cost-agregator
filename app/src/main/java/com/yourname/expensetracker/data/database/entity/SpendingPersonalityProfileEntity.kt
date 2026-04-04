@@ -13,7 +13,8 @@ import androidx.room.PrimaryKey
     tableName = "spending_personality_profiles",
     indices = [
         Index(value = ["lastUpdated"]),
-        Index(value = ["personalityType"])
+        Index(value = ["personalityType"]),
+        Index(value = ["isActive"])
     ]
 )
 data class SpendingPersonalityProfileEntity(

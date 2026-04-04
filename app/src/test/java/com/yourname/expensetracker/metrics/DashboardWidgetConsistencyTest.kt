@@ -4,9 +4,6 @@ import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.repository.FinancialWeather
-import com.yourname.expensetracker.data.repository.SpendingSummary
-import com.yourname.expensetracker.data.repository.WeatherState
 import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
@@ -26,6 +23,11 @@ import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
+import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
+import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
+import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
+import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
@@ -67,7 +69,7 @@ class DashboardWidgetConsistencyTest {
     fun setup() {
         every { timeProvider.now() } returns ts(2024, 5, 15)
         val insightsEngine = mockk<com.yourname.expensetracker.domain.analytics.InsightsEngine>(relaxed = true)
-        coEvery { insightsEngine.getSpendingPaceSuspend(any()) } returns SpendingPace(
+        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
             currentMonthSpent = 500.0,
             daysElapsed = 15,
             daysInMonth = 30,
@@ -137,7 +139,7 @@ class DashboardWidgetConsistencyTest {
         )
         val expectedMonthSpent = 100.0 + 200.0 + 25.0
 
-        val processedData = createProcessedData(expenses = purchases, monthSpent = expectedMonthSpent)
+        val processedData = createProcessedData(expenses = purchases.map { it.toDashboardExpense() }, monthSpent = expectedMonthSpent)
         val result = computeUseCase.compute(processedData)
 
         val periodSummary = result.allWidgets.filterIsInstance<DashboardWidget.PeriodSummary>().single()
@@ -177,7 +179,7 @@ class DashboardWidgetConsistencyTest {
         )
 
         val processedData = createProcessedData(
-            expenses = purchases,
+            expenses = purchases.map { it.toDashboardExpense() },
             monthSpent = 100.0,
             budgetStatuses = listOf(budgetStatus),
             recurringPatterns = recurring,
@@ -240,7 +242,7 @@ class DashboardWidgetConsistencyTest {
     }
 
     private fun createProcessedData(
-        expenses: List<Expense>,
+        expenses: List<DashboardExpense>,
         monthSpent: Double,
         weather: FinancialWeather = FinancialWeather(
             state = WeatherState.UNKNOWN,
@@ -290,5 +292,23 @@ class DashboardWidgetConsistencyTest {
         date = date,
         isSharedExpense = isSharedExpense,
         myShareAmount = myShareAmount
+    )
+
+    private fun Expense.toDashboardExpense(): DashboardExpense = DashboardExpense(
+        id = id,
+        amount = amount,
+        effectiveAmount = effectiveAmount,
+        merchant = merchant,
+        transactionType = when (transactionType) {
+            TransactionType.PURCHASE -> DashboardTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DashboardTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DashboardTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DashboardTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DashboardTransactionType.UNKNOWN
+        },
+        date = date,
+        categoryId = categoryId,
+        isNotMine = isNotMine,
+        isManualEntry = isManualEntry
     )
 }

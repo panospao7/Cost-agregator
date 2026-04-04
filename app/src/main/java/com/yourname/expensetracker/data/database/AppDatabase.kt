@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.BudgetAdjustmentEvent
 import com.yourname.expensetracker.data.database.entity.SpendingPersonalityProfileEntity
 import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
+import com.yourname.expensetracker.data.security.BankTokenCipher
 
 @Database(
     entities = [
@@ -59,7 +60,7 @@ import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
         StressForecastSnapshot::class,
         EmailReceiptSource::class
     ],
-    version = 69,
+    version = 70,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -1468,6 +1469,7 @@ abstract class AppDatabase : RoomDatabase() {
                         countryCode TEXT NOT NULL,
                         accessToken TEXT,
                         refreshToken TEXT,
+                        tokenEncryptionVersion INTEGER NOT NULL DEFAULT 0,
                         tokenExpiry INTEGER,
                         isActive INTEGER NOT NULL DEFAULT 0,
                         isConnected INTEGER NOT NULL DEFAULT 0,
@@ -1484,7 +1486,7 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
                 
                 database.execSQL("""
-                    CREATE INDEX IF NOT EXISTS index_bank_connections_bankId 
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_bank_connections_bankId 
                     ON bank_connections (bankId)
                 """.trimIndent())
                 
@@ -1632,8 +1634,9 @@ abstract class AppDatabase : RoomDatabase() {
         // This migration recreates tables with proper DEFAULT constraints to align with @ColumnInfo annotations
         val MIGRATION_49_50 = object : androidx.room.migration.Migration(49, 50) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                database.beginTransaction()
                 try {
+                    database.beginTransaction()
+
                     // Recreate scanned_receipts table with proper DEFAULT constraints (must be first due to FK dependencies)
                     database.execSQL("""
                         CREATE TABLE scanned_receipts_new (
@@ -1724,6 +1727,7 @@ abstract class AppDatabase : RoomDatabase() {
                     
                     // Recreate indices for expenses
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_rawNotificationId ON expenses (rawNotificationId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses (date)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_date ON expenses (transactionType, date)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_categoryId_date ON expenses (transactionType, categoryId, date)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_categoryId_date ON expenses (categoryId, date)")
@@ -1798,6 +1802,9 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("INSERT INTO manual_recurring_expenses_new SELECT id, merchant, amount, currency, frequency, nextDate, note, createdAt, isSubscription, subscriptionCategory, usageTargetPerMonth, cancellationUrl, isActive FROM manual_recurring_expenses")
                     database.execSQL("DROP TABLE manual_recurring_expenses")
                     database.execSQL("ALTER TABLE manual_recurring_expenses_new RENAME TO manual_recurring_expenses")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_isActive_nextDate ON manual_recurring_expenses (isActive, nextDate)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_isSubscription_isActive_nextDate ON manual_recurring_expenses (isSubscription, isActive, nextDate)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_merchant ON manual_recurring_expenses (merchant)")
                     
                     // Recreate warranties table with proper DEFAULT constraints
                     database.execSQL("""
@@ -1948,6 +1955,7 @@ abstract class AppDatabase : RoomDatabase() {
                             countryCode TEXT NOT NULL,
                             accessToken TEXT,
                             refreshToken TEXT,
+                            tokenEncryptionVersion INTEGER NOT NULL DEFAULT 0,
                             tokenExpiry INTEGER,
                             isActive INTEGER NOT NULL DEFAULT 0,
                             isConnected INTEGER NOT NULL DEFAULT 0,
@@ -1963,10 +1971,18 @@ abstract class AppDatabase : RoomDatabase() {
                         )
                     """.trimIndent())
                     
-                    database.execSQL("INSERT INTO bank_connections_new SELECT id, bankId, bankName, countryCode, accessToken, refreshToken, tokenExpiry, isActive, isConnected, lastSync, lastSyncStatus, autoSync, syncFrequency, defaultCategoryId, lastError, lastErrorTime, consecutiveErrors, createdAt FROM bank_connections")
+                    database.execSQL("INSERT INTO bank_connections_new SELECT id, bankId, bankName, countryCode, accessToken, refreshToken, 0, tokenExpiry, isActive, isConnected, lastSync, lastSyncStatus, autoSync, syncFrequency, defaultCategoryId, lastError, lastErrorTime, consecutiveErrors, createdAt FROM bank_connections")
                     database.execSQL("DROP TABLE bank_connections")
                     database.execSQL("ALTER TABLE bank_connections_new RENAME TO bank_connections")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_bankId ON bank_connections (bankId)")
+                    database.execSQL("""
+                        DELETE FROM bank_connections
+                        WHERE id NOT IN (
+                            SELECT MAX(id)
+                            FROM bank_connections
+                            GROUP BY bankId
+                        )
+                    """.trimIndent())
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_bank_connections_bankId ON bank_connections (bankId)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_isActive ON bank_connections (isActive)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_lastSync ON bank_connections (lastSync)")
                     
@@ -2319,7 +2335,6 @@ abstract class AppDatabase : RoomDatabase() {
                     
                     // 2. Drop known legacy extra indices (Room drift sources)
                     database.execSQL("DROP INDEX IF EXISTS index_exchange_rates_from_to")
-                    database.execSQL("DROP INDEX IF EXISTS index_expenses_date")
                     database.execSQL("DROP INDEX IF EXISTS index_expenses_transactionType_merchant")
                     database.execSQL("DROP INDEX IF EXISTS index_merchant_location_corrections_merchant_area")
                     database.execSQL("DROP INDEX IF EXISTS index_merchant_locations_normalizedMerchantName")
@@ -2328,6 +2343,7 @@ abstract class AppDatabase : RoomDatabase() {
                     
                     // 3. Recreate canonical indices that may be missing on upgraded DBs
                     database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_exchange_rates_fromCurrency_toCurrency ON exchange_rates(fromCurrency, toCurrency)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses(date)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp ON raw_notifications(packageName, timestamp)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications(capturedAt)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_price_history_subscriptionId_recordedAt ON subscription_price_history(subscriptionId, recordedAt)")
@@ -2893,7 +2909,7 @@ abstract class AppDatabase : RoomDatabase() {
                         receiptId INTEGER NOT NULL,
                         emailSender TEXT NOT NULL,
                         emailSubject TEXT NOT NULL,
-                        emailMessageId TEXT NOT NULL DEFAULT '',
+                        emailMessageId TEXT,
                         parsedAt INTEGER NOT NULL,
                         provider TEXT NOT NULL,
                         confidence REAL NOT NULL,
@@ -2904,8 +2920,9 @@ abstract class AppDatabase : RoomDatabase() {
 
                 // Create indices for efficient queries
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_receiptId ON email_receipt_sources (receiptId)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources (emailMessageId)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources (emailMessageId) WHERE emailMessageId IS NOT NULL")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources (provider, parsedAt)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_parsedAt ON email_receipt_sources (parsedAt)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources (fingerprint)")
             }
         }
@@ -3258,7 +3275,8 @@ abstract class AppDatabase : RoomDatabase() {
                         """.trimIndent(),
                         indexSql = listOf(
                             "CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_lastUpdated ON spending_personality_profiles (lastUpdated)",
-                            "CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_personalityType ON spending_personality_profiles (personalityType)"
+                            "CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_personalityType ON spending_personality_profiles (personalityType)",
+                            "CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_isActive ON spending_personality_profiles (isActive)"
                         )
                     )
 
@@ -3330,7 +3348,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 receiptId INTEGER NOT NULL,
                                 emailSender TEXT NOT NULL,
                                 emailSubject TEXT NOT NULL,
-                                emailMessageId TEXT NOT NULL DEFAULT '',
+                                emailMessageId TEXT,
                                 parsedAt INTEGER NOT NULL,
                                 provider TEXT NOT NULL,
                                 confidence REAL NOT NULL,
@@ -3340,8 +3358,9 @@ abstract class AppDatabase : RoomDatabase() {
                         """.trimIndent(),
                         indexSql = listOf(
                             "CREATE INDEX IF NOT EXISTS index_email_receipt_sources_receiptId ON email_receipt_sources (receiptId)",
-                            "CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources (emailMessageId)",
+                            "CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources (emailMessageId) WHERE emailMessageId IS NOT NULL",
                             "CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources (provider, parsedAt)",
+                            "CREATE INDEX IF NOT EXISTS index_email_receipt_sources_parsedAt ON email_receipt_sources (parsedAt)",
                             "CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources (fingerprint)"
                         )
                     )
@@ -3422,6 +3441,220 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Migration 69 -> 70: Security and index hardening.
+        // - Encrypt legacy plaintext bank tokens and add token encryption metadata
+        // - Enforce uniqueness of bankId with deterministic deduplication
+        // - Add missing hot-path indexes (expenses.date, profile.isActive, recurring queries)
+        // - Fix emailMessageId nullability and dedupe semantics, add parsedAt index
+        val MIGRATION_69_70 = object : androidx.room.migration.Migration(69, 70) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // H12: date-only index used by many ORDER BY / range scans.
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses(date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_merchantKey_date_amount ON expenses(merchantKey, date, amount)")
+                    database.execSQL("ALTER TABLE pending_reviews ADD COLUMN suggestedMerchantKey TEXT")
+                    database.execSQL("UPDATE pending_reviews SET suggestedMerchantKey = LOWER(REPLACE(REPLACE(REPLACE(suggestedMerchant, '.', ''), '''', ''), ' ', '')) WHERE suggestedMerchantKey IS NULL")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_suggestedMerchantKey ON pending_reviews(suggestedMerchantKey)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_suggestedMerchantKey_suggestedDate ON pending_reviews(status, suggestedMerchantKey, suggestedDate)")
+
+                    // M6: speed up active profile lookup.
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_spending_personality_profiles_isActive ON spending_personality_profiles(isActive)")
+
+                    // M7: recurring expense query coverage.
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_isActive_nextDate ON manual_recurring_expenses(isActive, nextDate)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_isSubscription_isActive_nextDate ON manual_recurring_expenses(isSubscription, isActive, nextDate)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_merchant ON manual_recurring_expenses(merchant)")
+
+                    // H13 + NEW-29: rebuild bank_connections with encryption metadata column.
+                    val bankHasTokenVersion = hasColumn(database, "bank_connections", "tokenEncryptionVersion")
+
+                    database.execSQL(
+                        """
+                        CREATE TABLE bank_connections_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            bankId TEXT NOT NULL,
+                            bankName TEXT NOT NULL,
+                            countryCode TEXT NOT NULL,
+                            accessToken TEXT,
+                            refreshToken TEXT,
+                            tokenEncryptionVersion INTEGER NOT NULL DEFAULT 0,
+                            tokenExpiry INTEGER,
+                            isActive INTEGER NOT NULL DEFAULT 0,
+                            isConnected INTEGER NOT NULL DEFAULT 0,
+                            lastSync INTEGER,
+                            lastSyncStatus TEXT NOT NULL DEFAULT 'NEVER',
+                            autoSync INTEGER NOT NULL DEFAULT 1,
+                            syncFrequency TEXT NOT NULL DEFAULT 'DAILY',
+                            defaultCategoryId INTEGER,
+                            lastError TEXT,
+                            lastErrorTime INTEGER,
+                            consecutiveErrors INTEGER NOT NULL DEFAULT 0,
+                            createdAt INTEGER NOT NULL
+                        )
+                        """.trimIndent()
+                    )
+
+                    if (bankHasTokenVersion) {
+                        database.execSQL(
+                            """
+                            INSERT INTO bank_connections_new (
+                                id, bankId, bankName, countryCode,
+                                accessToken, refreshToken, tokenEncryptionVersion, tokenExpiry,
+                                isActive, isConnected, lastSync, lastSyncStatus,
+                                autoSync, syncFrequency, defaultCategoryId,
+                                lastError, lastErrorTime, consecutiveErrors, createdAt
+                            )
+                            SELECT
+                                id, bankId, bankName, countryCode,
+                                accessToken, refreshToken, tokenEncryptionVersion, tokenExpiry,
+                                isActive, isConnected, lastSync, lastSyncStatus,
+                                autoSync, syncFrequency, defaultCategoryId,
+                                lastError, lastErrorTime, consecutiveErrors, createdAt
+                            FROM bank_connections
+                            """.trimIndent()
+                        )
+                    } else {
+                        database.execSQL(
+                            """
+                            INSERT INTO bank_connections_new (
+                                id, bankId, bankName, countryCode,
+                                accessToken, refreshToken, tokenEncryptionVersion, tokenExpiry,
+                                isActive, isConnected, lastSync, lastSyncStatus,
+                                autoSync, syncFrequency, defaultCategoryId,
+                                lastError, lastErrorTime, consecutiveErrors, createdAt
+                            )
+                            SELECT
+                                id, bankId, bankName, countryCode,
+                                accessToken, refreshToken, 0, tokenExpiry,
+                                isActive, isConnected, lastSync, lastSyncStatus,
+                                autoSync, syncFrequency, defaultCategoryId,
+                                lastError, lastErrorTime, consecutiveErrors, createdAt
+                            FROM bank_connections
+                            """.trimIndent()
+                        )
+                    }
+
+                    database.execSQL("DROP TABLE bank_connections")
+                    database.execSQL("ALTER TABLE bank_connections_new RENAME TO bank_connections")
+
+                    // NEW-29: dedupe before unique constraint, keep latest row per bankId.
+                    database.execSQL(
+                        """
+                        DELETE FROM bank_connections
+                        WHERE id NOT IN (
+                            SELECT MAX(id)
+                            FROM bank_connections
+                            GROUP BY bankId
+                        )
+                        """.trimIndent()
+                    )
+
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_bank_connections_bankId ON bank_connections(bankId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_isActive ON bank_connections(isActive)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_lastSync ON bank_connections(lastSync)")
+
+                    // H13: migrate plaintext tokens to encrypted payloads.
+                    database.query(
+                        "SELECT id, accessToken, refreshToken, tokenEncryptionVersion FROM bank_connections"
+                    ).use { cursor ->
+                        val idIndex = cursor.getColumnIndexOrThrow("id")
+                        val accessIndex = cursor.getColumnIndexOrThrow("accessToken")
+                        val refreshIndex = cursor.getColumnIndexOrThrow("refreshToken")
+                        val versionIndex = cursor.getColumnIndexOrThrow("tokenEncryptionVersion")
+
+                        while (cursor.moveToNext()) {
+                            val id = cursor.getLong(idIndex)
+                            val access = if (cursor.isNull(accessIndex)) null else cursor.getString(accessIndex)
+                            val refresh = if (cursor.isNull(refreshIndex)) null else cursor.getString(refreshIndex)
+                            val version = cursor.getInt(versionIndex)
+
+                            val encryptedAccess = BankTokenCipher.encryptIfNeeded(access)
+                            val encryptedRefresh = BankTokenCipher.encryptIfNeeded(refresh)
+
+                            val shouldMarkEncrypted = encryptedAccess != null || encryptedRefresh != null
+                            val targetVersion = if (shouldMarkEncrypted) 1 else 0
+
+                            if (encryptedAccess != access || encryptedRefresh != refresh || version != targetVersion) {
+                                database.execSQL(
+                                    "UPDATE bank_connections SET accessToken = ?, refreshToken = ?, tokenEncryptionVersion = ? WHERE id = ?",
+                                    arrayOf(encryptedAccess, encryptedRefresh, targetVersion, id)
+                                )
+                            }
+                        }
+                    }
+
+                    // M8 + NEW-30: rebuild email_receipt_sources with nullable messageId and parsedAt index.
+                    database.execSQL(
+                        """
+                        CREATE TABLE email_receipt_sources_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            receiptId INTEGER NOT NULL,
+                            emailSender TEXT NOT NULL,
+                            emailSubject TEXT NOT NULL,
+                            emailMessageId TEXT,
+                            parsedAt INTEGER NOT NULL,
+                            provider TEXT NOT NULL,
+                            confidence REAL NOT NULL,
+                            fingerprint TEXT NOT NULL DEFAULT '',
+                            FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+
+                    database.execSQL(
+                        """
+                        INSERT INTO email_receipt_sources_new (
+                            id, receiptId, emailSender, emailSubject, emailMessageId,
+                            parsedAt, provider, confidence, fingerprint
+                        )
+                        SELECT
+                            id,
+                            receiptId,
+                            emailSender,
+                            emailSubject,
+                            NULLIF(TRIM(emailMessageId), ''),
+                            parsedAt,
+                            provider,
+                            confidence,
+                            fingerprint
+                        FROM email_receipt_sources
+                        """.trimIndent()
+                    )
+
+                    database.execSQL("DROP TABLE email_receipt_sources")
+                    database.execSQL("ALTER TABLE email_receipt_sources_new RENAME TO email_receipt_sources")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_receiptId ON email_receipt_sources(receiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources(provider, parsedAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_parsedAt ON email_receipt_sources(parsedAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources(fingerprint)")
+                    database.execSQL("DROP INDEX IF EXISTS index_email_receipt_sources_emailMessageId")
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources(emailMessageId) WHERE emailMessageId IS NOT NULL"
+                    )
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+
+            private fun hasColumn(
+                database: androidx.sqlite.db.SupportSQLiteDatabase,
+                table: String,
+                column: String
+            ): Boolean {
+                database.query("PRAGMA table_info(`$table`)").use { cursor ->
+                    val nameIndex = cursor.getColumnIndex("name")
+                    if (nameIndex < 0) return false
+                    while (cursor.moveToNext()) {
+                        if (cursor.getString(nameIndex) == column) return true
+                    }
+                }
+                return false
+            }
+        }
+
         /**
          * Canonical migration registry used by every database builder path.
          *
@@ -3492,7 +3725,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_65_66,
             MIGRATION_66_67,
             MIGRATION_67_68,
-            MIGRATION_68_69
+            MIGRATION_68_69,
+            MIGRATION_69_70
         )
     }
 }

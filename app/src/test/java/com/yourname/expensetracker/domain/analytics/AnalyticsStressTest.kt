@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -22,6 +23,7 @@ class AnalyticsStressTest {
 
     @Test
     fun `analytics_month_10k_transactions_completes_within_budget`() = runTest {
+        val database = mockk<AppDatabase>(relaxed = true)
         val expenseDao = mockk<com.yourname.expensetracker.data.database.dao.ExpenseDao>(relaxed = true)
         val categoryRepository = mockk<CategoryRepository>(relaxed = true)
         val budgetRepository = mockk<BudgetRepository>(relaxed = true)
@@ -57,6 +59,7 @@ class AnalyticsStressTest {
         coEvery { expenseDao.getExpensesBetween(start, end) } returns expenses
 
         val repository = ExpenseRepository(
+            database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),

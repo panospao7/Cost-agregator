@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.e2e
 
 import com.yourname.expensetracker.TEST_CATEGORIES
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Category
@@ -65,6 +66,7 @@ internal fun buildPipeline(
     nowMs: Long,
     categories: List<Category> = TEST_CATEGORIES
 ): FlowPipeline {
+    val database = mockk<AppDatabase>(relaxed = true)
     val expenseDao = mockk<ExpenseDao>(relaxed = true)
     val categoryRepository = mockk<CategoryRepository>(relaxed = true)
     val budgetRepository = mockk<BudgetRepository>(relaxed = true)
@@ -102,6 +104,7 @@ internal fun buildPipeline(
     )
 
     val expenseRepository = ExpenseRepository(
+        database = database,
         expenseDao = expenseDao,
         userCorrectionDao = userCorrectionDao,
         pendingReviewDao = pendingReviewDao,

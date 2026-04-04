@@ -12,7 +12,8 @@ data class ReceiptItemCategorizationInput(
     val lineItems: List<ReceiptParser.LineItem>,
     val userCategories: List<Category>,
     val totalTax: Double?,
-    val currency: String
+    val currency: String,
+    val redactBeforeCloud: Boolean = false
 )
 
 /**

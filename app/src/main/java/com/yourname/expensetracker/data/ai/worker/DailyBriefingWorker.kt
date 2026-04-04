@@ -5,8 +5,8 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
-import com.yourname.expensetracker.data.repository.AnalyticsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
+import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -34,7 +34,7 @@ class DailyBriefingWorker @AssistedInject constructor(
     @Assisted workerParams: WorkerParameters,
     private val generateDashboardBriefingUseCase: GenerateDashboardBriefingUseCase,
     private val dashboardDataProvider: DashboardDataProvider,
-    private val analyticsRepository: AnalyticsRepository,
+    private val analyticsRepository: DashboardAnalyticsRepository,
     private val deliverProactiveBriefingNotificationUseCase: DeliverProactiveBriefingNotificationUseCase
 ) : CoroutineWorker(appContext, workerParams) {
 

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
+import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
@@ -19,27 +20,26 @@ import timber.log.Timber
 import java.io.IOException
 import java.net.SocketTimeoutException
 import javax.net.ssl.SSLException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.UUID
 
 @Singleton
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudDashboardBriefingService @Inject constructor(
-    private val secureKeyStorage: SecureKeyStorage
+    private val secureKeyStorage: SecureKeyStorage,
+    @CloudAiHttpClient private val client: OkHttpClient
 ) : DashboardBriefingService {
 
     private var apiKeyOverride: String? = null
 
+    // Secondary constructor for tests
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
+
     // Secondary constructor for testing
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage) {
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient()) {
         this.apiKeyOverride = apiKeyOverride
     }
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(AppConfig.Ai.DASHBOARD_BRIEFING_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .readTimeout(AppConfig.Ai.DASHBOARD_BRIEFING_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .build()
 
     private val promptHelper = OnDeviceDashboardBriefingService()
 
@@ -60,13 +60,14 @@ class CloudDashboardBriefingService @Inject constructor(
         val requestBody = buildRequestBody(input)
         Timber.d("CloudDashboardBriefingService: Request body built, length=${requestBody.length}")
         
-        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL}:generateContent?key=$apiKey"
+        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL}:generateContent"
         Timber.d("CloudDashboardBriefingService: URL: ${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL}:generateContent")
         
         val request = Request.Builder()
             .url(url)
             .post(requestBody.toRequestBody(JSON_MEDIA_TYPE))
             .header("Content-Type", "application/json")
+            .header("x-goog-api-key", apiKey)
             .build()
 
         return try {
@@ -75,9 +76,20 @@ class CloudDashboardBriefingService @Inject constructor(
                 Timber.d("CloudDashboardBriefingService: HTTP response code: ${response.code}")
                 
                 if (!response.isSuccessful) {
-                    val errorBody = response.body?.string()?.take(200) ?: "empty"
-                    Timber.w("CloudDashboardBriefingService: HTTP ${response.code} error: $errorBody")
-                    return@use AiServiceResult.Failure(AiServiceError.HttpError(response.code, errorBody))
+                    val correlationId = newCorrelationId()
+                    val errorClass = "HTTP_${response.code}"
+                    Timber.w(
+                        "CloudDashboardBriefingService: HTTP %d class=%s correlationId=%s",
+                        response.code,
+                        errorClass,
+                        correlationId
+                    )
+                    return@use AiServiceResult.Failure(
+                        AiServiceError.HttpError(
+                            response.code,
+                            "errorClass=$errorClass correlationId=$correlationId"
+                        )
+                    )
                 }
 
                 val body = response.body?.string() ?: run {
@@ -161,4 +173,6 @@ class CloudDashboardBriefingService @Inject constructor(
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
+
+    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 }

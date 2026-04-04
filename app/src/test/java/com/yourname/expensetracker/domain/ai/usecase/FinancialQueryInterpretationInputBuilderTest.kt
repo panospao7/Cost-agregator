@@ -3,12 +3,16 @@ package com.yourname.expensetracker.domain.ai.usecase
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
+import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
+import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -21,6 +25,7 @@ class FinancialQueryInterpretationInputBuilderTest {
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var timeProvider: FakeTimeProvider
+    private lateinit var aiPolicy: AiPolicy
     private lateinit var builder: FinancialQueryInterpretationInputBuilder
 
     @Before
@@ -28,10 +33,14 @@ class FinancialQueryInterpretationInputBuilderTest {
         categoryRepository = mockk()
         expenseRepository = mockk()
         timeProvider = FakeTimeProvider(1_710_000_000_000L)
+        aiPolicy = mockk()
+        every { aiPolicy.canUseCloudFor(any(), AiCapability.QUERY_INTERPRETATION) } returns true
+        every { aiPolicy.shouldRedact(any(), AiCapability.QUERY_INTERPRETATION) } returns false
         builder = FinancialQueryInterpretationInputBuilder(
             categoryRepository = categoryRepository,
             expenseRepository = expenseRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            aiPolicy = aiPolicy
         )
     }
 
@@ -58,7 +67,11 @@ class FinancialQueryInterpretationInputBuilderTest {
             )
         }
 
-        val result = builder.build(rawQuery = rawQuery, conversationHistory = history)
+        val result = builder.build(
+            rawQuery = rawQuery,
+            settings = AiSettings(),
+            conversationHistory = history
+        )
 
         assertEquals(AppConfig.Ai.MAX_QUERY_INPUT_CHARS, result.rawQuery.length)
         assertTrue(result.rawQuery.all { it == 'x' })
@@ -77,7 +90,7 @@ class FinancialQueryInterpretationInputBuilderTest {
         coEvery { categoryRepository.getAll() } returns emptyList()
         coEvery { expenseRepository.getRecentMerchantNames() } returns (1..120).map { "Merchant $it" }
 
-        val result = builder.build(rawQuery = "total this month")
+        val result = builder.build(rawQuery = "total this month", settings = AiSettings())
 
         assertEquals(100, result.merchantNames.size)
         assertEquals("Merchant 1", result.merchantNames.first())
