@@ -137,6 +137,10 @@ class GeoapifyGeocodingService @Inject constructor(
                     "countrycode:gr"
                 }
             )
+            // Geoapify Geocoding API documents apiKey as a required query parameter.
+            // Header-based auth is not documented for this endpoint.
+            // IMPORTANT: never log the full URL (it includes secrets); use buildSafeLogRoute().
+            // TODO(security): route Geoapify requests through backend proxy and remove client-side key usage.
             .addQueryParameter("apiKey", apiKey)
             .build()
             .toString()

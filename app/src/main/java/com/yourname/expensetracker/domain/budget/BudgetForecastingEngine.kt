@@ -223,6 +223,8 @@ class BudgetForecastingEngine @Inject constructor(
         confidence: Double,
         spentToDate: Double
     ): ForecastRiskLevel {
+        if (spentToDate >= budget.amount) return ForecastRiskLevel.CRITICAL
+
         val remaining = budget.amount - spentToDate
         
         // Calculate percentage of remaining budget that will be used

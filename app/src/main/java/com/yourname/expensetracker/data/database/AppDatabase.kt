@@ -1634,8 +1634,14 @@ abstract class AppDatabase : RoomDatabase() {
         // This migration recreates tables with proper DEFAULT constraints to align with @ColumnInfo annotations
         val MIGRATION_49_50 = object : androidx.room.migration.Migration(49, 50) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                val fkEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
                 try {
                     database.beginTransaction()
+                    try {
 
                     // Recreate scanned_receipts table with proper DEFAULT constraints (must be first due to FK dependencies)
                     database.execSQL("""
@@ -2322,7 +2328,18 @@ abstract class AppDatabase : RoomDatabase() {
                 } finally {
                     database.endTransaction()
                 }
+            } finally {
+                if (fkEnabled) {
+                    database.execSQL("PRAGMA foreign_keys=ON")
+                    val violations = database.query("PRAGMA foreign_key_check")
+                    violations.use {
+                        if (it.moveToFirst()) {
+                            throw IllegalStateException("Migration 49->50 produced FK violations")
+                        }
+                    }
+                }
             }
+        }
         }
 
         // Migration 50 -> 51: Schema normalization - fix index drift and table defaults
