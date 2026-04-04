@@ -1,0 +1,269 @@
+# Quick Reference Guide - Domain Layer
+
+## Find What You Need
+
+### By Feature Area
+
+| Feature | Key Files | Entry Point |
+|---------|-----------|------------|
+| **Dashboard** | `engine/DashboardFollowThroughEngine.kt` | `ComputeDashboardWidgetsUseCase` |
+| **Analytics** | `analytics/InsightsEngine.kt` | `InsightsEngine.generateInsights()` |
+| **Budget** | `budget/BudgetCalculator.kt` | `CalculateBudgetStatusUseCase` |
+| **Categorization** | `categorization/CategorizationEngine.kt` | `CategorizeExpenseUseCase` |
+| **Receipt Processing** | `receipt/ReceiptOcrService.kt` | `ProcessReceiptUseCase` |
+| **AI Features** | `ai/usecase/*` | Feature-specific use case |
+| **Forecasting** | `forecasting/FinancialStressForecastEngine.kt` | `CalculateFinancialForecastUseCase` |
+| **Groups/Sharing** | `groups/GroupTransactionCoordinator.kt` | `AddGroupExpenseUseCase` |
+| **Location** | `location/LocationInsightsEngine.kt` | Dashboard + Analytics |
+| **Savings** | `savings/SmartSavingsEngine.kt` | `LifestyleSavingsPromptUseCase` |
+
+### By Problem
+
+**"How do I..."**
+
+| Problem | Solution |
+|---------|----------|
+| ...detect duplicate transactions? | `DetectDuplicateExpenseUseCase` + `CrossSourceDeduplication` |
+| ...get spending insights? | `InsightsEngine.generateInsights()` |
+| ...calculate a budget period? | `BudgetCalculator.calculatePeriodRange()` |
+| ...categorize an expense? | `CategorizeExpenseUseCase` + `CategorizationEngine` |
+| ...process a receipt? | `ProcessReceiptUseCase` (end-to-end) |
+| ...detect anomalies? | `InsightsEngine.findAnomalies()` (dual-path) |
+| ...find recurring expenses? | `RecurringExpenseEngine.getPatterns()` |
+| ...make AI recommendations? | Feature-specific input builder → `ExecuteFinancialQueryUseCase` |
+| ...split an expense? | `EnhancedSplitManager` |
+| ...convert currency? | `CurrencyConverter` |
+
+## Key Concepts
+
+### The Insights Snapshot Pattern
+
+InsightsEngine is the hub for analytics. It returns an `InsightsSnapshot` containing:
+
+```kotlin
+InsightsSnapshot(
+    currentMonth: MonthPeriod,
+    monthlyComparison: MonthlyComparison,      // vs previous
+    categoryInsights: List<CategoryInsight>,    // top categories
+    topMerchants: List<MerchantInsight>,       // top spending
+    spendingPace: SpendingPace,                // daily rate projection
+    anomalies: List<AnomalyTransaction>,       // outliers
+    recurringExpenses: List<RecurringExpense>, // detected subscriptions
+    dayOfWeekPattern: List<DayOfWeekInsight>,  // 7-day breakdown
+    largestTransaction: Expense?,              // max this month
+    averageTransactionSize: Double,            // avg amount
+    medianTransactionSize: Double,             // median amount
+    totalMonthsOfData: Int                     // historical depth
+)
+```
+
+**Usage:** Fetch once, use for all dashboard metrics.
+
+### The Budget Period Calculation
+
+BudgetCalculator handles 5 period types:
+
+```
+DAILY    → 24-hour window from start time
+WEEKLY   → 7 days, aligned to anchor weekday
+MONTHLY  → Calendar month from anchor day
+QUARTERLY → 3-month window (Q1, Q2, Q3, Q4)
+YEARLY   → 365 days from anniversary
+```
+
+**Usage:** All budget logic depends on period range accuracy.
+
+### The Recommendation Pipeline
+
+```
+Transaction Event
+    ↓
+DashboardFollowThroughEngine.generateRecommendations()
+    ↓
+Applies 4 deterministic rules:
+    1. High-amount (adaptive threshold)
+    2. Category-specific
+    3. Merchant-specific
+    4. Recent transactions (7-day)
+    ↓
+Returns up to 5 recommendations (priority-sorted)
+    ↓
+AI artifact provides summary text (optional)
+```
+
+### The Dual Anomaly Detection
+
+**Path 1: Merchant-level (DB-backed)**
+- Compares max vs historical average
+- Multiplier: 5x (few), 4x (5-10), 3x (10+)
+- Precise, historical context
+
+**Path 2: Statistical (in-memory)**
+- IQR, MAD, contextual analysis
+- Fires on new merchants
+- Catches distribution outliers
+
+**Result:** Merged + deduplicated list (top 10)
+
+## Common Patterns
+
+### Pattern 1: Async Parallel Execution
+
+```kotlin
+// InsightsEngine.generateInsights()
+val deferred1 = async { buildMonthlyComparison(...) }
+val deferred2 = async { buildCategoryInsights(...) }
+// ... more in parallel ...
+val result1 = deferred1.await()  // wait for all
+```
+
+**When to use:** Heavy computations, independent queries
+
+### Pattern 2: Error Resilience
+
+```kotlin
+val result = try {
+    buildCategoryInsights(...)
+} catch (e: Exception) {
+    // Return safe default instead of crashing
+    emptyList()
+}
+```
+
+**When to use:** Optional analytics features that shouldn't crash dashboard
+
+### Pattern 3: Period Range Pair
+
+```kotlin
+// Instead of separate start/end params:
+val period: Pair<Long, Long> = Pair(startMs, endMs)
+
+// Used everywhere:
+expenseRepository.getTotalForPeriod(period.first, period.second)
+```
+
+**When to use:** Enforce start < end, keep paired values together
+
+### Pattern 4: Normalization → Classification
+
+```kotlin
+// CategorizationEngine pipeline:
+merchant = MerchantCanonicalizer.normalize(merchant)  // "Starbucks" ← "STARBUCKS S.A."
+keywords = CategoryKeywords.getKeywords(category)
+if (SemanticKeywordMatcher.matches(merchant, keywords)) {
+    return category
+}
+// Fallback: ML classifier
+```
+
+**When to use:** Multi-layered classifiers with increasing complexity
+
+## Dependency Injection Patterns
+
+### Standard Injection
+
+```kotlin
+@Singleton
+class MyEngine @Inject constructor(
+    private val repository: MyRepository,
+    private val helper: HelperService,
+    @DefaultDispatcher private val dispatcher: CoroutineDispatcher
+) { ... }
+```
+
+**Scope:** Most engines use @Singleton
+
+### Dispatcher Qualifiers
+
+```kotlin
+@DefaultDispatcher   // Default coroutine dispatcher (CPU-bound)
+@IoDispatcher        // IO-bound tasks (file, network)
+@MainDispatcher      // Main thread (Android-only)
+```
+
+**Usage:** InsightsEngine uses @DefaultDispatcher for parallel work
+
+## Performance Tips
+
+### 1. InsightsEngine Caching
+- It's expensive (~750 lines, 8+ db queries, 7 sub-engines)
+- Cache result for 5-10 minutes
+- Re-compute only on new transaction or manual refresh
+
+### 2. Category/Merchant Lists
+- Load once at app startup
+- Cache in memory (both are small datasets)
+- Category → keywords can be pre-indexed
+
+### 3. Anomaly Detection
+- Statistical path (in-memory) is fast
+- Merchant path (DB-backed) queries for all merchants
+- Limit to top 100 merchants to reduce DB load
+
+### 4. Async Best Practices
+- Use `coroutineScope { async { ... } }` for true parallelism
+- Don't spawn async for sequential work (use `withContext`)
+- Always `await()` all async jobs before returning
+
+## Testing Checklist
+
+- [ ] Mock `ExpenseRepository` for use case tests
+- [ ] Test edge cases: empty periods, null values, zero amounts
+- [ ] Test period calculations for month-end (28, 29, 30, 31 days)
+- [ ] Test anomaly detection with synthetic outliers
+- [ ] Test categorization fallback chain
+- [ ] Test concurrent async operations (InsightsEngine)
+- [ ] Test UI text rendering (post-rendering in presentation, not domain)
+
+## Clean Architecture Checklist
+
+- [ ] No Android imports (except debug utilities)
+- [ ] No UI framework imports (Compose, androidx.ui)
+- [ ] No View/Activity references
+- [ ] No Context in constructors (pass what you need, not Context)
+- [ ] No SharedPreferences (use repository pattern)
+- [ ] Return domain models, not entities
+- [ ] Suspend functions for async (not callbacks)
+
+## File Size Reference
+
+Large files (potential refactor candidates):
+
+| File | Lines | Reason |
+|------|-------|--------|
+| `analytics/InsightsEngine.kt` | 751 | Hub for all analytics, 7 sub-engines |
+| `domain/ai/usecase/ExecuteFinancialQueryUseCase.kt` | 222 | 6 query types × 2 paths each |
+| `budget/BudgetCalculator.kt` | 153 | 5 period types × complex calendar math |
+| `location/LocationInsightsEngine.kt` | ? | Geographic analytics |
+
+**Refactor approach:** Extract sub-methods to dedicated utilities (already done for most)
+
+## Common Gotchas
+
+1. **Period Range Direction:** Always `start < end`. BudgetCalculator validates this.
+2. **Merchant Normalization:** Must use canonical key (`MerchantKeyGenerator.generate()`) for lookups.
+3. **Category IDs:** Can be null. Treat as "Uncategorized" / "GENERAL".
+4. **Timezone Handling:** All timestamps are UTC milliseconds. No timezone conversion in domain.
+5. **Leap Year:** BudgetCalculator handles Feb 29 correctly.
+6. **Empty Lists:** Analytics gracefully handle zero transactions (return empty insights, not crash).
+7. **Null Safety:** Use `?.let { }` for optional fields (category, merchant, location).
+
+## Integration Checklist
+
+**Before adding new feature to domain:**
+
+- [ ] Define domain model (data class in `model/`)
+- [ ] Create use case (in `usecase/feature/`) or engine (in `feature/`)
+- [ ] Depend on repositories (data layer), not UI
+- [ ] Use `suspend fun` for async operations
+- [ ] Inject via Dagger (mark @Inject + @Singleton if shared)
+- [ ] Return domain model, wrapped in `Result<T>` if error-prone
+- [ ] Handle null/empty gracefully
+- [ ] Add Timber logging for debugging
+- [ ] No hardcoded strings (use AppConstants or repository config)
+- [ ] Test with mock repositories
+- [ ] Document public methods with KDoc
+
+---
+
+**Last Updated:** April 4, 2026

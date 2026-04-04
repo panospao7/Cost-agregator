@@ -1,0 +1,173 @@
+================================================================================
+                    DATA LAYER ARCHITECTURE SUMMARY
+================================================================================
+
+PROJECT: Expense Tracker | SCOPE: com.yourname.expensetracker.data.*
+DATE: April 2026 | Database Schema Version: 69
+
+================================================================================
+                              STATISTICS
+================================================================================
+
+  ENTITIES:              46 total
+  DAOs:                  45 total  
+  REPOSITORIES:          36+ total
+  MIGRATIONS:            46 (v6 → v69)
+  AI PROVIDERS:          33 services (cloud/on-device/hybrid/noop variants)
+  GEOCODING PROVIDERS:   5 (Nominatim, Photon, Geoapify, Google, Overpass)
+  
+  FILES BREAKDOWN:
+    ├── database/         99 files (AppDatabase, 45 DAOs, 46 entities, 5 models)
+    ├── repository/       36 files (business logic layer)
+    ├── ai/               35 files (33 providers + 2 workers)
+    ├── location/          9 files (geocoding services + workers)
+    ├── email/             5 files (IMAP/POP3 + 4 parsers)
+    ├── security/          1 file  (EncryptedSharedPreferences)
+    ├── provider/          1 file  (MerchantCategoryProvider)
+    └── service/           1 file  (AndroidNotificationService)
+  
+  TOTAL DATA LAYER FILES: 188 files
+
+================================================================================
+                         CORE ENTITY GROUPS
+================================================================================
+
+  CORE FINANCIAL (7)         │ RECEIPTS & ITEMS (7)          │ AI & CHAT (6)
+  ┌─────────────────────┐    ├──────────────────────┐       ├─────────────────┐
+  │ Expense             │    │ ScannedReceipt       │       │ AiArtifactEntity│
+  │ Category            │    │ ReceiptItemCategory  │       │ AiChatSession   │
+  │ Budget              │    │ Warranty             │       │ AiChatMessage   │
+  │ PlannedExpense      │    │ ReturnWindow         │       │ Recommendation  │
+  │ RecurringExpense    │    │ RawNotification      │       │ PromptState     │
+  │ SavingsGoal         │    │ PendingReview        │       │ SpendingProfile │
+  │ Investment          │    │ EmailReceiptSource   │       │                 │
+  │ InvestmentValue     │    │                      │       │                 │
+  └─────────────────────┘    └──────────────────────┘       └─────────────────┘
+
+  MERCHANTS (6)              │ BUDGETING (6)                 │ SHARED & SPLITS (4)
+  ├──────────────────────┐   ├─────────────────────┐       ├───────────────────┐
+  │ MerchantCanonical    │   │ BudgetForecast      │       │ ExpenseGroup      │
+  │ MerchantAlias        │   │ BudgetAdjustment    │       │ GroupMember       │
+  │ MerchantCategory     │   │ StressForecast      │       │ GroupExpense      │
+  │ MerchantLocation     │   │ HealthScoreHistory  │       │ SplitTemplate     │
+  │ LocationCorrection   │   │ SavingsSweepPlan    │       │ SplitItemAssign   │
+  │ UserCorrection       │   │ SubscriptionCandidate        │                   │
+  └──────────────────────┘   └─────────────────────┘       └───────────────────┘
+
+  SUBSCRIPTIONS (3)          │ BANK & CURRENCY (3)           │ BUSINESS (1)
+  ├──────────────────────┐   ├─────────────────────┐       ├───────────────────┐
+  │ SubscriptionPrice    │   │ BankConnection      │       │ MileageTracking   │
+  │ SubscriptionUsage    │   │ ExchangeRate        │       │                   │
+  │ [linked via FK]      │   │ SourceStats         │       │                   │
+  └──────────────────────┘   └─────────────────────┘       └───────────────────┘
+
+================================================================================
+                       REPOSITORY ARCHITECTURE
+================================================================================
+
+  CORE CRUD (10)
+  ├─ ExpenseRepository         (5 DAOs, 40+ methods)
+  ├─ CategoryRepository         (1 DAO)
+  ├─ BudgetRepository          (2 DAOs)
+  ├─ ReceiptRepository         (4 DAOs)
+  ├─ RecurringExpenseRepository(5 DAOs)
+  ├─ MerchantNormalizationRepo (3 DAOs)
+  ├─ MerchantLocationRepository(2 DAOs + Geocoding)
+  ├─ PlannedExpenseRepository  (1 DAO)
+  ├─ SavingsGoalRepository     (1 DAO)
+  └─ WarrantyTrackerRepository(2 DAOs)
+
+  AI & INSIGHTS (6)
+  ├─ AiArtifactRepositoryImpl   (1 DAO, v34)
+  ├─ AiChatRepositoryImpl       (2 DAOs, v35)
+  ├─ FinancialWeatherRepository(3 DAOs)
+  ├─ AiEngagementRepositoryImpl (Custom)
+  ├─ AiSettingsRepositoryImpl   (SharedPrefs)
+  └─ RecommendationRepository  (1 DAO, v36)
+
+  ANALYTICS (5)
+  ├─ AnalyticsRepository       (Complex aggregations)
+  ├─ DashboardRepository       (Widget data)
+  ├─ SourceStatsRepository     (Source analytics)
+  ├─ ReviewQueueRepository     (Pending reviews)
+  └─ NotificationProcessingPipeline
+
+  BUSINESS & FEATURES (8)
+  ├─ BusinessExpenseRepository (Business/personal separation)
+  ├─ MultiCurrencyRepository   (Currency conversion, v42)
+  ├─ GroupsRepositoryImpl       (Shared expenses, v43)
+  ├─ InvestmentRepository      (Portfolio tracking, v45)
+  ├─ MerchantCategoryRepository(Auto-assignment)
+  ├─ CurrencySettingsRepositoryImpl
+  ├─ PromptStateRepository     (AI A/B testing)
+  └─ MerchantRulesRepository
+
+  DATA MANAGEMENT (3)
+  ├─ DatabaseBackupRepositoryImpl
+  ├─ AccountingExportRepository
+  └─ NotificationRepository
+
+  INFRASTRUCTURE (4)
+  ├─ BankConnectionRepository  (Open Banking, v46)
+  ├─ WidgetStyleRepositoryImpl
+  ├─ EmailReceiptRepository
+  └─ UserCorrectionRepository
+
+================================================================================
+                      DESIGN PATTERNS IN USE
+================================================================================
+
+  ✓ REPOSITORY PATTERN
+    DAOs wrapped by Repositories with business logic
+    Repositories expose Flow<T> for reactive updates
+
+  ✓ COMPOSITE PATTERN (CompositeGeocodingService)
+    4 geocoding providers aggregated & merged
+    Parallel execution with smart gating
+    Re-ranking by qualifier match, deduplication
+
+  ✓ MULTI-IMPLEMENTATION PATTERN (AI Services)
+    Cloud / On-Device / Hybrid / NoOp variants
+    Dependency injection + settings-based selection
+    Enables offline + online + testing scenarios
+
+  ✓ TRANSACTION PATTERN (@Transaction in DAOs)
+    Automatic FK resolution
+    POJO result mapping (ExpenseWithCategory)
+    Extensively used in analytics queries
+
+  ✓ DYNAMIC QUERY PATTERN (@RawQuery)
+    Supports dynamic WHERE, ORDER BY, LIMIT
+    Used by ExpenseRepository.getExpensesDynamic()
+    Enables complex filtering UI
+
+  ✓ ATOMIC OPERATIONS
+    dedupeKey UNIQUE index (v21) prevents duplicates
+    insertAtomic() with IGNORE conflict strategy
+    Checked via SELECT changes()
+
+  ✓ REACTIVE STREAMS
+    Flow<List<T>> for subscription-based updates
+    Pagination via getPage(limit, offset)
+    Prevents OOM on large datasets
+
+  ✓ BACKGROUND WORKERS
+    LocationBackfillWorker (async geocoding, v28+)
+    MerchantKeyBackfillWorker (async merchant keying, v32+)
+    DailyBriefingWorker (scheduled AI briefing)
+
+================================================================================
+                        KEY FEATURES BY VERSION
+================================================================================
+
+  v6-8   FOUNDATION           Expenses, Categories, Budgets
+  v9-11  RECEIPTS             Scanned receipts, Pending reviews
+  v12-13 PLANNING             Recurring expenses, Planned expenses, Savings
+  v14-16 USER INPUT           User corrections, Indices optimization
+  v17-20 MERCHANT DEDUP       Canonicalization, Dedupe keys
+  v21-22 ATOMIC SAFETY        Unique dedupe indices, duplicate prevention
+  v23-27 TRANSFERS            Transfer direction, Location fields, Merchant geo
+  v28-30 GEOLOCATION          Merchant location cache, Backfill workers
+  v31-33 MERCHANT KEYS        Unified merchant key generation (v32)
+  v34-36 AI PHASE 1           Artifacts, Chat sessions, Recommendations
+  v37-39 RECEIPT V2           Item cat
