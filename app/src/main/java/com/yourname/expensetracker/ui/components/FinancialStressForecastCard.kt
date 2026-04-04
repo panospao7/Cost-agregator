@@ -27,7 +27,18 @@ fun FinancialStressForecastCard(
     val overallRisk = result.overallRiskLevel
     val (backgroundColor, accentColor, riskIcon) = getRiskColors(overallRisk)
     
-    var selectedHorizon by remember { mutableStateOf(0) } // 0 = 30d, 1 = 60d, 2 = 90d
+    var selectedHorizon by remember(result.horizons) { mutableIntStateOf(0) }
+    LaunchedEffect(result.horizons, selectedHorizon) {
+        val clampedIndex = if (result.horizons.isEmpty()) {
+            0
+        } else {
+            selectedHorizon.coerceIn(0, result.horizons.lastIndex)
+        }
+
+        if (clampedIndex != selectedHorizon) {
+            selectedHorizon = clampedIndex
+        }
+    }
     
     Card(
         modifier = modifier.fillMaxWidth(),

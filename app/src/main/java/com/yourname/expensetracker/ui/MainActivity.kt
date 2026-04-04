@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,7 +37,6 @@ import com.yourname.expensetracker.ui.components.AppNavigationBar
 import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
 import com.yourname.expensetracker.ui.screens.analytics.AdvancedAnalyticsScreen
-import com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen
 import com.yourname.expensetracker.ui.screens.bank.BankConnectionsScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetForecastingScreen
 import com.yourname.expensetracker.ui.screens.budget.BudgetScreen
@@ -65,12 +66,11 @@ import com.yourname.expensetracker.ui.screens.recurringmanual.ManualRecurringExp
 import com.yourname.expensetracker.ui.screens.subscription.SubscriptionManagementScreen
 import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
-import com.yourname.expensetracker.ui.navigation.NavigationController
 import com.yourname.expensetracker.ui.navigation.ProvideNavigationController
 import com.yourname.expensetracker.ui.navigation.LocalNavigationController
+import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.ui.util.ClipboardAmountParser
 import com.yourname.expensetracker.ui.util.HapticType
 import com.yourname.expensetracker.ui.util.rememberHapticFeedback
@@ -95,7 +95,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handleIntent(intent)
+        if (savedInstanceState == null) {
+            handleIntent(intent)
+        }
         setContent {
             ExpenseTrackerTheme {
                 ProvideNavigationController(
@@ -112,41 +114,49 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onNewIntent(intent: android.content.Intent) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleIntent(intent)
+        setIntent(intent)
+        val consumed = handleIntent(intent)
+        if (consumed) {
+            // One-shot consume so this deep link is not re-applied on future recreations.
+            intent.data = null
+            setIntent(intent)
+        }
     }
 
-    private fun handleIntent(intent: android.content.Intent?) {
-        val data = intent?.data ?: return
-        if (data.scheme == "expensetracker") {
-            when (data.host) {
-                "home", "dashboard" -> {
-                    mainViewModel.navigateToTab(0)
-                    data.getQueryParameter("briefingKey")?.let { briefingKey ->
-                        lifecycleScope.launch {
-                            aiEngagementRepository.setLastOpenedDashboardBriefingKey(briefingKey)
-                        }
+    private fun handleIntent(intent: Intent?): Boolean {
+        val data = intent?.data ?: return false
+        if (data.scheme != "expensetracker") return false
+
+        when (data.host) {
+            "home", "dashboard" -> {
+                mainViewModel.navigateToTab(0)
+                data.getQueryParameter("briefingKey")?.let { briefingKey ->
+                    lifecycleScope.launch {
+                        aiEngagementRepository.setLastOpenedDashboardBriefingKey(briefingKey)
                     }
-                    aiRuntimeDiagnostics.recordInteraction(
-                        type = "phase4_open",
-                        message = "dashboard deep link opened${data.getQueryParameter("briefingKey")?.let { " ($it)" } ?: ""}"
-                    )
                 }
-                "activity" -> mainViewModel.navigateToTab(1)
-                "review" -> mainViewModel.navigateToTab(2)
-                "plan" -> mainViewModel.navigateToTab(3)
-                "add" -> {
-                    mainViewModel.triggerAddExpense()
-                }
-                "analytics" -> mainViewModel.navigateToTab(4)
-                "map" -> mainViewModel.navigateToTab(5)
-                else -> {
-                    Timber.w("Ignoring unsupported deep link host: ${data.host}")
-                    mainViewModel.navigateToTab(0)
-                }
+                aiRuntimeDiagnostics.recordInteraction(
+                    type = "phase4_open",
+                    message = "dashboard deep link opened${data.getQueryParameter("briefingKey")?.let { " ($it)" } ?: ""}"
+                )
+            }
+            "activity" -> mainViewModel.navigateToTab(1)
+            "review" -> mainViewModel.navigateToTab(2)
+            "plan" -> mainViewModel.navigateToTab(3)
+            "add" -> {
+                mainViewModel.triggerAddExpense()
+            }
+            "analytics" -> mainViewModel.navigateToTab(4)
+            "map" -> mainViewModel.navigateToTab(5)
+            else -> {
+                Timber.w("Ignoring unsupported deep link host: ${data.host}")
+                mainViewModel.navigateToTab(0)
             }
         }
+
+        return true
     }
 }
 
@@ -157,6 +167,51 @@ fun MainScreen(
     actionRegistry: ContextualActionRegistry
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    val transactionFilterSaver = remember {
+        listSaver<TransactionFilter?, Any?>(
+            save = { filter ->
+                if (filter == null) {
+                    emptyList<Any?>()
+                } else {
+                    listOf(
+                        filter.categoryId,
+                        filter.merchantName,
+                        filter.transactionType?.name,
+                        filter.dateRange?.first,
+                        filter.dateRange?.second,
+                        filter.ownership?.name,
+                        filter.minAmount,
+                        filter.maxAmount,
+                        filter.correlationId
+                    )
+                }
+            },
+            restore = { saved ->
+                if (saved.isEmpty()) {
+                    null
+                } else {
+                    val transactionType = (saved.getOrNull(2) as? String)
+                        ?.let { runCatching { com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(it) }.getOrNull() }
+                    val rangeStart = saved.getOrNull(3) as? Long
+                    val rangeEnd = saved.getOrNull(4) as? Long
+                    val ownership = (saved.getOrNull(5) as? String)
+                        ?.let { runCatching { com.yourname.expensetracker.data.repository.OwnershipFilter.valueOf(it) }.getOrNull() }
+
+                    TransactionFilter(
+                        categoryId = saved.getOrNull(0) as? Long,
+                        merchantName = saved.getOrNull(1) as? String,
+                        transactionType = transactionType,
+                        dateRange = if (rangeStart != null && rangeEnd != null) rangeStart to rangeEnd else null,
+                        ownership = ownership,
+                        minAmount = saved.getOrNull(6) as? Double,
+                        maxAmount = saved.getOrNull(7) as? Double,
+                        correlationId = (saved.getOrNull(8) as? Long) ?: System.currentTimeMillis()
+                    )
+                }
+            }
+        )
+    }
     
     val pendingCount by mainViewModel.pendingReviewCount.collectAsState()
     
@@ -165,7 +220,9 @@ fun MainScreen(
     val reviewViewModel: com.yourname.expensetracker.ui.screens.review.ReviewViewModel = hiltViewModel()
     
     var showNotificationPermissionDialog by rememberSaveable { mutableStateOf(false) }
-    var activeTransactionFilter by remember { mutableStateOf<com.yourname.expensetracker.ui.screens.transactions.TransactionFilter?>(null) }
+    var activeTransactionFilter by rememberSaveable(stateSaver = transactionFilterSaver) {
+        mutableStateOf<TransactionFilter?>(null)
+    }
     
     // Navigation Controller - Single source of truth for ALL navigation
     val navigation = LocalNavigationController.current
@@ -299,7 +356,14 @@ fun MainScreen(
                         },
                         onNavigateToAnalytics = { navigation.navigateToTab(4) },
                         onNavigateToMap = { navigation.navigateToTab(5) },
-                        onNavigateToBudgetDetail = { navigation.navigateToTab(3) },
+                        onNavigateToBudgetDetail = { category ->
+                            navigation.navigateTo(
+                                NavigationDestination.BudgetDetail(
+                                    categoryId = category.toLongOrNull(),
+                                    categoryName = category.takeIf { it.isNotBlank() }
+                                )
+                            )
+                        },
                         // Config-driven feature navigation - handles all 22 features
                         onNavigateToFeature = { destination -> navigation.navigateTo(destination) }
                     )
@@ -310,6 +374,8 @@ fun MainScreen(
                     )
                     2 -> ReviewScreen()
                     3 -> BudgetScreen(
+                        initialCategoryId = (currentDestination as? NavigationDestination.BudgetDetail)?.categoryId,
+                        initialCategoryName = (currentDestination as? NavigationDestination.BudgetDetail)?.categoryName,
                         onNavigateToForecast = { budget: BudgetEntity ->
                             navigation.navigateTo(NavigationDestination.BudgetForecasting(budget))
                         }
@@ -499,9 +565,9 @@ fun MainScreen(
                 }
                 is NavigationDestination.VisualSplitEditor -> {
                     VisualSplitEditorScreen(
-                        totalAmount = currentDestination.expense?.amount ?: 0.0,
-                        currencyCode = currentDestination.expense?.currency ?: "EUR",
-                        expenseId = currentDestination.expense?.id,
+                        totalAmount = currentDestination.expenseAmount ?: currentDestination.expense?.amount ?: 0.0,
+                        currencyCode = currentDestination.expenseCurrency ?: currentDestination.expense?.currency ?: "EUR",
+                        expenseId = currentDestination.expenseId ?: currentDestination.expense?.id,
                         templateId = currentDestination.templateId,
                         onSplitComplete = { shares, splitType ->
                             // Handle split completion
@@ -548,6 +614,7 @@ fun MainScreen(
                 is NavigationDestination.Transactions,
                 is NavigationDestination.Review,
                 is NavigationDestination.Budget,
+                is NavigationDestination.BudgetDetail,
                 is NavigationDestination.Analytics,
                 is NavigationDestination.SpendingMap -> { /* Handled by AnimatedContent */ }
             }

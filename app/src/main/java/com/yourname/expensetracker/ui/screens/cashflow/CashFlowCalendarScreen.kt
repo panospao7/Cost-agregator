@@ -22,9 +22,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
+import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,7 +36,13 @@ fun CashFlowCalendarScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val dateFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
-    val dayFormat = remember { SimpleDateFormat("d", Locale.getDefault()) }
+    val selectedDateFormat = remember { SimpleDateFormat("EEE, MMM d, yyyy", Locale.getDefault()) }
+    val dailyCashFlowByDate = remember(state.dailyCashFlows) {
+        state.dailyCashFlows.associateBy { normalizeDateKey(it.date) }
+    }
+    val selectedCashFlow = state.selectedDate?.let { selectedDate ->
+        dailyCashFlowByDate[normalizeDateKey(selectedDate)]
+    }
     
     Scaffold(
         topBar = {
@@ -166,10 +174,7 @@ fun CashFlowCalendarScreen(
                 repeat(daysInMonth) { day ->
                     calendar.set(Calendar.DAY_OF_MONTH, day + 1)
                     val date = calendar.time
-                    val cashFlow = state.dailyCashFlows.find { 
-                        val cashFlowCal = Calendar.getInstance().apply { time = it.date }
-                        cashFlowCal.get(Calendar.DAY_OF_MONTH) == day + 1
-                    }
+                    val cashFlow = dailyCashFlowByDate[normalizeDateKey(date)]
                     days.add(DayCell(day + 1, date, cashFlow))
                 }
                 
@@ -184,8 +189,7 @@ fun CashFlowCalendarScreen(
                             DayCellView(
                                 dayCell = dayCell,
                                 isSelected = state.selectedDate?.let { selected ->
-                                    val selCal = Calendar.getInstance().apply { time = selected }
-                                    selCal.get(Calendar.DAY_OF_MONTH) == dayCell.day
+                                    normalizeDateKey(selected) == normalizeDateKey(dayCell.date)
                                 } ?: false,
                                 onClick = { viewModel.selectDate(dayCell.date) }
                             )
@@ -193,6 +197,17 @@ fun CashFlowCalendarScreen(
                             Box(modifier = Modifier.aspectRatio(1f))
                         }
                     }
+                }
+            }
+
+            state.selectedDate?.let { selectedDate ->
+                ModalBottomSheet(
+                    onDismissRequest = { viewModel.selectDate(null) }
+                ) {
+                    DailyCashFlowDetails(
+                        selectedDateLabel = selectedDateFormat.format(selectedDate),
+                        cashFlow = selectedCashFlow
+                    )
                 }
             }
         }
@@ -280,5 +295,113 @@ private fun getRiskColor(riskLevel: CashFlowRiskLevel): Color {
         CashFlowRiskLevel.LOW -> SemanticColors.StatusYellowLight
         CashFlowRiskLevel.MEDIUM -> SemanticColors.StatusOrangeLight
         CashFlowRiskLevel.HIGH -> SemanticColors.StatusRed.copy(alpha = 0.2f)
+    }
+}
+
+private fun normalizeDateKey(date: Date): Long {
+    return Calendar.getInstance().run {
+        time = date
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        timeInMillis
+    }
+}
+
+@Composable
+private fun DailyCashFlowDetails(
+    selectedDateLabel: String,
+    cashFlow: DailyCashFlow?
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = selectedDateLabel,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (cashFlow == null) {
+            Text(
+                text = "No cash flow details for this day.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+            return
+        }
+
+        val incomeTotal = cashFlow.income.sumOf { abs(it.amount) }
+        val expensesTotal = cashFlow.expenses.sumOf { it.amount }
+        val recurringTotal = cashFlow.predictedRecurring.sumOf { it.averageAmount }
+
+        Text(
+            text = "Ending balance: €${String.format("%.2f", cashFlow.endingBalance)}",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Income: €${String.format("%.2f", incomeTotal)}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = SemanticColors.StatusGreen
+        )
+        Text(
+            text = "Expenses: €${String.format("%.2f", expensesTotal)}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = SemanticColors.StatusRed
+        )
+        Text(
+            text = "Recurring: €${String.format("%.2f", recurringTotal)}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = SemanticColors.StatusYellow
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (cashFlow.income.isNotEmpty()) {
+            Text(text = "Income items", fontWeight = FontWeight.SemiBold)
+            cashFlow.income.take(3).forEach { income ->
+                Text(
+                    text = "• ${income.merchant}: +€${String.format("%.2f", abs(income.amount))}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        if (cashFlow.expenses.isNotEmpty()) {
+            Text(text = "Expense items", fontWeight = FontWeight.SemiBold)
+            cashFlow.expenses.take(3).forEach { expense ->
+                Text(
+                    text = "• ${expense.merchant}: -€${String.format("%.2f", expense.amount)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        if (cashFlow.predictedRecurring.isNotEmpty()) {
+            Text(text = "Recurring items", fontWeight = FontWeight.SemiBold)
+            cashFlow.predictedRecurring.take(3).forEach { recurring ->
+                Text(
+                    text = "• ${recurring.merchantName}: -€${String.format("%.2f", recurring.averageAmount)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }

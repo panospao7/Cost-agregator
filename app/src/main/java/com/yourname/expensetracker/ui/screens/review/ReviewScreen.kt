@@ -61,6 +61,7 @@ import com.yourname.expensetracker.ui.screens.debug.DebugViewerScreen
 import com.yourname.expensetracker.domain.util.AmountUtils
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.BuildConfig
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,7 +92,12 @@ fun ReviewScreen(
     var showDebugMenu by remember { mutableStateOf(false) }
     var debugInfoDialogText by remember { mutableStateOf<String?>(null) }
     var showDebugViewer by remember { mutableStateOf(false) }
+    var showApproveAllConfirm by remember { mutableStateOf(false) }
+    var showClearDebugConfirm by remember { mutableStateOf(false) }
+    var showClearScannedConfirm by remember { mutableStateOf(false) }
+    var showClearQueueConfirm by remember { mutableStateOf(false) }
     val debugData by viewModel.debugData.collectAsState()
+    val debugActionsEnabled = BuildConfig.DEBUG
 
     val batchLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -133,106 +139,117 @@ fun ReviewScreen(
                     titleContentColor = SemanticColors.TextPrimary
                 ),
                 actions = {
-                    // Debug viewer button (show when debug data is available)
-                    if (debugData != null) {
-                        val viewDebugCd = stringResource(R.string.review_view_debug_cd)
-                        IconButton(
-                            onClick = { showDebugViewer = true },
-                            modifier = Modifier.semantics { contentDescription = viewDebugCd }
-                        ) {
-                            Icon(Icons.Rounded.BugReport, contentDescription = null)
-                        }
+                    val approveAllCd = stringResource(R.string.review_approve_all_cd)
+                    IconButton(
+                        onClick = { showApproveAllConfirm = true },
+                        enabled = pendingCount > 0 && !isBatchProcessing,
+                        modifier = Modifier.semantics { contentDescription = approveAllCd }
+                    ) {
+                        Icon(Icons.Rounded.DoneAll, contentDescription = null)
                     }
-                    
-                    val debugMenuCd = stringResource(R.string.review_debug_menu_cd)
-                    Box {
-                        IconButton(
-                            onClick = { showDebugMenu = !showDebugMenu },
-                            modifier = Modifier.semantics { contentDescription = debugMenuCd }
-                        ) {
-                            Icon(Icons.Rounded.MoreVert, contentDescription = null)
+
+                    if (debugActionsEnabled) {
+                        // Debug viewer button (show when debug data is available)
+                        if (debugData != null) {
+                            val viewDebugCd = stringResource(R.string.review_view_debug_cd)
+                            IconButton(
+                                onClick = { showDebugViewer = true },
+                                modifier = Modifier.semantics { contentDescription = viewDebugCd }
+                            ) {
+                                Icon(Icons.Rounded.BugReport, contentDescription = null)
+                            }
                         }
-                        DropdownMenu(
-                            expanded = showDebugMenu,
-                            onDismissRequest = { showDebugMenu = false }
-                        ) {
-                            val massInsertCd = stringResource(R.string.review_mass_insert_cd)
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.review_mass_insert)) },
-                                onClick = {
-                                    showDebugMenu = false
-                                    batchLauncher.launch(arrayOf("image/*", "application/pdf"))
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.Layers, contentDescription = null) },
-                                modifier = Modifier.semantics { contentDescription = massInsertCd }
-                            )
-                            val importStatementCd = stringResource(R.string.review_import_statement_cd)
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.review_import_bank_statement)) },
-                                onClick = {
-                                    showDebugMenu = false
-                                    statementLauncher.launch(arrayOf("image/*", "application/pdf"))
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.ReceiptLong, contentDescription = null) },
-                                modifier = Modifier.semantics { contentDescription = importStatementCd }
-                            )
-                            HorizontalDivider()
-                            val exportParserCd = stringResource(R.string.review_export_parser_cd)
-                            val copiedToast = stringResource(R.string.review_copied_toast)
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.review_export_parser_data)) },
-                                onClick = {
-                                    showDebugMenu = false
-                                    coroutineScope.launch {
-                                        val data = viewModel.getDebugExportData()
-                                        clipboardManager.setText(AnnotatedString(data))
-                                        snackbarHostState.showSnackbar(copiedToast)
-                                    }
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
-                                modifier = Modifier.semantics { contentDescription = exportParserCd }
-                            )
-                            HorizontalDivider()
-                            val clearDebugCd = stringResource(R.string.review_clear_debug_cd)
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.review_clear_debug_data)) },
-                                onClick = {
-                                    showDebugMenu = false
-                                    viewModel.clearDebugData()
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
-                                colors = MenuDefaults.itemColors(
-                                    textColor = MaterialTheme.colorScheme.error,
-                                    leadingIconColor = MaterialTheme.colorScheme.error
-                                ),
-                                modifier = Modifier.semantics { contentDescription = clearDebugCd }
-                            )
-                            val clearScannedCd = stringResource(R.string.review_clear_scanned_cd)
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.review_clear_scanned_data)) },
-                                onClick = {
-                                    showDebugMenu = false
-                                    viewModel.clearScannedData()
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.DeleteSweep, contentDescription = null) },
-                                colors = MenuDefaults.itemColors(
-                                    textColor = MaterialTheme.colorScheme.error,
-                                    leadingIconColor = MaterialTheme.colorScheme.error
-                                ),
-                                modifier = Modifier.semantics { contentDescription = clearScannedCd }
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.review_clear_queue)) },
-                                onClick = {
-                                    showDebugMenu = false
-                                    viewModel.rejectAll()
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.RemoveCircle, null) },
-                                colors = MenuDefaults.itemColors(
-                                    textColor = MaterialTheme.colorScheme.error,
-                                    leadingIconColor = MaterialTheme.colorScheme.error
+
+                        val debugMenuCd = stringResource(R.string.review_debug_menu_cd)
+                        Box {
+                            IconButton(
+                                onClick = { showDebugMenu = !showDebugMenu },
+                                modifier = Modifier.semantics { contentDescription = debugMenuCd }
+                            ) {
+                                Icon(Icons.Rounded.MoreVert, contentDescription = null)
+                            }
+                            DropdownMenu(
+                                expanded = showDebugMenu,
+                                onDismissRequest = { showDebugMenu = false }
+                            ) {
+                                val massInsertCd = stringResource(R.string.review_mass_insert_cd)
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.review_mass_insert)) },
+                                    onClick = {
+                                        showDebugMenu = false
+                                        batchLauncher.launch(arrayOf("image/*", "application/pdf"))
+                                    },
+                                    leadingIcon = { Icon(Icons.Rounded.Layers, contentDescription = null) },
+                                    modifier = Modifier.semantics { contentDescription = massInsertCd }
                                 )
-                            )
+                                val importStatementCd = stringResource(R.string.review_import_statement_cd)
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.review_import_bank_statement)) },
+                                    onClick = {
+                                        showDebugMenu = false
+                                        statementLauncher.launch(arrayOf("image/*", "application/pdf"))
+                                    },
+                                    leadingIcon = { Icon(Icons.Rounded.ReceiptLong, contentDescription = null) },
+                                    modifier = Modifier.semantics { contentDescription = importStatementCd }
+                                )
+                                HorizontalDivider()
+                                val exportParserCd = stringResource(R.string.review_export_parser_cd)
+                                val copiedToast = stringResource(R.string.review_copied_toast)
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.review_export_parser_data)) },
+                                    onClick = {
+                                        showDebugMenu = false
+                                        coroutineScope.launch {
+                                            val data = viewModel.getDebugExportData()
+                                            clipboardManager.setText(AnnotatedString(data))
+                                            snackbarHostState.showSnackbar(copiedToast)
+                                        }
+                                    },
+                                    leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
+                                    modifier = Modifier.semantics { contentDescription = exportParserCd }
+                                )
+                                HorizontalDivider()
+                                val clearDebugCd = stringResource(R.string.review_clear_debug_cd)
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.review_clear_debug_data)) },
+                                    onClick = {
+                                        showDebugMenu = false
+                                        showClearDebugConfirm = true
+                                    },
+                                    leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
+                                    colors = MenuDefaults.itemColors(
+                                        textColor = MaterialTheme.colorScheme.error,
+                                        leadingIconColor = MaterialTheme.colorScheme.error
+                                    ),
+                                    modifier = Modifier.semantics { contentDescription = clearDebugCd }
+                                )
+                                val clearScannedCd = stringResource(R.string.review_clear_scanned_cd)
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.review_clear_scanned_data)) },
+                                    onClick = {
+                                        showDebugMenu = false
+                                        showClearScannedConfirm = true
+                                    },
+                                    leadingIcon = { Icon(Icons.Rounded.DeleteSweep, contentDescription = null) },
+                                    colors = MenuDefaults.itemColors(
+                                        textColor = MaterialTheme.colorScheme.error,
+                                        leadingIconColor = MaterialTheme.colorScheme.error
+                                    ),
+                                    modifier = Modifier.semantics { contentDescription = clearScannedCd }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.review_clear_queue)) },
+                                    onClick = {
+                                        showDebugMenu = false
+                                        showClearQueueConfirm = true
+                                    },
+                                    leadingIcon = { Icon(Icons.Rounded.RemoveCircle, null) },
+                                    colors = MenuDefaults.itemColors(
+                                        textColor = MaterialTheme.colorScheme.error,
+                                        leadingIconColor = MaterialTheme.colorScheme.error
+                                    )
+                                )
+                            }
                         }
                     }
                 }
@@ -534,6 +551,102 @@ fun ReviewScreen(
                 dismissButton = {
                     TextButton(onClick = { debugInfoDialogText = null }) {
                         Text(stringResource(R.string.review_close_button))
+                    }
+                }
+            )
+        }
+
+        if (showApproveAllConfirm) {
+            AlertDialog(
+                onDismissRequest = { showApproveAllConfirm = false },
+                title = { Text(stringResource(R.string.review_approve_all_title)) },
+                text = { Text(stringResource(R.string.review_approve_all_message, pendingCount)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showApproveAllConfirm = false
+                            viewModel.approveAll()
+                        },
+                        enabled = !isBatchProcessing
+                    ) {
+                        Text(stringResource(R.string.review_approve_all_action))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showApproveAllConfirm = false }) {
+                        Text(stringResource(R.string.cancel_button))
+                    }
+                }
+            )
+        }
+
+        if (showClearDebugConfirm) {
+            AlertDialog(
+                onDismissRequest = { showClearDebugConfirm = false },
+                title = { Text(stringResource(R.string.review_clear_debug_confirm_title)) },
+                text = { Text(stringResource(R.string.review_clear_debug_confirm_message)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showClearDebugConfirm = false
+                            viewModel.clearDebugData()
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text(stringResource(R.string.action_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearDebugConfirm = false }) {
+                        Text(stringResource(R.string.cancel_button))
+                    }
+                }
+            )
+        }
+
+        if (showClearScannedConfirm) {
+            AlertDialog(
+                onDismissRequest = { showClearScannedConfirm = false },
+                title = { Text(stringResource(R.string.review_clear_scanned_confirm_title)) },
+                text = { Text(stringResource(R.string.review_clear_scanned_confirm_message)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showClearScannedConfirm = false
+                            viewModel.clearScannedData()
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text(stringResource(R.string.action_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearScannedConfirm = false }) {
+                        Text(stringResource(R.string.cancel_button))
+                    }
+                }
+            )
+        }
+
+        if (showClearQueueConfirm) {
+            AlertDialog(
+                onDismissRequest = { showClearQueueConfirm = false },
+                title = { Text(stringResource(R.string.review_clear_queue_confirm_title)) },
+                text = { Text(stringResource(R.string.review_clear_queue_confirm_message, pendingCount)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showClearQueueConfirm = false
+                            viewModel.rejectAll()
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text(stringResource(R.string.action_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearQueueConfirm = false }) {
+                        Text(stringResource(R.string.cancel_button))
                     }
                 }
             )

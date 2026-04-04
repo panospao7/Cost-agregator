@@ -166,6 +166,7 @@ class GroupTransactionCoordinator @Inject constructor(
         amount: Double,
         paidById: Long,
         splitType: SplitType,
+        customSplitsJson: String?,
         date: Long
     ): GroupExpenseCreationResult = withContext(Dispatchers.IO) {
         try {
@@ -189,7 +190,8 @@ class GroupTransactionCoordinator @Inject constructor(
                 totalAmount = amount,
                 paidById = paidById,
                 date = date,
-                splitType = splitType
+                splitType = splitType,
+                customSplitsJson = customSplitsJson
             )
             
             val groupExpenseId = groupExpenseDao.insert(expense)

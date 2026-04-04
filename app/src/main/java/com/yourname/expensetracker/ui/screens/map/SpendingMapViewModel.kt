@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -36,6 +37,11 @@ data class MapExpenseMarker(
     val date: Long,
     val locationSource: String?,
     val placeId: String?
+)
+
+data class MapCategoryFilterOption(
+    val key: String,
+    val label: String
 )
 
 data class SpendingMapState(
@@ -64,7 +70,11 @@ data class SpendingMapState(
     val snackbarMessage: String? = null,
     // Feature E: unlocated expenses list
     val unlocatedExpenses: List<Expense> = emptyList(),
-    val expenseToPin: Expense? = null
+    val expenseToPin: Expense? = null,
+    val selectedCategories: Set<String> = emptySet(),
+    val dateRangeStartMs: Long? = null,
+    val dateRangeEndMs: Long? = null,
+    val availableCategories: List<MapCategoryFilterOption> = emptyList()
 )
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
@@ -72,6 +82,7 @@ data class SpendingMapState(
 @HiltViewModel
 class SpendingMapViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
+    private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val locationResolver: LocationResolver,
     private val locationProvider: ForegroundLocationProvider,
     private val merchantLocationRepository: MerchantLocationRepository,
@@ -295,11 +306,20 @@ class SpendingMapViewModel @Inject constructor(
      * (no 500-row limit) instead of getAllExpenses().
      * Bug #7 fix: maps to [LocatedExpense] before passing to domain engines.
      */
-    private fun recomputeMapData(locatedExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>) {
+    private suspend fun recomputeMapData(locatedExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>) {
+        val currentState = _state.value
+        val filteredExpenses = locatedExpenses.filter { expense ->
+            val dateInRange = (currentState.dateRangeStartMs == null || expense.date >= currentState.dateRangeStartMs) &&
+                (currentState.dateRangeEndMs == null || expense.date <= currentState.dateRangeEndMs)
+            val categoryMatch = currentState.selectedCategories.isEmpty() ||
+                currentState.selectedCategories.contains(expense.categoryId?.toString() ?: UNCATEGORIZED_KEY)
+            dateInRange && categoryMatch
+        }
+
         // B11 fix: use safe-call instead of force-unwrap (!!). The Flow query
         // filters for non-null coordinates, but if a location is cleared between
         // emission and this mapping, force-unwrap would NPE-crash the app.
-        val markers = locatedExpenses.mapNotNull { e ->
+        val markers = filteredExpenses.mapNotNull { e ->
             val lat = e.latitude ?: return@mapNotNull null
             val lon = e.longitude ?: return@mapNotNull null
             MapExpenseMarker(
@@ -315,7 +335,7 @@ class SpendingMapViewModel @Inject constructor(
         }
 
         // Map to domain LocatedExpense before calling domain engines
-        val domainExpenses = locatedExpenses.mapNotNull { e ->
+        val domainExpenses = filteredExpenses.mapNotNull { e ->
             val lat = e.latitude ?: return@mapNotNull null
             val lon = e.longitude ?: return@mapNotNull null
             LocatedExpense(
@@ -333,12 +353,61 @@ class SpendingMapViewModel @Inject constructor(
         val heatmap = heatmapEngine.compute(domainExpenses)
         val insights = insightsEngine.compute(domainExpenses)
 
+        val categoriesById = runCatching {
+            categoryRepository.getAll().associateBy { it.id }
+        }.getOrElse { emptyMap() }
+
+        val categoryIds = locatedExpenses.mapNotNull { it.categoryId?.toString() }.distinct().sorted()
+        val hasUncategorized = locatedExpenses.any { it.categoryId == null }
+        val availableCategories = buildList<MapCategoryFilterOption> {
+            categoryIds.forEach { categoryId ->
+                val label = categoriesById[categoryId.toLongOrNull()]?.name ?: "Category $categoryId"
+                add(MapCategoryFilterOption(key = categoryId, label = label))
+            }
+            if (hasUncategorized) {
+                add(MapCategoryFilterOption(key = UNCATEGORIZED_KEY, label = "Uncategorized"))
+            }
+        }
+
         _state.update { it.copy(
             isLoading = false,
             markers = markers,
             heatmapPoints = heatmap,
-            placeInsights = insights
+            placeInsights = insights,
+            availableCategories = availableCategories
         ) }
+    }
+
+    fun toggleCategoryFilter(categoryKey: String) {
+        _state.update { current ->
+            val next = current.selectedCategories.toMutableSet().apply {
+                if (contains(categoryKey)) remove(categoryKey) else add(categoryKey)
+            }
+            current.copy(selectedCategories = next)
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            recomputeMapData(expenseRepository.getLocatedExpenses().first())
+        }
+    }
+
+    fun clearFilters() {
+        _state.update {
+            it.copy(
+                selectedCategories = emptySet(),
+                dateRangeStartMs = null,
+                dateRangeEndMs = null
+            )
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            recomputeMapData(expenseRepository.getLocatedExpenses().first())
+        }
+    }
+
+    fun setDateRange(startMs: Long?, endMs: Long?) {
+        _state.update { it.copy(dateRangeStartMs = startMs, dateRangeEndMs = endMs) }
+        viewModelScope.launch(Dispatchers.IO) {
+            recomputeMapData(expenseRepository.getLocatedExpenses().first())
+        }
     }
 
     /**
@@ -387,5 +456,6 @@ class SpendingMapViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "SpendingMapViewModel"
+        const val UNCATEGORIZED_KEY = "uncategorized"
     }
 }

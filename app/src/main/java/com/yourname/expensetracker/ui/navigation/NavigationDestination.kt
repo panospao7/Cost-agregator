@@ -18,6 +18,10 @@ sealed class NavigationDestination {
     data object Assistant : NavigationDestination()
     data object Review : NavigationDestination()
     data object Budget : NavigationDestination()
+    data class BudgetDetail(
+        val categoryId: Long? = null,
+        val categoryName: String? = null
+    ) : NavigationDestination()
     data object SpendingMap : NavigationDestination()
     
     // Overlay Screens (previously boolean flags)
@@ -43,8 +47,12 @@ sealed class NavigationDestination {
     data object LifestyleInflation : NavigationDestination()
     data object SplitTemplates : NavigationDestination()
     data class VisualSplitEditor(
-        val expense: Expense? = null,
-        val templateId: Long? = null
+        val templateId: Long? = null,
+        val expenseId: Long? = null,
+        val expenseAmount: Double? = null,
+        val expenseCurrency: String? = null,
+        // Backward-compatible optional payload for in-memory navigation callers.
+        val expense: Expense? = null
     ) : NavigationDestination()
     data object CurrencyManagement : NavigationDestination()
     data object SubscriptionManagement : NavigationDestination()

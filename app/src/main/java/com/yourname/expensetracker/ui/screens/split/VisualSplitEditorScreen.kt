@@ -36,6 +36,8 @@ import java.text.NumberFormat
 import java.util.Currency
 import java.util.Locale
 
+private const val DEFAULT_SPLIT_COLOR = "#FF6B6B"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VisualSplitEditorScreen(
@@ -110,7 +112,9 @@ fun VisualSplitEditorScreen(
                 // Parse template shares into participants
                 val shares = viewModel.parseTemplateShares(template)
                 if (shares.isNotEmpty()) {
-                    participants = shares
+                    participants = shares.mapIndexed { index, share ->
+                        share.copy(color = sanitizeColorHex(share.color, getRandomColor(index)))
+                    }
                 }
             }
         }
@@ -373,7 +377,9 @@ fun VisualSplitEditorScreen(
                             },
                             modifier = Modifier.clickable {
                                 selectedTemplateId = template.id
-                                participants = viewModel.parseTemplateShares(template)
+                                participants = viewModel.parseTemplateShares(template).mapIndexed { index, share ->
+                                    share.copy(color = sanitizeColorHex(share.color, getRandomColor(index)))
+                                }
                                 splitType = template.splitType
                                 showTemplateDialog = false
                             }
@@ -406,8 +412,12 @@ fun VisualSplitEditorScreen(
                 TextButton(
                     onClick = {
                         if (templateName.isNotBlank()) {
-                            onSaveAsTemplate?.invoke(templateName, participants, splitType)
-                            viewModel.createTemplate(templateName, participants, splitType)
+                            val sanitizedParticipants = participants.mapIndexed { index, share ->
+                                share.copy(color = sanitizeColorHex(share.color, getRandomColor(index)))
+                            }
+
+                            onSaveAsTemplate?.invoke(templateName, sanitizedParticipants, splitType)
+                            viewModel.createTemplate(templateName, sanitizedParticipants, splitType)
                             showSaveTemplateDialog = false
                             templateName = ""
                         }
@@ -450,7 +460,7 @@ fun VisualSplitChart(
                     .clip(RoundedCornerShape(8.dp))
             ) {
                 splitData.segments.forEach { segment ->
-                    val color = Color(android.graphics.Color.parseColor(segment.color))
+                    val color = safeParseColor(segment.color)
                     Box(
                         modifier = Modifier
                             .fillMaxHeight()
@@ -469,7 +479,7 @@ fun VisualSplitChart(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 splitData.segments.forEach { segment ->
-                    val color = Color(android.graphics.Color.parseColor(segment.color))
+                    val color = safeParseColor(segment.color)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(vertical = 2.dp)
@@ -521,7 +531,7 @@ fun ParticipantSplitCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Color indicator
-                val color = Color(android.graphics.Color.parseColor(participant.color ?: "#FF6B6B"))
+                val color = safeParseColor(participant.color)
                 Box(
                     modifier = Modifier
                         .size(16.dp)
@@ -603,4 +613,20 @@ fun getRandomColor(index: Int): String {
         "#F7DC6F", "#BB8FCE", "#85C1E2", "#F8C471", "#82E0AA"
     )
     return colors.getOrElse(index) { colors[0] }
+}
+
+private fun safeParseColor(rawColor: String?): Color {
+    return runCatching {
+        Color(android.graphics.Color.parseColor(sanitizeColorHex(rawColor, DEFAULT_SPLIT_COLOR)))
+    }.getOrDefault(Color(0xFF6B7280))
+}
+
+private fun sanitizeColorHex(rawColor: String?, fallback: String = DEFAULT_SPLIT_COLOR): String {
+    if (rawColor.isNullOrBlank()) return fallback
+
+    val normalized = if (rawColor.startsWith("#")) rawColor else "#$rawColor"
+    val validLength = normalized.length == 7 || normalized.length == 9
+    val validChars = normalized.drop(1).all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+
+    return if (validLength && validChars) normalized else fallback
 }

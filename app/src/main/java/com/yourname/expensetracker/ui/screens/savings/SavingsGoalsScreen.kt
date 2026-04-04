@@ -19,8 +19,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.savings.SavingsStreak
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
 import com.yourname.expensetracker.domain.usecase.savings.GoalAllocation
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -32,8 +34,15 @@ fun SavingsGoalsScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val dateFormat = remember { SimpleDateFormat("MMM yyyy", Locale.getDefault()) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    var showAddGoalDialog by remember { mutableStateOf(false) }
+    var recommendationToConfirm by remember { mutableStateOf<SmartRecommendation?>(null) }
 
     Scaffold(
+        snackbarHost = {
+            SnackbarHost(hostState = snackbarHostState)
+        },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.screen_savings_goals)) },
@@ -51,7 +60,7 @@ fun SavingsGoalsScreen(
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = { /* Show add goal dialog */ },
+                onClick = { showAddGoalDialog = true },
                 icon = { Icon(Icons.Default.Add, null) },
                 text = { Text(stringResource(R.string.savings_action_add_goal)) }
             )
@@ -111,7 +120,10 @@ fun SavingsGoalsScreen(
                     modifier = Modifier.height(120.dp)
                 ) {
                     items(state.smartRecommendations.take(3)) { rec ->
-                        SmartRecommendationCard(rec)
+                        SmartRecommendationCard(
+                            rec = rec,
+                            onSave = { recommendationToConfirm = rec }
+                        )
                     }
                 }
                 
@@ -150,6 +162,64 @@ fun SavingsGoalsScreen(
                     }
                 }
             }
+        }
+
+        if (showAddGoalDialog) {
+            AddGoalDialog(
+                onDismiss = { showAddGoalDialog = false },
+                onConfirm = { name, targetAmount, targetDate, protectionLevel ->
+                    viewModel.addGoal(
+                        name = name,
+                        targetAmount = targetAmount,
+                        targetDate = targetDate,
+                        protectionLevel = protectionLevel
+                    )
+                    showAddGoalDialog = false
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Goal created",
+                            withDismissAction = true
+                        )
+                    }
+                }
+            )
+        }
+
+        recommendationToConfirm?.let { recommendation ->
+            AlertDialog(
+                onDismissRequest = { recommendationToConfirm = null },
+                title = { Text("Contribute to ${recommendation.goal.name}?") },
+                text = {
+                    Text(
+                        "Add €${String.format("%.2f", recommendation.recommendedAmount)} " +
+                                "to this goal now?"
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.contributeToGoal(
+                                goalId = recommendation.goal.id,
+                                amount = recommendation.recommendedAmount
+                            )
+                            recommendationToConfirm = null
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    message = "Saved €${String.format("%.2f", recommendation.recommendedAmount)}",
+                                    withDismissAction = true
+                                )
+                            }
+                        }
+                    ) {
+                        Text(stringResource(R.string.action_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { recommendationToConfirm = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            )
         }
     }
 }
@@ -215,7 +285,10 @@ private fun GamificationHeader(
 }
 
 @Composable
-private fun SmartRecommendationCard(rec: SmartRecommendation) {
+private fun SmartRecommendationCard(
+    rec: SmartRecommendation,
+    onSave: () -> Unit
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -249,13 +322,145 @@ private fun SmartRecommendationCard(rec: SmartRecommendation) {
             }
             
             Button(
-                onClick = { /* Add recommended amount */ },
+                onClick = onSave,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary
                 )
             ) {
                 Text(stringResource(R.string.savings_action_save))
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddGoalDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, targetAmount: Double, targetDate: Long?, protectionLevel: GoalProtectionLevel) -> Unit
+) {
+    var goalName by remember { mutableStateOf("") }
+    var targetAmountInput by remember { mutableStateOf("") }
+    var targetDateMillis by remember { mutableStateOf<Long?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var protectionLevel by remember { mutableStateOf(GoalProtectionLevel.WARNING) }
+
+    val parsedAmount = targetAmountInput.toDoubleOrNull()
+    val isNameValid = goalName.trim().isNotEmpty()
+    val isAmountValid = parsedAmount != null && parsedAmount > 0.0
+    val dateLabel = remember(targetDateMillis) {
+        targetDateMillis?.let { millis ->
+            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(millis))
+        } ?: "No date"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add savings goal") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = goalName,
+                    onValueChange = { goalName = it },
+                    label = { Text("Goal name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    isError = goalName.isNotBlank() && !isNameValid
+                )
+
+                OutlinedTextField(
+                    value = targetAmountInput,
+                    onValueChange = { value ->
+                        if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d{0,2}$"))) {
+                            targetAmountInput = value
+                        }
+                    },
+                    label = { Text("Target amount") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    isError = targetAmountInput.isNotEmpty() && !isAmountValid
+                )
+
+                Text(
+                    text = "Target date: $dateLabel",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { showDatePicker = true }) {
+                        Text(if (targetDateMillis == null) "Set date" else "Change date")
+                    }
+                    if (targetDateMillis != null) {
+                        TextButton(onClick = { targetDateMillis = null }) {
+                            Text("Clear")
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Protection level",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GoalProtectionLevel.entries.forEach { level ->
+                        FilterChip(
+                            selected = protectionLevel == level,
+                            onClick = { protectionLevel = level },
+                            label = { Text(level.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = isNameValid && isAmountValid,
+                onClick = {
+                    onConfirm(
+                        goalName.trim(),
+                        parsedAmount ?: 0.0,
+                        targetDateMillis,
+                        protectionLevel
+                    )
+                }
+            ) {
+                Text(stringResource(R.string.action_create))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = targetDateMillis
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        targetDateMillis = datePickerState.selectedDateMillis
+                        showDatePicker = false
+                    }
+                ) {
+                    Text(stringResource(R.string.action_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
         }
     }
 }

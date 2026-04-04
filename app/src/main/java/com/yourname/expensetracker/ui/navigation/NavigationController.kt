@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.navigation
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -64,6 +65,35 @@ private data class PersistedNavigationState(
     }
 }
 
+private fun buildSaveToken(base: String, params: Map<String, String?>): String {
+    val query = params
+        .filterValues { !it.isNullOrBlank() }
+        .entries
+        .joinToString("&") { (key, value) ->
+            "${Uri.encode(key)}=${Uri.encode(value)}"
+        }
+
+    return if (query.isBlank()) base else "$base?$query"
+}
+
+private fun parseSaveToken(token: String): Pair<String, Map<String, String>> {
+    val base = token.substringBefore('?')
+    val query = token.substringAfter('?', "")
+    if (query.isBlank()) return base to emptyMap()
+
+    val params = query
+        .split('&')
+        .mapNotNull { pair ->
+            if (pair.isBlank()) return@mapNotNull null
+            val key = pair.substringBefore('=', "").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val value = pair.substringAfter('=', "")
+            Uri.decode(key) to Uri.decode(value)
+        }
+        .toMap()
+
+    return base to params
+}
+
 private fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.Home -> "home"
     is NavigationDestination.Transactions -> "transactions"
@@ -71,6 +101,13 @@ private fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.Assistant -> "assistant"
     is NavigationDestination.Review -> "review"
     is NavigationDestination.Budget -> "budget"
+    is NavigationDestination.BudgetDetail -> buildSaveToken(
+        base = "budget_detail",
+        params = mapOf(
+            "categoryId" to categoryId?.toString(),
+            "categoryName" to categoryName
+        )
+    )
     is NavigationDestination.SpendingMap -> "spending_map"
     is NavigationDestination.AddExpense -> "add_expense"
     is NavigationDestination.ScanReceipt -> "scan_receipt"
@@ -91,9 +128,15 @@ private fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.CashFlowCalendar -> "cash_flow_calendar"
     is NavigationDestination.LifestyleInflation -> "lifestyle_inflation"
     is NavigationDestination.SplitTemplates -> "split_templates"
-    is NavigationDestination.VisualSplitEditor -> {
-        templateId?.let { "visual_split_editor:$it" } ?: "visual_split_editor"
-    }
+    is NavigationDestination.VisualSplitEditor -> buildSaveToken(
+        base = "visual_split_editor",
+        params = mapOf(
+            "templateId" to templateId?.toString(),
+            "expenseId" to (expenseId ?: expense?.id)?.toString(),
+            "expenseAmount" to (expenseAmount ?: expense?.amount)?.toString(),
+            "expenseCurrency" to (expenseCurrency ?: expense?.currency)
+        )
+    )
     is NavigationDestination.CurrencyManagement -> "currency_management"
     is NavigationDestination.SubscriptionManagement -> "subscription_management"
     is NavigationDestination.TaxConfiguration -> "tax_configuration"
@@ -106,47 +149,63 @@ private fun NavigationDestination.toSaveToken(): String = when (this) {
 }
 
 private fun destinationFromSaveToken(token: String): NavigationDestination? {
+    // Backward compatibility with older persisted format: visual_split_editor:<templateId>
+    if (token.startsWith("visual_split_editor:")) {
+        val templateId = token.substringAfter(':', "")
+            .takeIf { it.isNotBlank() }
+            ?.toLongOrNull()
+        return NavigationDestination.VisualSplitEditor(templateId = templateId)
+    }
+
+    val (baseToken, params) = parseSaveToken(token)
+
     return when {
-        token == "home" -> NavigationDestination.Home
-        token == "transactions" -> NavigationDestination.Transactions
-        token == "analytics" -> NavigationDestination.Analytics
-        token == "assistant" -> NavigationDestination.Assistant
-        token == "review" -> NavigationDestination.Review
-        token == "budget" -> NavigationDestination.Budget
-        token == "spending_map" -> NavigationDestination.SpendingMap
-        token == "add_expense" -> NavigationDestination.AddExpense
-        token == "scan_receipt" -> NavigationDestination.ScanReceipt
-        token == "recurring_expenses" -> NavigationDestination.RecurringExpenses
-        token == "manual_recurring_expense" -> NavigationDestination.ManualRecurringExpense
-        token == "savings_goals" -> NavigationDestination.SavingsGoals
-        token == "carbon_footprint" -> NavigationDestination.CarbonFootprint
-        token == "warranty_tracker" -> NavigationDestination.WarrantyTracker
-        token == "price_protection" -> NavigationDestination.PriceProtection
-        token == "bill_negotiation" -> NavigationDestination.BillNegotiation
-        token == "smart_search" -> NavigationDestination.SmartSearch
-        token == "receipt_matching" -> NavigationDestination.ReceiptMatching
-        token == "investment_portfolio" -> NavigationDestination.InvestmentPortfolio
-        token == "bank_connections" -> NavigationDestination.BankConnections
-        token == "bill_reminders" -> NavigationDestination.BillReminders
-        token == "spending_challenges" -> NavigationDestination.SpendingChallenges
-        token == "advanced_analytics" -> NavigationDestination.AdvancedAnalytics
-        token == "cash_flow_calendar" -> NavigationDestination.CashFlowCalendar
-        token == "lifestyle_inflation" -> NavigationDestination.LifestyleInflation
-        token == "split_templates" -> NavigationDestination.SplitTemplates
-        token.startsWith("visual_split_editor") -> {
-            val templateId = token.substringAfter(':', "")
-                .takeIf { it.isNotBlank() }
-                ?.toLongOrNull()
-            NavigationDestination.VisualSplitEditor(templateId = templateId)
+        baseToken == "home" -> NavigationDestination.Home
+        baseToken == "transactions" -> NavigationDestination.Transactions
+        baseToken == "analytics" -> NavigationDestination.Analytics
+        baseToken == "assistant" -> NavigationDestination.Assistant
+        baseToken == "review" -> NavigationDestination.Review
+        baseToken == "budget" -> NavigationDestination.Budget
+        baseToken == "budget_detail" -> NavigationDestination.BudgetDetail(
+            categoryId = params["categoryId"]?.toLongOrNull(),
+            categoryName = params["categoryName"]?.takeIf { it.isNotBlank() }
+        )
+        baseToken == "spending_map" -> NavigationDestination.SpendingMap
+        baseToken == "add_expense" -> NavigationDestination.AddExpense
+        baseToken == "scan_receipt" -> NavigationDestination.ScanReceipt
+        baseToken == "recurring_expenses" -> NavigationDestination.RecurringExpenses
+        baseToken == "manual_recurring_expense" -> NavigationDestination.ManualRecurringExpense
+        baseToken == "savings_goals" -> NavigationDestination.SavingsGoals
+        baseToken == "carbon_footprint" -> NavigationDestination.CarbonFootprint
+        baseToken == "warranty_tracker" -> NavigationDestination.WarrantyTracker
+        baseToken == "price_protection" -> NavigationDestination.PriceProtection
+        baseToken == "bill_negotiation" -> NavigationDestination.BillNegotiation
+        baseToken == "smart_search" -> NavigationDestination.SmartSearch
+        baseToken == "receipt_matching" -> NavigationDestination.ReceiptMatching
+        baseToken == "investment_portfolio" -> NavigationDestination.InvestmentPortfolio
+        baseToken == "bank_connections" -> NavigationDestination.BankConnections
+        baseToken == "bill_reminders" -> NavigationDestination.BillReminders
+        baseToken == "spending_challenges" -> NavigationDestination.SpendingChallenges
+        baseToken == "advanced_analytics" -> NavigationDestination.AdvancedAnalytics
+        baseToken == "cash_flow_calendar" -> NavigationDestination.CashFlowCalendar
+        baseToken == "lifestyle_inflation" -> NavigationDestination.LifestyleInflation
+        baseToken == "split_templates" -> NavigationDestination.SplitTemplates
+        baseToken == "visual_split_editor" -> {
+            NavigationDestination.VisualSplitEditor(
+                templateId = params["templateId"]?.toLongOrNull(),
+                expenseId = params["expenseId"]?.toLongOrNull(),
+                expenseAmount = params["expenseAmount"]?.toDoubleOrNull(),
+                expenseCurrency = params["expenseCurrency"]?.takeIf { it.isNotBlank() }
+            )
         }
-        token == "currency_management" -> NavigationDestination.CurrencyManagement
-        token == "subscription_management" -> NavigationDestination.SubscriptionManagement
-        token == "tax_configuration" -> NavigationDestination.TaxConfiguration
-        token == "export_options" -> NavigationDestination.ExportOptions
-        token == "shared_expense_groups" -> NavigationDestination.SharedExpenseGroups
-        token == "budget_forecasting" -> NavigationDestination.BudgetForecasting()
-        token == "ai_settings" -> NavigationDestination.AiSettings
-        token == "category_management" -> NavigationDestination.CategoryManagement
+        baseToken == "currency_management" -> NavigationDestination.CurrencyManagement
+        baseToken == "subscription_management" -> NavigationDestination.SubscriptionManagement
+        baseToken == "tax_configuration" -> NavigationDestination.TaxConfiguration
+        baseToken == "export_options" -> NavigationDestination.ExportOptions
+        baseToken == "shared_expense_groups" -> NavigationDestination.SharedExpenseGroups
+        baseToken == "budget_forecasting" -> NavigationDestination.BudgetForecasting()
+        baseToken == "ai_settings" -> NavigationDestination.AiSettings
+        baseToken == "category_management" -> NavigationDestination.CategoryManagement
         else -> null
     }
 }
@@ -213,10 +272,21 @@ class NavigationController(
             notifyStateChanged()
             true
         } else {
-            // No back stack entry, go to previous main tab or Home
-            val targetTab = previousMainTab ?: 0
-            navigateToTab(targetTab)
-            false
+            val currentTab = getCurrentTabIndex()
+            when {
+                // C2: On non-home main tabs, route back to Home before exiting app.
+                currentTab != null && currentTab != 0 -> {
+                    navigateToTab(0)
+                    true
+                }
+                // Already on Home tab: allow system back to exit app.
+                currentTab == 0 -> false
+                // Feature screen with no stack: return to previous main tab (or Home).
+                else -> {
+                    navigateToTab(previousMainTab ?: 0)
+                    true
+                }
+            }
         }
     }
     
@@ -272,6 +342,7 @@ class NavigationController(
             is NavigationDestination.Transactions,
             is NavigationDestination.Review,
             is NavigationDestination.Budget,
+            is NavigationDestination.BudgetDetail,
             is NavigationDestination.Analytics,
             is NavigationDestination.SpendingMap -> true
             else -> false
@@ -287,6 +358,7 @@ class NavigationController(
             is NavigationDestination.Transactions -> 1
             is NavigationDestination.Review -> 2
             is NavigationDestination.Budget -> 3
+            is NavigationDestination.BudgetDetail -> 3
             is NavigationDestination.Analytics -> 4
             is NavigationDestination.SpendingMap -> 5
             else -> null
@@ -297,7 +369,8 @@ class NavigationController(
      * Check if there's anything in the back stack.
      */
     fun canNavigateBack(): Boolean {
-        return backStack.isNotEmpty() || !isOnMainTab()
+        val currentTab = getCurrentTabIndex()
+        return backStack.isNotEmpty() || !isOnMainTab() || (currentTab != null && currentTab != 0)
     }
     
     /**

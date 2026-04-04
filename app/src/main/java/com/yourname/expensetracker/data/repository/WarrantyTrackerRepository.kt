@@ -17,6 +17,7 @@ import javax.inject.Singleton
 class WarrantyTrackerRepository @Inject constructor(
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
+    private val scannedReceiptDao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao,
     private val cloudExtractionService: CloudWarrantyExtractionService,
     private val timeProvider: TimeProvider
 ) {
@@ -145,5 +146,24 @@ class WarrantyTrackerRepository @Inject constructor(
         } else null
         
         return Pair(warranty, returnWindow)
+    }
+
+    suspend fun createManualPlaceholderReceipt(
+        merchantName: String,
+        purchaseDate: Long,
+        productName: String
+    ): Long {
+        val receipt = ScannedReceipt(
+            imagePath = null,
+            rawOcrText = "Manual warranty entry: $productName",
+            parsedTotal = null,
+            parsedMerchant = merchantName,
+            parsedDate = purchaseDate,
+            parsedItems = null,
+            parsedTaxAmount = null,
+            currency = "EUR",
+            confidence = 1f
+        )
+        return scannedReceiptDao.insert(receipt)
     }
 }

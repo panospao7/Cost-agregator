@@ -7,8 +7,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -95,32 +97,168 @@ fun ReceiptMatchingScreen(
                 ) {
                     CircularProgressIndicator()
                 }
-            } else if (state.suggestedMatches.isEmpty()) {
+            } else if (state.suggestedMatches.isEmpty() && state.unmatchedReceipts.isEmpty()) {
                 EmptyState()
             } else {
-                Text(
-                    text = stringResource(R.string.receipt_section_suggestions),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(state.suggestedMatches) { suggestion ->
-                        MatchSuggestionCard(
-                            suggestion = suggestion,
-                            dateFormat = dateFormat,
-                            onApprove = { viewModel.approveSuggestion(suggestion.receipt.id) },
-                            onReject = { viewModel.rejectSuggestion(suggestion.receipt.id) }
-                        )
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (state.suggestedMatches.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = stringResource(R.string.receipt_section_suggestions),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        items(state.suggestedMatches) { suggestion ->
+                            MatchSuggestionCard(
+                                suggestion = suggestion,
+                                dateFormat = dateFormat,
+                                onApprove = { viewModel.approveSuggestion(suggestion.receipt.id) },
+                                onReject = { viewModel.rejectSuggestion(suggestion.receipt.id) }
+                            )
+                        }
+                    }
+
+                    if (state.unmatchedReceipts.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = stringResource(R.string.receipt_section_unmatched_queue),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        items(state.unmatchedReceipts) { receipt ->
+                            UnmatchedReceiptCard(
+                                receipt = receipt,
+                                dateFormat = dateFormat,
+                                onManualMatch = { viewModel.openManualMatch(receipt) },
+                                onSkip = { viewModel.skipReceipt(receipt.id) },
+                                onRerun = { viewModel.rerunForReceipt(receipt) }
+                            )
+                        }
                     }
                 }
             }
         }
     }
+
+    state.selectedReceiptForManualMatch?.let { receipt ->
+        ManualMatchDialog(
+            receipt = receipt,
+            candidates = state.manualCandidates,
+            dateFormat = dateFormat,
+            onDismiss = { viewModel.closeManualMatch() },
+            onSelectExpense = { expenseId -> viewModel.manualMatch(receipt.id, expenseId) }
+        )
+    }
+}
+
+@Composable
+private fun UnmatchedReceiptCard(
+    receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt,
+    dateFormat: SimpleDateFormat,
+    onManualMatch: () -> Unit,
+    onSkip: () -> Unit,
+    onRerun: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = receipt.parsedMerchant ?: stringResource(R.string.receipt_label_unknown),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = stringResource(R.string.receipt_receipt_total, String.format("%.2f", receipt.parsedTotal ?: 0.0)),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = dateFormat.format(Date(receipt.parsedDate ?: receipt.createdAt)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onManualMatch, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Link, null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.receipt_action_manual_match))
+                }
+                OutlinedButton(onClick = onSkip, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.SkipNext, null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.receipt_action_skip))
+                }
+                OutlinedButton(onClick = onRerun, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Refresh, null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.receipt_action_rerun))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManualMatchDialog(
+    receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt,
+    candidates: List<com.yourname.expensetracker.data.database.entity.Expense>,
+    dateFormat: SimpleDateFormat,
+    onDismiss: () -> Unit,
+    onSelectExpense: (Long) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.receipt_manual_match_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = stringResource(
+                        R.string.receipt_manual_match_target,
+                        receipt.parsedMerchant ?: stringResource(R.string.receipt_label_unknown),
+                        String.format("%.2f", receipt.parsedTotal ?: 0.0)
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (candidates.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.receipt_manual_match_no_candidates),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 280.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(candidates) { expense ->
+                            OutlinedButton(
+                                onClick = { onSelectExpense(expense.id) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = expense.merchant,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "${String.format("%.2f", expense.amount)} • ${dateFormat.format(Date(expense.date))}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_close))
+            }
+        }
+    )
 }
 
 @Composable

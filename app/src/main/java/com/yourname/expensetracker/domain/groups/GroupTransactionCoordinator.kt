@@ -135,6 +135,7 @@ interface GroupTransactionCoordinator {
         amount: Double,
         paidById: Long,
         splitType: SplitType = SplitType.EQUAL,
+        customSplitsJson: String? = null,
         date: Long = System.currentTimeMillis()
     ): GroupExpenseCreationResult
     

@@ -8,10 +8,12 @@ import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import javax.inject.Inject
 
 data class WarrantyTrackerState(
     val warranties: List<Warranty> = emptyList(),
+    val allWarranties: List<Warranty> = emptyList(),
     val isLoading: Boolean = false,
     val activeCount: Int = 0,
     val expiringSoonCount: Int = 0,
@@ -19,7 +21,9 @@ data class WarrantyTrackerState(
     val selectedFilter: WarrantyStatus? = null,
     // F1: Auto-detected warranties needing review
     val needsReviewCount: Int = 0,
-    val autoDetectedWarranties: List<Warranty> = emptyList()
+    val autoDetectedWarranties: List<Warranty> = emptyList(),
+    val showAutoDetectedOnly: Boolean = false,
+    val showNeedsReviewOnly: Boolean = false
 )
 
 @HiltViewModel
@@ -41,16 +45,16 @@ class WarrantyTrackerViewModel @Inject constructor(
             
             warrantyRepository.getAllWarranties()
                 .collect { warranties ->
-                    val autoDetected = warranties.filter { it.autoDetected }
-                    val needsReview = warranties.filter { it.needsReview }
-                    
-                    _state.update { 
-                        it.copy(
-                            warranties = warranties,
+                    _state.update {
+                        val autoDetected = warranties.filter { warranty -> warranty.autoDetected }
+                        val needsReview = warranties.filter { warranty -> warranty.needsReview }
+                        val updated = it.copy(
+                            allWarranties = warranties,
                             autoDetectedWarranties = autoDetected,
                             needsReviewCount = needsReview.size,
                             isLoading = false
                         )
+                        updated.withDerivedWarranties()
                     }
                 }
         }
@@ -73,29 +77,65 @@ class WarrantyTrackerViewModel @Inject constructor(
     }
 
     fun filterByStatus(status: WarrantyStatus?) {
-        _state.update { it.copy(selectedFilter = status) }
+        _state.update {
+            it.copy(
+                selectedFilter = status,
+                showAutoDetectedOnly = false,
+                showNeedsReviewOnly = false
+            ).withDerivedWarranties()
+        }
     }
     
     // F1: Filter for auto-detected warranties
     fun filterByAutoDetected() {
-        _state.update { 
+        _state.update {
             it.copy(
-                warranties = it.autoDetectedWarranties,
+                showAutoDetectedOnly = true,
+                showNeedsReviewOnly = false,
                 selectedFilter = null
-            ) 
+            ).withDerivedWarranties()
         }
     }
     
     // F1: Show warranties needing review
     fun showNeedsReview() {
+        _state.update {
+            it.copy(
+                showNeedsReviewOnly = true,
+                showAutoDetectedOnly = false,
+                selectedFilter = null
+            ).withDerivedWarranties()
+        }
+    }
+
+    fun addManualWarranty(
+        productName: String,
+        merchantName: String,
+        purchaseDate: Long,
+        warrantyDurationMonths: Int,
+        supportPhone: String?
+    ) {
         viewModelScope.launch {
-            val needsReview = _state.value.warranties.filter { it.needsReview }
-            _state.update { 
-                it.copy(
-                    warranties = needsReview,
-                    selectedFilter = null
-                ) 
-            }
+            val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
+            val endDate = TimePeriodUtils.addMonths(purchaseStart, warrantyDurationMonths)
+            val placeholderReceiptId = warrantyRepository.createManualPlaceholderReceipt(
+                merchantName = merchantName,
+                purchaseDate = purchaseStart,
+                productName = productName
+            )
+            val manualWarranty = Warranty(
+                receiptId = placeholderReceiptId,
+                expenseId = null,
+                productName = productName,
+                merchantName = merchantName,
+                purchaseDate = purchaseStart,
+                warrantyDurationMonths = warrantyDurationMonths,
+                warrantyEndDate = endDate,
+                supportPhone = supportPhone?.takeIf { it.isNotBlank() },
+                extractionSource = "manual"
+            )
+            warrantyRepository.addWarranty(manualWarranty)
+            loadStats()
         }
     }
     
@@ -136,5 +176,15 @@ class WarrantyTrackerViewModel @Inject constructor(
     fun refresh() {
         loadWarranties()
         loadStats()
+    }
+
+    private fun WarrantyTrackerState.withDerivedWarranties(): WarrantyTrackerState {
+        val derived = when {
+            showNeedsReviewOnly -> allWarranties.filter { it.needsReview }
+            showAutoDetectedOnly -> allWarranties.filter { it.autoDetected }
+            selectedFilter != null -> allWarranties.filter { it.status == selectedFilter }
+            else -> allWarranties
+        }
+        return copy(warranties = derived)
     }
 }

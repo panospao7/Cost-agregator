@@ -15,6 +15,7 @@ class AddGroupExpenseUseCase @Inject constructor(
         amount: Double,
         paidById: Long,
         splitType: SplitType,
+        customSplitsJson: String? = null,
         date: Long = System.currentTimeMillis()
     ): GroupExpenseCreationResult {
         val group = groupsRepository.getGroupById(groupId)
@@ -36,6 +37,7 @@ class AddGroupExpenseUseCase @Inject constructor(
             amount = amount,
             paidById = paidById,
             splitType = splitType,
+            customSplitsJson = customSplitsJson,
             date = date
         )
     }

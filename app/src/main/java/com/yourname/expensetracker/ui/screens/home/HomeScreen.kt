@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.rounded.*
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -771,6 +772,7 @@ fun HomeScreen(
         if (showQuickSettings) {
             QuickSettingsDialog(
                 onDismiss = { showQuickSettings = false },
+                showDebugOption = BuildConfig.DEBUG,
                 onNavigateToAiSettings = {
                     showQuickSettings = false
                     showAiSettings = true
@@ -802,11 +804,13 @@ fun HomeScreen(
                     }
                 }
 
-                if (showDebug) {
+                if (showDebug && BuildConfig.DEBUG) {
                     // Debug screen remains as dev-only overlay (expected behavior)
                     com.yourname.expensetracker.ui.screens.debug.DebugScreen(
                         onDismiss = { showDebug = false }
                     )
+                } else if (showDebug) {
+                    showDebug = false
                 }
 
         if (showAddPlannedExpenseDialog) {
@@ -934,6 +938,7 @@ private fun isFullSpan(widget: DashboardWidget): Boolean = when (widget) {
 @Composable
 fun QuickSettingsDialog(
     onDismiss: () -> Unit,
+    showDebugOption: Boolean = true,
     onNavigateToAiSettings: () -> Unit,
     onNavigateToCategories: () -> Unit,
     onNavigateToDebug: () -> Unit
@@ -975,20 +980,22 @@ fun QuickSettingsDialog(
                         .clickable { onNavigateToCategories() }
                         .semantics { contentDescription = categoriesDesc }
                 )
-                ListItem(
-                    headlineContent = { Text(stringResource(R.string.home_debug_menu)) },
-                    leadingContent = { 
-                        Icon(
-                            Icons.Rounded.Build,
-                            contentDescription = null,
-                            tint = SemanticColors.PrimaryIndigo
-                        )
-                    },
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onNavigateToDebug() }
-                        .semantics { contentDescription = debugDesc }
-                )
+                if (showDebugOption) {
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.home_debug_menu)) },
+                        leadingContent = {
+                            Icon(
+                                Icons.Rounded.Build,
+                                contentDescription = null,
+                                tint = SemanticColors.PrimaryIndigo
+                            )
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onNavigateToDebug() }
+                            .semantics { contentDescription = debugDesc }
+                    )
+                }
             }
         },
         confirmButton = {

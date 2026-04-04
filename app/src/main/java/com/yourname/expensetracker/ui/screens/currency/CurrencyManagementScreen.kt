@@ -40,10 +40,18 @@ fun CurrencyManagementScreen(
     viewModel: CurrencyManagementViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
     var showConversionDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let { message ->
+            snackbarHostState.showSnackbar(message)
+        }
+    }
     
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { 
@@ -78,33 +86,74 @@ fun CurrencyManagementScreen(
             )
         }
     ) { padding ->
+        val showInitialLoading = uiState.isLoading &&
+            uiState.exchangeRates.isEmpty() &&
+            uiState.supportedCurrencies.isEmpty()
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            when {
-                uiState.isLoading -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
-                    }
+            if (showInitialLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = SemanticColors.PrimaryIndigo)
                 }
-                uiState.error != null -> {
-                    ErrorState(
-                        message = uiState.error!!,
-                        onRetry = { viewModel.refreshRates() }
-                    )
-                }
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                        uiState.error?.let { errorMessage ->
+                            item {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Warning,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                        Text(
+                                            text = errorMessage,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(onClick = { viewModel.refreshRates() }) {
+                                            Text(stringResource(R.string.action_retry))
+                                        }
+                                        IconButton(onClick = { viewModel.clearError() }) {
+                                            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.cd_dismiss))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (uiState.isLoading) {
+                            item {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = SemanticColors.PrimaryIndigo
+                                )
+                            }
+                        }
+
                         // Home Currency Card
                         item {
                             HomeCurrencyCard(
@@ -258,7 +307,6 @@ fun CurrencyManagementScreen(
                             }
                         }
                     }
-                }
             }
         }
         
@@ -715,40 +763,4 @@ private fun ConversionDialog(
     )
 }
 
-@Composable
-private fun ErrorState(message: String, onRetry: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Rounded.Error,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(64.dp)
-        )
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyLarge,
-            color = SemanticColors.TextSecondary,
-            textAlign = TextAlign.Center
-        )
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        Button(
-            onClick = onRetry,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = SemanticColors.PrimaryIndigo
-            )
-        ) {
-            Text(stringResource(R.string.action_retry))
-        }
-    }
-}
+// Intentionally no full-screen error state: recoverable currency errors stay inline.

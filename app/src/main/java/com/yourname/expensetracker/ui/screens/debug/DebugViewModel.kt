@@ -44,6 +44,16 @@ class DebugViewModel @Inject constructor(
     private val databaseBackupRepository: com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 ) : ViewModel() {
 
+    private data class ClearAllUndoSnapshot(
+        val notificationsSnapshot: NotificationRepository.DebugNotificationsSnapshot,
+        val expenseSnapshot: com.yourname.expensetracker.data.repository.ExpenseRepository.DebugExpenseSnapshot
+    )
+
+    private var clearAllUndoSnapshot: ClearAllUndoSnapshot? = null
+    private var expenseUndoSnapshot: com.yourname.expensetracker.data.repository.ExpenseRepository.DebugExpenseSnapshot? = null
+    private var budgetUndoSnapshot: com.yourname.expensetracker.data.repository.BudgetRepository.DebugBudgetSnapshot? = null
+    private var sourceStatsUndoSnapshot: List<SourceStats>? = null
+
     private val _aiRuntimeStatuses = MutableStateFlow<Map<AiCapability, OnDeviceModelStatus>>(emptyMap())
     val aiRuntimeStatuses: StateFlow<Map<AiCapability, OnDeviceModelStatus>> = _aiRuntimeStatuses
     private val _aiRuntimeMeta = MutableStateFlow(AiRuntimeStatusSummary(emptyList(), null))
@@ -118,16 +128,68 @@ class DebugViewModel @Inject constructor(
         }
     }
 
+    suspend fun clearAllWithUndoSupport(): Boolean {
+        val notificationsSnapshot = repository.createDebugSnapshot()
+        val expensesSnapshot = expenseRepository.createDebugSnapshot()
+        clearAllUndoSnapshot = ClearAllUndoSnapshot(
+            notificationsSnapshot = notificationsSnapshot,
+            expenseSnapshot = expensesSnapshot
+        )
+        repository.deleteAll()
+        return notificationsSnapshot.notifications.isNotEmpty() ||
+            notificationsSnapshot.sourceStats.isNotEmpty() ||
+            expensesSnapshot.expenses.isNotEmpty()
+    }
+
+    suspend fun undoClearAll(): Boolean {
+        val snapshot = clearAllUndoSnapshot ?: return false
+        repository.restoreDebugSnapshot(snapshot.notificationsSnapshot)
+        expenseRepository.restoreDebugSnapshot(snapshot.expenseSnapshot)
+        clearAllUndoSnapshot = null
+        return true
+    }
+
     fun resetExpenses() {
         viewModelScope.launch {
             expenseRepository.deleteAllExpenses()
         }
     }
 
+    suspend fun resetExpensesWithUndoSupport(): Boolean {
+        val snapshot = expenseRepository.createDebugSnapshot()
+        expenseUndoSnapshot = snapshot
+        expenseRepository.deleteAllExpenses()
+        return snapshot.expenses.isNotEmpty()
+    }
+
+    suspend fun undoResetExpenses(): Boolean {
+        val snapshot = expenseUndoSnapshot ?: return false
+        expenseRepository.restoreDebugSnapshot(snapshot)
+        expenseUndoSnapshot = null
+        return true
+    }
+
     fun resetBudgets() {
         viewModelScope.launch {
             budgetRepository.deleteAll()
         }
+    }
+
+    suspend fun resetBudgetsWithUndoSupport(): Boolean {
+        val snapshot = budgetRepository.createDebugSnapshot()
+        budgetUndoSnapshot = snapshot
+        budgetRepository.deleteAll()
+        return snapshot.budgets.isNotEmpty()
+    }
+
+    suspend fun undoResetBudgets(): Boolean {
+        val snapshot = budgetUndoSnapshot ?: return false
+        val restored = budgetRepository.restoreDebugSnapshot(snapshot)
+        if (restored is com.yourname.expensetracker.domain.model.Result.Success) {
+            budgetUndoSnapshot = null
+            return true
+        }
+        return false
     }
     
     fun markAsRelevant(id: Long, isRelevant: Boolean) {
@@ -158,6 +220,20 @@ class DebugViewModel @Inject constructor(
         viewModelScope.launch {
             repository.resetSourceStats()
         }
+    }
+
+    suspend fun resetSourceStatsWithUndoSupport(): Boolean {
+        val snapshot = repository.getSourceStatsSnapshot()
+        sourceStatsUndoSnapshot = snapshot
+        repository.resetSourceStats()
+        return snapshot.isNotEmpty()
+    }
+
+    suspend fun undoResetSourceStats(): Boolean {
+        val snapshot = sourceStatsUndoSnapshot ?: return false
+        repository.restoreSourceStatsSnapshot(snapshot)
+        sourceStatsUndoSnapshot = null
+        return true
     }
 
     private val _isSimulating = MutableStateFlow(false)

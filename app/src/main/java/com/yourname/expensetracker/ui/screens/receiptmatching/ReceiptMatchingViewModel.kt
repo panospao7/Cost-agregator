@@ -14,6 +14,8 @@ import javax.inject.Inject
 data class ReceiptMatchingState(
     val unmatchedReceipts: List<ScannedReceipt> = emptyList(),
     val suggestedMatches: List<MatchSuggestion> = emptyList(),
+    val manualCandidates: List<com.yourname.expensetracker.data.database.entity.Expense> = emptyList(),
+    val selectedReceiptForManualMatch: ScannedReceipt? = null,
     val isLoading: Boolean = false,
     val autoMatchedCount: Int = 0,
     val pendingSuggestionCount: Int = 0
@@ -120,6 +122,66 @@ class ReceiptMatchingViewModel @Inject constructor(
     fun rejectSuggestion(receiptId: Long) {
         viewModelScope.launch {
             receiptRepository.rejectAllSuggestions(receiptId)
+            loadReceipts()
+        }
+    }
+
+    fun openManualMatch(receipt: ScannedReceipt) {
+        viewModelScope.launch {
+            val candidates = receiptRepository.getCandidateExpensesForReceipt(receipt)
+            _state.update {
+                it.copy(
+                    selectedReceiptForManualMatch = receipt,
+                    manualCandidates = candidates
+                )
+            }
+        }
+    }
+
+    fun closeManualMatch() {
+        _state.update {
+            it.copy(
+                selectedReceiptForManualMatch = null,
+                manualCandidates = emptyList()
+            )
+        }
+    }
+
+    fun manualMatch(receiptId: Long, expenseId: Long) {
+        viewModelScope.launch {
+            receiptRepository.linkReceiptToExpense(receiptId, expenseId, confidence = 1.0)
+            closeManualMatch()
+            loadReceipts()
+        }
+    }
+
+    fun skipReceipt(receiptId: Long) {
+        viewModelScope.launch {
+            receiptRepository.rejectAllSuggestions(receiptId)
+            loadReceipts()
+        }
+    }
+
+    fun rerunForReceipt(receipt: ScannedReceipt) {
+        viewModelScope.launch {
+            receiptRepository.clearMatchForReceipt(receipt.id)
+            when (val result = matcher.findBestMatch(receipt)) {
+                is MatchResult.AutoMatch -> {
+                    receiptRepository.linkReceiptToExpense(
+                        receipt.id,
+                        result.transaction.id,
+                        result.score
+                    )
+                }
+                is MatchResult.Suggested -> {
+                    receiptRepository.saveMatchSuggestion(
+                        receipt.id,
+                        result.transaction.id,
+                        result.score
+                    )
+                }
+                MatchResult.NoMatch -> Unit
+            }
             loadReceipts()
         }
     }

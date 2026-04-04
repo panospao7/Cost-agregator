@@ -89,6 +89,12 @@ data class DashboardState(
     val categoryTrends: Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo> = emptyMap()
 )
 
+private sealed interface ProcessedDashboardUiState {
+    data object Loading : ProcessedDashboardUiState
+    data class Ready(val data: CompiledDashboardData) : ProcessedDashboardUiState
+    data class Error(val error: UiText) : ProcessedDashboardUiState
+}
+
 // ---------------------------------------------------------------------------
 // ViewModel
 // ---------------------------------------------------------------------------
@@ -162,20 +168,29 @@ class HomeViewModel @Inject constructor(
         loadCategoryTrends()
     }
 
-    private val processedDataFlow: Flow<CompiledDashboardData> =
+    private val processedDataFlow: StateFlow<ProcessedDashboardUiState> =
         dashboardDataProvider.getProcessedDataFlow(analyticsRepository)
             .map { processedData ->
-                computeDashboardWidgetsUseCase.compute(processedData)
+                ProcessedDashboardUiState.Ready(
+                    computeDashboardWidgetsUseCase.compute(processedData)
+                )
             }
-            .catch { e ->
+            .catch<ProcessedDashboardUiState> { e ->
                 Timber.e(e, "Error processing dashboard data")
-                emit(CompiledDashboardData(emptyList(), 0.0, 0))
+                emit(
+                    ProcessedDashboardUiState.Error(
+                        UiText.StringResource(R.string.home_error_unable_to_load_dashboard)
+                    )
+                )
+            }
+            .onStart {
+                emit(ProcessedDashboardUiState.Loading)
             }
             .flowOn(Dispatchers.Default)
             .stateIn(
                 viewModelScope,
                 SharingStarted.WhileSubscribed(5_000),
-                CompiledDashboardData(emptyList(), 0.0, 0)
+                ProcessedDashboardUiState.Loading
             )
 
     /**
@@ -249,12 +264,36 @@ class HomeViewModel @Inject constructor(
         _categoryTrends
     ) { params: Array<Any?> ->
         @Suppress("UNCHECKED_CAST")
-        val compiledData = params[0] as CompiledDashboardData
+        val processedDataState = params[0] as ProcessedDashboardUiState
         val editMode = params[1] as Boolean
         val configList = params[2] as List<com.yourname.expensetracker.data.database.model.DashboardWidgetConfig>
         val aiBriefing = params[3] as AiLoadState<DashboardBriefingUi>
         val widgetStyles = params[4] as WidgetStyleConfig
         val categoryTrends = params[5] as Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>
+
+        if (processedDataState is ProcessedDashboardUiState.Loading) {
+            return@combine DashboardState(
+                isEditMode = editMode,
+                isLoading = true,
+                error = null,
+                aiBriefing = aiBriefing,
+                widgetStyles = widgetStyles,
+                categoryTrends = categoryTrends
+            )
+        }
+
+        if (processedDataState is ProcessedDashboardUiState.Error) {
+            return@combine DashboardState(
+                isEditMode = editMode,
+                isLoading = false,
+                error = processedDataState.error,
+                aiBriefing = aiBriefing,
+                widgetStyles = widgetStyles,
+                categoryTrends = categoryTrends
+            )
+        }
+
+        val compiledData = (processedDataState as ProcessedDashboardUiState.Ready).data
         
         val sortedWidgets = configList
             .filter { it.isVisible || editMode }

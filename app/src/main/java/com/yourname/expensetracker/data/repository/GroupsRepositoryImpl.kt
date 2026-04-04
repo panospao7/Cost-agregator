@@ -81,6 +81,7 @@ class GroupsRepositoryImpl @Inject constructor(
         amount: Double,
         paidById: Long,
         splitType: SplitType,
+        customSplitsJson: String?,
         date: Long
     ): GroupExpenseCreationResult = withContext(Dispatchers.IO) {
         coordinator.addExpenseWithLink(
@@ -90,6 +91,7 @@ class GroupsRepositoryImpl @Inject constructor(
             amount = amount,
             paidById = paidById,
             splitType = splitType,
+            customSplitsJson = customSplitsJson,
             date = date
         )
     }

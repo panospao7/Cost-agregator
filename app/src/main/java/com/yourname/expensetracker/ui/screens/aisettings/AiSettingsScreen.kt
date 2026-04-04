@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -23,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -32,11 +35,16 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,9 +97,9 @@ fun AiSettingsScreen(
                             modifier = Modifier.semantics { contentDescription = refreshButtonCd }
                         ) {
                             Text(stringResource(R.string.ai_refresh))
+                        }
                     }
-                }
-            },
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = SemanticColors.BaseNavy,
                     titleContentColor = SemanticColors.TextPrimary
@@ -140,6 +148,26 @@ fun AiSettingsScreen(
                             )
                         }
                     }
+                }
+            }
+
+            item {
+                SettingsSection(
+                    title = stringResource(R.string.ai_section_provider),
+                    description = stringResource(R.string.ai_section_provider_desc)
+                ) {
+                    ProviderAndApiKeySection(
+                        providerName = uiState.providerName,
+                        apiKeyInput = uiState.apiKeyInput,
+                        hasStoredApiKey = uiState.hasStoredApiKey,
+                        apiKeyValidationMessage = uiState.apiKeyValidationMessage,
+                        isTestingConnection = uiState.isTestingConnection,
+                        connectionTestMessage = uiState.connectionTestMessage,
+                        isConnectionTestSuccess = uiState.isConnectionTestSuccess,
+                        onApiKeyChange = viewModel::updateApiKeyInput,
+                        onSaveApiKey = viewModel::saveApiKey,
+                        onTestConnection = viewModel::testConnection
+                    )
                 }
             }
 
@@ -352,6 +380,113 @@ private fun RuntimeMetaCard(
         }
     }
     Spacer(modifier = Modifier.height(8.dp))
+}
+
+@Composable
+private fun ProviderAndApiKeySection(
+    providerName: String,
+    apiKeyInput: String,
+    hasStoredApiKey: Boolean,
+    apiKeyValidationMessage: String?,
+    isTestingConnection: Boolean,
+    connectionTestMessage: String?,
+    isConnectionTestSuccess: Boolean?,
+    onApiKeyChange: (String) -> Unit,
+    onSaveApiKey: () -> Unit,
+    onTestConnection: () -> Unit
+) {
+    var revealApiKey by rememberSaveable { mutableStateOf(false) }
+
+    ElevatedCard {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.ai_provider_label, providerName),
+                style = MaterialTheme.typography.bodyLarge
+            )
+
+            if (hasStoredApiKey && apiKeyInput.isBlank()) {
+                Text(
+                    text = stringResource(R.string.ai_api_key_saved_masked),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            OutlinedTextField(
+                value = apiKeyInput,
+                onValueChange = onApiKeyChange,
+                label = { Text(stringResource(R.string.ai_api_key_label)) },
+                placeholder = { Text(stringResource(R.string.ai_api_key_placeholder)) },
+                singleLine = true,
+                isError = apiKeyValidationMessage != null,
+                visualTransformation = if (revealApiKey) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
+                trailingIcon = {
+                    IconButton(onClick = { revealApiKey = !revealApiKey }) {
+                        Icon(
+                            imageVector = if (revealApiKey) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            contentDescription = if (revealApiKey) {
+                                stringResource(R.string.ai_hide_api_key_cd)
+                            } else {
+                                stringResource(R.string.ai_show_api_key_cd)
+                            }
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text(
+                text = stringResource(R.string.ai_api_key_secure_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            apiKeyValidationMessage?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onSaveApiKey) {
+                    Text(stringResource(R.string.ai_save_api_key))
+                }
+                Button(onClick = onTestConnection, enabled = !isTestingConnection) {
+                    Text(
+                        if (isTestingConnection) {
+                            stringResource(R.string.ai_testing_connection)
+                        } else {
+                            stringResource(R.string.ai_test_connection)
+                        }
+                    )
+                }
+            }
+
+            connectionTestMessage?.let { message ->
+                val feedbackColor = when (isConnectionTestSuccess) {
+                    true -> MaterialTheme.colorScheme.primary
+                    false -> MaterialTheme.colorScheme.error
+                    null -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = feedbackColor
+                )
+            }
+        }
+    }
 }
 
 @Composable

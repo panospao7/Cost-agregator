@@ -72,109 +72,94 @@ val ExpenseTypography = Typography(
         fontSize = 57.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 64.sp,
-        fontFeatureSettings = "tnum",
-        color = SemanticColors.TextPrimary
+        fontFeatureSettings = "tnum"
     ),
     displayMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 45.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 52.sp,
-        fontFeatureSettings = "tnum",
-        color = SemanticColors.TextPrimary
+        fontFeatureSettings = "tnum"
     ),
     displaySmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 36.sp,
         fontWeight = FontWeight.Bold,
         lineHeight = 44.sp,
-        fontFeatureSettings = "tnum",
-        color = SemanticColors.TextPrimary
+        fontFeatureSettings = "tnum"
     ),
     headlineLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 32.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 40.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 40.sp
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 28.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 36.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 36.sp
     ),
     headlineSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 24.sp,
         fontWeight = FontWeight.SemiBold,
         lineHeight = 32.sp,
-        fontFeatureSettings = "tnum",
-        color = SemanticColors.TextPrimary
+        fontFeatureSettings = "tnum"
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 22.sp,
         fontWeight = FontWeight.SemiBold,
-        lineHeight = 28.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 28.sp
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 16.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 24.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 24.sp
     ),
     titleSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 20.sp,
-        color = SemanticColors.TextSecondary
+        lineHeight = 20.sp
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 16.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 24.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 24.sp
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 20.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 20.sp
     ),
     bodySmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 12.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 16.sp,
-        color = SemanticColors.TextSecondary
+        lineHeight = 16.sp
     ),
     labelLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 20.sp,
-        color = SemanticColors.TextPrimary
+        lineHeight = 20.sp
     ),
     labelMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 16.sp,
-        color = SemanticColors.TextSecondary
+        lineHeight = 16.sp
     ),
     labelSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 16.sp,
-        color = SemanticColors.TextMuted
+        lineHeight = 16.sp
     )
 )
 

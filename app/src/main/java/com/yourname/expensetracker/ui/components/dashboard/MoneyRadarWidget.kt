@@ -4,8 +4,9 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -194,7 +195,9 @@ fun MoneyRadarWidget(
             
             // Summary chips for each category
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Due Bills Chip
@@ -277,17 +280,20 @@ private fun RadarSummaryChip(
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = backgroundColor,
+        onClick = onClick,
         border = if (isUrgent) {
             BorderStroke(1.dp, SemanticColors.WarningOrange.copy(alpha = 0.3f))
         } else null,
         modifier = modifier
-            .height(32.dp)
-            .clickable(onClick = onClick)
+            .minimumInteractiveComponentSize()
+            .heightIn(min = 48.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.padding(horizontal = 8.dp)
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 8.dp)
         ) {
             Icon(
                 imageVector = icon,
@@ -356,16 +362,20 @@ private fun RadarPrimaryAction(
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = color.copy(alpha = 0.15f),
+        onClick = onClick,
         border = BorderStroke(1.dp, color.copy(alpha = 0.3f)),
         modifier = modifier
             .fillMaxWidth()
-            .height(40.dp)
-            .clickable(onClick = onClick)
+            .minimumInteractiveComponentSize()
+            .heightIn(min = 48.dp)
             .semantics { contentDescription = actionDesc }
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
         ) {
             Icon(
                 imageVector = icon,

@@ -38,6 +38,11 @@ class NotificationRepository @Inject constructor(
     private val pipeline: NotificationProcessingPipeline
 ) {
 
+    data class DebugNotificationsSnapshot(
+        val notifications: List<RawNotification>,
+        val sourceStats: List<SourceStats>
+    )
+
     // === Notification access ===
     fun getAllNotifications(): Flow<List<RawNotification>> = dao.getAllFlow()
     fun getRecentNotifications(limit: Int = 100): Flow<List<RawNotification>> =
@@ -122,5 +127,34 @@ class NotificationRepository @Inject constructor(
 
     suspend fun resetSourceStats() {
         sourceStatsDao.deleteAll()
+    }
+
+    suspend fun createDebugSnapshot(): DebugNotificationsSnapshot {
+        return DebugNotificationsSnapshot(
+            notifications = dao.getAll(),
+            sourceStats = sourceStatsDao.getAll()
+        )
+    }
+
+    suspend fun restoreDebugSnapshot(snapshot: DebugNotificationsSnapshot) {
+        dao.deleteAll()
+        sourceStatsDao.deleteAll()
+        if (snapshot.notifications.isNotEmpty()) {
+            dao.insertAll(snapshot.notifications)
+        }
+        if (snapshot.sourceStats.isNotEmpty()) {
+            sourceStatsDao.insertAll(snapshot.sourceStats)
+        }
+    }
+
+    suspend fun getSourceStatsSnapshot(): List<SourceStats> {
+        return sourceStatsDao.getAll()
+    }
+
+    suspend fun restoreSourceStatsSnapshot(stats: List<SourceStats>) {
+        sourceStatsDao.deleteAll()
+        if (stats.isNotEmpty()) {
+            sourceStatsDao.insertAll(stats)
+        }
     }
 }

@@ -1,0 +1,236 @@
+================================================================================
+                    EXPENSETRACKER FRONTEND UI/UX MAPPING
+                            Scout Analysis Report
+================================================================================
+Generated: April 4, 2026
+Analyst: Scout Agent
+Status: COMPLETE ✅
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+This comprehensive Scout analysis has mapped the entire frontend UI/UX of the 
+ExpenseTracker app, covering all screens, components, navigation paths, and 
+design systems.
+
+TOTAL DELIVERABLES: 3 comprehensive documents
+TOTAL UI FILES CATALOGED: 128 (77 screens + 51 components)
+TOTAL SCREENS: 37 (6 main tabs + 22 features + 4 overlays + 2 mgmt + 3 debug)
+TOTAL COMPONENTS: 51 reusable widget/card components
+TOTAL NAVIGATION DESTINATIONS: 30+ distinct destinations
+
+================================================================================
+DOCUMENTS GENERATED
+================================================================================
+
+1. COMPREHENSIVE_UI_MAP.md (Primary Reference)
+   └─ 18 major sections
+   └─ Complete file inventory
+   └─ Screen-by-screen breakdowns
+   └─ Component library catalog
+   └─ Navigation architecture
+   └─ Color scheme & typography details
+   └─ Deep link configuration
+   └─ Accessibility notes
+   └─ ~1000+ lines of detailed documentation
+
+2. COMPREHENSIVE_UI_VISUAL_MAP.md (Diagrams & Flowcharts)
+   └─ Application flow diagram
+   └─ Bottom navigation structure
+   └─ Home screen composition
+   └─ Transaction list layout
+   └─ Review workflow
+   └─ Budget interface
+   └─ Analytics dashboard
+   └─ Spending map visualization
+   └─ Modal overlay patterns
+   └─ AI assistant sheet
+   └─ Feature screen examples
+   └─ Navigation state machine
+   └─ Color palette visualization
+   └─ File structure tree
+   └─ ASCII diagrams for all major screens
+
+3. UI_REFERENCE_INDEX.md (Quick Reference)
+   └─ Quick lookup tables
+   └─ File location map
+   └─ Color reference
+   └─ Component inventory
+   └─ Navigation patterns
+   └─ Common implementation examples
+   └─ How-to guides
+   └─ Troubleshooting
+
+================================================================================
+KEY FINDINGS
+================================================================================
+
+✅ ARCHITECTURE
+   • Pure Compose (no NavHost/Fragments)
+   • Type-safe sealed class navigation
+   • CompositionLocal for injection
+   • Back stack management via NavigationController
+   • State persistence via rememberSaveable
+
+✅ NAVIGATION SYSTEM
+   • 6 main tabs (bottom bar)
+   • 22 feature screens (config-driven)
+   • 4 overlay screens (sheets/modals)
+   • 2 management screens
+   • 3 debug screens (non-production)
+   • 8 deep link hosts
+   • No orphaned screens
+
+✅ UI COMPONENTS (51 files)
+   • 11 dashboard widgets
+   • 6 chart/visualization components
+   • 5 AI-specific components
+   • 4 common state components
+   • 2 navigation components
+   • 6 dialog/sheet components
+   • 17 feature-specific components
+
+✅ DESIGN SYSTEM
+   • Midnight Navy color scheme
+   • 4 primary colors
+   • 3 text color variants
+   • 7 status color states
+   • Material 3 typography
+   • Glass morphism support
+   • Semantic color tokens
+
+✅ ACCESSIBILITY
+   • Material 3 standards
+   • Content descriptions on all icons
+   • Semantic markup
+   • Keyboard navigation
+   • Proper contrast ratios
+   • Touch target sizing (48dp+)
+
+✅ STATE MANAGEMENT
+   • ViewModel per screen
+   • StateFlow for reactive state
+   • Sealed classes for events
+   • Hilt dependency injection
+   • Proper lifecycle handling
+
+================================================================================
+SCREEN INVENTORY
+================================================================================
+
+MAIN TABS (6):
+  0. Home/Dashboard         - Dashboard with configurable widgets
+  1. Transactions          - Transaction list with filtering
+  2. Review                - Pending approval workflow
+  3. Budget/Plan           - Budget management & forecasting
+  4. Analytics/Insights    - Analytics & deep analytics
+  5. Spending Map          - Geo-spatial visualization
+
+FEATURE SCREENS (22):
+  1. Savings Goals         - Goal tracking & progress
+  2. Carbon Footprint      - CO₂ emission tracking
+  3. Warranty Tracker      - Purchase warranty management
+  4. Price Protection      - Price drop monitoring
+  5. Bill Negotiation      - Negotiation assistance
+  6. Smart Search [NEW]    - Natural language queries
+  7. Receipt Matching      - Receipt to transaction matching
+  8. Investment Portfolio  - Investment tracking
+  9. Bank Connections      - Bank account linking
+ 10. Bill Reminders        - Bill due date reminders
+ 11. Spending Challenges   - Gamified spending goals
+ 12. Advanced Analytics    - Statistical analysis
+ 13. Cash Flow Calendar    - Calendar transaction view
+ 14. Lifestyle Inflation   - Lifestyle spending tracking
+ 15. Split Templates       - Expense split templates
+ 16. Visual Split Editor   - Visual split editor
+ 17. Currency Management [NEW] - Multi-currency support
+ 18. Subscription Mgmt [NEW]   - Subscription tracking
+ 19. Tax Configuration [NEW]   - Tax setup & deductions
+ 20. Export Options [NEW]      - Data export formats
+ 21. Recurring Expenses        - Recurring expense management
+ 22. Shared Expense Groups[NEW]- Expense sharing groups
+
+OVERLAY SCREENS (4):
+  • Add Expense (Modal Sheet)
+  • Receipt Scan (Full Screen)
+  • Recurring Expenses Management
+  • AI Assistant (Bottom Sheet Modal)
+
+MANAGEMENT SCREENS (2):
+  • AI Settings
+  • Category Management
+
+DEBUG SCREENS (3):
+  • Debug Screen (notifications, AI runtime)
+  • Categorization Debug (ML metrics)
+  • Debug Viewer (raw data)
+
+================================================================================
+COMPONENT LIBRARY
+================================================================================
+
+DASHBOARD WIDGETS (11):
+  TotalsDashboardCard, BudgetBlockPartyCard, FinancialWeatherCard,
+  FinancialRunwayCard, FinancialStressForecastCard, MonteCarloForecastCard,
+  HealthScoreWidget, FinancialHealthScoreV2Widget, RecommendationCard,
+  PlaceInsightCard, NearbyShopSuggestionCard
+
+CHARTS & VISUALIZATION (6):
+  CategoryDonutChart, SpendingTrendChart, SpendingPaceGauge, ChartMarker,
+  ForecastTimeline, MoneyRadarWidget
+
+AI COMPONENTS (5):
+  AssistantResultCard, CategoryAssistCard, DedupeAssistCard,
+  ReceiptAssistCard, ReceiptItemBreakdownCard
+
+COMMON COMPONENTS (4):
+  EmptyState, EnhancedEmptyState, ErrorState, LoadingSkeleton
+
+NAVIGATION (2):
+  AppNavigationBar, AppFabMenu
+
+DIALOGS/SHEETS (6):
+  CategoryBreakdownSheet, LocationCorrectionSheet, TransactionFilterSheet,
+  LocationPermissionDialog, NotificationPermissionDialog, LocationSearchPicker
+
+FEATURE-SPECIFIC (17):
+  BentoCard, RetroBudgetBlockPartyCard, RetroTopCategoriesCard,
+  RetroTotalsDashboardCard, TransferDirectionBadge, PulseDot,
+  NoSpendStreakWidget, PersonalityProfileCard, StatisticalVisualizations,
+  And 8 others...
+
+================================================================================
+NAVIGATION PATTERNS
+================================================================================
+
+PATTERN 1: Tab Navigation
+  navigation.navigateToTab(index)
+
+PATTERN 2: Feature Navigation
+  navigation.navigateTo(NavigationDestination.SavingsGoals)
+
+PATTERN 3: Overlay Navigation
+  navigation.navigateTo(NavigationDestination.AddExpense)
+
+PATTERN 4: Back Navigation
+  navigation.navigateBack()
+
+PATTERN 5: Deep Links
+  expensetracker://home?briefingKey=value
+  expensetracker://activity
+  expensetracker://analytics
+  etc.
+
+================================================================================
+COLOR SYSTEM
+================================================================================
+
+PRIMARY COLORS:
+  Base Navy        #0F172A    (Background)
+  Surface Light    #1E293B    (Cards/Surface)
+  Primary Indigo   #6366F1    (Buttons/CTA)
+  Primary Light    #818CF8    (Light actions)
+
+STATUS COLORS:
+  Success Green    #10B981

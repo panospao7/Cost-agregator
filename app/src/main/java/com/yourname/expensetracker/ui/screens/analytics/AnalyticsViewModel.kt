@@ -91,7 +91,16 @@ class AnalyticsViewModel @Inject constructor(
         val period: TimePeriod,
         val startMs: Long,
         val endMs: Long,
-        val categoriesHash: Int
+        val categoriesHash: Int,
+        val latestExpenseTimestamp: Long,
+        val expenseCount: Int,
+        val dataVersion: Long
+    )
+
+    private data class ExpenseFreshness(
+        val latestExpenseTimestamp: Long = 0L,
+        val expenseCount: Int = 0,
+        val dataVersion: Long = 0L
     )
 
     private data class AdvResult(
@@ -103,6 +112,8 @@ class AnalyticsViewModel @Inject constructor(
 
     private val analyticsCache = ConcurrentHashMap<PeriodCacheKey, AnalyticsState>()
     private val advancedCache = ConcurrentHashMap<PeriodCacheKey, AdvResult>()
+    @Volatile
+    private var lastExpenseDataVersion: Long = -1L
 
     private val _selectedPeriod = MutableStateFlow(TimePeriod.MONTH)
 
@@ -110,21 +121,40 @@ class AnalyticsViewModel @Inject constructor(
     val state: StateFlow<AnalyticsState> = combine(
         categoryRepository.allCategories.catch { emit(emptyList()) },
         _selectedPeriod,
-        expenseRepository.getTotalSpent().map { it ?: 0.0 }
-    ) { categories, period, _ ->
-        Pair(categories, period)
+        expenseRepository.getAllExpenses()
+            .scan(ExpenseFreshness()) { previous, expenses ->
+                ExpenseFreshness(
+                    latestExpenseTimestamp = expenses.maxOfOrNull { it.date } ?: 0L,
+                    expenseCount = expenses.size,
+                    dataVersion = previous.dataVersion + 1L
+                )
+            }
+            .drop(1)
+            .catch { emit(ExpenseFreshness()) }
+    ) { categories, period, freshness ->
+        Triple(categories, period, freshness)
     }
     .debounce(300)
-    .flatMapLatest { (categories, period) ->
+    .flatMapLatest { (categories, period, freshness) ->
         flow {
             emit(AnalyticsState(isLoading = true, selectedPeriod = period))
+
+            if (freshness.dataVersion != lastExpenseDataVersion) {
+                analyticsCache.clear()
+                advancedCache.clear()
+                lastExpenseDataVersion = freshness.dataVersion
+            }
+
             val now = timeProvider.now()
             val (currentStart, currentEnd) = getPeriodRange(period, now)
             val cacheKey = PeriodCacheKey(
                 period = period,
                 startMs = currentStart,
                 endMs = currentEnd,
-                categoriesHash = categories.hashCode()
+                categoriesHash = categories.hashCode(),
+                latestExpenseTimestamp = freshness.latestExpenseTimestamp,
+                expenseCount = freshness.expenseCount,
+                dataVersion = freshness.dataVersion
             )
 
             val cached = analyticsCache[cacheKey]
@@ -246,29 +276,21 @@ class AnalyticsViewModel @Inject constructor(
         // Actually generateInsights receives 'allExpenses' (usually full list or large subset).
         // Let's assume 'allExpenses' passed to computeAnalytics is sufficient.
         val patterns = recurringExpenseEngine.getPatterns(allExpenses)
+        val recurringOccurrencesByMerchant = allExpenses
+            .asSequence()
+            .filter { it.transactionType == TransactionType.PURCHASE }
+            .groupingBy { it.merchant.lowercase().trim() }
+            .eachCount()
         
         val recurring = patterns.map { pattern ->
-             RecurringCandidate(
-                 merchant = pattern.merchantName,
-                 amount = pattern.averageAmount,
-                 intervalDays = pattern.periodVarianceDays, // Mapping variance or calculating interval? 
-                 // RecurringPattern stores frequency enum, not raw days. We need to map back for UI if it expects days.
-                 // Actually RecurringCandidate.intervalDays seems to act as "average interval".
-                 // Let's approximate from Frequency.
-                 occurrences = 0, // RecurringPattern doesn't expose raw count easily in this model unless we add it. 
-                 // For now, let's keep it 0 or map frequency.days
-                 nextExpectedDate = pattern.nextExpectedDate,
-                 confidence = pattern.confidence
-             )
-        }.toMutableList()
-        
-        // Fix: RecurringCandidate needs 'occurrences' and 'intervalDays'. 
-        // The new engine abstracts this. If the UI relies on it, we might need to expose it in RecurringPattern or calculate it.
-        // For now, let's map frequency days.
-        patterns.forEachIndexed { index, p ->
-            recurring[index] = recurring[index].copy(
-                intervalDays = p.frequency.days,
-                occurrences = 3 // Minimum required by engine, placeholder
+            val occurrences = recurringOccurrencesByMerchant[pattern.merchantName.lowercase().trim()] ?: 0
+            RecurringCandidate(
+                merchant = pattern.merchantName,
+                amount = pattern.averageAmount,
+                intervalDays = pattern.frequency.days,
+                occurrences = occurrences,
+                nextExpectedDate = pattern.nextExpectedDate,
+                confidence = pattern.confidence
             )
         }
 

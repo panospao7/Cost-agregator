@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.ui.screens.price
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -18,10 +20,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
@@ -34,12 +38,17 @@ fun PriceProtectionScreen(
     onNavigateBack: () -> Unit,
     viewModel: PriceProtectionViewModel = hiltViewModel()
 ) {
+    val context = LocalContext.current
     val priceDrops by viewModel.priceDrops.collectAsState()
     val protectedItems by viewModel.protectedItems.collectAsState()
+    val excludedTrackingKeys by viewModel.excludedTrackingKeys.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(0) }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.screen_price_protection)) },
@@ -92,11 +101,41 @@ fun PriceProtectionScreen(
                 0 -> PriceDropsTab(
                     priceDrops = priceDrops,
                     isLoading = isLoading,
-                    onRefresh = { viewModel.refreshPriceDrops() }
+                    onRefresh = { viewModel.refreshPriceDrops() },
+                    onFileClaim = { url ->
+                        val launched = openExternalUrl(context, url)
+                        if (!launched) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Unable to open claim link")
+                            }
+                        }
+                    }
                 )
                 1 -> ProtectedItemsTab(
                     items = protectedItems,
-                    isLoading = isLoading
+                    isLoading = isLoading,
+                    isTracked = { item ->
+                        val key = "${item.receiptId}:${item.itemName.lowercase()}:${item.purchaseDate}"
+                        key !in excludedTrackingKeys
+                    },
+                    onTrackItem = { item ->
+                        viewModel.trackItem(item)
+                        scope.launch {
+                            snackbarHostState.showSnackbar("Item added back to tracking")
+                        }
+                    },
+                    onRemoveFromTracking = { item ->
+                        viewModel.removeFromTracking(item)
+                        scope.launch {
+                            val result = snackbarHostState.showSnackbar(
+                                message = "Item removed from tracking",
+                                actionLabel = "Undo"
+                            )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                viewModel.trackItem(item)
+                            }
+                        }
+                    }
                 )
                 2 -> DealsTab(
                     viewModel = viewModel,
@@ -111,7 +150,8 @@ fun PriceProtectionScreen(
 fun PriceDropsTab(
     priceDrops: List<PriceProtectionTracker.PriceDropAlert>,
     isLoading: Boolean,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onFileClaim: (String) -> Unit
 ) {
     val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     
@@ -166,14 +206,20 @@ fun PriceDropsTab(
             }
             
             items(priceDrops) { alert ->
-                PriceDropCard(alert = alert)
+                PriceDropCard(
+                    alert = alert,
+                    onFileClaim = onFileClaim
+                )
             }
         }
     }
 }
 
 @Composable
-fun PriceDropCard(alert: PriceProtectionTracker.PriceDropAlert) {
+fun PriceDropCard(
+    alert: PriceProtectionTracker.PriceDropAlert,
+    onFileClaim: (String) -> Unit
+) {
     val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     val dateFormatter = DateTimeFormatter.ofPattern("MMM dd")
     
@@ -308,7 +354,7 @@ fun PriceDropCard(alert: PriceProtectionTracker.PriceDropAlert) {
             // Claim button
             if (alert.claimUrl != null) {
                 Button(
-                    onClick = { /* Open claim URL */ },
+                    onClick = { onFileClaim(alert.claimUrl) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Rounded.OpenInNew, null, modifier = Modifier.size(18.dp))
@@ -323,8 +369,13 @@ fun PriceDropCard(alert: PriceProtectionTracker.PriceDropAlert) {
 @Composable
 fun ProtectedItemsTab(
     items: List<PriceProtectionTracker.PriceProtectedItem>,
-    isLoading: Boolean
+    isLoading: Boolean,
+    isTracked: (PriceProtectionTracker.PriceProtectedItem) -> Boolean,
+    onTrackItem: (PriceProtectionTracker.PriceProtectedItem) -> Unit,
+    onRemoveFromTracking: (PriceProtectionTracker.PriceProtectedItem) -> Unit
 ) {
+    var pendingRemoval by remember { mutableStateOf<PriceProtectionTracker.PriceProtectedItem?>(null) }
+
     if (isLoading) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -368,14 +419,50 @@ fun ProtectedItemsTab(
             }
             
             items(items) { item ->
-                ProtectedItemCard(item = item)
+                ProtectedItemCard(
+                    item = item,
+                    isTracked = isTracked(item),
+                    onTrackItem = { onTrackItem(item) },
+                    onRemoveFromTracking = { pendingRemoval = item }
+                )
             }
         }
+    }
+
+    pendingRemoval?.let { item ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text("Remove from tracking?") },
+            text = { Text("You will stop receiving price-drop alerts for ${item.itemName}.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onRemoveFromTracking(item)
+                        pendingRemoval = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text(stringResource(R.string.label_remove))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemoval = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
     }
 }
 
 @Composable
-fun ProtectedItemCard(item: PriceProtectionTracker.PriceProtectedItem) {
+fun ProtectedItemCard(
+    item: PriceProtectionTracker.PriceProtectedItem,
+    isTracked: Boolean,
+    onTrackItem: () -> Unit,
+    onRemoveFromTracking: () -> Unit
+) {
     val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     val dateFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy")
     val purchaseDate = Instant.ofEpochMilli(item.purchaseDate)
@@ -450,6 +537,31 @@ fun ProtectedItemCard(item: PriceProtectionTracker.PriceProtectedItem) {
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (isTracked) {
+                OutlinedButton(
+                    onClick = onRemoveFromTracking,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Icon(Icons.Rounded.NotificationsOff, null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Remove from tracking")
+                }
+            } else {
+                Button(
+                    onClick = onTrackItem,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Rounded.NotificationsActive, null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Track item")
                 }
             }
         }
@@ -802,4 +914,13 @@ fun EmptyDealsState() {
                 textAlign = TextAlign.Center
             )
     }
+}
+
+private fun openExternalUrl(context: android.content.Context, url: String): Boolean {
+    return runCatching {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }.isSuccess
 }

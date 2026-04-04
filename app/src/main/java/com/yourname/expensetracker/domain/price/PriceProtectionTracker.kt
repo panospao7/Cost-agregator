@@ -6,6 +6,8 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.json.JSONArray
+import org.json.JSONObject
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import javax.inject.Inject
@@ -78,12 +80,76 @@ class PriceProtectionTracker @Inject constructor(
     
     private fun parseExtractedItems(jsonItems: String): List<ExtractedItem>? {
         return try {
-            // Simple parsing - in production would use Gson
-            // This is a placeholder implementation
-            emptyList()
+            if (jsonItems.isBlank()) {
+                return emptyList()
+            }
+
+            val array = JSONArray(jsonItems)
+            (0 until array.length()).mapNotNull { index ->
+                val element = array.opt(index)
+
+                when (element) {
+                    is JSONObject -> {
+                        val name = element.optString("name")
+                            .ifBlank { element.optString("itemName") }
+                            .ifBlank { null }
+                            ?: return@mapNotNull null
+
+                        val price = parseDoubleField(
+                            element,
+                            primaryKey = "price",
+                            fallbackKeys = listOf("amount", "total", "unitPrice")
+                        ) ?: return@mapNotNull null
+
+                        val category = element.optString("category").takeIf { it.isNotBlank() }
+
+                        val quantity = element.optInt("quantity", 1)
+                            .takeIf { it > 0 }
+                            ?: element.optDouble("quantity", 1.0).toInt().coerceAtLeast(1)
+
+                        ExtractedItem(
+                            name = name,
+                            price = price,
+                            category = category,
+                            quantity = quantity
+                        )
+                    }
+                    is String -> {
+                        val trimmed = element.trim()
+                        if (trimmed.isNotBlank()) {
+                            ExtractedItem(
+                                name = trimmed,
+                                price = 0.0,
+                                category = null,
+                                quantity = 1
+                            )
+                        } else {
+                            null
+                        }
+                    }
+                    else -> null
+                }
+            }
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun parseDoubleField(
+        jsonObject: JSONObject,
+        primaryKey: String,
+        fallbackKeys: List<String>
+    ): Double? {
+        val keys = listOf(primaryKey) + fallbackKeys
+        for (key in keys) {
+            if (!jsonObject.has(key)) continue
+
+            when (val value = jsonObject.opt(key)) {
+                is Number -> return value.toDouble()
+                is String -> value.toDoubleOrNull()?.let { return it }
+            }
+        }
+        return null
     }
     
     private fun getReturnWindow(merchantName: String?): Int {
@@ -284,6 +350,41 @@ class PriceProtectionTracker @Inject constructor(
     private fun String.containsAny(vararg keywords: String): Boolean {
         return keywords.any { this.contains(it, ignoreCase = true) }
     }
+
+    suspend fun getDealsCouponsAndBenefits(): DealsAndBenefits {
+        val recentReceipts = receiptDao.getAll().take(20)
+
+        val deals = mutableListOf<DealAlternative>()
+        val coupons = mutableListOf<CouponMatch>()
+        val benefits = mutableListOf<CreditCardBenefit>()
+
+        recentReceipts.forEach { receipt ->
+            deals += findBetterDeals(receipt)
+            coupons += findCoupons(receipt)
+            benefits += getCreditCardBenefits(receipt)
+        }
+
+        val deduplicatedDeals = deals
+            .groupBy { "${it.originalItem.name.lowercase()}-${it.betterMerchant.lowercase()}" }
+            .mapNotNull { (_, variants) -> variants.maxByOrNull { it.savings } }
+            .sortedByDescending { it.savings }
+
+        val deduplicatedCoupons = coupons
+            .groupBy { "${it.merchant.lowercase()}-${it.code.lowercase()}" }
+            .mapNotNull { (_, variants) -> variants.maxByOrNull { it.discount } }
+            .sortedByDescending { it.discount }
+
+        val deduplicatedBenefits = benefits
+            .groupBy { "${it.cardName.lowercase()}-${it.benefitType}-${it.benefitDescription.lowercase()}" }
+            .mapNotNull { (_, variants) -> variants.maxByOrNull { it.estimatedValue } }
+            .sortedByDescending { it.estimatedValue }
+
+        return DealsAndBenefits(
+            deals = deduplicatedDeals,
+            coupons = deduplicatedCoupons,
+            benefits = deduplicatedBenefits
+        )
+    }
     
     data class PriceProtectedItem(
         val receiptId: Long,
@@ -365,4 +466,10 @@ class PriceProtectionTracker @Inject constructor(
     enum class BenefitType {
         CASHBACK, POINTS, PROTECTION, WARRANTY, EXTENDED_RETURN
     }
+
+    data class DealsAndBenefits(
+        val deals: List<DealAlternative>,
+        val coupons: List<CouponMatch>,
+        val benefits: List<CreditCardBenefit>
+    )
 }

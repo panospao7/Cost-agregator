@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -43,14 +44,51 @@ import com.yourname.expensetracker.R
 import kotlinx.coroutines.launch
 import java.util.*
 
+private enum class DebugDestructiveAction {
+    CLEAR_ALL,
+    RESET_EXPENSES,
+    RESET_BUDGETS,
+    RESET_SOURCE_STATS
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DebugScreen(
     onDismiss: () -> Unit,
     viewModel: DebugViewModel = hiltViewModel()
 ) {
+    if (!BuildConfig.DEBUG) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.debug_title)) },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
+                        }
+                    }
+                )
+            }
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(R.string.debug_disabled_in_release),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        }
+        return
+    }
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     val notifications by viewModel.filteredNotifications.collectAsState()
     val count by viewModel.notificationCount.collectAsState()
     val packages by viewModel.packages.collectAsState()
@@ -64,6 +102,7 @@ fun DebugScreen(
     var expandedNotificationId by remember { mutableStateOf<Long?>(null) }
     var diagnosticsStats by remember { mutableStateOf(viewModel.getServiceDiagnostics()) }
     var showCategorizationDebug by remember { mutableStateOf(false) }
+    var pendingConfirmationAction by remember { mutableStateOf<DebugDestructiveAction?>(null) }
 
     if (showCategorizationDebug) {
         CategorizationDebugScreen(onNavigateBack = { showCategorizationDebug = false })
@@ -71,6 +110,7 @@ fun DebugScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.debug_title_format, count)) },
@@ -80,7 +120,7 @@ fun DebugScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.clearAll() }) {
+                    IconButton(onClick = { pendingConfirmationAction = DebugDestructiveAction.CLEAR_ALL }) {
                         Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_clear))
                     }
                 }
@@ -454,7 +494,7 @@ fun DebugScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Button(
-                        onClick = { viewModel.resetExpenses() },
+                        onClick = { pendingConfirmationAction = DebugDestructiveAction.RESET_EXPENSES },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error
@@ -466,7 +506,7 @@ fun DebugScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Button(
-                        onClick = { viewModel.resetBudgets() },
+                        onClick = { pendingConfirmationAction = DebugDestructiveAction.RESET_BUDGETS },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
@@ -478,7 +518,7 @@ fun DebugScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Button(
-                        onClick = { viewModel.resetSourceStats() },
+                        onClick = { pendingConfirmationAction = DebugDestructiveAction.RESET_SOURCE_STATS },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
@@ -628,6 +668,111 @@ fun DebugScreen(
                 }
             }
         }
+    }
+
+    if (pendingConfirmationAction != null) {
+        val action = pendingConfirmationAction!!
+        val title = when (action) {
+            DebugDestructiveAction.CLEAR_ALL -> stringResource(R.string.debug_confirm_clear_all_title)
+            DebugDestructiveAction.RESET_EXPENSES -> stringResource(R.string.debug_confirm_reset_expenses_title)
+            DebugDestructiveAction.RESET_BUDGETS -> stringResource(R.string.debug_confirm_reset_budgets_title)
+            DebugDestructiveAction.RESET_SOURCE_STATS -> stringResource(R.string.debug_confirm_reset_trust_scores_title)
+        }
+        val message = when (action) {
+            DebugDestructiveAction.CLEAR_ALL -> stringResource(R.string.debug_confirm_clear_all_message)
+            DebugDestructiveAction.RESET_EXPENSES -> stringResource(R.string.debug_confirm_reset_expenses_message)
+            DebugDestructiveAction.RESET_BUDGETS -> stringResource(R.string.debug_confirm_reset_budgets_message)
+            DebugDestructiveAction.RESET_SOURCE_STATS -> stringResource(R.string.debug_confirm_reset_trust_scores_message)
+        }
+
+        AlertDialog(
+            onDismissRequest = { pendingConfirmationAction = null },
+            title = { Text(title) },
+            text = { Text(message) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingConfirmationAction = null
+                        scope.launch {
+                            when (action) {
+                                DebugDestructiveAction.CLEAR_ALL -> {
+                                    val hadData = viewModel.clearAllWithUndoSupport()
+                                    if (hadData) {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.debug_action_clear_all_done),
+                                            actionLabel = context.getString(R.string.action_undo),
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.undoClearAll()
+                                        }
+                                    } else {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.debug_action_no_data_to_clear))
+                                    }
+                                }
+                                DebugDestructiveAction.RESET_EXPENSES -> {
+                                    val hadData = viewModel.resetExpensesWithUndoSupport()
+                                    if (hadData) {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.debug_action_reset_expenses_done),
+                                            actionLabel = context.getString(R.string.action_undo),
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.undoResetExpenses()
+                                        }
+                                    } else {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.debug_action_no_expenses_to_reset))
+                                    }
+                                }
+                                DebugDestructiveAction.RESET_BUDGETS -> {
+                                    val hadData = viewModel.resetBudgetsWithUndoSupport()
+                                    if (hadData) {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.debug_action_reset_budgets_done),
+                                            actionLabel = context.getString(R.string.action_undo),
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.undoResetBudgets()
+                                        }
+                                    } else {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.debug_action_no_budgets_to_reset))
+                                    }
+                                }
+                                DebugDestructiveAction.RESET_SOURCE_STATS -> {
+                                    val hadData = viewModel.resetSourceStatsWithUndoSupport()
+                                    if (hadData) {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.debug_action_reset_trust_scores_done),
+                                            actionLabel = context.getString(R.string.action_undo),
+                                            withDismissAction = true,
+                                            duration = SnackbarDuration.Long
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.undoResetSourceStats()
+                                        }
+                                    } else {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.debug_action_no_trust_scores_to_reset))
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text(stringResource(R.string.action_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingConfirmationAction = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
     }
 }
 

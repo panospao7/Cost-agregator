@@ -28,6 +28,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import java.text.NumberFormat
+import java.util.Currency
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -255,7 +256,7 @@ private fun VatRateCard(vatRate: Double) {
 
 @Composable
 private fun TaxBracketCard(bracket: TaxBracket, currency: String) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    val currencyFormat = remember(currency) { buildCurrencyFormat(currency) }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -313,7 +314,7 @@ private fun SampleCalculatorCard(
     estimate: com.yourname.expensetracker.domain.tax.TaxEstimate?,
     currency: String
 ) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    val currencyFormat = remember(currency) { buildCurrencyFormat(currency) }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -466,6 +467,12 @@ private fun SampleCalculatorCard(
                 }
             }
         }
+    }
+}
+
+private fun buildCurrencyFormat(currencyCode: String): NumberFormat {
+    return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
+        runCatching { currency = Currency.getInstance(currencyCode) }
     }
 }
 

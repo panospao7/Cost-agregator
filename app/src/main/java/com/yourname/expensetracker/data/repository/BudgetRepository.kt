@@ -30,6 +30,10 @@ class BudgetRepository @Inject constructor(
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
     private val offsetEngine: SharedExpenseBudgetOffsetEngine
 ) {
+    data class DebugBudgetSnapshot(
+        val budgets: List<Budget>
+    )
+
     val allBudgets: Flow<List<Budget>> = budgetDao.getAllFlow()
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
 
@@ -178,6 +182,23 @@ class BudgetRepository @Inject constructor(
         } catch (e: Exception) {
             Timber.e(e, "Failed to delete all budgets")
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete all budgets")
+        }
+    }
+
+    suspend fun createDebugSnapshot(): DebugBudgetSnapshot {
+        return DebugBudgetSnapshot(budgets = budgetDao.getAll())
+    }
+
+    suspend fun restoreDebugSnapshot(snapshot: DebugBudgetSnapshot): com.yourname.expensetracker.domain.model.Result<Unit> {
+        return try {
+            budgetDao.deleteAll()
+            if (snapshot.budgets.isNotEmpty()) {
+                budgetDao.insertAll(snapshot.budgets)
+            }
+            com.yourname.expensetracker.domain.model.Result.Success(Unit)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to restore debug budget snapshot")
+            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to restore budgets")
         }
     }
 

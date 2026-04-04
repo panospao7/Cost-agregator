@@ -24,6 +24,9 @@ interface ExpenseDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAtomic(expense: Expense): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(expenses: List<Expense>)
+
     @Query("SELECT changes()")
     suspend fun getChanges(): Int
 

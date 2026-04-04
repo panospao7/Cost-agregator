@@ -65,7 +65,7 @@ class CashFlowCalendarViewModel @Inject constructor(
         }
     }
 
-    fun selectDate(date: Date) {
+    fun selectDate(date: Date?) {
         _state.update { it.copy(selectedDate = date) }
     }
 

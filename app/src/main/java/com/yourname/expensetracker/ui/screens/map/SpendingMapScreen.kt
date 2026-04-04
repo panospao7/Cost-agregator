@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -194,6 +195,78 @@ fun SpendingMapScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            // ── Filters ───────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val now = remember { System.currentTimeMillis() }
+                val sevenDaysStart = now - 7L * 86_400_000L
+                val thirtyDaysStart = now - 30L * 86_400_000L
+                val ninetyDaysStart = now - 90L * 86_400_000L
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.map_filter_date_range),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (state.selectedCategories.isNotEmpty() || state.dateRangeStartMs != null || state.dateRangeEndMs != null) {
+                        TextButton(onClick = viewModel::clearFilters) {
+                            Text(stringResource(R.string.map_filter_clear))
+                        }
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = state.dateRangeStartMs == null && state.dateRangeEndMs == null,
+                        onClick = { viewModel.setDateRange(null, null) },
+                        label = { Text(stringResource(R.string.map_filter_all_dates)) }
+                    )
+                    FilterChip(
+                        selected = state.dateRangeStartMs == sevenDaysStart && state.dateRangeEndMs == now,
+                        onClick = { viewModel.setDateRange(sevenDaysStart, now) },
+                        label = { Text(stringResource(R.string.map_filter_7_days)) }
+                    )
+                    FilterChip(
+                        selected = state.dateRangeStartMs == thirtyDaysStart && state.dateRangeEndMs == now,
+                        onClick = { viewModel.setDateRange(thirtyDaysStart, now) },
+                        label = { Text(stringResource(R.string.map_filter_30_days)) }
+                    )
+                    FilterChip(
+                        selected = state.dateRangeStartMs == ninetyDaysStart && state.dateRangeEndMs == now,
+                        onClick = { viewModel.setDateRange(ninetyDaysStart, now) },
+                        label = { Text(stringResource(R.string.map_filter_90_days)) }
+                    )
+                }
+
+                if (state.availableCategories.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.map_filter_categories),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(state.availableCategories) { category ->
+                            FilterChip(
+                                selected = state.selectedCategories.contains(category.key),
+                                onClick = { viewModel.toggleCategoryFilter(category.key) },
+                                label = {
+                                    Text(category.label)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
             // ── Map ───────────────────────────────────────────────────────────
             Box(
                 modifier = Modifier

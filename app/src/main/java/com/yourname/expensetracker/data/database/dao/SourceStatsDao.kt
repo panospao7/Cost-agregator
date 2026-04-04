@@ -19,6 +19,9 @@ interface SourceStatsDao {
     @Query("SELECT * FROM source_stats ORDER BY totalNotifications DESC")
     suspend fun getAll(): List<SourceStats>
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(stats: List<SourceStats>)
+
     @Query("""
         UPDATE source_stats 
         SET totalNotifications = totalNotifications + 1, 

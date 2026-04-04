@@ -42,7 +42,30 @@ fun CategoryDonutChart(
     totalSpent: Double,
     modifier: Modifier = Modifier
 ) {
-    if (categories.isEmpty()) return
+    if (categories.isEmpty()) {
+        BentoCard(modifier = modifier) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "No category data yet",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SemanticColors.TextPrimary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Add a few categorized transactions to see your spending split.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SemanticColors.TextSecondary
+                )
+            }
+        }
+        return
+    }
 
     // Animate sweep on first composition
     val animationProgress = remember { Animatable(0f) }

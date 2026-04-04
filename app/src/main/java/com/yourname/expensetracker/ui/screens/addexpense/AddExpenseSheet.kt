@@ -456,7 +456,11 @@ fun AddExpenseSheet(
                                 label = { Text(stringResource(R.string.add_expense_my_share_label)) },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
-                                placeholder = { Text(stringResource(R.string.add_expense_share_placeholder)) }
+                                placeholder = { Text(stringResource(R.string.add_expense_share_placeholder)) },
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = ImeAction.Next
+                                )
                             )
                             OutlinedTextField(
                                 value = state.myShareAmount,
@@ -464,7 +468,11 @@ fun AddExpenseSheet(
                                 label = { Text(stringResource(R.string.add_expense_or_amount_label)) },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
-                                placeholder = { Text(stringResource(R.string.add_expense_amount_placeholder_short)) }
+                                placeholder = { Text(stringResource(R.string.add_expense_amount_placeholder_short)) },
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Decimal,
+                                    imeAction = ImeAction.Done
+                                )
                             )
                         }
                     }

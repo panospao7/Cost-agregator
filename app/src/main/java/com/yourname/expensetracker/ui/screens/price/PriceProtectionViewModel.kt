@@ -41,6 +41,9 @@ class PriceProtectionViewModel @Inject constructor(
     
     private val _protectedItems = MutableStateFlow<List<PriceProtectionTracker.PriceProtectedItem>>(emptyList())
     val protectedItems: StateFlow<List<PriceProtectionTracker.PriceProtectedItem>> = _protectedItems.asStateFlow()
+
+    private val _excludedTrackingKeys = MutableStateFlow<Set<String>>(emptySet())
+    val excludedTrackingKeys: StateFlow<Set<String>> = _excludedTrackingKeys.asStateFlow()
     
     private val _deals = MutableStateFlow<List<PriceProtectionTracker.DealAlternative>>(emptyList())
     val deals: StateFlow<List<PriceProtectionTracker.DealAlternative>> = _deals.asStateFlow()
@@ -93,7 +96,25 @@ class PriceProtectionViewModel @Inject constructor(
     }
 
     private suspend fun loadDealsAndBenefits() {
-        // In a real implementation, this would load from recent receipts
-        // For now, we'll leave it empty as the data would come from the price tracker
+        val payload = priceTracker.getDealsCouponsAndBenefits()
+        _deals.value = payload.deals
+        _coupons.value = payload.coupons
+        _creditCardBenefits.value = payload.benefits
+    }
+
+    fun removeFromTracking(item: PriceProtectionTracker.PriceProtectedItem) {
+        _excludedTrackingKeys.value = _excludedTrackingKeys.value + trackingKey(item)
+    }
+
+    fun trackItem(item: PriceProtectionTracker.PriceProtectedItem) {
+        _excludedTrackingKeys.value = _excludedTrackingKeys.value - trackingKey(item)
+    }
+
+    fun isTracked(item: PriceProtectionTracker.PriceProtectedItem): Boolean {
+        return trackingKey(item) !in _excludedTrackingKeys.value
+    }
+
+    private fun trackingKey(item: PriceProtectionTracker.PriceProtectedItem): String {
+        return "${item.receiptId}:${item.itemName.lowercase()}:${item.purchaseDate}"
     }
 }

@@ -185,7 +185,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
         description: String,
         amount: Double,
         paidById: Long,
-        splitType: SplitType
+        splitType: SplitType,
+        customSplits: Map<Long, Double>? = null
     ) {
         viewModelScope.launch {
             try {
@@ -213,7 +214,12 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                             description = description,
                             amount = amount,
                             paidById = paidById,
-                            splitType = splitType
+                            splitType = splitType,
+                            customSplitsJson = customSplits
+                                ?.entries
+                                ?.joinToString(",") { (memberId, splitValue) ->
+                                    "$memberId:$splitValue"
+                                }
                         )) {
                             is GroupExpenseCreationResult.Success -> {
                                 loadGroups()

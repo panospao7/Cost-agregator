@@ -1,5 +1,9 @@
 package com.yourname.expensetracker.ui.screens.export
 
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -15,15 +19,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.core.content.FileProvider
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,10 +45,38 @@ fun ExportOptionsScreen(
     viewModel: ExportOptionsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val snackbarHostState = remember { SnackbarHostState() }
     var showDatePicker by remember { mutableStateOf(false) }
     var isPickingStartDate by remember { mutableStateOf(true) }
+    var pendingExportData by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    val saveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: Uri? ->
+        val content = pendingExportData
+        if (uri == null || content == null) {
+            pendingExportData = null
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        output.writer().use { writer -> writer.write(content) }
+                    } ?: error("Cannot open destination file")
+                }
+                snackbarHostState.showSnackbar(context.getString(R.string.export_save_success))
+            } catch (t: Throwable) {
+                snackbarHostState.showSnackbar(
+                    context.getString(R.string.export_save_failed, t.message ?: "unknown error")
+                )
+            }
+            pendingExportData = null
+        }
+    }
 
     LaunchedEffect(uiState.error) {
         uiState.error?.let {
@@ -164,6 +202,51 @@ fun ExportOptionsScreen(
                             exportData = uiState.exportData!!,
                             onCopy = {
                                 clipboardManager.setText(AnnotatedString(uiState.exportData!!))
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(context.getString(R.string.export_copy_success))
+                                }
+                            },
+                            onSave = {
+                                pendingExportData = uiState.exportData
+                                val ext = when (uiState.selectedFormat) {
+                                    "quickbooks" -> "iif"
+                                    else -> "csv"
+                                }
+                                val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                                saveLauncher.launch("expenses_$timestamp.$ext")
+                            },
+                            onShare = {
+                                scope.launch {
+                                    try {
+                                        val ext = when (uiState.selectedFormat) {
+                                            "quickbooks" -> "iif"
+                                            else -> "csv"
+                                        }
+                                        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                                        val file = withContext(Dispatchers.IO) {
+                                            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+                                            File(exportDir, "expenses_$timestamp.$ext").apply {
+                                                writeText(uiState.exportData!!)
+                                            }
+                                        }
+                                        val uri = FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.fileprovider",
+                                            file
+                                        )
+                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = if (ext == "iif") "application/octet-stream" else "text/csv"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, context.getString(R.string.action_share)))
+                                        snackbarHostState.showSnackbar(context.getString(R.string.export_share_success))
+                                    } catch (t: Throwable) {
+                                        snackbarHostState.showSnackbar(
+                                            context.getString(R.string.export_save_failed, t.message ?: "unknown error")
+                                        )
+                                    }
+                                }
                             },
                             onDismiss = { viewModel.clearExport() }
                         )
@@ -242,6 +325,11 @@ fun ExportOptionsScreen(
                 DatePicker(state = datePickerState)
             }
         }
+
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { pendingExportData = null }
     }
 }
 
@@ -419,6 +507,8 @@ private fun ExportFormatCard(
 private fun ExportResultCard(
     exportData: String,
     onCopy: () -> Unit,
+    onSave: () -> Unit,
+    onShare: () -> Unit,
     onDismiss: () -> Unit
 ) {
     Card(
@@ -484,6 +574,22 @@ private fun ExportResultCard(
                     Icon(Icons.Rounded.ContentCopy, null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(stringResource(R.string.export_copy_button))
+                }
+                OutlinedButton(
+                    onClick = onSave,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Rounded.Save, null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.export_save_button))
+                }
+                OutlinedButton(
+                    onClick = onShare,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Rounded.Share, null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.action_share))
                 }
             }
             

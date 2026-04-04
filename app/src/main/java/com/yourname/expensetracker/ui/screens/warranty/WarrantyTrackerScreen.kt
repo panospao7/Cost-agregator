@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,6 +33,7 @@ import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 import java.text.SimpleDateFormat
 import java.util.*
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +46,7 @@ fun WarrantyTrackerScreen(
     val state by viewModel.state.collectAsState()
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
+    var showManualAddDialog by remember { mutableStateOf(false) }
 
     // Get contextual actions for empty state
     val emptyStateActions by remember(completedActionKeys) {
@@ -62,11 +65,19 @@ fun WarrantyTrackerScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showManualAddDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.action_add))
+                    }
                     IconButton(onClick = { viewModel.refresh() }) {
                         Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.action_refresh))
                     }
                 }
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showManualAddDialog = true }) {
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.action_add))
+            }
         }
     ) { padding ->
         Column(
@@ -198,7 +209,7 @@ fun WarrantyTrackerScreen(
                 // F1: Auto-detected filter chip
                 if (state.autoDetectedWarranties.isNotEmpty()) {
                     FilterChip(
-                        selected = state.warranties == state.autoDetectedWarranties && state.selectedFilter == null,
+                        selected = state.showAutoDetectedOnly,
                         onClick = { viewModel.filterByAutoDetected() },
                         label = { Text(stringResource(R.string.warranty_filter_auto)) },
                         leadingIcon = {
@@ -248,14 +259,10 @@ fun WarrantyTrackerScreen(
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                val filteredWarranties = state.selectedFilter?.let { filter ->
-                    state.warranties.filter { it.status == filter }
-                } ?: state.warranties
-
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(filteredWarranties) { warranty ->
+                    items(state.warranties) { warranty ->
                         WarrantyCard(
                             warranty = warranty,
                             dateFormat = dateFormat,
@@ -270,6 +277,107 @@ fun WarrantyTrackerScreen(
             }
         }
     }
+
+    if (showManualAddDialog) {
+        ManualWarrantyDialog(
+            onDismiss = { showManualAddDialog = false },
+            onSave = { productName, merchantName, purchaseDate, durationMonths, supportPhone ->
+                viewModel.addManualWarranty(
+                    productName = productName,
+                    merchantName = merchantName,
+                    purchaseDate = purchaseDate,
+                    warrantyDurationMonths = durationMonths,
+                    supportPhone = supportPhone
+                )
+                showManualAddDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun ManualWarrantyDialog(
+    onDismiss: () -> Unit,
+    onSave: (productName: String, merchantName: String, purchaseDate: Long, durationMonths: Int, supportPhone: String?) -> Unit
+) {
+    var productName by remember { mutableStateOf("") }
+    var merchantName by remember { mutableStateOf("") }
+    var purchaseDateText by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())) }
+    var durationMonthsText by remember { mutableStateOf("24") }
+    var supportPhone by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.warranty_manual_add_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = productName,
+                    onValueChange = { productName = it },
+                    label = { Text(stringResource(R.string.warranty_manual_product_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = merchantName,
+                    onValueChange = { merchantName = it },
+                    label = { Text(stringResource(R.string.warranty_manual_merchant_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = purchaseDateText,
+                    onValueChange = { purchaseDateText = it },
+                    label = { Text(stringResource(R.string.warranty_manual_purchase_date)) },
+                    placeholder = { Text("yyyy-MM-dd") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = durationMonthsText,
+                    onValueChange = { durationMonthsText = it.filter { c -> c.isDigit() } },
+                    label = { Text(stringResource(R.string.warranty_manual_duration_months)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = supportPhone,
+                    onValueChange = { supportPhone = it },
+                    label = { Text(stringResource(R.string.warranty_manual_support_phone_optional)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            val parsedDate = runCatching {
+                SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(purchaseDateText)?.time
+            }.getOrNull()
+            val parsedDuration = durationMonthsText.toIntOrNull()
+            val canSave = productName.isNotBlank() && merchantName.isNotBlank() && parsedDate != null && (parsedDuration ?: 0) > 0
+            Button(
+                onClick = {
+                    if (parsedDate != null && parsedDuration != null) {
+                        onSave(
+                            productName.trim(),
+                            merchantName.trim(),
+                            TimePeriodUtils.getStartOfDay(parsedDate),
+                            parsedDuration,
+                            supportPhone.trim().ifBlank { null }
+                        )
+                    }
+                },
+                enabled = canSave
+            ) {
+                Text(stringResource(R.string.action_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
 }
 
 @Composable

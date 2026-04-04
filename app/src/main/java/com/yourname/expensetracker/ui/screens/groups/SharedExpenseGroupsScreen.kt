@@ -23,9 +23,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -33,6 +33,7 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -179,13 +180,14 @@ fun SharedExpenseGroupsScreen(
             AddExpenseDialog(
                 members = uiState.selectedGroup!!.members,
                 onDismiss = { viewModel.toggleAddExpense(false) },
-                onAdd = { description, amount, paidById, splitType ->
+                onAdd = { description, amount, paidById, splitType, customSplits ->
                     viewModel.addExpense(
                         uiState.selectedGroup!!.group.id,
                         description,
                         amount,
                         paidById,
-                        splitType
+                        splitType,
+                        customSplits
                     )
                 }
             )
@@ -363,6 +365,14 @@ private fun GroupDetailContent(
                 currencyFormat = currencyFormat
             )
         }
+
+        item {
+            SettlementPlanSection(
+                members = group.members,
+                memberBalances = group.memberBalances,
+                currencyFormat = currencyFormat
+            )
+        }
         
         // Expenses Section
         if (group.expenses.isNotEmpty()) {
@@ -401,6 +411,82 @@ private fun GroupDetailContent(
             Spacer(modifier = Modifier.height(80.dp))
         }
     }
+}
+
+@Composable
+private fun SettlementPlanSection(
+    members: List<GroupMember>,
+    memberBalances: Map<Long, Double>,
+    currencyFormat: NumberFormat
+) {
+    val memberNames = remember(members) { members.associate { it.id to it.name } }
+    var settledTransferKeys by remember(memberBalances) { mutableStateOf(setOf<String>()) }
+
+    val settlementTransfers = remember(memberBalances) {
+        SplitCalculator.simplifyBalances(memberBalances)
+    }
+
+    val pendingTransfers = settlementTransfers.filterNot { (fromId, toId, amount) ->
+        buildSettlementKey(fromId, toId, amount) in settledTransferKeys
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Settlement Plan",
+            style = MaterialTheme.typography.titleMedium,
+            color = SemanticColors.TextPrimary,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+
+        if (pendingTransfers.isEmpty()) {
+            Text(
+                text = stringResource(R.string.label_settled_up),
+                style = MaterialTheme.typography.bodyMedium,
+                color = SemanticColors.TextSecondary
+            )
+        } else {
+            pendingTransfers.forEach { (fromId, toId, amount) ->
+                val fromName = memberNames[fromId] ?: "Member #$fromId"
+                val toName = memberNames[toId] ?: "Member #$toId"
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = SemanticColors.SurfaceLight.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "$fromName → $toName: ${currencyFormat.format(amount)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SemanticColors.TextPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        TextButton(
+                            onClick = {
+                                settledTransferKeys = settledTransferKeys + buildSettlementKey(fromId, toId, amount)
+                            }
+                        ) {
+                            Text("Settle")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun buildSettlementKey(fromId: Long, toId: Long, amount: Double): String {
+    return "$fromId-$toId-${"%.2f".format(Locale.US, amount)}"
 }
 
 @Composable
@@ -677,12 +763,28 @@ private fun AddMemberDialog(
 private fun AddExpenseDialog(
     members: List<GroupMember>,
     onDismiss: () -> Unit,
-    onAdd: (String, Double, Long, SplitType) -> Unit
+    onAdd: (String, Double, Long, SplitType, Map<Long, Double>?) -> Unit
 ) {
     var description by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     var paidById by remember { mutableStateOf(members.firstOrNull()?.id ?: 0L) }
     var splitType by remember { mutableStateOf(SplitType.EQUAL) }
+    var memberSplitInputs by remember {
+        mutableStateOf(members.associate { it.id to "" })
+    }
+
+    val totalAmount = amount.toDoubleOrNull()
+    val parsedMemberSplits = memberSplitInputs.mapValues { it.value.toDoubleOrNull() }
+    val allInputsValid = parsedMemberSplits.values.all { it != null }
+    val splitTotal = parsedMemberSplits.values.sumOf { it ?: 0.0 }
+    val isNonEqualSplit = splitType != SplitType.EQUAL
+    val isSplitValid = when (splitType) {
+        SplitType.EQUAL -> true
+        SplitType.CUSTOM_PERCENT -> allInputsValid && abs(splitTotal - 100.0) <= 0.1
+        SplitType.CUSTOM_AMOUNT, SplitType.UNEQUAL -> {
+            totalAmount != null && allInputsValid && abs(splitTotal - totalAmount) <= 0.01
+        }
+    }
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -752,10 +854,85 @@ private fun AddExpenseDialog(
                         SplitType.values().forEach { type ->
                             DropdownMenuItem(
                                 text = { Text(type.name.lowercase().replaceFirstChar { it.uppercase() }) },
-                                onClick = { splitType = type; splitExpanded = false }
+                                onClick = {
+                                    splitType = type
+                                    splitExpanded = false
+                                    memberSplitInputs = members.associate { member ->
+                                        val seeded = when (type) {
+                                            SplitType.EQUAL -> ""
+                                            SplitType.CUSTOM_PERCENT -> String.format(
+                                                Locale.US,
+                                                "%.2f",
+                                                100.0 / members.size.coerceAtLeast(1)
+                                            )
+                                            SplitType.CUSTOM_AMOUNT, SplitType.UNEQUAL -> {
+                                                val amt = amount.toDoubleOrNull()?.div(members.size.coerceAtLeast(1)) ?: 0.0
+                                                String.format(Locale.US, "%.2f", amt)
+                                            }
+                                        }
+                                        member.id to seeded
+                                    }
+                                }
                             )
                         }
                     }
+                }
+
+                if (isNonEqualSplit) {
+                    HorizontalDivider()
+                    Text(
+                        text = if (splitType == SplitType.CUSTOM_PERCENT) {
+                            "Enter each member's percentage"
+                        } else {
+                            "Enter each member's amount"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = SemanticColors.TextSecondary
+                    )
+
+                    members.forEach { member ->
+                        OutlinedTextField(
+                            value = memberSplitInputs[member.id].orEmpty(),
+                            onValueChange = { value ->
+                                memberSplitInputs = memberSplitInputs.toMutableMap().apply {
+                                    this[member.id] = value
+                                }
+                            },
+                            label = {
+                                Text(
+                                    if (splitType == SplitType.CUSTOM_PERCENT) {
+                                        "${member.name}${if (member.isCurrentUser) " (You)" else ""} %"
+                                    } else {
+                                        "${member.name}${if (member.isCurrentUser) " (You)" else ""}"
+                                    }
+                                )
+                            },
+                            suffix = {
+                                if (splitType == SplitType.CUSTOM_PERCENT) {
+                                    Text("%")
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
+
+                    val summaryText = when (splitType) {
+                        SplitType.CUSTOM_PERCENT -> "Total: ${String.format(Locale.US, "%.2f", splitTotal)}% (must be 100%)"
+                        SplitType.CUSTOM_AMOUNT, SplitType.UNEQUAL -> {
+                            val totalText = String.format(Locale.US, "%.2f", splitTotal)
+                            val amountText = totalAmount?.let { String.format(Locale.US, "%.2f", it) } ?: "-"
+                            "Split total: $totalText (amount: $amountText)"
+                        }
+                        SplitType.EQUAL -> ""
+                    }
+
+                    Text(
+                        text = summaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isSplitValid) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                    )
                 }
             }
         },
@@ -763,10 +940,14 @@ private fun AddExpenseDialog(
             Button(
                 onClick = {
                     amount.toDoubleOrNull()?.let { amt ->
-                        onAdd(description, amt, paidById, splitType)
+                        val customSplits = when (splitType) {
+                            SplitType.EQUAL -> null
+                            else -> parsedMemberSplits.mapValues { it.value ?: 0.0 }
+                        }
+                        onAdd(description, amt, paidById, splitType, customSplits)
                     }
                 },
-                enabled = description.isNotBlank() && amount.toDoubleOrNull() != null
+                enabled = description.isNotBlank() && amount.toDoubleOrNull() != null && isSplitValid
             ) {
                 Text(stringResource(R.string.groups_add_expense_button))
             }

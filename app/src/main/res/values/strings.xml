@@ -30,6 +30,7 @@
     <string name="action_skip">Skip</string>
     <string name="action_next">Next</string>
     <string name="action_previous">Previous</string>
+    <string name="action_undo">Undo</string>
     
     <!-- Navigation -->
     <string name="nav_home">Home</string>
@@ -38,6 +39,7 @@
     <string name="nav_plan">Plan</string>
     <string name="nav_analytics">Analytics</string>
     <string name="nav_map">Map</string>
+    <string name="nav_more">More</string>
     <string name="nav_features">Features</string>
     <string name="nav_assistant">Assistant</string>
     
@@ -403,6 +405,16 @@
     <string name="review_clear_scanned_data">Clear Scanned Data</string>
     <string name="review_clear_scanned_cd">Clear scanned data</string>
     <string name="review_clear_queue">Clear Review Queue</string>
+    <string name="review_approve_all_cd">Approve all pending reviews</string>
+    <string name="review_approve_all_title">Approve all reviews?</string>
+    <string name="review_approve_all_message">Approve all %1$d pending reviews now?</string>
+    <string name="review_approve_all_action">Approve all</string>
+    <string name="review_clear_debug_confirm_title">Clear debug data?</string>
+    <string name="review_clear_debug_confirm_message">This will permanently remove locally stored debug export data.</string>
+    <string name="review_clear_scanned_confirm_title">Clear scanned data?</string>
+    <string name="review_clear_scanned_confirm_message">This will remove all scanned receipts and parsed debug artifacts.</string>
+    <string name="review_clear_queue_confirm_title">Clear review queue?</string>
+    <string name="review_clear_queue_confirm_message">Reject and remove all %1$d pending reviews?</string>
     <string name="review_empty_cd">All caught up! No transactions need your review.</string>
     <string name="review_empty_title">All caught up!</string>
     <string name="review_empty_subtitle">No transactions need your review</string>
@@ -618,6 +630,11 @@
     <string name="export_generate_button">Generate Export</string>
     <string name="export_success_title">Export Generated</string>
     <string name="export_copy_button">Copy to Clipboard</string>
+    <string name="export_save_button">Save File</string>
+    <string name="export_copy_success">Export copied to clipboard</string>
+    <string name="export_save_success">Export saved successfully</string>
+    <string name="export_share_success">Share sheet opened</string>
+    <string name="export_save_failed">Couldn’t save export: %1$s</string>
     <string name="export_how_to_title">How to Use</string>
     <string name="export_tip_format">Tip: Paste the data into a text editor and save with the appropriate extension (%1$s)</string>
     <string name="export_error_generate">Failed to generate export: %1$s</string>
@@ -950,6 +967,7 @@
     <string name="chart_trend_title">TREND</string>
     <string name="chart_legend_actual">Actual</string>
     <string name="chart_legend_projected">Projected</string>
+    <string name="chart_legend_budget_limit">Budget limit</string>
     
     <!-- Statistical Visualizations -->
     <string name="analytics_merchant_visits_format">%1$d visits · Avg €%2$.2f</string>
@@ -1080,6 +1098,8 @@
     
     <!-- G07: Debug & Diagnostics -->
     <string name="debug_title_format">Debug: Notifications (%1$d)</string>
+    <string name="debug_title">Debug</string>
+    <string name="debug_disabled_in_release">Debug tools are disabled in release builds.</string>
     <string name="debug_section_service_diagnostics">Service Diagnostics</string>
     <string name="debug_section_ai_runtime">AI Runtime Diagnostics</string>
     <string name="debug_section_mass_simulation">Mass Simulation</string>
@@ -1096,6 +1116,22 @@
     <string name="debug_reset_expenses">Reset All Expenses</string>
     <string name="debug_reset_budgets">Reset All Budgets</string>
     <string name="debug_reset_trust_scores">Reset Trust Scores</string>
+    <string name="debug_confirm_clear_all_title">Clear all debug data?</string>
+    <string name="debug_confirm_clear_all_message">This will remove captured notifications and derived debug data.</string>
+    <string name="debug_confirm_reset_expenses_title">Reset all expenses?</string>
+    <string name="debug_confirm_reset_expenses_message">This will delete all expenses created for this app profile.</string>
+    <string name="debug_confirm_reset_budgets_title">Reset all budgets?</string>
+    <string name="debug_confirm_reset_budgets_message">This will remove all saved budget entries.</string>
+    <string name="debug_confirm_reset_trust_scores_title">Reset trust scores?</string>
+    <string name="debug_confirm_reset_trust_scores_message">This will clear source trust statistics and history.</string>
+    <string name="debug_action_clear_all_done">Debug data cleared</string>
+    <string name="debug_action_reset_expenses_done">Expenses reset</string>
+    <string name="debug_action_reset_budgets_done">Budgets reset</string>
+    <string name="debug_action_reset_trust_scores_done">Trust scores reset</string>
+    <string name="debug_action_no_data_to_clear">No debug data to clear</string>
+    <string name="debug_action_no_expenses_to_reset">No expenses to reset</string>
+    <string name="debug_action_no_budgets_to_reset">No budgets to reset</string>
+    <string name="debug_action_no_trust_scores_to_reset">No trust scores to reset</string>
     <string name="debug_export">Export</string>
     <string name="debug_import">Import</string>
     <string name="debug_categorization_pipeline">Categorization Pipeline Debug</string>
@@ -1239,6 +1275,12 @@
     <string name="warranty_confidence_format">Confidence: %1$d%%</string>
     <string name="warranty_action_confirm">Confirm</string>
     <string name="warranty_action_reject">Reject</string>
+    <string name="warranty_manual_add_title">Add Warranty Manually</string>
+    <string name="warranty_manual_product_name">Product name</string>
+    <string name="warranty_manual_merchant_name">Merchant</string>
+    <string name="warranty_manual_purchase_date">Purchase date</string>
+    <string name="warranty_manual_duration_months">Warranty duration (months)</string>
+    <string name="warranty_manual_support_phone_optional">Support phone (optional)</string>
     
     <!-- Receipt Matching -->
     <string name="screen_receipt_matching">Receipt Matching</string>
@@ -1256,6 +1298,13 @@
     <string name="receipt_suggested_match_details">Match Details</string>
     <string name="receipt_empty_title">No match suggestions</string>
     <string name="receipt_empty_message">Scan receipts to see match suggestions here</string>
+    <string name="receipt_section_unmatched_queue">Unmatched Receipts</string>
+    <string name="receipt_action_manual_match">Manual Match</string>
+    <string name="receipt_action_skip">Skip</string>
+    <string name="receipt_action_rerun">Re-run</string>
+    <string name="receipt_manual_match_title">Manual Match Receipt</string>
+    <string name="receipt_manual_match_target">Receipt: %1$s • %2$s</string>
+    <string name="receipt_manual_match_no_candidates">No candidate expenses found nearby in time.</string>
     
     <!-- Split Templates -->
     <string name="screen_split_templates">Split Templates</string>
@@ -1473,6 +1522,14 @@
     <string name="map_pin_expense_title">Pin expense</string>
     <string name="map_source_format">Source: %1$s</string>
     <string name="map_top_spending_places">Top spending places</string>
+    <string name="map_filter_date_range">Date range</string>
+    <string name="map_filter_clear">Clear filters</string>
+    <string name="map_filter_all_dates">All</string>
+    <string name="map_filter_7_days">7d</string>
+    <string name="map_filter_30_days">30d</string>
+    <string name="map_filter_90_days">90d</string>
+    <string name="map_filter_categories">Categories</string>
+    <string name="map_filter_uncategorized">Uncategorized</string>
     
     <!-- Add Expense Sheet -->
     <string name="add_expense_not_mine">Not mine (belongs to someone else)</string>
@@ -1540,6 +1597,18 @@
     <string name="ai_toggle_on_device">Allow on-device AI</string>
     <string name="ai_section_preferred_mode">Preferred Mode</string>
     <string name="ai_section_preferred_mode_desc">Choose how the app should prefer local and cloud AI when both are available.</string>
+    <string name="ai_section_provider">AI Provider &amp; API Key</string>
+    <string name="ai_section_provider_desc">Configure cloud provider credentials and verify connectivity before using cloud AI features.</string>
+    <string name="ai_provider_label">Provider: %1$s</string>
+    <string name="ai_api_key_label">API key</string>
+    <string name="ai_api_key_placeholder">Enter Gemini API key</string>
+    <string name="ai_api_key_saved_masked">Saved key: ••••••••••••••••••••</string>
+    <string name="ai_api_key_secure_note">Stored securely in encrypted device storage (Android Keystore).</string>
+    <string name="ai_show_api_key_cd">Show API key</string>
+    <string name="ai_hide_api_key_cd">Hide API key</string>
+    <string name="ai_save_api_key">Save key</string>
+    <string name="ai_test_connection">Test connection</string>
+    <string name="ai_testing_connection">Testing…</string>
     <string name="ai_mode_auto">Automatic</string>
     <string name="ai_mode_on_device">On-device</string>
     <string name="ai_mode_cloud">Cloud</string>
@@ -1783,8 +1852,8 @@
     
     <!-- Assistant Sheet -->
     <string name="assistant_title">Assistant</string>
-    <string name="assistant_clear_session_cd">Clear session</string>
-    <string name="assistant_clear_history_cd">Clear history</string>
+    <string name="assistant_clear_session_cd">Clear current conversation</string>
+    <string name="assistant_clear_history_cd">Clear all history</string>
     <string name="assistant_unavailable">Assistant is unavailable</string>
     <string name="assistant_thinking">Thinking…</string>
     <string name="assistant_retry">Retry</string>

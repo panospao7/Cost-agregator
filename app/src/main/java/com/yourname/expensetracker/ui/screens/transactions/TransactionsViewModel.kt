@@ -15,6 +15,8 @@ import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -86,6 +88,9 @@ class TransactionsViewModel @Inject constructor(
     // Pagination state for ALL tab
     private val _currentPage = MutableStateFlow(0)
     private val _pagedExpenses = MutableStateFlow<List<ExpenseWithCategory>>(emptyList())
+    private var loadInitialAllJob: Job? = null
+    private var loadMoreJob: Job? = null
+    private var loadInitialAllRequestId: Long = 0L
     
     // Loading states - using StateFlow for thread-safe observable loading state
     private val _isLoading = MutableStateFlow(false)
@@ -93,6 +98,9 @@ class TransactionsViewModel @Inject constructor(
     
     private val _isLoadingMoreState = MutableStateFlow(false)
     val isLoadingMoreState: StateFlow<Boolean> = _isLoadingMoreState.asStateFlow()
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     // Error state for UI feedback
     private val _error = MutableSharedFlow<String>()
@@ -128,15 +136,21 @@ class TransactionsViewModel @Inject constructor(
                 if (params.tab == TransactionTab.ALL) {
                     _pagedExpenses
                 } else {
-                    val (start, end) = params.filter.dateRange ?: Pair(0L, timeProvider.now())
+                    val tabRange = getTimeRangeForTab(params.tab)
+                    val filterRange = params.filter.dateRange ?: tabRange
+                    val effectiveRange = intersectRanges(tabRange, filterRange)
 
-                    expenseRepository.getExpensesWithCategoryFiltered(
-                        startMs = start,
-                        endMs = end,
-                        type = params.filter.transactionType,
-                        categoryId = params.filter.categoryId,
-                        merchantKey = params.filter.merchantName?.let { MerchantKeyGenerator.generate(it) }
-                    )
+                    if (effectiveRange == null) {
+                        flowOf(emptyList())
+                    } else {
+                        expenseRepository.getExpensesWithCategoryFiltered(
+                            startMs = effectiveRange.first,
+                            endMs = effectiveRange.second,
+                            type = params.filter.transactionType,
+                            categoryId = params.filter.categoryId,
+                            merchantKey = params.filter.merchantName?.let { MerchantKeyGenerator.generate(it) }
+                        )
+                    }
                 }
             } else if (params.tab == TransactionTab.ALL) {
                 _pagedExpenses
@@ -146,12 +160,21 @@ class TransactionsViewModel @Inject constructor(
             }
 
             baseExpenses.map { expenses ->
-                var filtered = expenses
+                var filtered = if (params.tab == TransactionTab.ALL) {
+                    expenses
+                } else {
+                    applyAmountConstraints(expenses, params.filter)
+                }
                 if (params.query.isNotBlank()) {
                     filtered = filtered.filter { matchesSearch(it, params.query) }
                 }
                 filtered = filterByOwnership(filtered, params.ownership)
                 filtered
+            }
+        }
+        .onEach {
+            if (_isRefreshing.value && _selectedTab.value != TransactionTab.ALL) {
+                _isRefreshing.value = false
             }
         }
         .flowOn(Dispatchers.Default)
@@ -241,6 +264,12 @@ class TransactionsViewModel @Inject constructor(
 
     fun clearFilter() {
         _filter.value = null
+        _ownershipFilter.value = OwnershipFilter.ALL
+        if (_selectedTab.value == TransactionTab.ALL) {
+            _currentPage.value = 0
+            _pagedExpenses.value = emptyList()
+            loadInitialAll()
+        }
     }
 
     fun selectTab(tab: TransactionTab) {
@@ -285,6 +314,7 @@ class TransactionsViewModel @Inject constructor(
     }
 
     fun refresh() {
+        _isRefreshing.value = true
         _refreshTrigger.value += 1
         
         if (_selectedTab.value == TransactionTab.ALL) {
@@ -298,8 +328,9 @@ class TransactionsViewModel @Inject constructor(
         // Guard conditions - prevent loading if not on ALL tab or already loading
         if (_selectedTab.value != TransactionTab.ALL) return
         if (_isLoadingMoreState.value) return
-        
-        viewModelScope.launch {
+
+        loadMoreJob?.cancel()
+        loadMoreJob = viewModelScope.launch {
             // Double-check inside coroutine to prevent race conditions
             if (_isLoadingMoreState.value) return@launch
             
@@ -334,6 +365,7 @@ class TransactionsViewModel @Inject constructor(
                     _currentPage.value = nextPage
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _error.emit("Failed to load more transactions: ${e.message}")
             } finally {
                 _isLoadingMoreState.value = false
@@ -534,7 +566,11 @@ class TransactionsViewModel @Inject constructor(
     // ============================================================
 
     private fun loadInitialAll() {
-        viewModelScope.launch {
+        loadMoreJob?.cancel()
+        _isLoadingMoreState.value = false
+        loadInitialAllJob?.cancel()
+        val requestId = ++loadInitialAllRequestId
+        loadInitialAllJob = viewModelScope.launch {
             _isLoading.value = true
             try {
                 val initial = withContext(Dispatchers.IO) {
@@ -554,12 +590,17 @@ class TransactionsViewModel @Inject constructor(
                         sortOrder = _sortOrder.value
                     )
                 }
+                if (requestId != loadInitialAllRequestId) return@launch
                 _pagedExpenses.value = initial
                 _currentPage.value = 0
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _error.emit("Failed to load transactions: ${e.message}")
             } finally {
-                _isLoading.value = false
+                if (requestId == loadInitialAllRequestId) {
+                    _isLoading.value = false
+                    _isRefreshing.value = false
+                }
             }
         }
     }
@@ -590,6 +631,31 @@ class TransactionsViewModel @Inject constructor(
             TransactionTab.QUARTER -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 90)
             TransactionTab.YEAR -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 365)
             TransactionTab.ALL -> Pair(0L, now)
+        }
+    }
+
+    private fun intersectRanges(
+        first: Pair<Long, Long>,
+        second: Pair<Long, Long>
+    ): Pair<Long, Long>? {
+        val start = maxOf(first.first, second.first)
+        val end = minOf(first.second, second.second)
+        return if (start < end) start to end else null
+    }
+
+    private fun applyAmountConstraints(
+        expenses: List<ExpenseWithCategory>,
+        filter: TransactionFilter?
+    ): List<ExpenseWithCategory> {
+        if (filter == null) return expenses
+        val minAmount = filter.minAmount
+        val maxAmount = filter.maxAmount
+        if (minAmount == null && maxAmount == null) return expenses
+
+        return expenses.filter { item ->
+            val amount = item.expense.effectiveAmount
+            (minAmount == null || amount >= minAmount) &&
+                (maxAmount == null || amount <= maxAmount)
         }
     }
 

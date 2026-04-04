@@ -78,7 +78,13 @@ fun ForecastTimeline(
             
             val budgetLimitEntries = listOf(
                 FloatEntry(0f, safeBudgetLimit.toFloat()),
-                FloatEntry((pastPoints.size + projectionEntries.size).toFloat(), safeBudgetLimit.toFloat())
+                FloatEntry(
+                    listOfNotNull(
+                        pastEntries.maxOfOrNull { it.x },
+                        projectionEntries.maxOfOrNull { it.x }
+                    ).maxOrNull() ?: 0f,
+                    safeBudgetLimit.toFloat()
+                )
             )
             entryModelOf(pastEntries, projectionEntries, budgetLimitEntries)
         }
@@ -127,9 +133,11 @@ fun ForecastTimeline(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
-             LegendItem(stringResource(R.string.chart_legend_actual), SemanticColors.PrimaryIndigo)
-             Spacer(modifier = Modifier.width(16.dp))
-             LegendItem(stringResource(R.string.chart_legend_projected), SemanticColors.PrimaryIndigo.copy(alpha = 0.3f))
+              LegendItem(stringResource(R.string.chart_legend_actual), SemanticColors.PrimaryIndigo)
+              Spacer(modifier = Modifier.width(16.dp))
+              LegendItem(stringResource(R.string.chart_legend_projected), SemanticColors.PrimaryIndigo.copy(alpha = 0.3f))
+              Spacer(modifier = Modifier.width(16.dp))
+              LegendItem(stringResource(R.string.chart_legend_budget_limit), SemanticColors.WarningOrange.copy(alpha = 0.5f))
         }
     }
 }

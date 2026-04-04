@@ -2,14 +2,9 @@
 
 package com.yourname.expensetracker.ui.screens.naturallanguage
 
-import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
-import android.speech.SpeechRecognizer
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,12 +18,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -36,7 +29,6 @@ import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchE
 import java.text.NumberFormat
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -45,24 +37,10 @@ fun NaturalLanguageSearchScreen(
     onViewTransaction: (Long) -> Unit,
     viewModel: NaturalLanguageSearchViewModel = hiltViewModel()
 ) {
-    val context = LocalContext.current
     val searchState by viewModel.searchState.collectAsState()
     val query by viewModel.query.collectAsState()
     val results by viewModel.results.collectAsState()
     val interpretation by viewModel.interpretation.collectAsState()
-    
-    var showVoiceSearch by remember { mutableStateOf(false) }
-    var isListening by remember { mutableStateOf(false) }
-    
-    // Permission launcher
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            startVoiceSearch(context, viewModel) { isListening = false }
-            isListening = true
-        }
-    }
     
     Scaffold(
         topBar = {
@@ -100,18 +78,9 @@ fun NaturalLanguageSearchScreen(
                         },
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
-                            Row {
-                                if (query.isNotEmpty()) {
-                                    IconButton(onClick = { viewModel.clearQuery() }) {
-                                        Icon(Icons.Default.Clear, stringResource(R.string.cd_clear))
-                                    }
-                                }
-                                IconButton(
-                                    onClick = { },
-                                    enabled = false
-                                ) {
-                                    Icon(Icons.Default.Mic, stringResource(R.string.nlp_search_voice_cd), 
-                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { viewModel.clearQuery() }) {
+                                    Icon(Icons.Default.Clear, stringResource(R.string.cd_clear))
                                 }
                             }
                         }
@@ -505,15 +474,6 @@ fun InitialSearchState() {
             )
         }
     }
-}
-
-private fun startVoiceSearch(
-    context: Context,
-    viewModel: NaturalLanguageSearchViewModel,
-    onListeningEnd: () -> Unit
-) {
-    // Implementation would create and start the speech recognizer
-    // This is a placeholder - real implementation would need proper handling
 }
 
 private fun String.capitalize(): String {

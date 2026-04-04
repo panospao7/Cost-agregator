@@ -94,6 +94,7 @@ fun TransactionsScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val activeFilter by viewModel.filter.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
     val isLoadingMore by viewModel.isLoadingMoreState.collectAsState()
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
     val ownershipFilter by viewModel.ownershipFilter.collectAsState()
@@ -125,7 +126,6 @@ fun TransactionsScreen(
     
     // Pull-to-refresh state
     val pullToRefreshState = rememberPullToRefreshState()
-    var isRefreshing by remember { mutableStateOf(false) }
     
     // Error handling
     val snackbarHostState = remember { SnackbarHostState() }
@@ -170,14 +170,6 @@ fun TransactionsScreen(
         }
     }
     
-    // Handle refresh
-    LaunchedEffect(isRefreshing) {
-        if (isRefreshing) {
-            viewModel.refresh()
-            isRefreshing = false
-        }
-    }
-
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -429,7 +421,7 @@ fun TransactionsScreen(
             isRefreshing = isRefreshing,
             onRefresh = { 
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                isRefreshing = true 
+                viewModel.refresh()
             },
             modifier = Modifier.padding(padding)
         ) {

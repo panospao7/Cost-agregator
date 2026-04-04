@@ -21,6 +21,9 @@ interface BudgetDao {
     @Query("SELECT * FROM budgets")
     suspend fun getAll(): List<Budget>
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(budgets: List<Budget>)
+
     @Query("SELECT * FROM budgets")
     fun getAllFlow(): Flow<List<Budget>>
 

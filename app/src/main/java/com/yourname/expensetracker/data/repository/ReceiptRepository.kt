@@ -670,4 +670,38 @@ class ReceiptRepository @Inject constructor(
     suspend fun getExpenseById(id: Long): com.yourname.expensetracker.data.database.entity.Expense? {
         return expenseDao.getById(id)
     }
+
+    suspend fun clearMatchForReceipt(receiptId: Long) {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return
+        val updated = receipt.copy(
+            expenseId = null,
+            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.UNMATCHED,
+            suggestedExpenseId = null,
+            matchConfidence = null
+        )
+        scannedReceiptDao.update(updated)
+    }
+
+    suspend fun getCandidateExpensesForReceipt(
+        receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt,
+        lookbackDays: Int = 14,
+        limit: Int = 20
+    ): List<com.yourname.expensetracker.data.database.entity.Expense> {
+        val anchorDate = receipt.parsedDate ?: receipt.createdAt
+        val dayMs = 86_400_000L
+        val startDate = anchorDate - lookbackDays * dayMs
+        val endDate = anchorDate + lookbackDays * dayMs
+        val receiptAmount = receipt.parsedTotal
+
+        return expenseDao.getExpensesBetween(startDate, endDate)
+            .asSequence()
+            .filter { it.transactionType == TransactionType.PURCHASE }
+            .sortedBy { expense ->
+                val amountPenalty = receiptAmount?.let { kotlin.math.abs(it - expense.amount) } ?: 0.0
+                val datePenalty = kotlin.math.abs(anchorDate - expense.date) / dayMs.toDouble()
+                amountPenalty + datePenalty
+            }
+            .take(limit)
+            .toList()
+    }
 }

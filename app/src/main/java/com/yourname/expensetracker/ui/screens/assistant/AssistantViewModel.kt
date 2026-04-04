@@ -4,9 +4,7 @@ import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
-import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
-import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
@@ -25,6 +23,7 @@ import com.yourname.expensetracker.ui.mappers.toUi
 import com.yourname.expensetracker.R
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -183,17 +182,7 @@ class AssistantViewModel @Inject constructor(
 
                 when (val interpretation = interpretFinancialQueryUseCase(query, historyMessages)) {
                     is FinancialQueryInterpretationResult.Structured -> {
-                        val result = try {
-                            executeFinancialQueryUseCase(interpretation.intent)
-                        } catch (e: Exception) {
-                            Timber.e(e, "Query execution failed")
-                            _uiState.value = _uiState.value.copy(
-                                isLoading = false,
-                                errorMessage = "Failed to execute query: ${e.message}",
-                                input = query
-                            )
-                            return@launch
-                        }
+                        val result = executeFinancialQueryUseCase(interpretation.intent)
                         val navigationFilter = mapFinancialQueryToNavigationUseCase(interpretation.intent)?.toUi()
                         val resultItem = AssistantConversationItem.Result(
                             id = "result-${System.nanoTime()}",
@@ -239,7 +228,24 @@ class AssistantViewModel @Inject constructor(
                         persistAssistantTurn(sessionId, result)
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e, "Assistant query pipeline failed")
+                val friendlyMessage = mapAssistantExceptionToUserMessage(e)
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = friendlyMessage,
+                    messages = _uiState.value.messages + AssistantConversationItem.Error(
+                        id = "error-${System.nanoTime()}",
+                        text = friendlyMessage
+                    ),
+                    input = if (_uiState.value.input.isBlank()) query else _uiState.value.input
+                )
             } finally {
+                if (_uiState.value.isLoading) {
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
                 _isSubmitting.value = false
                 _currentQueryJob = null
             }
@@ -408,6 +414,18 @@ class AssistantViewModel @Inject constructor(
             message = message,
             diagnostics = runtime.routeDisplayText()
         )
+    }
+
+    private fun mapAssistantExceptionToUserMessage(error: Throwable): String {
+        val details = error.message?.lowercase().orEmpty()
+        return when {
+            details.contains("timeout") -> "The assistant took too long to respond. Please try again."
+            details.contains("network") || details.contains("offline") || details.contains("connection") ->
+                "Couldn’t reach AI right now. Check your connection and retry."
+            details.contains("ssl") || details.contains("certificate") || details.contains("secure") ->
+                "Secure connection failed. Please try again in a moment."
+            else -> "Something went wrong while handling your request. Please retry."
+        }
     }
 }
 

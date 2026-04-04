@@ -395,9 +395,15 @@ fun EnhancedCategoryItem(
             // Budget bar if exists
             item.budgetAmount?.let { budget ->
                 Spacer(modifier = Modifier.height(12.dp))
+                val hasValidBudget = budget > 0.0
+                val budgetProgress = if (hasValidBudget) {
+                    (item.totalSpent / budget).toFloat().coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     LinearProgressIndicator(
-                        progress = { (item.totalSpent / budget).toFloat().coerceIn(0f, 1f) },
+                        progress = { budgetProgress },
                         modifier = Modifier
                             .weight(1f)
                             .height(6.dp)
@@ -411,7 +417,11 @@ fun EnhancedCategoryItem(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        stringResource(R.string.analytics_budget_percent_format, item.budgetUtilizationPercent?.toInt() ?: 0),
+                        text = if (hasValidBudget) {
+                            stringResource(R.string.analytics_budget_percent_format, item.budgetUtilizationPercent?.toInt() ?: 0)
+                        } else {
+                            stringResource(R.string.forecast_no_budget_set)
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -911,16 +921,23 @@ fun BudgetVsActualChart(items: List<BudgetVsActualItem>) {
             Spacer(modifier = Modifier.height(16.dp))
 
             items.forEach { item ->
+                val hasValidBudget = item.budgetAmount > 0
+                val safePercentUsed = if (hasValidBudget) {
+                    item.percentUsed.takeIf { it.isFinite() && it >= 0f } ?: 0f
+                } else {
+                    0f
+                }
                 val barColor = try {
                     Color(android.graphics.Color.parseColor(item.categoryColor))
                 } catch (_: Exception) {
                     SemanticColors.PrimaryIndigo
                 }
                 val statusColor = when {
-                    item.percentUsed > 1f -> SemanticColors.DangerRed
-                    item.percentUsed > 0.75f -> SemanticColors.WarningOrange
+                    safePercentUsed > 1f -> SemanticColors.DangerRed
+                    safePercentUsed > 0.75f -> SemanticColors.WarningOrange
                     else -> SemanticColors.SuccessGreen
                 }
+                val budgetTextColor = if (hasValidBudget) statusColor else MaterialTheme.colorScheme.onSurfaceVariant
 
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -940,9 +957,13 @@ fun BudgetVsActualChart(items: List<BudgetVsActualItem>) {
                                 color = SemanticColors.TextPrimary
                             )
                             Text(
-                                stringResource(R.string.analytics_budget_range_format, item.actualSpent, item.budgetAmount),
+                                text = if (hasValidBudget) {
+                                    stringResource(R.string.analytics_budget_range_format, item.actualSpent, item.budgetAmount)
+                                } else {
+                                    stringResource(R.string.forecast_no_budget_set)
+                                },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = statusColor,
+                                color = budgetTextColor,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -957,11 +978,11 @@ fun BudgetVsActualChart(items: List<BudgetVsActualItem>) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxHeight()
-                                    .fillMaxWidth(item.percentUsed.coerceIn(0f, 1f))
+                                    .fillMaxWidth(safePercentUsed.coerceIn(0f, 1f))
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(barColor.copy(alpha = 0.8f))
                             )
-                            if (item.percentUsed > 1f) {
+                            if (safePercentUsed > 1f) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxHeight()
@@ -972,16 +993,20 @@ fun BudgetVsActualChart(items: List<BudgetVsActualItem>) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxHeight()
-                                        .fillMaxWidth((1f / item.percentUsed).coerceIn(0f, 1f))
+                                        .fillMaxWidth((1f / safePercentUsed).coerceIn(0f, 1f))
                                         .clip(RoundedCornerShape(4.dp))
                                         .background(barColor.copy(alpha = 0.8f))
                                 )
                             }
                         }
                         Text(
-                            stringResource(R.string.analytics_percent_used_format, (item.percentUsed * 100).toInt()),
+                            text = if (hasValidBudget) {
+                                stringResource(R.string.analytics_percent_used_format, (safePercentUsed * 100).toInt())
+                            } else {
+                                stringResource(R.string.forecast_no_budget_set)
+                            },
                             style = MaterialTheme.typography.labelSmall,
-                            color = statusColor.copy(alpha = 0.8f)
+                            color = budgetTextColor.copy(alpha = 0.8f)
                         )
                     }
                 }
@@ -1164,14 +1189,18 @@ fun RecurringItem(item: RecurringCandidate) {
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(item.merchant, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                Text("Estimated every ${item.intervalDays} days", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (item.intervalDays > 0) {
+                    Text("Estimated every ${item.intervalDays} days", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 item.nextExpectedDate?.let { nextDate ->
                     val dateStr = remember(nextDate) {
                         java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault()).format(nextDate)
                     }
                     Text("Next expected: $dateStr", style = MaterialTheme.typography.labelSmall, color = SemanticColors.PrimaryLight)
                 }
-                Text("Seen ${item.occurrences} times", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                if (item.occurrences > 0) {
+                    Text("Seen ${item.occurrences} times", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text("€${String.format("%.2f", item.amount)}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)

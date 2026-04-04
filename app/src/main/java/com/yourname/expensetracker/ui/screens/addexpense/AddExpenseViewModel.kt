@@ -242,6 +242,70 @@ class AddExpenseViewModel @Inject constructor(
             return
         }
 
+        val transferAccountNameTrimmed = currentState.transferAccountName.trim()
+        if (currentState.transactionType == TransactionType.TRANSFER) {
+            if (currentState.transferDirection == null) {
+                _state.update {
+                    it.copy(saveResult = SaveResult.Error("Transfer direction is required for transfer transactions"))
+                }
+                return
+            }
+            if (transferAccountNameTrimmed.isBlank()) {
+                _state.update {
+                    it.copy(saveResult = SaveResult.Error("Transfer account name is required for transfer transactions"))
+                }
+                return
+            }
+        }
+
+        val sharePercentageText = currentState.mySharePercentage.trim()
+        val shareAmountText = currentState.myShareAmount.trim()
+        val hasSharePercentage = sharePercentageText.isNotEmpty()
+        val hasShareAmount = shareAmountText.isNotEmpty()
+
+        val sharePercentage: Int?
+        val shareAmount: Double?
+        if (currentState.isSharedExpense) {
+            if (currentState.sharedWithName.trim().isBlank()) {
+                _state.update {
+                    it.copy(saveResult = SaveResult.Error("Shared with name is required for shared expenses"))
+                }
+                return
+            }
+
+            if (hasSharePercentage == hasShareAmount) {
+                _state.update {
+                    it.copy(saveResult = SaveResult.Error("Set either share % or share amount for shared expenses"))
+                }
+                return
+            }
+
+            if (hasSharePercentage) {
+                val parsedSharePercentage = sharePercentageText.toIntOrNull()
+                if (parsedSharePercentage == null || parsedSharePercentage !in 0..100) {
+                    _state.update {
+                        it.copy(saveResult = SaveResult.Error("Share percentage must be between 0 and 100"))
+                    }
+                    return
+                }
+                sharePercentage = parsedSharePercentage
+                shareAmount = null
+            } else {
+                val parsedShareAmount = AmountUtils.parseAmount(shareAmountText)
+                if (parsedShareAmount == null || parsedShareAmount <= 0) {
+                    _state.update {
+                        it.copy(saveResult = SaveResult.Error("Share amount must be greater than 0"))
+                    }
+                    return
+                }
+                sharePercentage = null
+                shareAmount = parsedShareAmount
+            }
+        } else {
+            sharePercentage = null
+            shareAmount = null
+        }
+
         // Normalize to 2 decimal places
         val normalizedAmount = java.math.BigDecimal(amount)
             .setScale(2, java.math.RoundingMode.HALF_UP)
@@ -251,9 +315,6 @@ class AddExpenseViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                val sharePercentage = currentState.mySharePercentage.toIntOrNull()
-                val shareAmount = currentState.myShareAmount.toDoubleOrNull()
-
                 // 1. Save the actual transaction
                 val result = manualExpenseRepository.addManualExpense(
                     merchant = merchantTrimmed,
@@ -264,12 +325,18 @@ class AddExpenseViewModel @Inject constructor(
                     paymentMethod = currentState.paymentMethod,
                     date = currentState.date,
                     notes = currentState.notes.takeIf { it.isNotBlank() },
-                    transferDirection = currentState.transferDirection,
-                    transferAccountName = currentState.transferAccountName.takeIf { it.isNotBlank() },
+                    transferDirection = currentState.transferDirection.takeIf {
+                        currentState.transactionType == TransactionType.TRANSFER
+                    },
+                    transferAccountName = transferAccountNameTrimmed.takeIf {
+                        currentState.transactionType == TransactionType.TRANSFER && it.isNotBlank()
+                    },
                     isNotMine = currentState.isNotMine,
                     ownerName = currentState.ownerName.takeIf { it.isNotBlank() },
                     isSharedExpense = currentState.isSharedExpense,
-                    sharedWithName = currentState.sharedWithName.takeIf { it.isNotBlank() },
+                    sharedWithName = currentState.sharedWithName.trim().takeIf {
+                        currentState.isSharedExpense && it.isNotBlank()
+                    },
                     mySharePercentage = sharePercentage,
                     myShareAmount = shareAmount
                 )

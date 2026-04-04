@@ -48,6 +48,9 @@ class ExpenseRepository @Inject constructor(
     private val merchantCategoryRepository: MerchantCategoryRepository,
     private val merchantNormalizer: MerchantNormalizer
 ) {
+    data class DebugExpenseSnapshot(
+        val expenses: List<Expense>
+    )
     // Mutex to prevent race conditions in category learning
     private val categoryUpdateMutex = Mutex()
     // Direct flow without sharing - each collector gets its own subscription
@@ -346,6 +349,17 @@ class ExpenseRepository @Inject constructor(
     }
 
     suspend fun deleteAllExpenses() = expenseDao.deleteAll()
+
+    suspend fun createDebugSnapshot(): DebugExpenseSnapshot {
+        return DebugExpenseSnapshot(expenses = expenseDao.getAll(limit = 20_000))
+    }
+
+    suspend fun restoreDebugSnapshot(snapshot: DebugExpenseSnapshot) {
+        expenseDao.deleteAll()
+        if (snapshot.expenses.isNotEmpty()) {
+            expenseDao.insertAll(snapshot.expenses)
+        }
+    }
     
     fun getTotalSpent(): Flow<Double?> = expenseDao.getTotalSpentFlow()
 

@@ -86,10 +86,10 @@ fun AssistantSheet(
                 }
 
                 Row {
+                    IconButton(onClick = { viewModel.clearSession() }) {
+                        Icon(Icons.Rounded.History, contentDescription = stringResource(R.string.assistant_clear_session_cd))
+                    }
                     if (uiState.canPersistHistory) {
-                        IconButton(onClick = { viewModel.clearSession() }) {
-                            Icon(Icons.Rounded.History, contentDescription = stringResource(R.string.assistant_clear_session_cd))
-                        }
                         IconButton(onClick = { viewModel.clearAllHistory() }) {
                             Icon(Icons.Rounded.DeleteSweep, contentDescription = stringResource(R.string.assistant_clear_history_cd))
                         }

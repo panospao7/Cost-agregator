@@ -638,11 +638,19 @@ class ReviewViewModel @Inject constructor(
     }
 
     fun approveAll() {
+        if (_isBatchProcessing.value) return
         viewModelScope.launch {
             try {
+                _isBatchProcessing.value = true
+                _batchProgress.value = Pair(0, 1)
                 reviewQueueRepository.approveAllReview()
+                _batchProgress.value = Pair(1, 1)
+                _errorMessage.value = "Approved all pending reviews."
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to approve all: ${e.message}"
+            } finally {
+                _isBatchProcessing.value = false
+                _batchProgress.value = null
             }
         }
     }

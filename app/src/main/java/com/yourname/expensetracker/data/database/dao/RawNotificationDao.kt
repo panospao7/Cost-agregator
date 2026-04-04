@@ -18,6 +18,9 @@ interface RawNotificationDao {
     
     @Query("SELECT * FROM raw_notifications ORDER BY capturedAt DESC")
     fun getAllFlow(): Flow<List<RawNotification>>
+
+    @Query("SELECT * FROM raw_notifications ORDER BY capturedAt DESC")
+    suspend fun getAll(): List<RawNotification>
     
     @Query("SELECT * FROM raw_notifications ORDER BY capturedAt DESC LIMIT :limit")
     fun getRecentFlow(limit: Int): Flow<List<RawNotification>>
@@ -36,6 +39,9 @@ interface RawNotificationDao {
     
     @Delete
     suspend fun delete(notification: RawNotification)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(notifications: List<RawNotification>)
     
     @Query("""
         SELECT EXISTS(

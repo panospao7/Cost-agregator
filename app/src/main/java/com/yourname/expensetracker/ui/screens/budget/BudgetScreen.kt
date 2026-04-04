@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +57,8 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BudgetScreen(
+    initialCategoryId: Long? = null,
+    initialCategoryName: String? = null,
     onNavigateToForecast: ((Budget) -> Unit)? = null,
     viewModel: BudgetViewModel = hiltViewModel()
 ) {
@@ -65,6 +68,10 @@ fun BudgetScreen(
     
     var showAddDialog by remember { mutableStateOf(false) }
     var editingBudget by remember { mutableStateOf<BudgetStatus?>(null) }
+    var preselectedCategoryIdForAdd by remember { mutableStateOf<Long?>(null) }
+    var hasHandledInitialCategoryContext by rememberSaveable(initialCategoryId, initialCategoryName) {
+        mutableStateOf(false)
+    }
 
     LaunchedEffect(Unit) {
         viewModel.refreshBudgets()
@@ -82,6 +89,52 @@ fun BudgetScreen(
         }
     }
 
+    LaunchedEffect(
+        initialCategoryId,
+        initialCategoryName,
+        uiState.isLoading,
+        uiState.budgets,
+        categories,
+        hasHandledInitialCategoryContext
+    ) {
+        if (hasHandledInitialCategoryContext || uiState.isLoading) return@LaunchedEffect
+
+        val hasContext = initialCategoryId != null || !initialCategoryName.isNullOrBlank()
+        if (!hasContext) {
+            hasHandledInitialCategoryContext = true
+            return@LaunchedEffect
+        }
+
+        val normalizedName = initialCategoryName?.trim().orEmpty()
+        val isOverallTarget = normalizedName.equals("GENERAL", ignoreCase = true) ||
+            normalizedName.equals("OVERALL", ignoreCase = true)
+
+        val matchingBudget = uiState.budgets.firstOrNull { status ->
+            when {
+                initialCategoryId != null -> status.budget.categoryId == initialCategoryId
+                isOverallTarget -> status.budget.categoryId == null
+                normalizedName.isNotBlank() -> status.category?.name.equals(normalizedName, ignoreCase = true)
+                else -> false
+            }
+        }
+
+        if (matchingBudget != null) {
+            editingBudget = matchingBudget
+        } else {
+            preselectedCategoryIdForAdd = when {
+                initialCategoryId != null -> initialCategoryId
+                isOverallTarget -> null
+                normalizedName.isNotBlank() -> categories.firstOrNull {
+                    it.name.equals(normalizedName, ignoreCase = true)
+                }?.id
+                else -> null
+            }
+            showAddDialog = true
+        }
+
+        hasHandledInitialCategoryContext = true
+    }
+
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
         topBar = {
@@ -93,7 +146,10 @@ fun BudgetScreen(
                     ) 
                 },
                 actions = {
-                    IconButton(onClick = { showAddDialog = true }) {
+                    IconButton(onClick = {
+                        preselectedCategoryIdForAdd = null
+                        showAddDialog = true
+                    }) {
                         Icon(Icons.Default.Add, contentDescription = stringResource(R.string.budget_add_cd))
                     }
                 },
@@ -162,7 +218,12 @@ fun BudgetScreen(
                 }
 
                 if (uiState.budgets.isEmpty()) {
-                    item { EmptyBudgetsState { showAddDialog = true } }
+                    item {
+                        EmptyBudgetsState {
+                            preselectedCategoryIdForAdd = null
+                            showAddDialog = true
+                        }
+                    }
                 } else {
             items(uiState.budgets, key = { it.budget.id }) { budgetStatus ->
                         BudgetCard(
@@ -182,8 +243,15 @@ fun BudgetScreen(
 
         if (showAddDialog) {
             AddEditBudgetDialog(
-                onDismiss = { showAddDialog = false },
-                onConfirm = { viewModel.addBudget(it) },
+                initialCategoryId = preselectedCategoryIdForAdd,
+                onDismiss = {
+                    showAddDialog = false
+                    preselectedCategoryIdForAdd = null
+                },
+                onConfirm = {
+                    viewModel.addBudget(it)
+                    preselectedCategoryIdForAdd = null
+                },
                 categories = categories
             )
         }
@@ -338,10 +406,25 @@ fun BudgetCard(
     val context = LocalContext.current
     val budgetActiveString = stringResource(R.string.budget_status_active)
     val budgetInactiveString = stringResource(R.string.budget_status_inactive)
+    val adjustedSpend = status.adjustedSpendBreakdown
+    val displaySpend = adjustedSpend?.effectiveSpend ?: status.spentAmount
+    val displayPercentUsed = if (status.budget.amount > 0.0) {
+        (displaySpend / status.budget.amount).toFloat()
+    } else {
+        0f
+    }
+    val displayRemainingAmount = status.budget.amount - displaySpend
+    val hasPendingReimbursements = adjustedSpend?.pendingReimbursements?.let { it > 0.01 } == true
+    val displayHealthStatus = when {
+        displayPercentUsed >= 1.0f -> BudgetHealthStatus.EXCEEDED
+        displayPercentUsed >= status.budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
+        displayPercentUsed >= status.budget.notifyAtWarning -> BudgetHealthStatus.WARNING
+        else -> BudgetHealthStatus.ON_TRACK
+    }
     
     // Remember expensive calculations
-    val progressColor = remember(status.healthStatus) {
-        when (status.healthStatus) {
+    val progressColor = remember(displayHealthStatus) {
+        when (displayHealthStatus) {
             BudgetHealthStatus.ON_TRACK -> SemanticColors.SuccessGreen
             BudgetHealthStatus.WARNING -> SemanticColors.WarningOrange
             BudgetHealthStatus.CRITICAL -> SemanticColors.WarningOrange
@@ -349,16 +432,16 @@ fun BudgetCard(
         }
     }
 
-    val cardDescription = remember(status.spentAmount, status.budget.amount, status.healthStatus) {
+    val cardDescription = remember(displaySpend, status.budget.amount, displayPercentUsed, displayHealthStatus) {
         val statusText = if (status.budget.isActive) budgetActiveString else budgetInactiveString
         context.getString(
             R.string.budget_cd_format,
             status.category?.name ?: "Overall Budget",
             statusText,
-            status.spentAmount,
+            displaySpend,
             status.budget.amount,
-            (status.percentUsed * 100).toInt(),
-            status.healthStatus.name.lowercase().replaceFirstChar { it.titlecase() }
+            (displayPercentUsed * 100).toInt(),
+            displayHealthStatus.name.lowercase().replaceFirstChar { it.titlecase() }
         )
     }
     
@@ -403,11 +486,6 @@ fun BudgetCard(
     val periodProgress = remember(totalPeriodMs, elapsedPeriodMs) {
         (elapsedPeriodMs.toFloat() / totalPeriodMs.toFloat()).coerceIn(0f, 1f)
     }
-
-    // F11: Check if we have adjusted spend info
-    val adjustedSpend = status.adjustedSpendBreakdown
-    val hasPendingReimbursements = adjustedSpend != null && adjustedSpend.pendingReimbursements > 0.01
-    val displaySpend = adjustedSpend?.effectiveSpend ?: status.spentAmount
 
     Card(
         modifier = Modifier
@@ -485,7 +563,7 @@ fun BudgetCard(
 
             Spacer(Modifier.height(8.dp))
             LinearProgressIndicator(
-                progress = { status.percentUsed.coerceIn(0f, 1f) },
+                progress = { displayPercentUsed.coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
                 color = progressColor,
                 trackColor = progressColor.copy(alpha = 0.2f)
@@ -523,9 +601,9 @@ fun BudgetCard(
                 AdjustedSpendBreakdownRow(adjustedSpend)
             }
 
-            if (status.percentUsed > 1f) {
+            if (displayPercentUsed > 1f) {
                 Text(
-                    text = stringResource(R.string.budget_over_format, status.spentAmount - status.budget.amount),
+                    text = stringResource(R.string.budget_over_format, displaySpend - status.budget.amount),
                     color = SemanticColors.DangerRed,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -533,7 +611,7 @@ fun BudgetCard(
                 )
             } else {
                 Text(
-                    text = stringResource(R.string.budget_remaining_format, status.remainingAmount),
+                    text = stringResource(R.string.budget_remaining_format, displayRemainingAmount),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary,
                     modifier = Modifier.padding(top = 4.dp)
@@ -708,12 +786,13 @@ fun EmptyBudgetsState(onAdd: () -> Unit) {
 @Composable
 fun AddEditBudgetDialog(
     initialBudget: Budget? = null,
+    initialCategoryId: Long? = null,
     categories: List<Category>,
     onDismiss: () -> Unit,
     onConfirm: (Budget) -> Unit
 ) {
     var amount by remember { mutableStateOf(initialBudget?.amount?.toString() ?: "") }
-    var selectedCategory by remember { mutableStateOf(initialBudget?.categoryId) }
+    var selectedCategory by remember { mutableStateOf(initialBudget?.categoryId ?: initialCategoryId) }
     var period by remember { mutableStateOf(initialBudget?.period ?: BudgetPeriod.MONTHLY) }
     var periodMode by remember { mutableStateOf(initialBudget?.periodMode ?: "ROLLING") }
     var rollover by remember { mutableStateOf(initialBudget?.rollover ?: false) }

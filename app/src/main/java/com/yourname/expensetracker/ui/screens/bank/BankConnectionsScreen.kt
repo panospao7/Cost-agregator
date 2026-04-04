@@ -20,6 +20,7 @@ import com.yourname.expensetracker.data.database.entity.BankConnection
 import com.yourname.expensetracker.data.database.entity.SyncStatus
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,9 +33,17 @@ fun BankConnectionsScreen(
     viewModel: BankConnectionsViewModel = hiltViewModel()
 ) {
     val connections by viewModel.connections.collectAsState()
+    var hiddenConnectionIds by remember { mutableStateOf(setOf<Long>()) }
+    val visibleConnections = remember(connections, hiddenConnectionIds) {
+        connections.filterNot { it.id in hiddenConnectionIds }
+    }
     val isLoading by viewModel.isLoading.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    var pendingDisconnect by remember { mutableStateOf<BankConnection?>(null) }
     
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.screen_bank_connections)) },
@@ -60,7 +69,7 @@ fun BankConnectionsScreen(
                 CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center)
                 )
-            } else if (connections.isEmpty()) {
+            } else if (visibleConnections.isEmpty()) {
                 EmptyBankConnectionsView(onAddConnection)
             } else {
                 LazyColumn(
@@ -69,15 +78,59 @@ fun BankConnectionsScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(connections) { connection ->
+                    items(visibleConnections) { connection ->
                         BankConnectionCard(
                             connection = connection,
                             onSync = { viewModel.syncConnection(connection.id) },
-                            onDisconnect = { viewModel.disconnect(connection.id) }
+                            onDisconnect = { pendingDisconnect = connection }
                         )
                     }
                 }
             }
+        }
+
+        pendingDisconnect?.let { connection ->
+            AlertDialog(
+                onDismissRequest = { pendingDisconnect = null },
+                title = { Text(if (connection.isConnected) "Disconnect bank?" else "Remove bank connection?") },
+                text = {
+                    Text(
+                        if (connection.isConnected) {
+                            "${connection.bankName} will stop syncing transactions and may require reconnecting later."
+                        } else {
+                            "This will remove ${connection.bankName} from your saved connections list."
+                        }
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            hiddenConnectionIds = hiddenConnectionIds + connection.id
+                            viewModel.disconnect(connection.id)
+                            pendingDisconnect = null
+                            scope.launch {
+                                val result = snackbarHostState.showSnackbar(
+                                    message = if (connection.isConnected) "Bank disconnected" else "Connection removed",
+                                    actionLabel = "Undo"
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    hiddenConnectionIds = hiddenConnectionIds - connection.id
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text(if (connection.isConnected) stringResource(R.string.label_disconnect) else stringResource(R.string.label_remove))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDisconnect = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            )
         }
     }
 }

@@ -3,8 +3,8 @@ package com.yourname.expensetracker.ui.components.common
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -15,19 +15,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedAssistChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -45,7 +46,6 @@ import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
-import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
  * Enhanced empty state component that displays contextual action chips.
@@ -91,122 +91,130 @@ fun EnhancedEmptyState(
         displayMessage
     )
 
-    Column(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .padding(Dimens.Space24)
-            .semantics { this.contentDescription = emptyContentDescription },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .semantics { this.contentDescription = emptyContentDescription }
     ) {
-        // Icon with glassmorphism styling
-        Icon(
-            imageVector = type.icon,
-            contentDescription = null,
+        val shouldTopAlign = maxHeight < 640.dp
+
+        Column(
             modifier = Modifier
-                .size(Dimens.IconXLarge)
-                .alpha(0.6f),
-            tint = SemanticColors.TextSecondary
-        )
-
-        Spacer(modifier = Modifier.height(Dimens.Space24))
-
-        // Title
-        Text(
-            text = displayTitle,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center
-        )
-
-        Spacer(modifier = Modifier.height(Dimens.Space12))
-
-        // Message
-        Text(
-            text = displayMessage,
-            style = MaterialTheme.typography.bodyMedium,
-            color = SemanticColors.TextSecondary,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(0.8f)
-        )
-
-        // Contextual Action Chips
-        if (actions.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(Dimens.Space32))
-
-            Text(
-                text = stringResource(R.string.empty_state_suggested_actions),
-                style = MaterialTheme.typography.labelMedium,
-                color = SemanticColors.TextSecondary,
-                modifier = Modifier.padding(bottom = Dimens.Space12)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(Dimens.Space24),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = if (shouldTopAlign) Arrangement.Top else Arrangement.Center
+        ) {
+            // Icon with glassmorphism styling
+            Icon(
+                imageVector = type.icon,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(Dimens.IconXLarge)
+                    .alpha(0.6f),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(0.9f),
-                horizontalArrangement = Arrangement.spacedBy(
-                    Dimens.Space8,
-                    Alignment.CenterHorizontally
-                ),
-                verticalArrangement = Arrangement.spacedBy(Dimens.Space8),
-                maxItemsInEachRow = 3
-            ) {
-                actions.forEach { action ->
-                    ActionChip(
-                        action = action,
-                        onClick = { onActionClick?.invoke(action) },
-                        onDismiss = { onDismissAction?.invoke(action.id) }
-                    )
-                }
-            }
-        }
+            Spacer(modifier = Modifier.height(Dimens.Space24))
 
-        // Legacy action buttons (for backward compatibility)
-        if (actionLabel != null || secondaryLabel != null) {
-            Spacer(modifier = Modifier.height(Dimens.Space32))
+            // Title
+            Text(
+                text = displayTitle,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center
+            )
 
-            Column(
-                verticalArrangement = Arrangement.spacedBy(Dimens.Space12),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                actionLabel?.let { label ->
-                    Button(
-                        onClick = { onPrimaryClick?.invoke() },
-                        modifier = Modifier
-                            .height(Dimens.ButtonHeightMedium)
-                            .fillMaxWidth(0.6f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = SemanticColors.PrimaryIndigo
-                        )
-                    ) {
-                        if (actionIcon != null) {
-                            Icon(
-                                imageVector = actionIcon,
-                                contentDescription = null,
-                                modifier = Modifier.size(Dimens.IconSmall)
-                            )
-                        }
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelLarge
+            Spacer(modifier = Modifier.height(Dimens.Space12))
+
+            // Message
+            Text(
+                text = displayMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(0.8f)
+            )
+
+            // Contextual Action Chips
+            if (actions.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(Dimens.Space32))
+
+                Text(
+                    text = stringResource(R.string.empty_state_suggested_actions),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = Dimens.Space12)
+                )
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(0.9f),
+                    horizontalArrangement = Arrangement.spacedBy(
+                        Dimens.Space8,
+                        Alignment.CenterHorizontally
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(Dimens.Space8),
+                    maxItemsInEachRow = 3
+                ) {
+                    actions.forEach { action ->
+                        ActionChip(
+                            action = action,
+                            onClick = { onActionClick?.invoke(action) },
+                            onDismiss = { onDismissAction?.invoke(action.id) }
                         )
                     }
                 }
+            }
 
-                secondaryLabel?.let { label ->
-                    OutlinedButton(
-                        onClick = { onSecondaryClick?.invoke() },
-                        modifier = Modifier
-                            .height(Dimens.ButtonHeightMedium)
-                            .fillMaxWidth(0.6f),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = SemanticColors.TextSecondary
-                        )
-                    ) {
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = SemanticColors.TextSecondary
-                        )
+            // Legacy action buttons (for backward compatibility)
+            if (actionLabel != null || secondaryLabel != null) {
+                Spacer(modifier = Modifier.height(Dimens.Space32))
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(Dimens.Space12),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    actionLabel?.let { label ->
+                        Button(
+                            onClick = { onPrimaryClick?.invoke() },
+                            modifier = Modifier
+                                .height(Dimens.ButtonHeightMedium)
+                                .fillMaxWidth(0.6f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        ) {
+                            if (actionIcon != null) {
+                                Icon(
+                                    imageVector = actionIcon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(Dimens.IconSmall)
+                                )
+                            }
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+
+                    secondaryLabel?.let { label ->
+                        OutlinedButton(
+                            onClick = { onSecondaryClick?.invoke() },
+                            modifier = Modifier
+                                .height(Dimens.ButtonHeightMedium)
+                                .fillMaxWidth(0.6f),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
                     }
                 }
             }
@@ -223,46 +231,46 @@ private fun ActionChip(
     onClick: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    ElevatedAssistChip(
-        onClick = onClick,
-        label = {
-            Text(
-                text = action.title,
-                style = MaterialTheme.typography.labelMedium
-            )
-        },
-        leadingIcon = {
-            Icon(
-                imageVector = action.icon,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-        },
-        trailingIcon = {
-            // Dismiss button (small x icon)
-            Surface(
-                onClick = onDismiss,
-                modifier = Modifier.size(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = MaterialTheme.shapes.small
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = stringResource(R.string.cd_dismiss_action),
-                    modifier = Modifier.size(12.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        ElevatedAssistChip(
+            onClick = onClick,
+            label = {
+                Text(
+                    text = action.title,
+                    style = MaterialTheme.typography.labelMedium
                 )
-            }
-        },
-        colors = AssistChipDefaults.elevatedAssistChipColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            labelColor = MaterialTheme.colorScheme.onSurface,
-            leadingIconContentColor = SemanticColors.PrimaryIndigo
-        ),
-        elevation = AssistChipDefaults.elevatedAssistChipElevation(
-            elevation = 2.dp
+            },
+            leadingIcon = {
+                Icon(
+                    imageVector = action.icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            },
+            colors = AssistChipDefaults.elevatedAssistChipColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                labelColor = MaterialTheme.colorScheme.onSurface,
+                leadingIconContentColor = MaterialTheme.colorScheme.primary
+            ),
+            elevation = AssistChipDefaults.elevatedAssistChipElevation(
+                elevation = 2.dp
+            )
         )
-    )
+
+        IconButton(
+            onClick = onDismiss,
+            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = stringResource(R.string.cd_dismiss_action),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 /**

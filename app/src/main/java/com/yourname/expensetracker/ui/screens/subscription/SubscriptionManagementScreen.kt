@@ -508,6 +508,14 @@ private fun SubscriptionCard(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = "Renews ${dateFormat.format(Date(subscription.subscription.nextDate))}",
+                style = MaterialTheme.typography.bodySmall,
+                color = SemanticColors.TextSecondary
+            )
             
             Spacer(modifier = Modifier.height(8.dp))
             
@@ -696,6 +704,9 @@ private fun AddSubscriptionDialog(
     var amount by remember { mutableStateOf("") }
     var frequency by remember { mutableStateOf(RecurrenceFrequency.MONTHLY) }
     var category by remember { mutableStateOf("") }
+    var nextDate by remember { mutableStateOf<Long?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
     
     val categories = listOf(
         stringResource(R.string.category_streaming),
@@ -793,16 +804,32 @@ private fun AddSubscriptionDialog(
                         }
                     }
                 }
+
+                OutlinedTextField(
+                    value = nextDate?.let { dateFormat.format(Date(it)) }.orEmpty(),
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text(stringResource(R.string.recurring_next_date_label)) },
+                    trailingIcon = {
+                        IconButton(onClick = { showDatePicker = true }) {
+                            Icon(Icons.Rounded.CalendarToday, null)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Select next billing date") }
+                )
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     amount.toDoubleOrNull()?.let { amt ->
-                        onAdd(merchant, amt, frequency, category.takeIf { it.isNotEmpty() }, System.currentTimeMillis())
+                        nextDate?.let { chosenDate ->
+                            onAdd(merchant, amt, frequency, category.takeIf { it.isNotEmpty() }, chosenDate)
+                        }
                     }
                 },
-                enabled = merchant.isNotBlank() && amount.toDoubleOrNull() != null
+                enabled = merchant.isNotBlank() && amount.toDoubleOrNull() != null && nextDate != null
             ) {
                 Text(stringResource(R.string.action_add))
             }
@@ -813,6 +840,32 @@ private fun AddSubscriptionDialog(
             }
         }
     )
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = nextDate ?: System.currentTimeMillis()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        nextDate = datePickerState.selectedDateMillis
+                        showDatePicker = false
+                    }
+                ) {
+                    Text(stringResource(R.string.action_ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 }
 
 @Composable

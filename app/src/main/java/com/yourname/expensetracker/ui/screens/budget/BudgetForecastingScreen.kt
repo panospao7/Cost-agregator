@@ -31,6 +31,7 @@ import com.yourname.expensetracker.domain.model.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.NumberFormat
 import java.util.Locale
+import kotlin.math.max
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -233,6 +234,12 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
 @Composable
 private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
     val currencyFormatter = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    val (lowForecast, baseForecast, highForecast) = remember(forecast.predictedSpending, forecast.confidenceScore) {
+        calculateForecastBounds(
+            predictedSpending = forecast.predictedSpending,
+            confidenceScore = forecast.confidenceScore
+        )
+    }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -287,8 +294,126 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
                     else -> SemanticColors.StatusGreen
                 }
             )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            ConfidenceIntervalSection(
+                budgetAmount = budget.amount,
+                lowForecast = lowForecast,
+                baseForecast = baseForecast,
+                highForecast = highForecast,
+                confidenceScore = forecast.confidenceScore,
+                currencyFormatter = currencyFormatter
+            )
         }
     }
+}
+
+@Composable
+private fun ConfidenceIntervalSection(
+    budgetAmount: Double,
+    lowForecast: Double,
+    baseForecast: Double,
+    highForecast: Double,
+    confidenceScore: Double,
+    currencyFormatter: NumberFormat
+) {
+    Text(
+        text = "Forecast range (low / base / high)",
+        style = MaterialTheme.typography.labelLarge,
+        color = SemanticColors.TextPrimary,
+        fontWeight = FontWeight.SemiBold
+    )
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    RangeRow(
+        label = "Low",
+        amount = lowForecast,
+        budgetAmount = budgetAmount,
+        color = SemanticColors.StatusGreen,
+        currencyFormatter = currencyFormatter
+    )
+    RangeRow(
+        label = "Base",
+        amount = baseForecast,
+        budgetAmount = budgetAmount,
+        color = SemanticColors.PrimaryIndigo,
+        currencyFormatter = currencyFormatter
+    )
+    RangeRow(
+        label = "High",
+        amount = highForecast,
+        budgetAmount = budgetAmount,
+        color = SemanticColors.StatusRed,
+        currencyFormatter = currencyFormatter
+    )
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    val confidencePercent = (confidenceScore * 100).toInt()
+    Text(
+        text = "Range width reflects model uncertainty: higher confidence ($confidencePercent%) gives a tighter interval.",
+        style = MaterialTheme.typography.bodySmall,
+        color = SemanticColors.TextSecondary
+    )
+}
+
+@Composable
+private fun RangeRow(
+    label: String,
+    amount: Double,
+    budgetAmount: Double,
+    color: Color,
+    currencyFormatter: NumberFormat
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = SemanticColors.TextSecondary
+            )
+            Text(
+                text = currencyFormatter.format(amount),
+                style = MaterialTheme.typography.bodySmall,
+                color = SemanticColors.TextPrimary,
+                fontWeight = FontWeight.Medium
+            )
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        LinearProgressIndicator(
+            progress = {
+                if (budgetAmount > 0) {
+                    (amount / budgetAmount).toFloat().coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp)),
+            color = color,
+            trackColor = color.copy(alpha = 0.2f)
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+    }
+}
+
+private fun calculateForecastBounds(predictedSpending: Double, confidenceScore: Double): Triple<Double, Double, Double> {
+    val uncertaintyRatio = ((1.0 - confidenceScore).coerceIn(0.0, 1.0) * 0.55) + 0.10
+    val spread = predictedSpending * uncertaintyRatio
+    val low = max(0.0, predictedSpending - spread)
+    val high = predictedSpending + spread
+    return Triple(low, predictedSpending, high)
 }
 
 @Composable

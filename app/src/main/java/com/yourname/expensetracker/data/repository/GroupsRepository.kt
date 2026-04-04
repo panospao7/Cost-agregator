@@ -47,6 +47,7 @@ interface GroupsRepository {
         amount: Double,
         paidById: Long,
         splitType: SplitType,
+        customSplitsJson: String? = null,
         date: Long = System.currentTimeMillis()
     ): GroupExpenseCreationResult
 

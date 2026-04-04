@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsRecomm
 import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -49,6 +50,7 @@ class SavingsGoalsViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(SavingsGoalsState())
     val state: StateFlow<SavingsGoalsState> = _state.asStateFlow()
+    private var goalsCollectionJob: Job? = null
 
     init {
         loadGoals()
@@ -58,7 +60,8 @@ class SavingsGoalsViewModel @Inject constructor(
     }
 
     private fun loadGoals() {
-        viewModelScope.launch {
+        goalsCollectionJob?.cancel()
+        goalsCollectionJob = viewModelScope.launch {
             _state.update { it.copy(isLoading = true) }
             
             savingsGoalRepository.getAllGoals()
