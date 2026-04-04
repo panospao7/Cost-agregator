@@ -1,0 +1,307 @@
+package com.yourname.expensetracker.domain.health
+
+import com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
+import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
+import com.yourname.expensetracker.data.database.entity.HealthScoreHistory
+import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import java.util.Calendar
+
+class FinancialHealthScoreV2Test {
+
+    private lateinit var budgetRepository: BudgetRepository
+    private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var savingsGoalRepository: SavingsGoalRepository
+    private lateinit var recurringExpenseEngine: RecurringExpenseEngine
+    private lateinit var healthScoreHistoryDao: HealthScoreHistoryDao
+    private lateinit var timeProvider: TimeProvider
+
+    private lateinit var calculator: FinancialHealthScoreV2
+
+    private val now = millis(2026, Calendar.APRIL, 15)
+    private val dayMs = 24L * 60L * 60L * 1000L
+
+    @Before
+    fun setup() {
+        budgetRepository = mockk()
+        expenseRepository = mockk()
+        savingsGoalRepository = mockk()
+        recurringExpenseEngine = mockk()
+        healthScoreHistoryDao = mockk(relaxed = true)
+        timeProvider = mockk()
+
+        every { timeProvider.now() } returns now
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
+        coEvery { healthScoreHistoryDao.getMostRecent() } returns null
+        coEvery { healthScoreHistoryDao.getHistoryForPeriod(any(), any()) } returns emptyList()
+
+        calculator = FinancialHealthScoreV2(
+            budgetRepository = budgetRepository,
+            expenseRepository = expenseRepository,
+            savingsGoalRepository = savingsGoalRepository,
+            recurringExpenseEngine = recurringExpenseEngine,
+            healthScoreHistoryDao = healthScoreHistoryDao,
+            timeProvider = timeProvider
+        )
+    }
+
+    @Test
+    fun `calculateHealthScore applies weighted formula thirty twentyfive twentyfive twenty`() = runTest {
+        // Savings component: income 1000, expenses 900 => rate 10% => score 50
+        // Runway: savingsGoals currentAmount total 900, monthlyExpenses 900 => 1 month => score 16
+        // Budget adherence: one budget 1000 spent 1100 => overspend ratio 0.1 => score 90
+        // Bills: no patterns => default 75
+        // Overall = 0.30*50 + 0.25*16 + 0.25*90 + 0.20*75 = 56.5 -> 56
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 1000.0, TransactionType.DEPOSIT, now - 10 * dayMs),
+            expense(2L, 900.0, TransactionType.PURCHASE, now - 9 * dayMs)
+        )
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(amount = 1000.0, spent = 1100.0))
+        )
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+            listOf(goal(1L, target = 3000.0, current = 900.0))
+        )
+
+        val result = calculator.calculateHealthScore()
+
+        assertEquals(50, result.savingsRateScore)
+        assertEquals(16, result.runwayScore)
+        assertEquals(90, result.budgetAdherenceScore)
+        assertEquals(75, result.billReliabilityScore)
+        assertEquals(56, result.overallScore)
+    }
+
+    @Test
+    fun `calculateHealthScore runway uses savings goals not monthly budget surplus`() = runTest {
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 1000.0, TransactionType.DEPOSIT, now - 10 * dayMs),
+            expense(2L, 500.0, TransactionType.PURCHASE, now - 9 * dayMs)
+        )
+        // Large budget headroom should NOT inflate runway score.
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(amount = 5000.0, spent = 500.0))
+        )
+        // Savings goals total currentAmount = 1000 => runwayMonths = 2 => score 33
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+            listOf(
+                goal(1L, target = 10_000.0, current = 700.0),
+                goal(2L, target = 5_000.0, current = 300.0)
+            )
+        )
+
+        val result = calculator.calculateHealthScore()
+
+        assertEquals(33, result.runwayScore)
+    }
+
+    @Test
+    fun `calculateHealthScore upserts history by updating existing period record`() = runTest {
+        val periodStart = now - 30 * dayMs
+        val periodEnd = now
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 1000.0, TransactionType.DEPOSIT, now - 5 * dayMs),
+            expense(2L, 800.0, TransactionType.PURCHASE, now - 4 * dayMs)
+        )
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(amount = 1000.0, spent = 800.0))
+        )
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+            listOf(goal(1L, target = 5000.0, current = 1200.0))
+        )
+
+        coEvery { healthScoreHistoryDao.getHistoryForPeriod(periodStart, periodEnd) } returns listOf(
+            HealthScoreHistory(
+                id = 99L,
+                overallScore = 10,
+                savingsRateScore = 10,
+                runwayScore = 10,
+                budgetAdherenceScore = 10,
+                billReliabilityScore = 10,
+                periodStart = periodStart,
+                periodEnd = periodEnd,
+                trend = HealthTrend.STABLE.name
+            )
+        )
+
+        calculator.calculateHealthScore(periodStart, periodEnd)
+
+        coVerify(exactly = 1) { healthScoreHistoryDao.update(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+    }
+
+    @Test
+    fun `calculateHealthScore determines trend improving stable declining by five point threshold`() = runTest {
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 1000.0, TransactionType.DEPOSIT, now - 5 * dayMs),
+            expense(2L, 100.0, TransactionType.PURCHASE, now - 4 * dayMs)
+        )
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(amount = 1000.0, spent = 100.0))
+        )
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+            listOf(goal(1L, target = 5000.0, current = 2000.0))
+        )
+
+        coEvery { healthScoreHistoryDao.getMostRecent() } returns HealthScoreHistory(
+            id = 1L,
+            overallScore = 40,
+            savingsRateScore = 40,
+            runwayScore = 40,
+            budgetAdherenceScore = 40,
+            billReliabilityScore = 40,
+            periodStart = now - 60 * dayMs,
+            periodEnd = now - 31 * dayMs,
+            trend = HealthTrend.STABLE.name
+        )
+
+        val improving = calculator.calculateHealthScore()
+        assertEquals(HealthTrend.IMPROVING, improving.trend)
+
+        coEvery { healthScoreHistoryDao.getMostRecent() } returns improving.toHistorySnapshot(overall = improving.overallScore - 3)
+        val stable = calculator.calculateHealthScore()
+        assertEquals(HealthTrend.STABLE, stable.trend)
+
+        coEvery { healthScoreHistoryDao.getMostRecent() } returns improving.toHistorySnapshot(overall = improving.overallScore + 6)
+        val declining = calculator.calculateHealthScore()
+        assertEquals(HealthTrend.DECLINING, declining.trend)
+    }
+
+    @Test
+    fun `calculateHealthScore edge case zero income gives neutral savings score`() = runTest {
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 300.0, TransactionType.PURCHASE, now - 2 * dayMs)
+        )
+
+        val result = calculator.calculateHealthScore()
+
+        assertEquals(50, result.savingsRateScore)
+    }
+
+    @Test
+    fun `calculateHealthScore edge case zero expenses gives neutral runway score`() = runTest {
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 1500.0, TransactionType.DEPOSIT, now - 2 * dayMs)
+        )
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+            listOf(goal(1L, target = 1000.0, current = 500.0))
+        )
+
+        val result = calculator.calculateHealthScore()
+
+        assertEquals(50, result.runwayScore)
+    }
+
+    @Test
+    fun `calculateHealthScore edge case missing data uses neutral defaults`() = runTest {
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
+
+        val result = calculator.calculateHealthScore()
+
+        assertEquals(50, result.savingsRateScore)
+        assertEquals(50, result.runwayScore)
+        assertEquals(50, result.budgetAdherenceScore)
+        assertEquals(75, result.billReliabilityScore)
+        assertTrue(result.overallScore in 0..100)
+    }
+
+    private fun FinancialHealthResult.toHistorySnapshot(overall: Int): HealthScoreHistory {
+        return HealthScoreHistory(
+            id = 999L,
+            overallScore = overall,
+            savingsRateScore = savingsRateScore,
+            runwayScore = runwayScore,
+            budgetAdherenceScore = budgetAdherenceScore,
+            billReliabilityScore = billReliabilityScore,
+            periodStart = now - 30 * dayMs,
+            periodEnd = now,
+            trend = trend.name
+        )
+    }
+
+    private fun budgetStatus(amount: Double, spent: Double): BudgetStatus {
+        val budget = Budget(
+            id = 1L,
+            categoryId = null,
+            amount = amount,
+            period = BudgetPeriod.MONTHLY,
+            startDate = now - 20 * dayMs
+        )
+        return BudgetStatus(
+            budget = budget,
+            category = null,
+            spentAmount = spent,
+            remainingAmount = (amount - spent).coerceAtLeast(0.0),
+            percentUsed = if (amount > 0) (spent / amount).toFloat() else 0f,
+            healthStatus = BudgetHealthStatus.ON_TRACK,
+            periodStart = now - 20 * dayMs,
+            periodEnd = now + 10 * dayMs
+        )
+    }
+
+    private fun goal(id: Long, target: Double, current: Double): SavingsGoal {
+        return SavingsGoal(
+            id = id,
+            name = "G$id",
+            targetAmount = target,
+            currentAmount = current,
+            targetDate = null,
+            protectionLevel = GoalProtectionLevel.WARNING,
+            createdAt = now - dayMs
+        )
+    }
+
+    private fun expense(
+        id: Long,
+        amount: Double,
+        type: TransactionType,
+        date: Long
+    ): com.yourname.expensetracker.data.database.entity.Expense {
+        return com.yourname.expensetracker.data.database.entity.Expense(
+            id = id,
+            amount = amount,
+            merchant = "M$id",
+            transactionType = type,
+            date = date,
+            isNotMine = false
+        )
+    }
+
+    private fun millis(year: Int, month: Int, day: Int): Long {
+        return Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, day)
+            set(Calendar.HOUR_OF_DAY, 12)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+}

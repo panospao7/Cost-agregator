@@ -29,7 +29,11 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -334,6 +338,145 @@ class AssistantViewModelTest : ViewModelTestUtils() {
 
         assertEquals("", viewModel.uiState.value.input)
         assertTrue(viewModel.uiState.value.messages.isEmpty())
+    }
+
+    @Test
+    fun `clearSession cancels in-flight query job`() = runTest(testDispatcher) {
+        val activeJob = backgroundScope.launch { delay(Long.MAX_VALUE) }
+        setPrivateCurrentQueryJob(activeJob)
+        getPrivateSubmittingFlow().value = true
+
+        viewModel.clearSession()
+        advanceUntilIdle()
+
+        assertTrue(activeJob.isCancelled)
+        assertFalse(getPrivateSubmittingFlow().value)
+    }
+
+    @Test
+    fun `clearAllHistory cancels in-flight query job`() = runTest(testDispatcher) {
+        val activeJob = backgroundScope.launch { delay(Long.MAX_VALUE) }
+        setPrivateCurrentQueryJob(activeJob)
+        getPrivateSubmittingFlow().value = true
+
+        viewModel.clearAllHistory()
+        advanceUntilIdle()
+
+        assertTrue(activeJob.isCancelled)
+        assertFalse(getPrivateSubmittingFlow().value)
+        coVerify { aiChatRepository.clearAllHistory() }
+    }
+
+    @Test
+    fun `clearSession with active session clears repository session and resets state`() = runTest(testDispatcher) {
+        setPrivateUiState(
+            AssistantUiState(
+                messages = listOf(AssistantConversationItem.User(id = "u1", text = "hello")),
+                input = "draft",
+                isLoading = true,
+                errorMessage = "old",
+                currentSessionId = 77L
+            )
+        )
+
+        viewModel.clearSession()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { aiChatRepository.clearSession(77L) }
+        assertEquals(null, viewModel.uiState.value.currentSessionId)
+        assertEquals("", viewModel.uiState.value.input)
+        assertTrue(viewModel.uiState.value.messages.isEmpty())
+        assertFalse(viewModel.uiState.value.isLoading)
+    }
+
+    @Test
+    fun `clearSession with null session does not call repository clearSession`() = runTest(testDispatcher) {
+        setPrivateUiState(AssistantUiState(currentSessionId = null))
+
+        viewModel.clearSession()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { aiChatRepository.clearSession(any()) }
+        assertEquals(null, viewModel.uiState.value.currentSessionId)
+    }
+
+    @Test
+    fun `clearAllHistory clears history and active session`() = runTest(testDispatcher) {
+        setPrivateUiState(
+            AssistantUiState(
+                currentSessionId = 99L,
+                messages = listOf(AssistantConversationItem.User(id = "u2", text = "q"))
+            )
+        )
+
+        viewModel.clearAllHistory()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { aiChatRepository.clearAllHistory() }
+        coVerify(exactly = 1) { aiChatRepository.clearSession(99L) }
+        assertTrue(viewModel.uiState.value.messages.isEmpty())
+        assertEquals(null, viewModel.uiState.value.currentSessionId)
+    }
+
+    @Test
+    fun `concurrent clearSession calls keep state consistent`() = runTest(testDispatcher) {
+        setPrivateUiState(
+            AssistantUiState(
+                currentSessionId = 321L,
+                input = "hello",
+                messages = listOf(AssistantConversationItem.User(id = "u3", text = "x"))
+            )
+        )
+
+        backgroundScope.launch { viewModel.clearSession() }
+        backgroundScope.launch { viewModel.clearSession() }
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.currentSessionId)
+        assertEquals("", viewModel.uiState.value.input)
+        assertTrue(viewModel.uiState.value.messages.isEmpty())
+        assertFalse(viewModel.uiState.value.isLoading)
+    }
+
+    @Test
+    fun `concurrent clearAllHistory calls keep state consistent`() = runTest(testDispatcher) {
+        setPrivateUiState(
+            AssistantUiState(
+                currentSessionId = 654L,
+                input = "pending",
+                messages = listOf(AssistantConversationItem.User(id = "u4", text = "y"))
+            )
+        )
+
+        backgroundScope.launch { viewModel.clearAllHistory() }
+        backgroundScope.launch { viewModel.clearAllHistory() }
+        advanceUntilIdle()
+
+        coVerify(atLeast = 1) { aiChatRepository.clearAllHistory() }
+        assertEquals(null, viewModel.uiState.value.currentSessionId)
+        assertTrue(viewModel.uiState.value.messages.isEmpty())
+        assertEquals("", viewModel.uiState.value.input)
+    }
+
+    private fun setPrivateCurrentQueryJob(job: Job?) {
+        val field = AssistantViewModel::class.java.getDeclaredField("_currentQueryJob")
+        field.isAccessible = true
+        field.set(viewModel, job)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun getPrivateSubmittingFlow(): MutableStateFlow<Boolean> {
+        val field = AssistantViewModel::class.java.getDeclaredField("_isSubmitting")
+        field.isAccessible = true
+        return field.get(viewModel) as MutableStateFlow<Boolean>
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun setPrivateUiState(state: AssistantUiState) {
+        val field = AssistantViewModel::class.java.getDeclaredField("_uiState")
+        field.isAccessible = true
+        val flow = field.get(viewModel) as MutableStateFlow<AssistantUiState>
+        flow.value = state
     }
 
     private fun runtimeSummary(
