@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
@@ -28,6 +29,7 @@ import androidx.compose.material3.ElevatedAssistChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -179,7 +181,7 @@ fun EnhancedEmptyState(
                         Button(
                             onClick = { onPrimaryClick?.invoke() },
                             modifier = Modifier
-                                .height(Dimens.ButtonHeightMedium)
+                                .heightIn(min = 48.dp)
                                 .fillMaxWidth(0.6f),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
@@ -204,7 +206,7 @@ fun EnhancedEmptyState(
                         OutlinedButton(
                             onClick = { onSecondaryClick?.invoke() },
                             modifier = Modifier
-                                .height(Dimens.ButtonHeightMedium)
+                                .heightIn(min = 48.dp)
                                 .fillMaxWidth(0.6f),
                             colors = ButtonDefaults.outlinedButtonColors(
                                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -237,6 +239,9 @@ private fun ActionChip(
     ) {
         ElevatedAssistChip(
             onClick = onClick,
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .minimumInteractiveComponentSize(),
             label = {
                 Text(
                     text = action.title,

@@ -568,6 +568,22 @@
     <string name="groups_expense_amount_label">Amount</string>
     <string name="groups_paid_by_label">Paid By</string>
     <string name="groups_split_type_label">Split Type</string>
+    <string name="groups_settlement_plan_title">Settlement Plan</string>
+    <string name="groups_settle_action">Settle</string>
+    <string name="groups_member_fallback_format">Member #%1$d</string>
+    <string name="groups_split_hint_enter_percent">Enter each member\'s percentage</string>
+    <string name="groups_split_hint_enter_amount">Enter each member\'s amount</string>
+    <string name="groups_split_member_percent_label">%1$s %%</string>
+    <string name="groups_split_summary_percent">Total: %1$s%% (must be 100%%)</string>
+    <string name="groups_split_summary_amount">Split total: %1$s (amount: %2$s)</string>
+    <string name="groups_split_error_required">Required</string>
+    <string name="groups_split_error_invalid_number">Enter a valid number</string>
+    <string name="groups_split_error_non_negative">Must be 0 or greater</string>
+    <string name="groups_split_error_non_negative_amount">Amount must be 0 or greater</string>
+    <string name="groups_split_error_percent_range">Must be between 0 and 100</string>
+    <string name="groups_split_error_total_non_negative">Split total cannot be negative</string>
+    <string name="groups_split_error_percent_total">Total percentage must equal 100%%</string>
+    <string name="groups_split_error_amount_total">Split total must equal amount</string>
     <string name="groups_error_load">Failed to load groups: %1$s</string>
     <string name="groups_error_create">Failed to create group: %1$s</string>
     <string name="groups_error_add_member">Failed to add member: %1$s</string>
@@ -1040,6 +1056,12 @@
     <string name="label_sync_now">Sync Now</string>
     <string name="label_disconnect">Disconnect</string>
     <string name="label_remove">Remove</string>
+    <string name="bank_disconnect_confirm_title">Disconnect bank?</string>
+    <string name="bank_remove_confirm_title">Remove bank connection?</string>
+    <string name="bank_disconnect_confirm_message">%1$s will stop syncing transactions and may require reconnecting later.</string>
+    <string name="bank_remove_confirm_message">This will remove %1$s from your saved connections list.</string>
+    <string name="bank_disconnect_snackbar_disconnected">Bank disconnected</string>
+    <string name="bank_disconnect_snackbar_removed">Connection removed</string>
     <string name="label_connect_bank">Connect Bank</string>
     <string name="label_quick_conversion">Quick Conversion</string>
     <string name="label_unknown">Unknown</string>
@@ -1225,6 +1247,13 @@
     <string name="price_merchant_at_label">At: %1$s</string>
     <string name="price_via_card">via %1$s</string>
     <string name="price_plus_value_format">+%1$s</string>
+    <string name="price_snackbar_unable_open_claim_link">Unable to open claim link</string>
+    <string name="price_snackbar_item_added_back_tracking">Item added back to tracking</string>
+    <string name="price_snackbar_item_removed_tracking">Item removed from tracking</string>
+    <string name="price_remove_tracking_confirm_title">Remove from tracking?</string>
+    <string name="price_remove_tracking_confirm_message">You will stop receiving price-drop alerts for %1$s.</string>
+    <string name="price_remove_from_tracking_action">Remove from tracking</string>
+    <string name="price_track_item_action">Track item</string>
     
     <!-- Savings Goals -->
     <string name="screen_savings_goals">Savings Goals</string>

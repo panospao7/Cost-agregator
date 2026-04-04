@@ -90,31 +90,51 @@ fun BankConnectionsScreen(
         }
 
         pendingDisconnect?.let { connection ->
+            val confirmTitle = stringResource(
+                if (connection.isConnected) {
+                    R.string.bank_disconnect_confirm_title
+                } else {
+                    R.string.bank_remove_confirm_title
+                }
+            )
+            val confirmMessage = stringResource(
+                if (connection.isConnected) {
+                    R.string.bank_disconnect_confirm_message
+                } else {
+                    R.string.bank_remove_confirm_message
+                },
+                connection.bankName
+            )
+            val snackbarMessage = stringResource(
+                if (connection.isConnected) {
+                    R.string.bank_disconnect_snackbar_disconnected
+                } else {
+                    R.string.bank_disconnect_snackbar_removed
+                }
+            )
+            val undoLabel = stringResource(R.string.action_undo)
+
             AlertDialog(
                 onDismissRequest = { pendingDisconnect = null },
-                title = { Text(if (connection.isConnected) "Disconnect bank?" else "Remove bank connection?") },
+                title = { Text(confirmTitle) },
                 text = {
-                    Text(
-                        if (connection.isConnected) {
-                            "${connection.bankName} will stop syncing transactions and may require reconnecting later."
-                        } else {
-                            "This will remove ${connection.bankName} from your saved connections list."
-                        }
-                    )
+                    Text(confirmMessage)
                 },
                 confirmButton = {
                     Button(
                         onClick = {
                             hiddenConnectionIds = hiddenConnectionIds + connection.id
-                            viewModel.disconnect(connection.id)
                             pendingDisconnect = null
                             scope.launch {
                                 val result = snackbarHostState.showSnackbar(
-                                    message = if (connection.isConnected) "Bank disconnected" else "Connection removed",
-                                    actionLabel = "Undo"
+                                    message = snackbarMessage,
+                                    actionLabel = undoLabel
                                 )
                                 if (result == SnackbarResult.ActionPerformed) {
                                     hiddenConnectionIds = hiddenConnectionIds - connection.id
+                                } else {
+                                    hiddenConnectionIds = hiddenConnectionIds - connection.id
+                                    viewModel.disconnect(connection.id)
                                 }
                             }
                         },

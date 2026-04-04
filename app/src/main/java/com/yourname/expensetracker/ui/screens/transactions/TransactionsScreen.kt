@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.shape.CircleShape
@@ -38,12 +39,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -99,6 +102,7 @@ fun TransactionsScreen(
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
     val ownershipFilter by viewModel.ownershipFilter.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
+    val debugActionsEnabled = BuildConfig.DEBUG
     
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -477,7 +481,11 @@ fun TransactionsScreen(
                                     onRename = { expenseToRename = item.expense },
                                     onChangeType = { expenseToChangeType = item.expense },
                                     onEditOwnership = { expenseToEditOwnership = item.expense },
-                                    onDebug = { expenseToDebug = item.expense },
+                                    onDebug = {
+                                        if (debugActionsEnabled) {
+                                            expenseToDebug = item.expense
+                                        }
+                                    },
                                     onEditLocation = { expenseToEditLocation = item.expense }
                                 )
                             }
@@ -587,9 +595,18 @@ fun TransactionsScreen(
         if (expenseToChangeType != null) {
             ChangeTypeDialog(
                 currentType = expenseToChangeType?.transactionType ?: TransactionType.PURCHASE,
+                currentTransferDirection = expenseToChangeType?.transferDirection,
+                currentTransferAccountName = expenseToChangeType?.transferAccountName,
                 onDismiss = { expenseToChangeType = null },
-                onConfirm = { newType ->
-                    expenseToChangeType?.let { viewModel.updateExpenseType(it, newType) }
+                onConfirm = { newType, transferDirection, transferAccountName ->
+                    expenseToChangeType?.let {
+                        viewModel.updateExpenseType(
+                            expense = it,
+                            newType = newType,
+                            transferDirection = transferDirection,
+                            transferAccountName = transferAccountName
+                        )
+                    }
                     expenseToChangeType = null
                 }
             )
@@ -611,7 +628,7 @@ fun TransactionsScreen(
         }
         
         // Debug Screen Overlay
-        if (expenseToDebug != null) {
+        if (debugActionsEnabled && expenseToDebug != null) {
             Dialog(
                 onDismissRequest = { expenseToDebug = null },
                 properties = androidx.compose.ui.window.DialogProperties(
@@ -1149,19 +1166,21 @@ private fun TransactionItem(
                                 }
                             )
 
-                            DropdownMenuItem(
-                                text = { Text(debugMenuLabel) },
-                                onClick = {
-                                    showActionMenu = false
-                                    onDebug()
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Rounded.BugReport,
-                                        contentDescription = null
-                                    )
-                                }
-                            )
+                            if (BuildConfig.DEBUG) {
+                                DropdownMenuItem(
+                                    text = { Text(debugMenuLabel) },
+                                    onClick = {
+                                        showActionMenu = false
+                                        onDebug()
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.BugReport,
+                                            contentDescription = null
+                                        )
+                                    }
+                                )
+                            }
 
                             DropdownMenuItem(
                                 text = { Text(deleteTransactionCd) },
@@ -1513,10 +1532,17 @@ fun RenameMerchantDialog(
 @Composable
 fun ChangeTypeDialog(
     currentType: TransactionType,
+    currentTransferDirection: TransferDirection?,
+    currentTransferAccountName: String?,
     onDismiss: () -> Unit,
-    onConfirm: (TransactionType) -> Unit
+    onConfirm: (TransactionType, TransferDirection?, String) -> Unit
 ) {
     var selectedType by remember { mutableStateOf(currentType) }
+    var transferDirection by remember { mutableStateOf(currentTransferDirection) }
+    var transferAccountName by remember { mutableStateOf(currentTransferAccountName.orEmpty()) }
+    val transferAccountNameTrimmed = transferAccountName.trim()
+    val transferMetadataValid = selectedType != TransactionType.TRANSFER ||
+        (transferDirection != null && transferAccountNameTrimmed.isNotBlank())
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1593,12 +1619,44 @@ fun ChangeTypeDialog(
                         }
                     }
                 }
+
+                if (selectedType == TransactionType.TRANSFER) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.add_expense_transfer_direction),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = transferDirection == TransferDirection.INCOMING,
+                            onClick = { transferDirection = TransferDirection.INCOMING },
+                            label = { Text(stringResource(R.string.add_expense_incoming)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = transferDirection == TransferDirection.OUTGOING,
+                            onClick = { transferDirection = TransferDirection.OUTGOING },
+                            label = { Text(stringResource(R.string.add_expense_outgoing)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    OutlinedTextField(
+                        value = transferAccountName,
+                        onValueChange = { transferAccountName = it.take(100) },
+                        label = { Text(stringResource(R.string.add_expense_account_name_label)) },
+                        placeholder = { Text(stringResource(R.string.add_expense_account_placeholder)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        isError = transferAccountNameTrimmed.isBlank()
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(selectedType) },
-                enabled = selectedType != currentType,
+                onClick = { onConfirm(selectedType, transferDirection, transferAccountNameTrimmed) },
+                enabled = selectedType != currentType && transferMetadataValid,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SemanticColors.PrimaryIndigo
                 )
@@ -1626,6 +1684,9 @@ fun EditOwnershipDialog(
     var sharedWithName by remember { mutableStateOf(expense.sharedWithName ?: "") }
     var mySharePercentage by remember { mutableStateOf(expense.mySharePercentage?.toString() ?: "") }
     var myShareAmount by remember { mutableStateOf(expense.myShareAmount?.toString() ?: "") }
+    val parsedSharePercentage = mySharePercentage.toIntOrNull()
+    val isSharePercentageInvalid = isSharedExpense && mySharePercentage.isNotBlank() &&
+        (parsedSharePercentage == null || parsedSharePercentage !in 0..100)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1692,10 +1753,20 @@ fun EditOwnershipDialog(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
                             value = mySharePercentage,
-                            onValueChange = { mySharePercentage = it.filter { c -> c.isDigit() } },
+                            onValueChange = { input ->
+                                val filtered = input.filter { c -> c.isDigit() }.take(3)
+                                mySharePercentage = when {
+                                    filtered.isBlank() -> ""
+                                    filtered.toIntOrNull() == null -> ""
+                                    filtered.toInt() > 100 -> "100"
+                                    else -> filtered
+                                }
+                            },
                             label = { Text(stringResource(R.string.transactions_my_percentage_label)) },
                             modifier = Modifier.weight(1f),
-                            singleLine = true
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            isError = isSharePercentageInvalid
                         )
                         OutlinedTextField(
                             value = myShareAmount,
@@ -1727,7 +1798,8 @@ fun EditOwnershipDialog(
                 onClick = {
                     onSave(isNotMine, ownerName, isSharedExpense, sharedWithName, mySharePercentage, myShareAmount)
                 },
-                modifier = Modifier
+                modifier = Modifier,
+                enabled = !isSharePercentageInvalid
             ) {
                 Text(stringResource(R.string.transactions_save_button))
             }

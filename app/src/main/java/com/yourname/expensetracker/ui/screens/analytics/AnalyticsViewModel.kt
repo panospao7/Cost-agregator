@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.analytics
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -94,13 +95,27 @@ class AnalyticsViewModel @Inject constructor(
         val categoriesHash: Int,
         val latestExpenseTimestamp: Long,
         val expenseCount: Int,
-        val dataVersion: Long
+        val dataVersion: Long,
+        val budgetsHash: Int,
+        val budgetDataVersion: Long
     )
 
     private data class ExpenseFreshness(
         val latestExpenseTimestamp: Long = 0L,
         val expenseCount: Int = 0,
         val dataVersion: Long = 0L
+    )
+
+    private data class BudgetFreshness(
+        val budgetsHash: Int = 0,
+        val dataVersion: Long = 0L
+    )
+
+    private data class AnalyticsInputs(
+        val categories: List<Category>,
+        val period: TimePeriod,
+        val expenseFreshness: ExpenseFreshness,
+        val budgetFreshness: BudgetFreshness
     )
 
     private data class AdvResult(
@@ -114,6 +129,8 @@ class AnalyticsViewModel @Inject constructor(
     private val advancedCache = ConcurrentHashMap<PeriodCacheKey, AdvResult>()
     @Volatile
     private var lastExpenseDataVersion: Long = -1L
+    @Volatile
+    private var lastBudgetDataVersion: Long = -1L
 
     private val _selectedPeriod = MutableStateFlow(TimePeriod.MONTH)
 
@@ -130,19 +147,42 @@ class AnalyticsViewModel @Inject constructor(
                 )
             }
             .drop(1)
-            .catch { emit(ExpenseFreshness()) }
-    ) { categories, period, freshness ->
-        Triple(categories, period, freshness)
+            .catch { emit(ExpenseFreshness()) },
+        budgetRepository.allBudgets
+            .scan(BudgetFreshness()) { previous, budgets ->
+                BudgetFreshness(
+                    budgetsHash = computeBudgetsHash(budgets),
+                    dataVersion = previous.dataVersion + 1L
+                )
+            }
+            .drop(1)
+            .catch { emit(BudgetFreshness()) }
+    ) { categories, period, expenseFreshness, budgetFreshness ->
+        AnalyticsInputs(
+            categories = categories,
+            period = period,
+            expenseFreshness = expenseFreshness,
+            budgetFreshness = budgetFreshness
+        )
     }
     .debounce(300)
-    .flatMapLatest { (categories, period, freshness) ->
+    .flatMapLatest { inputs ->
         flow {
+            val categories = inputs.categories
+            val period = inputs.period
+            val freshness = inputs.expenseFreshness
+            val budgetFreshness = inputs.budgetFreshness
+
             emit(AnalyticsState(isLoading = true, selectedPeriod = period))
 
-            if (freshness.dataVersion != lastExpenseDataVersion) {
+            if (
+                freshness.dataVersion != lastExpenseDataVersion ||
+                budgetFreshness.dataVersion != lastBudgetDataVersion
+            ) {
                 analyticsCache.clear()
                 advancedCache.clear()
                 lastExpenseDataVersion = freshness.dataVersion
+                lastBudgetDataVersion = budgetFreshness.dataVersion
             }
 
             val now = timeProvider.now()
@@ -154,7 +194,9 @@ class AnalyticsViewModel @Inject constructor(
                 categoriesHash = categories.hashCode(),
                 latestExpenseTimestamp = freshness.latestExpenseTimestamp,
                 expenseCount = freshness.expenseCount,
-                dataVersion = freshness.dataVersion
+                dataVersion = freshness.dataVersion,
+                budgetsHash = budgetFreshness.budgetsHash,
+                budgetDataVersion = budgetFreshness.dataVersion
             )
 
             val cached = analyticsCache[cacheKey]
@@ -486,6 +528,12 @@ class AnalyticsViewModel @Inject constructor(
         TimePeriod.YEAR,
         TimePeriod.TODAY,
         TimePeriod.ALL -> null
+    }
+
+    private fun computeBudgetsHash(budgets: List<Budget>): Int {
+        return budgets
+            .sortedBy { it.id }
+            .fold(1) { acc, budget -> 31 * acc + budget.hashCode() }
     }
 
     private fun computeVelocityAnomalies(

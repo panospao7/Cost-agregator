@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -33,6 +34,7 @@ class WarrantyTrackerViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(WarrantyTrackerState())
     val state: StateFlow<WarrantyTrackerState> = _state.asStateFlow()
+    private var warrantiesCollectorJob: Job? = null
 
     init {
         loadWarranties()
@@ -40,7 +42,8 @@ class WarrantyTrackerViewModel @Inject constructor(
     }
 
     private fun loadWarranties() {
-        viewModelScope.launch {
+        warrantiesCollectorJob?.cancel()
+        warrantiesCollectorJob = viewModelScope.launch {
             _state.update { it.copy(isLoading = true) }
             
             warrantyRepository.getAllWarranties()

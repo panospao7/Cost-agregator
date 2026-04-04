@@ -1207,6 +1207,28 @@ When analyzing a specific feature, check files in this order:
 
 ### Location Bug Fixes (Mar 2026)
 - **F1**: Map always visible in LocationSearchPicker → Made collapsible (hidden by default, toggle, auto-expand)
+--- 
+## RECENT UI/UX FIXES (47 items across 9 batches)
+Status: Implemented across the codebase in this release.
+
+- Batch A: Navigation & Main — 6 fixes
+- C1, C2, C3, C4, C5, H1
+- Batch B: Dashboard Widgets — 7 fixes
+- H2, H3, H4, H5, H6, H7, H8
+- Batch C: Transactions & Review — 7 fixes
+- H9, H10, H11, H12, H13, H14, H15
+- Batch D: Analytics & Charts — 4 fixes
+- H16, H17, H18, H19
+- Batch E: Budget & Savings — 7 fixes
+- C6, C7, H20, H21, H22, H23, H24
+- Batch F: AI Assistant — 5 fixes
+- C8, C9, H25, H26, H27
+- Batch G: Advanced Features — 8 fixes
+- H28, H29, H30, H31, H32, H33, H34, H35
+- Batch H: Shared Components & Theme — 5 fixes
+- C14, H36, H37, H38, H39
+- Batch I: Settings & Edge Cases — 0 fixes (not included in 47-count)
+
 - **F2**: Long-press pin not resolving address → Added reverseGeocode override
 - **F3**: FAB centre-on-device not working → Wired centreOnDeviceRequest flag
 - **F4**: osmdroid config loading race → Moved to factory lambda

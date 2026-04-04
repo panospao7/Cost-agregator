@@ -43,6 +43,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -424,6 +426,10 @@ private fun ProviderAndApiKeySection(
                 placeholder = { Text(stringResource(R.string.ai_api_key_placeholder)) },
                 singleLine = true,
                 isError = apiKeyValidationMessage != null,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    autoCorrect = false
+                ),
                 visualTransformation = if (revealApiKey) {
                     VisualTransformation.None
                 } else {

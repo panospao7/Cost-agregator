@@ -5,21 +5,15 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.dao.ExchangeRateDao
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.w3c.dom.Element
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.Currency
-import java.util.Locale
-import javax.xml.parsers.DocumentBuilderFactory
 import javax.inject.Inject
 
 /**
@@ -55,6 +49,7 @@ data class ExchangeRateInfo(
 class CurrencyManagementViewModel @Inject constructor(
     private val exchangeRateDao: ExchangeRateDao,
     private val currencyConverter: CurrencyConverter,
+    private val currencyRatesRepository: CurrencyRatesRepository,
     private val settingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
     
@@ -190,11 +185,10 @@ class CurrencyManagementViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true)
             
             try {
-                val refreshedCount = syncRatesFromRemote(_uiState.value.homeCurrency)
+                val refreshedCount = currencyRatesRepository.refresh(_uiState.value.homeCurrency)
                 if (refreshedCount <= 0) {
                     throw IllegalStateException("No rates returned from provider")
                 }
-                settingsRepository.setLastRateUpdate(System.currentTimeMillis())
                 loadCurrencyData()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -204,63 +198,6 @@ class CurrencyManagementViewModel @Inject constructor(
                 )
             }
         }
-    }
-
-    private suspend fun syncRatesFromRemote(homeCurrency: String): Int = withContext(Dispatchers.IO) {
-        val connection = (URL("https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml").openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 10_000
-            readTimeout = 10_000
-        }
-
-        connection.connect()
-        if (connection.responseCode !in 200..299) {
-            throw IllegalStateException("Rate provider returned HTTP ${connection.responseCode}")
-        }
-
-        val document = connection.inputStream.use { stream ->
-            DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(stream)
-        }
-        connection.disconnect()
-
-        val eurToCurrency = mutableMapOf<String, Double>()
-        eurToCurrency["EUR"] = 1.0
-
-        val nodes = document.getElementsByTagName("Cube")
-        for (i in 0 until nodes.length) {
-            val element = nodes.item(i) as? Element ?: continue
-            val currency = element.getAttribute("currency")?.uppercase(Locale.US).orEmpty()
-            val rate = element.getAttribute("rate")?.toDoubleOrNull() ?: continue
-            if (currency.isNotBlank() && rate > 0.0) {
-                eurToCurrency[currency] = rate
-            }
-        }
-
-        val base = homeCurrency.uppercase(Locale.US)
-        if (!eurToCurrency.containsKey(base)) {
-            throw IllegalStateException("Provider did not include home currency $base")
-        }
-
-        val supported = (priorityCurrencies + base + "EUR")
-            .map { it.uppercase(Locale.US) }
-            .distinct()
-            .filter { eurToCurrency.containsKey(it) }
-
-        val rates = mutableListOf<Triple<String, String, Double>>()
-        for (from in supported) {
-            val fromEur = eurToCurrency[from] ?: continue
-            for (to in supported) {
-                if (from == to) continue
-                val toEur = eurToCurrency[to] ?: continue
-                val computedRate = toEur / fromEur
-                if (computedRate.isFinite() && computedRate > 0.0) {
-                    rates.add(Triple(from, to, computedRate))
-                }
-            }
-        }
-
-        currencyConverter.storeRates(rates, source = "ecb")
-        rates.size
     }
     
     /**

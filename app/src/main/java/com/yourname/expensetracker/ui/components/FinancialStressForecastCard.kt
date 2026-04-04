@@ -111,7 +111,10 @@ fun FinancialStressForecastCard(
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = if (isSelected) accentColor.copy(alpha = 0.2f) else tabColor.copy(alpha = 0.1f),
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .minimumInteractiveComponentSize()
+                            .heightIn(min = 48.dp),
                         onClick = { selectedHorizon = index }
                     ) {
                         Column(
@@ -298,7 +301,10 @@ private fun RecommendationChip(
         color = SemanticColors.PrimaryIndigo.copy(alpha = 0.08f),
         border = BorderStroke(1.dp, SemanticColors.PrimaryIndigo.copy(alpha = 0.2f)),
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .minimumInteractiveComponentSize()
+            .heightIn(min = 48.dp)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),

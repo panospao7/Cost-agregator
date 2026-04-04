@@ -51,11 +51,11 @@ fun ForecastTimeline(
             return
         }
 
-        // Guard against invalid budget limit
-        val safeBudgetLimit = if (budgetLimit <= 0) 1.0 else budgetLimit
+        val hasValidBudget = budgetLimit > 0.0
+        val noBudgetSetText = stringResource(R.string.forecast_no_budget_set)
 
         // Vico model creation - Connect past to projected (no gap)
-        val chartEntryModel: ChartEntryModel = remember(pastPoints, projectedPoints, budgetLimit) {
+        val chartEntryModel: ChartEntryModel = remember(pastPoints, projectedPoints, budgetLimit, hasValidBudget) {
             val pastEntries = pastPoints.mapIndexed { index, value -> 
                 FloatEntry(index.toFloat(), value.toFloat()) 
             }
@@ -76,32 +76,44 @@ fun ForecastTimeline(
                 }
             }
             
-            val budgetLimitEntries = listOf(
-                FloatEntry(0f, safeBudgetLimit.toFloat()),
-                FloatEntry(
-                    listOfNotNull(
-                        pastEntries.maxOfOrNull { it.x },
-                        projectionEntries.maxOfOrNull { it.x }
-                    ).maxOrNull() ?: 0f,
-                    safeBudgetLimit.toFloat()
+            if (hasValidBudget) {
+                val budgetLimitEntries = listOf(
+                    FloatEntry(0f, budgetLimit.toFloat()),
+                    FloatEntry(
+                        listOfNotNull(
+                            pastEntries.maxOfOrNull { it.x },
+                            projectionEntries.maxOfOrNull { it.x }
+                        ).maxOrNull() ?: 0f,
+                        budgetLimit.toFloat()
+                    )
                 )
-            )
-            entryModelOf(pastEntries, projectionEntries, budgetLimitEntries)
+                entryModelOf(pastEntries, projectionEntries, budgetLimitEntries)
+            } else {
+                entryModelOf(pastEntries, projectionEntries)
+            }
         }
 
-        val lineSpecs = remember {
-            listOf(
-                LineChart.LineSpec(
-                    lineColor = SemanticColors.PrimaryIndigo.toArgb(),
-                ),
-                LineChart.LineSpec(
-                    lineColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f).toArgb(),
-                ),
-                LineChart.LineSpec(
-                    lineColor = SemanticColors.WarningOrange.copy(alpha = 0.5f).toArgb(),
-                    lineThicknessDp = 1f
+        val lineSpecs = remember(hasValidBudget) {
+            buildList {
+                add(
+                    LineChart.LineSpec(
+                        lineColor = SemanticColors.PrimaryIndigo.toArgb(),
+                    )
                 )
-            )
+                add(
+                    LineChart.LineSpec(
+                        lineColor = SemanticColors.PrimaryIndigo.copy(alpha = 0.3f).toArgb(),
+                    )
+                )
+                if (hasValidBudget) {
+                    add(
+                        LineChart.LineSpec(
+                            lineColor = SemanticColors.WarningOrange.copy(alpha = 0.5f).toArgb(),
+                            lineThicknessDp = 1f
+                        )
+                    )
+                }
+            }
         }
 
         val allPoints = remember(pastPoints, projectedPoints) { pastPoints + projectedPoints }
@@ -109,8 +121,13 @@ fun ForecastTimeline(
         val maxPoint = allPoints.maxOrNull() ?: 0.0
         val currentPoint = pastPoints.lastOrNull() ?: 0.0
         val projectedEnd = projectedPoints.lastOrNull() ?: currentPoint
-        val chartSummary = remember(minPoint, maxPoint, currentPoint, projectedEnd, safeBudgetLimit) {
-            "Forecast timeline. Current spending €${String.format("%.0f", currentPoint)}, projected month-end €${String.format("%.0f", projectedEnd)}, minimum €${String.format("%.0f", minPoint)}, maximum €${String.format("%.0f", maxPoint)}, budget limit €${String.format("%.0f", safeBudgetLimit)}."
+        val chartSummary = remember(minPoint, maxPoint, currentPoint, projectedEnd, hasValidBudget, budgetLimit, noBudgetSetText) {
+            val baseSummary = "Forecast timeline. Current spending €${String.format("%.0f", currentPoint)}, projected month-end €${String.format("%.0f", projectedEnd)}, minimum €${String.format("%.0f", minPoint)}, maximum €${String.format("%.0f", maxPoint)}"
+            if (hasValidBudget) {
+                "$baseSummary, budget limit €${String.format("%.0f", budgetLimit)}."
+            } else {
+                "$baseSummary. $noBudgetSetText."
+            }
         }
 
         Chart(
@@ -136,8 +153,10 @@ fun ForecastTimeline(
               LegendItem(stringResource(R.string.chart_legend_actual), SemanticColors.PrimaryIndigo)
               Spacer(modifier = Modifier.width(16.dp))
               LegendItem(stringResource(R.string.chart_legend_projected), SemanticColors.PrimaryIndigo.copy(alpha = 0.3f))
-              Spacer(modifier = Modifier.width(16.dp))
-              LegendItem(stringResource(R.string.chart_legend_budget_limit), SemanticColors.WarningOrange.copy(alpha = 0.5f))
+              if (hasValidBudget) {
+                  Spacer(modifier = Modifier.width(16.dp))
+                  LegendItem(stringResource(R.string.chart_legend_budget_limit), SemanticColors.WarningOrange.copy(alpha = 0.5f))
+              }
         }
     }
 }

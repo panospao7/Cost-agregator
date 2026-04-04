@@ -367,18 +367,21 @@ fun ReviewScreen(
                                     editingReviewReceipt = item
                                 },
                                 onDebug = {
-                                    item.receipt?.let { receipt ->
-                                        coroutineScope.launch {
-                                            debugInfoDialogText = loadingText
-                                            debugInfoDialogText = viewModel.getReceiptDebugInfo(receipt.id)
+                                    if (debugActionsEnabled) {
+                                        item.receipt?.let { receipt ->
+                                            coroutineScope.launch {
+                                                debugInfoDialogText = loadingText
+                                                debugInfoDialogText = viewModel.getReceiptDebugInfo(receipt.id)
+                                            }
+                                        } ?: run {
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(noReceiptDebugMsg)
+                                            }
                                         }
-                                    } ?: run {
-                                        coroutineScope.launch {
-                                            snackbarHostState.showSnackbar(noReceiptDebugMsg)
-                                        }
+                                        debugReview = item.review
                                     }
-                                    debugReview = item.review
                                 },
+                                debugEnabled = debugActionsEnabled,
                                 aiExplanationState = aiExplanationStates[item.review.id]
                                     ?: AiLoadState.Idle,
                                 captureAssistState = reviewCaptureAssistStates[item.review.id]
@@ -495,7 +498,8 @@ fun ReviewScreen(
             )
         }
 
-        debugReview?.let { review ->
+        if (debugActionsEnabled) {
+            debugReview?.let { review ->
             androidx.compose.ui.window.Dialog(
                 onDismissRequest = { debugReview = null },
                 properties = androidx.compose.ui.window.DialogProperties(
@@ -518,7 +522,7 @@ fun ReviewScreen(
             }
         }
 
-        debugInfoDialogText?.let { info ->
+            debugInfoDialogText?.let { info ->
             val copiedToast = stringResource(R.string.review_copied_toast)
             AlertDialog(
                 onDismissRequest = { debugInfoDialogText = null },
@@ -554,6 +558,7 @@ fun ReviewScreen(
                     }
                 }
             )
+        }
         }
 
         if (showApproveAllConfirm) {
@@ -689,7 +694,7 @@ fun ReviewScreen(
         }
         
         // Debug Viewer Dialog
-        if (showDebugViewer) {
+        if (debugActionsEnabled && showDebugViewer) {
             debugData?.let { data ->
                 DebugViewerScreen(
                     debugData = data,
@@ -708,6 +713,7 @@ fun ReviewCard(
     onReject: () -> Unit,
     onEdit: () -> Unit,
     onDebug: () -> Unit,
+    debugEnabled: Boolean = false,
     aiExplanationState: AiLoadState<ReviewExplanationUi> = AiLoadState.Idle,
     captureAssistState: ReviewCaptureAssistState = ReviewCaptureAssistState(),
     onLoadAiExplanation: () -> Unit = {},
@@ -903,11 +909,16 @@ fun ReviewCard(
                         RoundedCornerShape(16.dp)
                     )
                     .border(1.dp, SemanticColors.GlassBorder.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
-                    .clickable { 
-                        haptic(HapticType.Standard)
-                        onDebug() // Tap the evidence area to show debug info instead of expanding
-                        // showTrustSignal = !showTrustSignal 
-                    }
+                    .then(
+                        if (debugEnabled) {
+                            Modifier.clickable {
+                                haptic(HapticType.Standard)
+                                onDebug()
+                            }
+                        } else {
+                            Modifier
+                        }
+                    )
                     .padding(12.dp)
             ) {
                 Row(

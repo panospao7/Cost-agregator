@@ -1,12 +1,10 @@
 package com.yourname.expensetracker.ui.screens.assistant
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,7 +14,6 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Send
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,6 +27,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -37,6 +37,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
+import com.yourname.expensetracker.domain.model.asString
+import com.yourname.expensetracker.ui.components.ai.AiChatBubble
+import com.yourname.expensetracker.ui.components.ai.AiInsightsCard
+import com.yourname.expensetracker.ui.components.ai.AiRecommendationCard
+import com.yourname.expensetracker.ui.components.ai.AiTypingIndicator
 import com.yourname.expensetracker.ui.components.ai.AssistantResultCard
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -143,17 +149,54 @@ fun AssistantSheet(
                     }) { item ->
                         when (item) {
                             is AssistantConversationItem.User -> {
-                                UserBubble(text = item.text)
+                                AiChatBubble(
+                                    text = item.text,
+                                    isUser = true
+                                )
                             }
                             is AssistantConversationItem.Result -> {
-                                AssistantResultCard(
-                                    result = item.result,
-                                    canDrilldown = item.drilldownFilter != null,
-                                    onOpenTransactions = {
-                                        item.drilldownFilter?.let(viewModel::openDrilldown)
-                                    },
-                                    onClarificationSelected = viewModel::onClarificationSelected
-                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    AssistantResultCard(
+                                        result = item.result,
+                                        canDrilldown = item.drilldownFilter != null,
+                                        onOpenTransactions = {
+                                            item.drilldownFilter?.let(viewModel::openDrilldown)
+                                        },
+                                        onClarificationSelected = viewModel::onClarificationSelected
+                                    )
+
+                                    when (val result = item.result) {
+                                        is FinancialQueryResult.Summary -> {
+                                            result.supportingText
+                                                ?.takeIf { it.isNotBlank() }
+                                                ?.let { insightText ->
+                                                    AiInsightsCard(
+                                                        title = result.title.asString(),
+                                                        insight = insightText
+                                                    )
+                                                }
+                                        }
+
+                                        is FinancialQueryResult.Clarification -> {
+                                            var dismissedRecommendations by remember(item.id) {
+                                                mutableStateOf(emptySet<String>())
+                                            }
+                                            result.options
+                                                .filterNot { it in dismissedRecommendations }
+                                                .forEach { option ->
+                                                    AiRecommendationCard(
+                                                        recommendation = option,
+                                                        onApply = { viewModel.onClarificationSelected(option) },
+                                                        onDismiss = {
+                                                            dismissedRecommendations += option
+                                                        }
+                                                    )
+                                                }
+                                        }
+
+                                        else -> Unit
+                                    }
+                                }
                             }
                             is AssistantConversationItem.Error -> {
                                 Text(
@@ -167,11 +210,7 @@ fun AssistantSheet(
                 }
 
                 if (uiState.isLoading) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.height(16.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.padding(horizontal = 6.dp))
-                        Text(stringResource(R.string.assistant_thinking), style = MaterialTheme.typography.bodyMedium)
-                    }
+                    AiTypingIndicator()
                 }
 
                 uiState.errorMessage?.let {
@@ -224,18 +263,5 @@ private fun StarterPrompts(
             SuggestionChip(onClick = { onPromptSelected("Largest purchase this month") }, label = { Text(stringResource(R.string.assistant_suggestion_largest)) })
             SuggestionChip(onClick = { onPromptSelected("Show groceries this month") }, label = { Text(stringResource(R.string.assistant_suggestion_groceries)) })
         }
-    }
-}
-
-@Composable
-private fun UserBubble(text: String) {
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-        Text(
-            text = text,
-            modifier = Modifier
-                .padding(start = 48.dp)
-                .padding(10.dp),
-            style = MaterialTheme.typography.bodyMedium
-        )
     }
 }

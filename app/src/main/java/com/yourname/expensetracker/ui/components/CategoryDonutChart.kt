@@ -83,6 +83,13 @@ fun CategoryDonutChart(
             }
         }
     }
+    val categoryColorByKey = remember(categories, categoryColors) {
+        categories
+            .mapIndexed { index, item ->
+                (item.category.id to item.category.name) to categoryColors[index]
+            }
+            .toMap()
+    }
 
     val topCategorySummary = remember(categories) {
         categories
@@ -173,11 +180,7 @@ fun CategoryDonutChart(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         row.forEach { item ->
-                            val color = try {
-                                Color(android.graphics.Color.parseColor(item.category.color))
-                            } catch (_: Exception) {
-                                Color.Gray
-                            }
+                            val color = categoryColorByKey[item.category.id to item.category.name] ?: Color.Gray
                             Row(
                                 modifier = Modifier.weight(1f),
                                 verticalAlignment = Alignment.CenterVertically

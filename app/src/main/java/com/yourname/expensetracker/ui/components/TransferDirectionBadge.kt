@@ -49,6 +49,7 @@ fun TransferDirectionBadge(
         )
         null -> UnknownBadge(
             modifier = modifier,
+            showLabel = showLabel,
             compact = compact
         )
     }
@@ -177,16 +178,23 @@ private fun OutgoingBadge(
 @Composable
 private fun UnknownBadge(
     modifier: Modifier = Modifier,
+    showLabel: Boolean = true,
     compact: Boolean = false
 ) {
     val backgroundColor = MaterialTheme.colorScheme.surfaceVariant
     val contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val compactContentDescription = stringResource(R.string.a11y_transfer_unknown)
     
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(backgroundColor)
+            .then(
+                if (showLabel) Modifier else Modifier.semantics {
+                    contentDescription = compactContentDescription
+                }
+            )
             .padding(horizontal = if (compact) 6.dp else 10.dp, vertical = if (compact) 4.dp else 6.dp)
     ) {
         Icon(
@@ -195,18 +203,20 @@ private fun UnknownBadge(
             tint = contentColor,
             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
         )
-        
-        Spacer(modifier = Modifier.width(6.dp))
-        
-        Text(
-            text = stringResource(R.string.transfer_set_direction),
-            color = contentColor,
-            style = if (compact) {
-                MaterialTheme.typography.labelSmall
-            } else {
-                MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
-            }
-        )
+
+        if (showLabel) {
+            Spacer(modifier = Modifier.width(6.dp))
+
+            Text(
+                text = stringResource(R.string.transfer_set_direction),
+                color = contentColor,
+                style = if (compact) {
+                    MaterialTheme.typography.labelSmall
+                } else {
+                    MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
+                }
+            )
+        }
     }
 }
 

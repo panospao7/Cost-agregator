@@ -70,6 +70,9 @@ class SavingsGoalsViewModel @Inject constructor(
                     for (goal in goals) {
                         totalSaved += goal.currentAmount
                     }
+
+                    val level = gamificationEngine.calculateLevel(totalSaved)
+                    val title = gamificationEngine.getLevelTitle(level)
                     
                     // Generate smart recommendations
                     val recommendations = goals.mapNotNull { goal ->
@@ -94,7 +97,9 @@ class SavingsGoalsViewModel @Inject constructor(
                             goals = goals,
                             smartRecommendations = recommendations,
                             isLoading = false,
-                            totalSaved = totalSaved
+                            totalSaved = totalSaved,
+                            userLevel = level,
+                            levelTitle = title
                         )
                     }
                 }
@@ -105,16 +110,11 @@ class SavingsGoalsViewModel @Inject constructor(
         viewModelScope.launch {
             val streak = gamificationEngine.calculateStreak()
             val achievements = gamificationEngine.getAchievements()
-            val totalSaved = _state.value.totalSaved
-            val level = gamificationEngine.calculateLevel(totalSaved)
-            val title = gamificationEngine.getLevelTitle(level)
             
             _state.update {
                 it.copy(
                     streak = streak,
-                    achievements = achievements,
-                    userLevel = level,
-                    levelTitle = title
+                    achievements = achievements
                 )
             }
         }

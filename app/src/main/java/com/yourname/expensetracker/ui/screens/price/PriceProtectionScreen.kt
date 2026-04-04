@@ -46,6 +46,10 @@ fun PriceProtectionScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(0) }
+    val unableToOpenClaimMessage = stringResource(R.string.price_snackbar_unable_open_claim_link)
+    val itemAddedBackMessage = stringResource(R.string.price_snackbar_item_added_back_tracking)
+    val itemRemovedMessage = stringResource(R.string.price_snackbar_item_removed_tracking)
+    val undoLabel = stringResource(R.string.action_undo)
 
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -106,7 +110,7 @@ fun PriceProtectionScreen(
                         val launched = openExternalUrl(context, url)
                         if (!launched) {
                             scope.launch {
-                                snackbarHostState.showSnackbar("Unable to open claim link")
+                                snackbarHostState.showSnackbar(unableToOpenClaimMessage)
                             }
                         }
                     }
@@ -121,15 +125,15 @@ fun PriceProtectionScreen(
                     onTrackItem = { item ->
                         viewModel.trackItem(item)
                         scope.launch {
-                            snackbarHostState.showSnackbar("Item added back to tracking")
+                            snackbarHostState.showSnackbar(itemAddedBackMessage)
                         }
                     },
                     onRemoveFromTracking = { item ->
                         viewModel.removeFromTracking(item)
                         scope.launch {
                             val result = snackbarHostState.showSnackbar(
-                                message = "Item removed from tracking",
-                                actionLabel = "Undo"
+                                message = itemRemovedMessage,
+                                actionLabel = undoLabel
                             )
                             if (result == SnackbarResult.ActionPerformed) {
                                 viewModel.trackItem(item)
@@ -432,8 +436,8 @@ fun ProtectedItemsTab(
     pendingRemoval?.let { item ->
         AlertDialog(
             onDismissRequest = { pendingRemoval = null },
-            title = { Text("Remove from tracking?") },
-            text = { Text("You will stop receiving price-drop alerts for ${item.itemName}.") },
+            title = { Text(stringResource(R.string.price_remove_tracking_confirm_title)) },
+            text = { Text(stringResource(R.string.price_remove_tracking_confirm_message, item.itemName)) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -552,7 +556,7 @@ fun ProtectedItemCard(
                 ) {
                     Icon(Icons.Rounded.NotificationsOff, null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Remove from tracking")
+                    Text(stringResource(R.string.price_remove_from_tracking_action))
                 }
             } else {
                 Button(
@@ -561,7 +565,7 @@ fun ProtectedItemCard(
                 ) {
                     Icon(Icons.Rounded.NotificationsActive, null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Track item")
+                    Text(stringResource(R.string.price_track_item_action))
                 }
             }
         }

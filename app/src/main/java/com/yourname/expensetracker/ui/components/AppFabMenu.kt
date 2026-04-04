@@ -42,11 +42,11 @@ fun AppFabMenu(
         dismissMenu()
     }
 
-    Box(modifier = modifier) {
+    Box(modifier = Modifier.fillMaxSize()) {
         if (expanded && showScrimWhenExpanded) {
             Box(
                 modifier = Modifier
-                    .matchParentSize()
+                    .fillMaxSize()
                     .background(scrimColor)
                     .clickable(
                         interactionSource = scrimInteractionSource,
@@ -58,7 +58,9 @@ fun AppFabMenu(
         Column(
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.align(Alignment.BottomEnd)
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .then(modifier)
         ) {
             AnimatedVisibility(
                 visible = expanded,

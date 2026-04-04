@@ -427,11 +427,33 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 }
-    fun updateExpenseType(expense: Expense, newType: TransactionType) {
+    fun updateExpenseType(
+        expense: Expense,
+        newType: TransactionType,
+        transferDirection: TransferDirection? = expense.transferDirection,
+        transferAccountName: String = expense.transferAccountName.orEmpty()
+    ) {
+        val normalizedTransferAccountName = transferAccountName.trim()
+        if (newType == TransactionType.TRANSFER) {
+            if (transferDirection == null || normalizedTransferAccountName.isBlank()) {
+                viewModelScope.launch {
+                    _error.emit("Transfer direction and account name are required for transfer transactions")
+                }
+                return
+            }
+        }
+
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 expenseRepository.updateExpenseType(expense, newType)
+                if (newType == TransactionType.TRANSFER) {
+                    expenseRepository.updateTransferDetails(
+                        expense = expense,
+                        transferDirection = transferDirection,
+                        transferAccountName = normalizedTransferAccountName
+                    )
+                }
                 _successMessage.emit("Type changed to ${newType.name}")
             } catch (e: Exception) {
                 _error.emit("Failed to update type: ${e.message}")
@@ -474,13 +496,22 @@ class TransactionsViewModel @Inject constructor(
         mySharePercentage: String,
         myShareAmount: String
     ) {
+        val percentageText = mySharePercentage.trim()
+        val parsedSharePercentage = percentageText.takeIf { it.isNotEmpty() }?.toIntOrNull()
+        if (percentageText.isNotEmpty() && (parsedSharePercentage == null || parsedSharePercentage !in 0..100)) {
+            viewModelScope.launch {
+                _error.emit("Share percentage must be between 0 and 100")
+            }
+            return
+        }
+
         viewModelScope.launch {
             try {
                 expenseRepository.updateSharedExpenseDetails(
                     expense = expense,
                     isSharedExpense = isSharedExpense,
                     sharedWithName = sharedWithName.takeIf { it.isNotBlank() },
-                    mySharePercentage = mySharePercentage.toIntOrNull(),
+                    mySharePercentage = parsedSharePercentage,
                     myShareAmount = myShareAmount.toDoubleOrNull()
                 )
                 _successMessage.emit(if (isSharedExpense) "Marked as shared expense" else "Unmarked shared expense")

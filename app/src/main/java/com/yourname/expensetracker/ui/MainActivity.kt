@@ -96,7 +96,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (savedInstanceState == null) {
-            handleIntent(intent)
+            val consumed = handleIntent(intent)
+            if (consumed) {
+                // One-shot consume so this deep link is not re-applied on future recreations.
+                intent.data = null
+                setIntent(intent)
+            }
         }
         setContent {
             ExpenseTrackerTheme {

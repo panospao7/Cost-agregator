@@ -432,7 +432,7 @@ private fun SettlementPlanSection(
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Settlement Plan",
+            text = stringResource(R.string.groups_settlement_plan_title),
             style = MaterialTheme.typography.titleMedium,
             color = SemanticColors.TextPrimary,
             fontWeight = FontWeight.Bold,
@@ -447,8 +447,8 @@ private fun SettlementPlanSection(
             )
         } else {
             pendingTransfers.forEach { (fromId, toId, amount) ->
-                val fromName = memberNames[fromId] ?: "Member #$fromId"
-                val toName = memberNames[toId] ?: "Member #$toId"
+                val fromName = memberNames[fromId] ?: stringResource(R.string.groups_member_fallback_format, fromId)
+                val toName = memberNames[toId] ?: stringResource(R.string.groups_member_fallback_format, toId)
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -476,7 +476,7 @@ private fun SettlementPlanSection(
                                 settledTransferKeys = settledTransferKeys + buildSettlementKey(fromId, toId, amount)
                             }
                         ) {
-                            Text("Settle")
+                            Text(stringResource(R.string.groups_settle_action))
                         }
                     }
                 }
@@ -774,16 +774,56 @@ private fun AddExpenseDialog(
     }
 
     val totalAmount = amount.toDoubleOrNull()
-    val parsedMemberSplits = memberSplitInputs.mapValues { it.value.toDoubleOrNull() }
-    val allInputsValid = parsedMemberSplits.values.all { it != null }
+    val amountErrorRes = when {
+        amount.isBlank() -> null
+        totalAmount == null -> R.string.error_invalid_amount
+        totalAmount < 0.0 -> R.string.groups_split_error_non_negative_amount
+        else -> null
+    }
+
+    val parsedMemberSplits = memberSplitInputs.mapValues { it.value.trim().toDoubleOrNull() }
     val splitTotal = parsedMemberSplits.values.sumOf { it ?: 0.0 }
     val isNonEqualSplit = splitType != SplitType.EQUAL
+    val memberSplitErrors: Map<Long, Int?> = if (isNonEqualSplit) {
+        members.associate { member ->
+            val rawValue = memberSplitInputs[member.id].orEmpty().trim()
+            val parsedValue = parsedMemberSplits[member.id]
+            val errorRes = when {
+                rawValue.isBlank() -> R.string.groups_split_error_required
+                parsedValue == null -> R.string.groups_split_error_invalid_number
+                parsedValue < 0.0 -> R.string.groups_split_error_non_negative
+                splitType == SplitType.CUSTOM_PERCENT && parsedValue > 100.0 -> R.string.groups_split_error_percent_range
+                else -> null
+            }
+            member.id to errorRes
+        }
+    } else {
+        emptyMap()
+    }
+
+    val hasMemberFieldErrors = memberSplitErrors.values.any { it != null }
+    val hasNegativeComponents = parsedMemberSplits.values.any { it != null && it < 0.0 }
+    val splitSummaryErrorRes = when (splitType) {
+        SplitType.EQUAL -> null
+        SplitType.CUSTOM_PERCENT -> when {
+            hasMemberFieldErrors -> null
+            hasNegativeComponents || splitTotal < 0.0 -> R.string.groups_split_error_total_non_negative
+            abs(splitTotal - 100.0) > 0.1 -> R.string.groups_split_error_percent_total
+            else -> null
+        }
+        SplitType.CUSTOM_AMOUNT, SplitType.UNEQUAL -> when {
+            totalAmount == null -> R.string.error_invalid_amount
+            totalAmount < 0.0 -> R.string.groups_split_error_non_negative_amount
+            hasMemberFieldErrors -> null
+            hasNegativeComponents || splitTotal < 0.0 -> R.string.groups_split_error_total_non_negative
+            abs(splitTotal - totalAmount) > 0.01 -> R.string.groups_split_error_amount_total
+            else -> null
+        }
+    }
+
     val isSplitValid = when (splitType) {
         SplitType.EQUAL -> true
-        SplitType.CUSTOM_PERCENT -> allInputsValid && abs(splitTotal - 100.0) <= 0.1
-        SplitType.CUSTOM_AMOUNT, SplitType.UNEQUAL -> {
-            totalAmount != null && allInputsValid && abs(splitTotal - totalAmount) <= 0.01
-        }
+        else -> !hasMemberFieldErrors && splitSummaryErrorRes == null
     }
     
     AlertDialog(
@@ -802,6 +842,10 @@ private fun AddExpenseDialog(
                     onValueChange = { amount = it },
                     label = { Text(stringResource(R.string.groups_expense_amount_label)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = amountErrorRes != null,
+                    supportingText = {
+                        amountErrorRes?.let { Text(stringResource(it)) }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
                 
@@ -826,7 +870,14 @@ private fun AddExpenseDialog(
                     ) {
                         members.forEach { member ->
                             DropdownMenuItem(
-                                text = { Text(member.name + if (member.isCurrentUser) " (You)" else "") },
+                                text = {
+                                    val memberDisplayName = if (member.isCurrentUser) {
+                                        stringResource(R.string.label_you_format, member.name)
+                                    } else {
+                                        member.name
+                                    }
+                                    Text(memberDisplayName)
+                                },
                                 onClick = { paidById = member.id; expanded = false }
                             )
                         }
@@ -882,15 +933,22 @@ private fun AddExpenseDialog(
                     HorizontalDivider()
                     Text(
                         text = if (splitType == SplitType.CUSTOM_PERCENT) {
-                            "Enter each member's percentage"
+                            stringResource(R.string.groups_split_hint_enter_percent)
                         } else {
-                            "Enter each member's amount"
+                            stringResource(R.string.groups_split_hint_enter_amount)
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = SemanticColors.TextSecondary
                     )
 
                     members.forEach { member ->
+                        val memberDisplayName = if (member.isCurrentUser) {
+                            stringResource(R.string.label_you_format, member.name)
+                        } else {
+                            member.name
+                        }
+                        val fieldErrorRes = memberSplitErrors[member.id]
+
                         OutlinedTextField(
                             value = memberSplitInputs[member.id].orEmpty(),
                             onValueChange = { value ->
@@ -901,9 +959,9 @@ private fun AddExpenseDialog(
                             label = {
                                 Text(
                                     if (splitType == SplitType.CUSTOM_PERCENT) {
-                                        "${member.name}${if (member.isCurrentUser) " (You)" else ""} %"
+                                        stringResource(R.string.groups_split_member_percent_label, memberDisplayName)
                                     } else {
-                                        "${member.name}${if (member.isCurrentUser) " (You)" else ""}"
+                                        memberDisplayName
                                     }
                                 )
                             },
@@ -913,25 +971,36 @@ private fun AddExpenseDialog(
                                 }
                             },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            isError = fieldErrorRes != null,
+                            supportingText = {
+                                fieldErrorRes?.let { Text(stringResource(it)) }
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
                     }
 
                     val summaryText = when (splitType) {
-                        SplitType.CUSTOM_PERCENT -> "Total: ${String.format(Locale.US, "%.2f", splitTotal)}% (must be 100%)"
+                        SplitType.CUSTOM_PERCENT -> stringResource(
+                            R.string.groups_split_summary_percent,
+                            String.format(Locale.US, "%.2f", splitTotal)
+                        )
                         SplitType.CUSTOM_AMOUNT, SplitType.UNEQUAL -> {
                             val totalText = String.format(Locale.US, "%.2f", splitTotal)
                             val amountText = totalAmount?.let { String.format(Locale.US, "%.2f", it) } ?: "-"
-                            "Split total: $totalText (amount: $amountText)"
+                            stringResource(R.string.groups_split_summary_amount, totalText, amountText)
                         }
                         SplitType.EQUAL -> ""
                     }
 
                     Text(
-                        text = summaryText,
+                        text = splitSummaryErrorRes?.let { stringResource(it) } ?: summaryText,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (isSplitValid) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                        color = if (splitSummaryErrorRes == null && !hasMemberFieldErrors) {
+                            Color(0xFF4CAF50)
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        }
                     )
                 }
             }
@@ -947,7 +1016,7 @@ private fun AddExpenseDialog(
                         onAdd(description, amt, paidById, splitType, customSplits)
                     }
                 },
-                enabled = description.isNotBlank() && amount.toDoubleOrNull() != null && isSplitValid
+                enabled = description.isNotBlank() && totalAmount != null && totalAmount >= 0.0 && isSplitValid
             ) {
                 Text(stringResource(R.string.groups_add_expense_button))
             }
