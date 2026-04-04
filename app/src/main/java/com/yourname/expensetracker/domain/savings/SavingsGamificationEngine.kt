@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.savings
 
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -34,7 +32,7 @@ class SavingsGamificationEngine @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
     suspend fun calculateStreak(userId: String = "default"): SavingsStreak {
-        val goals = savingsGoalRepository.getAllGoals().first()
+        val goals = savingsGoalRepository.observeSavingsGoals().first()
         
         // Find the most recent contribution across all goals
         var lastContributionDate: Long? = null
@@ -76,7 +74,7 @@ class SavingsGamificationEngine @Inject constructor(
     }
     
     suspend fun getAchievements(userId: String = "default"): List<SavingsAchievement> {
-        val goals = savingsGoalRepository.getAllGoals().first()
+        val goals = savingsGoalRepository.observeSavingsGoals().first()
         
         var totalSaved = 0.0
         for (goal in goals) {

@@ -31,16 +31,16 @@ class DashboardBriefingInputBuilder @Inject constructor(
 
         // --- top categories (name only, capped at 5) -------------------------
         val topCategories = processed.categoryBreakdown
-            .sortedByDescending { it.total }
+            .sortedByDescending { it.amount }
             .take(5)
-            .map { it.category.name }
+            .map { it.categoryName }
 
         // --- budget warnings (exceeded + critical) ---------------------------
         val budgetWarnings = data.budgetStatuses
             .filter { it.healthStatus == BudgetHealthStatus.EXCEEDED ||
                       it.healthStatus == BudgetHealthStatus.CRITICAL }
             .mapNotNull { status ->
-                val name = status.category?.name ?: "Overall"
+                val name = status.categoryName ?: "Overall"
                 val pct  = (status.percentUsed * 100).toInt()
                 "$name at $pct%"
             }

@@ -74,7 +74,10 @@ class SmartReceiptAssistService @Inject constructor(
 
             if (result is AiServiceResult.Success && isGoodResult(result.value)) {
                 Timber.d("SmartReceiptAssist: Cloud Vision succeeded with confidence ${result.value.total?.confidence}")
-                return result.withExecutionMetadata(usedImageInput = true, attempts = attempts)
+                return result.withExecutionMetadata(
+                    usedImageInput = result.value.usedImageInput,
+                    attempts = attempts
+                )
             }
         }
 
@@ -86,7 +89,10 @@ class SmartReceiptAssistService @Inject constructor(
 
             if (result is AiServiceResult.Success && isGoodResult(result.value)) {
                 Timber.d("SmartReceiptAssist: On-Device Vision succeeded")
-                return result.withExecutionMetadata(usedImageInput = true, attempts = attempts)
+                return result.withExecutionMetadata(
+                    usedImageInput = result.value.usedImageInput,
+                    attempts = attempts
+                )
             }
         }
 

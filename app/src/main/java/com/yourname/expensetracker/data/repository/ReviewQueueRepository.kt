@@ -274,7 +274,6 @@ class ReviewQueueRepository @Inject constructor(
 
     suspend fun markAsRelevant(id: Long, isRelevant: Boolean) {
         val notification = rawNotificationDao.getById(id) ?: return
-        rawNotificationDao.markRelevance(id, isRelevant)
 
         val fullNotificationText = listOfNotNull(
             notification.title,
@@ -282,79 +281,75 @@ class ReviewQueueRepository @Inject constructor(
             notification.bigText
         ).joinToString(" ")
 
-        if (isRelevant) {
-            val parsed = parserRegistry.parse(
+        val parsed = if (isRelevant) {
+            parserRegistry.parse(
                 title = notification.title,
                 text = notification.text,
                 bigText = notification.bigText,
                 subText = notification.subText,
                 packageName = notification.packageName
             )
-
-            if (parsed != null) {
-                val lookupResult = merchantNormalizer.normalize(parsed.merchant)
-                val correctedMerchant = lookupResult.canonical.normalizedName
-
-                val classification = hybridClassifier.classify(
-                    merchantName = correctedMerchant,
-                    amount = parsed.amount,
-                    notificationTitle = notification.title,
-                    notificationText = notification.text,
-                    packageName = notification.packageName
-                )
-                val categoryId = classification.categoryId.takeIf { it > 0 }
-
-                val expense = Expense(
-                    amount = parsed.amount,
-                    currency = parsed.currency,
-                    merchant = correctedMerchant,
-                    merchantKey = MerchantKeyGenerator.generate(correctedMerchant),
-                    transactionType = parsed.type,
-                    date = notification.timestamp,
-                    rawNotificationId = id,
-                    categoryId = categoryId,
-                    createdAt = timeProvider.now(),
-                    paymentMethod = PaymentMethod.CARD,
-                    isManualEntry = false,
-                    notes = "Manually recovered from debug log",
-                    dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, notification.timestamp)
-                )
-
-                val expenseId = database.withTransaction {
-                    expenseDao.insertAtomic(expense)
-                }
-
-                if (expenseId > 0) {
-                    sourceStatsDao.incrementAccepted(notification.packageName)
-                    budgetMonitor.checkBudgets()
-                    classifier.train(fullNotificationText, isTransaction = true)
-                } else {
-                    sourceStatsDao.incrementDuplicate(notification.packageName)
-                    classifier.train(fullNotificationText, isTransaction = true)
-                }
-            } else {
-                val review = PendingReview(
-                    rawNotificationId = id,
-                    suggestedAmount = 0.0,
-                    suggestedCurrency = "EUR",
-                    suggestedMerchant = "Unknown",
-                    suggestedMerchantKey = MerchantKeyGenerator.generate("Unknown"),
-                    suggestedType = TransactionType.PURCHASE.name,
-                    suggestedCategoryId = null,
-                    confidence = 1.0f,
-                    packageName = notification.packageName,
-                    notificationTitle = notification.title,
-                    notificationText = notification.text ?: notification.bigText,
-                    suggestedDate = notification.timestamp
-                )
-                pendingReviewDao.insert(review)
-                sourceStatsDao.incrementPending(notification.packageName)
-            }
+        } else {
+            null
         }
 
-        confidenceRouter.invalidateSourceStatsCache(notification.packageName)
+        val expense = parsed?.let {
+            val lookupResult = merchantNormalizer.normalize(it.merchant)
+            val correctedMerchant = lookupResult.canonical.normalizedName
 
-        database.withTransaction {
+            val classification = hybridClassifier.classify(
+                merchantName = correctedMerchant,
+                amount = it.amount,
+                notificationTitle = notification.title,
+                notificationText = notification.text,
+                packageName = notification.packageName
+            )
+            val categoryId = classification.categoryId.takeIf { category -> category > 0 }
+
+            Expense(
+                amount = it.amount,
+                currency = it.currency,
+                merchant = correctedMerchant,
+                merchantKey = MerchantKeyGenerator.generate(correctedMerchant),
+                transactionType = it.type,
+                date = notification.timestamp,
+                rawNotificationId = id,
+                categoryId = categoryId,
+                createdAt = timeProvider.now(),
+                paymentMethod = PaymentMethod.CARD,
+                isManualEntry = false,
+                notes = "Manually recovered from debug log",
+                dedupeKey = Expense.generateDedupeKey(it.amount, correctedMerchant, notification.timestamp)
+            )
+        }
+
+        val pendingReview = if (isRelevant && parsed == null) {
+            PendingReview(
+                rawNotificationId = id,
+                suggestedAmount = 0.0,
+                suggestedCurrency = "EUR",
+                suggestedMerchant = "Unknown",
+                suggestedMerchantKey = MerchantKeyGenerator.generate("Unknown"),
+                suggestedType = TransactionType.PURCHASE.name,
+                suggestedCategoryId = null,
+                confidence = 1.0f,
+                packageName = notification.packageName,
+                notificationTitle = notification.title,
+                notificationText = notification.text ?: notification.bigText,
+                suggestedDate = notification.timestamp
+            )
+        } else {
+            null
+        }
+
+        data class MarkAsRelevantOutcome(
+            val shouldTrainAsTransaction: Boolean,
+            val shouldCheckBudgets: Boolean
+        )
+
+        val outcome = database.withTransaction {
+            rawNotificationDao.markRelevance(id, isRelevant)
+
             val correction = UserCorrection(
                 packageName = notification.packageName,
                 originalMerchant = "Manual",
@@ -370,8 +365,56 @@ class ReviewQueueRepository @Inject constructor(
                 notificationTitle = notification.title,
                 notificationText = notification.text ?: notification.bigText
             )
-            userCorrectionDao.insert(correction)
+
+            when {
+                expense != null -> {
+                    val expenseId = expenseDao.insertAtomic(expense)
+                    if (expenseId > 0) {
+                        sourceStatsDao.incrementAccepted(notification.packageName)
+                        userCorrectionDao.insert(correction)
+                        MarkAsRelevantOutcome(
+                            shouldTrainAsTransaction = true,
+                            shouldCheckBudgets = true
+                        )
+                    } else {
+                        sourceStatsDao.incrementDuplicate(notification.packageName)
+                        userCorrectionDao.insert(correction)
+                        MarkAsRelevantOutcome(
+                            shouldTrainAsTransaction = true,
+                            shouldCheckBudgets = false
+                        )
+                    }
+                }
+
+                pendingReview != null -> {
+                    pendingReviewDao.insert(pendingReview)
+                    sourceStatsDao.incrementPending(notification.packageName)
+                    userCorrectionDao.insert(correction)
+                    MarkAsRelevantOutcome(
+                        shouldTrainAsTransaction = false,
+                        shouldCheckBudgets = false
+                    )
+                }
+
+                else -> {
+                    userCorrectionDao.insert(correction)
+                    MarkAsRelevantOutcome(
+                        shouldTrainAsTransaction = false,
+                        shouldCheckBudgets = false
+                    )
+                }
+            }
         }
+
+        if (outcome.shouldCheckBudgets) {
+            budgetMonitor.checkBudgets()
+        }
+
+        if (outcome.shouldTrainAsTransaction) {
+            classifier.train(fullNotificationText, isTransaction = true)
+        }
+
+        confidenceRouter.invalidateSourceStatsCache(notification.packageName)
 
         try { classifier.retrainFromCorrections() } catch (e: Exception) {
             Timber.e(e, "Failed to retrain classifier")

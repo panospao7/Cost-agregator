@@ -2,7 +2,7 @@ package com.yourname.expensetracker.ui.screens.naturallanguage
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
@@ -26,8 +26,8 @@ class NaturalLanguageSearchViewModel @Inject constructor(
     private val _interpretation = MutableStateFlow<NaturalLanguageSearchEngine.QueryInterpretation?>(null)
     val interpretation: StateFlow<NaturalLanguageSearchEngine.QueryInterpretation?> = _interpretation.asStateFlow()
     
-    private val _results = MutableStateFlow<List<Expense>>(emptyList())
-    val results: StateFlow<List<Expense>> = _results.asStateFlow()
+    private val _results = MutableStateFlow<List<NaturalLanguageExpense>>(emptyList())
+    val results: StateFlow<List<NaturalLanguageExpense>> = _results.asStateFlow()
     
     init {
         // Debounce search queries

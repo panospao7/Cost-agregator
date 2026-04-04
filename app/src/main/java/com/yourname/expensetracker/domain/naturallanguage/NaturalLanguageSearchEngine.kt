@@ -1,19 +1,12 @@
 package com.yourname.expensetracker.domain.naturallanguage
 
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.entity.Expense
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
-import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class NaturalLanguageSearchEngine @Inject constructor(
-    private val expenseDao: ExpenseDao,
+    private val expenseQueryRepository: NaturalLanguageExpenseQueryRepository,
     private val speechInputGateway: SpeechInputGateway
 ) {
     
@@ -145,40 +138,22 @@ class NaturalLanguageSearchEngine @Inject constructor(
         )
     }
     
-    suspend fun executeSearch(interpretation: QueryInterpretation): List<Expense> {
+    suspend fun executeSearch(interpretation: QueryInterpretation): List<NaturalLanguageExpense> {
+        val (startMs, endMs) = resolveDateRangeMillis(interpretation.dateRange)
+
         return when (interpretation.queryType) {
             QueryType.TOTAL_AMOUNT -> {
-                // Calculate total for the period
-                val startMs = interpretation.dateRange?.start?.let {
-                    it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                } ?: 0
-                val endMs = interpretation.dateRange?.end?.let {
-                    it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                } ?: System.currentTimeMillis()
-                
-                expenseDao.getExpensesBetweenFlow(startMs, endMs).let { flow ->
-                    var result: List<Expense> = emptyList()
-                    flow.collect { result = it }
-                    result
-                }
+                expenseQueryRepository.getExpensesBetween(startMs, endMs)
             }
             QueryType.FIND_TRANSACTIONS -> {
-                // Search for specific transactions
-                val startMs = interpretation.dateRange?.start?.let {
-                    it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                } ?: 0
-                val endMs = interpretation.dateRange?.end?.let {
-                    it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                } ?: System.currentTimeMillis()
-                
-                expenseDao.getExpensesBetweenFlow(startMs, endMs).let { flow ->
-                    var result: List<Expense> = emptyList()
-                    flow.collect { result = it }
-                    result.filter { expense ->
+                expenseQueryRepository
+                    .getExpensesBetween(startMs, endMs)
+                    .filter { expense ->
                         interpretation.merchants?.let { merchants ->
                             merchants.any { expense.merchant.contains(it, ignoreCase = true) }
                         } ?: true
-                    }.filter { expense ->
+                    }
+                    .filter { expense ->
                         interpretation.extractedAmounts?.let { amounts ->
                             amounts.any { amount ->
                                 when (amount.comparison) {
@@ -189,30 +164,26 @@ class NaturalLanguageSearchEngine @Inject constructor(
                                         val other = amounts.find { it != amount }
                                         other?.let { expense.amount in amount.value..it.value } ?: true
                                     }
-                                    else -> true
                                 }
                             }
                         } ?: true
                     }
-                }
             }
             QueryType.SPENDING_BY_CATEGORY -> {
-                // Get spending breakdown
-                val startMs = interpretation.dateRange?.start?.let {
-                    it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                } ?: 0
-                val endMs = interpretation.dateRange?.end?.let {
-                    it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                } ?: System.currentTimeMillis()
-                
-                expenseDao.getExpensesBetweenFlow(startMs, endMs).let { flow ->
-                    var result: List<Expense> = emptyList()
-                    flow.collect { result = it }
-                    result
-                }
+                expenseQueryRepository.getExpensesBetween(startMs, endMs)
             }
             else -> emptyList()
         }
+    }
+
+    private fun resolveDateRangeMillis(dateRange: DateRange?): Pair<Long, Long> {
+        val startMs = dateRange?.start?.let {
+            it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        } ?: 0L
+        val endMs = dateRange?.end?.let {
+            it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        } ?: System.currentTimeMillis()
+        return startMs to endMs
     }
     
     private fun extractAmounts(query: String): List<ExtractedAmount>? {

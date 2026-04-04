@@ -31,7 +31,6 @@ import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
 import com.yourname.expensetracker.domain.analytics.AnomalyDetector
-import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.CategoryInsightEngine
 import com.yourname.expensetracker.domain.analytics.DayOfWeekAnalyzer
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
@@ -52,6 +51,8 @@ import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.model.dashboard.DashboardCategoryBreakdown
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
@@ -100,7 +101,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
-            merchantNormalizer = mockk(relaxed = true)
+            merchantNormalizer = mockk(relaxed = true),
+            transferDirectionAnalytics = mockk(relaxed = true)
         )
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
@@ -220,13 +222,26 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
         val monthSpent = expenses.filter { it.transactionType == TransactionType.PURCHASE && it.date in ms(2026, 3, 1) until ms(2026, 4, 1) }
             .sumOf { it.effectiveAmount }
+        val dashboardBudgetStatuses = budgetStatuses.map {
+            BudgetStatusSnapshot(
+                budgetCategoryId = it.budget.categoryId,
+                budgetAmount = it.budget.amount,
+                categoryName = it.category?.name,
+                spentAmount = it.spentAmount,
+                remainingAmount = it.remainingAmount,
+                percentUsed = it.percentUsed,
+                healthStatus = it.healthStatus,
+                periodStart = it.periodStart,
+                periodEnd = it.periodEnd
+            )
+        }
 
         val compiled = useCase.compute(
             ProcessedDashboardData(
                 data = DashboardData(
                     expenses = expenses.map { it.toDashboardExpense() },
                     categories = categories.map { it.toDashboardCategory() },
-                    budgetStatuses = budgetStatuses,
+                    budgetStatuses = dashboardBudgetStatuses,
                     pendingCount = 0,
                     weather = weather,
                     recurringPatterns = emptyList(),
@@ -242,7 +257,15 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                     transactionCount = expenses.count { it.transactionType == TransactionType.PURCHASE }
                 ),
                 categoryBreakdown = listOf(
-                    CategoryBreakdown(category = categories[0], total = monthSpent, count = 3, percentage = 100f)
+                    DashboardCategoryBreakdown(
+                        categoryId = categories[0].id,
+                        categoryName = categories[0].name,
+                        categoryIcon = categories[0].icon,
+                        categoryColor = categories[0].color,
+                        amount = monthSpent,
+                        percentage = 100.0,
+                        changeFromLastPeriod = 0.0
+                    )
                 )
             )
         )

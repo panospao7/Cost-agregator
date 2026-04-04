@@ -35,7 +35,7 @@ object BankTokenCipher {
         if (!isEncrypted(value)) return value
 
         val parts = value.removePrefix(PREFIX).split(':')
-        if (parts.size != 2) return value
+        if (parts.size != 2) return null
 
         return try {
             val iv = Base64.getDecoder().decode(parts[0])
@@ -51,8 +51,7 @@ object BankTokenCipher {
             val plaintext = cipher.doFinal(ciphertext)
             String(plaintext, Charsets.UTF_8)
         } catch (_: Exception) {
-            // Keep backward compatibility if payload is malformed/corrupted.
-            value
+            null
         }
     }
 

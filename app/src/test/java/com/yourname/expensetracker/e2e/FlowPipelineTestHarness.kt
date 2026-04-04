@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.analytics.MerchantInsightEngine
 import com.yourname.expensetracker.domain.analytics.MonthlyComparisonCalculator
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.SpendingPersonalityClassifier
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.location.AreaSpendingEngine
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
 import com.yourname.expensetracker.domain.location.TravelDetectionEngine
@@ -75,6 +76,7 @@ internal fun buildPipeline(
     val pendingReviewDao = mockk<com.yourname.expensetracker.data.database.dao.PendingReviewDao>(relaxed = true)
     val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
+    val transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
 
     val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
     val locationInsightsEngine = mockk<LocationInsightsEngine>(relaxed = true)
@@ -109,7 +111,8 @@ internal fun buildPipeline(
         userCorrectionDao = userCorrectionDao,
         pendingReviewDao = pendingReviewDao,
         merchantCategoryRepository = merchantCategoryRepository,
-        merchantNormalizer = merchantNormalizer
+        merchantNormalizer = merchantNormalizer,
+        transferDirectionAnalytics = transferDirectionAnalytics
     )
 
     val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository)

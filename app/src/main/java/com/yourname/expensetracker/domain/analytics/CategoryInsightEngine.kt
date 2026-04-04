@@ -3,11 +3,15 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class CategoryInsightEngine @Inject constructor() {
+
+    private val missingCategoryHitCount = ConcurrentHashMap<Long, Int>()
 
     companion object {
         private val FALLBACK_CATEGORY = Category(
@@ -44,6 +48,34 @@ class CategoryInsightEngine @Inject constructor() {
         }
         
         val totalCurrent = currentExpenses.sumOf { it.effectiveAmount }
+
+        val missingCategoryUsage = currentExpenses
+            .asSequence()
+            .mapNotNull { it.categoryId }
+            .filter { !categoryMap.containsKey(it) }
+            .groupingBy { it }
+            .eachCount()
+
+        if (missingCategoryUsage.isNotEmpty()) {
+            val affectedTransactions = missingCategoryUsage.values.sum()
+            missingCategoryUsage.forEach { (categoryId, count) ->
+                missingCategoryHitCount.merge(categoryId, count, Int::plus)
+            }
+            val sample = missingCategoryUsage.entries
+                .sortedByDescending { it.value }
+                .take(5)
+                .joinToString { "${it.key}:${it.value}" }
+            val cumulativeSample = missingCategoryHitCount.entries
+                .sortedByDescending { it.value }
+                .take(5)
+                .joinToString { "${it.key}:${it.value}" }
+            Timber.tag("CategoryInsightEngine").w(
+                "Missing category mappings detected; fallback used for %d txs (%s), cumulative (%s)",
+                affectedTransactions,
+                sample,
+                cumulativeSample
+            )
+        }
         
         val categoryTotals = currentExpenses.groupBy { it.categoryId }
         

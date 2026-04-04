@@ -190,7 +190,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val velocity = calculateVelocity(expenses)
             
             EnhancedCategoryAnalytics(
-                category = category,
+                category = category.toAnalyticsCategoryRef(),
                 period = period,
                 totalSpent = total,
                 transactionCount = expenses.size,
@@ -294,7 +294,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
                     consistencyRating = consistencyRating,
                     consecutiveMonthsVisited = streakCount,
                     spendingByDayOfWeek = spendingByDay,
-                    recentTransactions = transactions.take(5)
+                    recentTransactions = transactions
+                        .take(5)
+                        .map { it.toAnalyticsTransactionSummary() }
                 )
             }
             // Sort by: 1) Visit frequency (more visits = higher priority)
@@ -480,8 +482,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
             meanTransaction = mean,
             medianTransaction = percentiles.p50,
             modeTransaction = findMode(amounts),
-            largestTransaction = purchases.maxByOrNull { it.amount },
-            smallestTransaction = purchases.minByOrNull { it.amount },
+            largestTransaction = purchases
+                .maxByOrNull { it.amount }
+                ?.toAnalyticsTransactionSummary(),
+            smallestTransaction = purchases
+                .minByOrNull { it.amount }
+                ?.toAnalyticsTransactionSummary(),
             averageDailySpend = averageDailySpend,
             maxDailySpend = dailyTotals.values.maxOrNull() ?: 0.0,
             daysWithSpending = dailyTotals.size,
@@ -707,6 +713,26 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val last: Double?,
         val change: Float?
     )
+
+    private fun com.yourname.expensetracker.data.database.entity.Category.toAnalyticsCategoryRef(): AnalyticsCategoryRef {
+        return AnalyticsCategoryRef(
+            id = id,
+            name = name,
+            icon = icon,
+            color = color
+        )
+    }
+
+    private fun Expense.toAnalyticsTransactionSummary(): AnalyticsTransactionSummary {
+        return AnalyticsTransactionSummary(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            merchant = merchant,
+            date = date,
+            categoryId = categoryId
+        )
+    }
     
     private fun calculateLoyaltyScore(amounts: List<Double>, historicalCount: Int): Float {
         if (amounts.isEmpty()) return 0f

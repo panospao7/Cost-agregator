@@ -1,13 +1,14 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.model.dashboard.DashboardCategory
+import com.yourname.expensetracker.domain.model.dashboard.DashboardCategoryBreakdown
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
@@ -50,8 +51,22 @@ class DashboardContractsAdapter @Inject constructor(
     override fun observeDashboardCategories(): Flow<List<DashboardCategory>> =
         categoryRepository.allCategories.map { list -> list.map { it.toDashboardCategory() } }
 
-    override fun observeBudgetStatuses(): Flow<List<BudgetStatus>> =
-        budgetRepository.getBudgetStatuses()
+    override fun observeBudgetStatuses(): Flow<List<BudgetStatusSnapshot>> =
+        budgetRepository.getBudgetStatuses().map { statuses ->
+            statuses.map { status ->
+                BudgetStatusSnapshot(
+                    budgetCategoryId = status.budget.categoryId,
+                    budgetAmount = status.budget.amount,
+                    categoryName = status.category?.name,
+                    spentAmount = status.spentAmount,
+                    remainingAmount = status.remainingAmount,
+                    percentUsed = status.percentUsed,
+                    healthStatus = status.healthStatus,
+                    periodStart = status.periodStart,
+                    periodEnd = status.periodEnd
+                )
+            }
+        }
 
     override fun observePendingReviewCount(): Flow<Int> =
         reviewQueueRepository.getPendingReviewCount()
@@ -109,7 +124,8 @@ class DashboardContractsAdapter @Inject constructor(
                         com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.STRICT -> GoalProtectionLevel.STRICT
                         com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.WARNING -> GoalProtectionLevel.WARNING
                         com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.TRACKING -> GoalProtectionLevel.TRACKING
-                    }
+                    },
+                    createdAt = entity.createdAt
                 )
             }
         }
@@ -126,8 +142,20 @@ class DashboardContractsAdapter @Inject constructor(
             )
         }
 
-    override fun observeCategoryBreakdown(start: Long, end: Long) =
-        analyticsRepository.getCategoryBreakdown(start, end)
+    override fun observeCategoryBreakdown(start: Long, end: Long): Flow<List<DashboardCategoryBreakdown>> =
+        analyticsRepository.getCategoryBreakdown(start, end).map { breakdown ->
+            breakdown.map { item ->
+                DashboardCategoryBreakdown(
+                    categoryId = item.category.id,
+                    categoryName = item.category.name,
+                    categoryIcon = item.category.icon,
+                    categoryColor = item.category.color,
+                    amount = item.total,
+                    percentage = item.percentage.toDouble(),
+                    changeFromLastPeriod = 0.0
+                )
+            }
+        }
 
     private fun com.yourname.expensetracker.data.database.entity.Expense.toDomainDashboard(): DashboardExpense =
         DashboardExpense(

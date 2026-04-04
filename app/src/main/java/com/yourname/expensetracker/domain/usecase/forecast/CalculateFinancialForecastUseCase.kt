@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.FinancialForecast
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
@@ -32,6 +33,20 @@ class CalculateFinancialForecastUseCase @Inject constructor(
         plannedExpenseRepository.getAllPlannedExpenses(),
         savingsGoalRepository.getAllGoals()
     ) { expenses, budgetStatuses, recurringEntities, plannedEntities, goalEntities ->
+        val budgetSnapshots = budgetStatuses.map { status ->
+            BudgetStatusSnapshot(
+                budgetCategoryId = status.budget.categoryId,
+                budgetAmount = status.budget.amount,
+                categoryName = status.category?.name,
+                spentAmount = status.spentAmount,
+                remainingAmount = status.remainingAmount,
+                percentUsed = status.percentUsed,
+                healthStatus = status.healthStatus,
+                periodStart = status.periodStart,
+                periodEnd = status.periodEnd
+            )
+        }
+
         
         val recurringPatterns = recurringEntities.map { entity ->
             RecurringPattern(
@@ -67,7 +82,8 @@ class CalculateFinancialForecastUseCase @Inject constructor(
                 targetAmount = entity.targetAmount,
                 currentAmount = entity.currentAmount,
                 targetDate = entity.targetDate,
-                protectionLevel = com.yourname.expensetracker.domain.model.GoalProtectionLevel.TRACKING
+                protectionLevel = com.yourname.expensetracker.domain.model.GoalProtectionLevel.TRACKING,
+                createdAt = entity.createdAt
             )
         }
         
@@ -96,7 +112,7 @@ class CalculateFinancialForecastUseCase @Inject constructor(
             recurringPatterns = recurringPatterns,
             plannedExpenses = plannedExpenses,
             savingsGoals = savingsGoals,
-            budgetStatuses = budgetStatuses,
+            budgetStatuses = budgetSnapshots,
             spendingPace = spendingPace
         )
     }

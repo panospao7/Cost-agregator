@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,7 @@ class ExpenseRepositoryStressTest {
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
     private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
+    private val transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
 
     private lateinit var repository: ExpenseRepository
 
@@ -43,7 +45,8 @@ class ExpenseRepositoryStressTest {
             userCorrectionDao,
             pendingReviewDao,
             merchantCategoryRepository,
-            merchantNormalizer
+            merchantNormalizer,
+            transferDirectionAnalytics
         )
     }
 

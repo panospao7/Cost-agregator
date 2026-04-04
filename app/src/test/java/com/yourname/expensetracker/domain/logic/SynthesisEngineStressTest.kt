@@ -3,8 +3,8 @@ package com.yourname.expensetracker.domain.logic
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
@@ -96,14 +96,10 @@ class SynthesisEngineStressTest {
         limit: Double = 1000.0,
         categoryId: Long? = null,
         spent: Double = 0.0
-    ) = BudgetStatus(
-        budget = com.yourname.expensetracker.data.database.entity.Budget(
-            amount = limit,
-            categoryId = categoryId,
-            period = com.yourname.expensetracker.data.database.entity.BudgetPeriod.MONTHLY,
-            startDate = System.currentTimeMillis()
-        ),
-        category = null,
+    ) = BudgetStatusSnapshot(
+        budgetCategoryId = categoryId,
+        budgetAmount = limit,
+        categoryName = null,
         spentAmount = spent,
         remainingAmount = limit - spent,
         percentUsed = if (limit > 0) (spent / limit * 100).toFloat() else 0f,
@@ -777,14 +773,10 @@ class SynthesisEngineStressTest {
             plannedExpenses = emptyList(),
             savingsGoals = emptyList(),
             budgetStatuses = listOf(
-                BudgetStatus(
-                    budget = com.yourname.expensetracker.data.database.entity.Budget(
-                        amount = 0.0, // Zero, not null
-                        categoryId = null,
-                        period = com.yourname.expensetracker.data.database.entity.BudgetPeriod.MONTHLY,
-                        startDate = System.currentTimeMillis()
-                    ),
-                    category = null,
+                BudgetStatusSnapshot(
+                    budgetCategoryId = null,
+                    budgetAmount = 0.0, // Zero, not null
+                    categoryName = null,
                     spentAmount = 0.0,
                     remainingAmount = 0.0,
                     percentUsed = 0f,

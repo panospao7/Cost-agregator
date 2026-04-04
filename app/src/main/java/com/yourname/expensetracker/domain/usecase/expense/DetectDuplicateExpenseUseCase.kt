@@ -12,14 +12,35 @@ class DetectDuplicateExpenseUseCase @Inject constructor(
     private val userCorrectionRepository: UserCorrectionRepository,
     private val crossSourceDeduplication: CrossSourceDeduplication
 ) {
+    companion object {
+        private const val AUTO_WINDOW_MS = -1L
+        private const val FIVE_MINUTES_MS = 5 * 60 * 1000L
+        private const val TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000L
+    }
+
+    enum class DuplicateDetectionSource(val defaultWindowMs: Long) {
+        NOTIFICATION(defaultWindowMs = FIVE_MINUTES_MS),
+        MANUAL_ENTRY(defaultWindowMs = TWENTY_FOUR_HOURS_MS),
+        STATEMENT_IMPORT(defaultWindowMs = TWENTY_FOUR_HOURS_MS),
+        OCR_IMPORT(defaultWindowMs = TWENTY_FOUR_HOURS_MS),
+        UNKNOWN(defaultWindowMs = TWENTY_FOUR_HOURS_MS)
+    }
+
     suspend operator fun invoke(
         amount: Double,
         merchant: String,
         date: Long,
-        windowMs: Long = 300_000
+        windowMs: Long = AUTO_WINDOW_MS,
+        source: DuplicateDetectionSource = DuplicateDetectionSource.UNKNOWN
     ): DuplicateCheckResult {
-        val startDate = date - windowMs
-        val endDateExclusive = date + windowMs + 1
+        val effectiveWindowMs = if (windowMs == AUTO_WINDOW_MS) {
+            source.defaultWindowMs
+        } else {
+            windowMs.coerceAtLeast(0L)
+        }
+
+        val startDate = date - effectiveWindowMs
+        val endDateExclusive = date + effectiveWindowMs + 1
         val targetMerchantKey = MerchantKeyGenerator.generate(merchant)
 
         val nearbyExpenses = expenseRepository.getExpensesBetween(startDate, endDateExclusive)
@@ -38,7 +59,7 @@ class DetectDuplicateExpenseUseCase @Inject constructor(
             merchant = merchant,
             date = date,
             expenses = nearbyExpenses,
-            timeWindowMs = windowMs
+            timeWindowMs = effectiveWindowMs
         )
         
         return if (duplicate != null) {

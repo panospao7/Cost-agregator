@@ -55,6 +55,8 @@ class TransferDirectionAnalytics @Inject constructor() {
 
     private val incomingSources = ConcurrentHashMap<String, Int>()
     private val outgoingDestinations = ConcurrentHashMap<String, Int>()
+    private val autoDetectedDirectionByTransferId = ConcurrentHashMap<Long, TransferDirection>()
+    private val correctionAppliedByTransferId = ConcurrentHashMap<Long, Boolean>()
 
     /**
      * Record a successful auto-detection.
@@ -62,8 +64,14 @@ class TransferDirectionAnalytics @Inject constructor() {
     fun recordAutoDetection(
         direction: TransferDirection,
         accountName: String?,
-        wasCorrect: Boolean = true
+        wasCorrect: Boolean = true,
+        transferId: Long? = null
     ) {
+        transferId?.let { id ->
+            autoDetectedDirectionByTransferId[id] = direction
+            correctionAppliedByTransferId.remove(id)
+        }
+
         // Track source/destination
         accountName?.let { name ->
             when (direction) {
@@ -151,16 +159,48 @@ class TransferDirectionAnalytics @Inject constructor() {
      * Record a user correction (they changed the direction).
      */
     fun recordUserCorrection(fromDirection: TransferDirection?, toDirection: TransferDirection) {
-        // This indicates the auto-detection was wrong
-        // Adjust accuracy calculation
-        if (fromDirection == null) return
+        // Without a transfer id we cannot guarantee idempotent correction accounting.
+        // Keep as compatibility no-op; callers should use the transferId overload.
+        if (fromDirection == null || fromDirection == toDirection) return
+    }
 
+    /**
+     * Record a correction for a specific transfer id.
+     * Ensures each transfer impacts accuracy at most once unless corrected back.
+     */
+    fun recordUserCorrection(
+        transferId: Long,
+        fromDirection: TransferDirection?,
+        toDirection: TransferDirection
+    ) {
+        val autoDetected = autoDetectedDirectionByTransferId[transferId] ?: return
+        val shouldCountAsIncorrect = autoDetected != toDirection
+        val alreadyApplied = correctionAppliedByTransferId[transferId] == true
+
+        when {
+            shouldCountAsIncorrect && !alreadyApplied -> {
+                adjustCorrectDetections(delta = -1)
+                correctionAppliedByTransferId[transferId] = true
+            }
+            !shouldCountAsIncorrect && alreadyApplied -> {
+                adjustCorrectDetections(delta = 1)
+                correctionAppliedByTransferId.remove(transferId)
+            }
+        }
+    }
+
+    private fun adjustCorrectDetections(delta: Int) {
         _insights.update { current ->
             if (current.totalDetections <= 0) {
                 return@update current
             }
 
-            val correctedCount = (current.correctDetections - 1).coerceAtLeast(0)
+            val correctedCount = (current.correctDetections + delta)
+                .coerceIn(0, current.totalDetections)
+            if (correctedCount == current.correctDetections) {
+                return@update current
+            }
+
             val newAccuracy = (correctedCount.toFloat() / current.totalDetections.toFloat()) * 100f
 
             current.copy(
@@ -177,6 +217,8 @@ class TransferDirectionAnalytics @Inject constructor() {
         _insights.value = TransferInsights()
         incomingSources.clear()
         outgoingDestinations.clear()
+        autoDetectedDirectionByTransferId.clear()
+        correctionAppliedByTransferId.clear()
     }
 
     /**

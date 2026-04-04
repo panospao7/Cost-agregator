@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
 import com.yourname.expensetracker.domain.analytics.PeriodRange
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.StatisticsUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -448,7 +449,8 @@ class AnalyticsPipelineIntegrationTest {
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
-            merchantNormalizer = mockk(relaxed = true)
+            merchantNormalizer = mockk(relaxed = true),
+            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
         )
         val totalsEngine = TotalsAggregationEngine(repository, timeProvider)
         val advancedEngine = AdvancedAnalyticsEngine(repository, categoryRepository, budgetRepository, timeProvider)

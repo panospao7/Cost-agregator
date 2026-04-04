@@ -2,16 +2,42 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.SavingsGoalDao
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class SavingsGoalRepository @Inject constructor(
     private val savingsGoalDao: SavingsGoalDao
-) {
-    fun getAllGoals(): Flow<List<SavingsGoal>> {
+) : com.yourname.expensetracker.domain.savings.SavingsGoalRepository {
+    override fun observeSavingsGoals(): Flow<List<com.yourname.expensetracker.domain.model.SavingsGoal>> {
+        return savingsGoalDao.getAllGoals().map { entities ->
+            entities.map { entity ->
+                com.yourname.expensetracker.domain.model.SavingsGoal(
+                    id = entity.id,
+                    name = entity.name,
+                    targetAmount = entity.targetAmount,
+                    currentAmount = entity.currentAmount,
+                    targetDate = entity.targetDate,
+                    protectionLevel = when (entity.protectionLevel) {
+                        com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.STRICT -> GoalProtectionLevel.STRICT
+                        com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.WARNING -> GoalProtectionLevel.WARNING
+                        com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.TRACKING -> GoalProtectionLevel.TRACKING
+                    },
+                    createdAt = entity.createdAt
+                )
+            }
+        }
+    }
+
+    fun getAllGoalEntities(): Flow<List<SavingsGoal>> {
         return savingsGoalDao.getAllGoals()
+    }
+
+    fun getAllGoals(): Flow<List<SavingsGoal>> {
+        return getAllGoalEntities()
     }
 
     suspend fun addGoal(goal: SavingsGoal): Long {

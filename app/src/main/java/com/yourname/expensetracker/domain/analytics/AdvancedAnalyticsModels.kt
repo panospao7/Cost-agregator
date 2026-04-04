@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 
 /**
@@ -26,7 +24,7 @@ data class PeriodRange(
  * Enhanced category analytics with budget context and trends.
  */
 data class EnhancedCategoryAnalytics(
-    val category: Category,
+    val category: AnalyticsCategoryRef,
     val period: PeriodRange,
     
     // Core metrics
@@ -100,7 +98,7 @@ data class EnhancedMerchantAnalytics(
     val spendingByDayOfWeek: Map<Int, Double>,
     
     // Recent transactions preview
-    val recentTransactions: List<Expense>
+    val recentTransactions: List<AnalyticsTransactionSummary>
 )
 
 enum class MerchantVisitFrequency {
@@ -202,8 +200,8 @@ data class StatisticalInsights(
     val modeTransaction: Double?,
     
     // Extremes
-    val largestTransaction: Expense?,
-    val smallestTransaction: Expense?,
+    val largestTransaction: AnalyticsTransactionSummary?,
+    val smallestTransaction: AnalyticsTransactionSummary?,
     
     // Daily spending stats
     val averageDailySpend: Double,
@@ -228,4 +226,20 @@ data class TransactionPercentiles(
     val p90: Double,
     val p95: Double,
     val p99: Double
+)
+
+data class AnalyticsCategoryRef(
+    val id: Long,
+    val name: String,
+    val icon: String,
+    val color: String
+)
+
+data class AnalyticsTransactionSummary(
+    val id: Long,
+    val amount: Double,
+    val effectiveAmount: Double,
+    val merchant: String,
+    val date: Long,
+    val categoryId: Long?
 )

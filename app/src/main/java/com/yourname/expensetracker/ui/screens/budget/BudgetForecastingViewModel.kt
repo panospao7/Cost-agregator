@@ -4,9 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetForecast
+import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationEngine
 import com.yourname.expensetracker.domain.budget.BudgetRecommendation
+import com.yourname.expensetracker.domain.budget.BudgetRecommendationBudget
+import com.yourname.expensetracker.domain.budget.BudgetRecommendationForecast
+import com.yourname.expensetracker.domain.budget.BudgetRecommendationRiskLevel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,8 +54,19 @@ class BudgetForecastingViewModel @Inject constructor(
                 
                 // Generate recommendations
                 val recommendations = recommendationEngine.generateRecommendations(
-                    budget,
-                    forecast,
+                    budget = BudgetRecommendationBudget(amount = budget.amount),
+                    forecast = BudgetRecommendationForecast(
+                        predictedSpending = forecast.predictedSpending,
+                        predictedRemaining = forecast.predictedRemaining,
+                        confidenceScore = forecast.confidenceScore,
+                        riskLevel = when (forecast.riskLevel) {
+                            ForecastRiskLevel.LOW -> BudgetRecommendationRiskLevel.LOW
+                            ForecastRiskLevel.MEDIUM -> BudgetRecommendationRiskLevel.MEDIUM
+                            ForecastRiskLevel.HIGH -> BudgetRecommendationRiskLevel.HIGH
+                            ForecastRiskLevel.CRITICAL -> BudgetRecommendationRiskLevel.CRITICAL
+                        },
+                        overspendProbability = forecast.overspendProbability
+                    ),
                     currentSpending
                 )
                 

@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.UserCorrection
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import io.mockk.*
@@ -28,6 +29,7 @@ class ExpenseRepositoryTest {
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
     private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
+    private val transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
 
     private lateinit var repository: ExpenseRepository
 
@@ -42,7 +44,8 @@ class ExpenseRepositoryTest {
             userCorrectionDao,
             pendingReviewDao,
             merchantCategoryRepository,
-            merchantNormalizer
+            merchantNormalizer,
+            transferDirectionAnalytics
         )
     }
 

@@ -24,7 +24,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
-import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine
 import java.text.NumberFormat
 import java.time.format.DateTimeFormatter
@@ -172,7 +172,7 @@ fun InterpretingState() {
 @Composable
 fun SearchResultsContent(
     interpretation: NaturalLanguageSearchEngine.QueryInterpretation?,
-    results: List<Expense>,
+    results: List<NaturalLanguageExpense>,
     onViewTransaction: (Long) -> Unit
 ) {
     val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
@@ -368,7 +368,7 @@ fun ExtractedChip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
 
 @Composable
 fun TransactionResultCard(
-    expense: Expense,
+    expense: NaturalLanguageExpense,
     onClick: () -> Unit
 ) {
     val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())

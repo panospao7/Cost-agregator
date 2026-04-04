@@ -31,8 +31,8 @@ import java.util.Locale
 fun SpendingChallengesScreen(
     onNavigateBack: () -> Unit,
     onCreateChallenge: () -> Unit,
+    actionRegistry: ContextualActionRegistry,
     viewModel: SpendingChallengesViewModel = hiltViewModel(),
-    actionRegistry: ContextualActionRegistry = ContextualActionRegistry()
 ) {
     val noSpendStatus by viewModel.noSpendStatus.collectAsState()
     val activeChallenges by viewModel.activeChallenges.collectAsState()

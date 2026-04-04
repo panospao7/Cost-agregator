@@ -67,9 +67,9 @@ class CloudReceiptAssistService @Inject constructor(
         }
 
         val settings = aiSettingsRepository.settings().first()
-        // NEW: Use input.isImageAnalysisMode to decide if we should include the image
-        val useImageAnalysis = input.isImageAnalysisMode && settings.receiptImageCloudEnabled
-        val requestBody = buildRequestBody(input, useImageAnalysis)
+        val allowImage = input.isImageAnalysisMode && settings.receiptImageCloudEnabled
+        val requestPayload = buildRequestPayload(input, allowImage)
+        val requestBody = requestPayload.jsonBody
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -100,7 +100,9 @@ class CloudReceiptAssistService @Inject constructor(
                     ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
                 val parsed = parseResponse(body)
                     ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable suggestion in response"))
-                AiServiceResult.Success(parsed)
+                AiServiceResult.Success(
+                    parsed.copy(usedImageInput = requestPayload.actuallyUsedImageInput)
+                )
             }
         } catch (e: SocketTimeoutException) {
             Timber.w(e, "CloudReceiptAssistService: timeout")
@@ -121,13 +123,15 @@ class CloudReceiptAssistService @Inject constructor(
     }
 
     internal fun buildRequestBodyForTest(input: ReceiptAssistInput, allowImage: Boolean): String =
-        buildRequestBody(input, allowImage)
+        buildRequestPayload(input, allowImage).jsonBody
 
-    private fun buildRequestBody(input: ReceiptAssistInput, allowImage: Boolean): String {
-        val prompt = buildPrompt(input)
+    private fun buildRequestPayload(input: ReceiptAssistInput, allowImage: Boolean): RequestPayload {
+        val inlineImagePart = buildImageInlineData(input, allowImage)
+        val prompt = buildPrompt(input, hasAttachedImage = inlineImagePart != null)
         val parts = JSONArray().put(JSONObject().put("text", prompt))
-        buildImageInlineData(input, allowImage)?.let(parts::put)
-        return JSONObject().apply {
+        inlineImagePart?.let(parts::put)
+
+        val requestJson = JSONObject().apply {
             put(
                 "contents",
                 JSONArray().put(
@@ -151,10 +155,15 @@ class CloudReceiptAssistService @Inject constructor(
                 }
             )
         }.toString()
+
+        return RequestPayload(
+            jsonBody = requestJson,
+            actuallyUsedImageInput = inlineImagePart != null
+        )
     }
 
-    private fun buildPrompt(input: ReceiptAssistInput): String {
-        val imageMode = if (usedImageInput(input)) {
+    private fun buildPrompt(input: ReceiptAssistInput, hasAttachedImage: Boolean): String {
+        val imageMode = if (hasAttachedImage) {
             """
             |CRITICAL - IMAGE IS SOURCE OF TRUTH:
             |1. Read merchant name, total amount, date, and tax DIRECTLY from the attached receipt image.
@@ -170,6 +179,23 @@ class CloudReceiptAssistService @Inject constructor(
         } else {
             "No receipt image available. Use OCR text only - be extra careful with Greek characters."
         }
+
+        val rulesBlock = if (hasAttachedImage) {
+            """
+            - Prefer null over guessing.
+            - Only provide date if clearly readable on the image.
+            - Keep notes short.
+            - When image and OCR disagree, THE IMAGE IS CORRECT.
+            """.trimIndent()
+        } else {
+            """
+            - Prefer null over guessing.
+            - Infer date only if OCR text is explicit and unambiguous.
+            - Keep notes short.
+            - Do not assume unseen receipt details.
+            """.trimIndent()
+        }
+
         return """
             You are an expert at reading Greek and European receipts.
             $imageMode
@@ -187,10 +213,7 @@ class CloudReceiptAssistService @Inject constructor(
             }
 
             Rules:
-            - Prefer null over guessing.
-            - Only provide date if clearly readable on the image.
-            - Keep notes short.
-            - When image and OCR disagree, THE IMAGE IS CORRECT.
+            $rulesBlock
 
             Receipt facts (OCR - may be corrupted, especially for Greek characters):
             - currency: ${input.currency}
@@ -375,6 +398,11 @@ class CloudReceiptAssistService @Inject constructor(
         private const val MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
         private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
     }
+
+    private data class RequestPayload(
+        val jsonBody: String,
+        val actuallyUsedImageInput: Boolean
+    )
 
     private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 }

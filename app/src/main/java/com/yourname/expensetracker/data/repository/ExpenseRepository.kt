@@ -23,6 +23,7 @@ import com.yourname.expensetracker.data.database.dao.MonthlyTotal
 import com.yourname.expensetracker.data.database.dao.WeeklyTotal
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import androidx.room.withTransaction
 import androidx.sqlite.db.SimpleSQLiteQuery
 import kotlinx.coroutines.flow.*
@@ -49,7 +50,8 @@ class ExpenseRepository @Inject constructor(
     private val userCorrectionDao: UserCorrectionDao,
     private val pendingReviewDao: PendingReviewDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
-    private val merchantNormalizer: MerchantNormalizer
+    private val merchantNormalizer: MerchantNormalizer,
+    private val transferDirectionAnalytics: TransferDirectionAnalytics
 ) {
     data class DebugExpenseSnapshot(
         val expenses: List<Expense>
@@ -315,6 +317,14 @@ class ExpenseRepository @Inject constructor(
     ) {
         expenseDao.updateTransferDirection(expense.id, transferDirection?.name)
         expenseDao.updateTransferAccountName(expense.id, transferAccountName)
+
+        if (transferDirection != null) {
+            transferDirectionAnalytics.recordUserCorrection(
+                transferId = expense.id,
+                fromDirection = expense.transferDirection,
+                toDirection = transferDirection
+            )
+        }
     }
 
     suspend fun updateNotMineDetails(
@@ -359,9 +369,11 @@ class ExpenseRepository @Inject constructor(
     }
 
     suspend fun restoreDebugSnapshot(snapshot: DebugExpenseSnapshot) {
-        expenseDao.deleteAll()
-        if (snapshot.expenses.isNotEmpty()) {
-            expenseDao.insertAll(snapshot.expenses)
+        database.withTransaction {
+            expenseDao.deleteAll()
+            if (snapshot.expenses.isNotEmpty()) {
+                expenseDao.insertAll(snapshot.expenses)
+            }
         }
     }
     

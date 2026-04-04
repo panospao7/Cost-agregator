@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -17,9 +18,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
+import java.util.UUID
+import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.random.Random
 
 /**
  * CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig.
@@ -52,49 +57,108 @@ class CloudWarrantyExtractionService @Inject constructor(
             return@withContext null
         }
 
+        val correlationId = newCorrelationId()
         val prompt = buildPrompt(receipt, shouldRedactBeforeCloud)
         
-        try {
-            val requestBody = JSONObject().apply {
-                put("contents", JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("parts", JSONArray().apply {
-                            put(JSONObject().apply {
-                                put("text", prompt)
-                            })
+        val requestBody = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("text", prompt)
                         })
                     })
                 })
-                put("generationConfig", JSONObject().apply {
-                    put("temperature", 0.1)
-                    put("maxOutputTokens", 1024)
-                })
-            }
+            })
+            put("generationConfig", JSONObject().apply {
+                put("temperature", 0.1)
+                put("maxOutputTokens", 1024)
+            })
+        }
 
-            val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/gemini-2.0-flash:generateContent"
-            val request = Request.Builder()
-                .url(url)
-                .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
-                .header("Content-Type", "application/json")
-                .header("x-goog-api-key", apiKey)
-                .build()
+        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/gemini-2.0-flash:generateContent"
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .header("Content-Type", "application/json")
+            .header("x-goog-api-key", apiKey)
+            .build()
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Timber.e("Gemini API error: ${response.code}")
-                    return@withContext null
+        for (attempt in 1..MAX_RETRY_ATTEMPTS) {
+            var retryableHttpFailure = false
+            try {
+                val parsed = client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        if (isRetryableHttpStatus(response.code) && attempt < MAX_RETRY_ATTEMPTS) {
+                            retryableHttpFailure = true
+                            val errorClass = "HTTP_${response.code}"
+                            Timber.w(
+                                "CloudWarrantyExtractionService: retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
+                                response.code,
+                                errorClass,
+                                correlationId,
+                                attempt,
+                                MAX_RETRY_ATTEMPTS
+                            )
+                        } else {
+                            val errorClass = "HTTP_${response.code}"
+                            Timber.w(
+                                "CloudWarrantyExtractionService: HTTP %d class=%s correlationId=%s",
+                                response.code,
+                                errorClass,
+                                correlationId
+                            )
+                        }
+                        return@use null
+                    }
+
+                    val responseBody = response.body?.string()
+                    parseResponse(responseBody, receipt, correlationId)
                 }
 
-                val responseBody = response.body?.string()
-                parseResponse(responseBody, receipt)
+                if (parsed != null) return@withContext parsed
+                if (!retryableHttpFailure) return@withContext null
+            } catch (e: SocketTimeoutException) {
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    Timber.w(
+                        e,
+                        "CloudWarrantyExtractionService: timeout correlationId=%s, retrying (%d/%d)",
+                        correlationId,
+                        attempt,
+                        MAX_RETRY_ATTEMPTS
+                    )
+                } else {
+                    Timber.e(e, "CloudWarrantyExtractionService: timeout correlationId=%s", correlationId)
+                    return@withContext null
+                }
+            } catch (e: SSLException) {
+                Timber.e(e, "CloudWarrantyExtractionService: SSL error correlationId=%s", correlationId)
+                return@withContext null
+            } catch (e: IOException) {
+                val retryable = e.isConnectionReset()
+                if (retryable && attempt < MAX_RETRY_ATTEMPTS) {
+                    Timber.w(
+                        e,
+                        "CloudWarrantyExtractionService: connection reset correlationId=%s, retrying (%d/%d)",
+                        correlationId,
+                        attempt,
+                        MAX_RETRY_ATTEMPTS
+                    )
+                } else {
+                    Timber.e(e, "CloudWarrantyExtractionService: network error extracting warranty correlationId=%s", correlationId)
+                    return@withContext null
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "CloudWarrantyExtractionService: error extracting warranty correlationId=%s", correlationId)
+                return@withContext null
             }
-        } catch (e: IOException) {
-            Timber.e(e, "Network error extracting warranty")
-            null
-        } catch (e: Exception) {
-            Timber.e(e, "Error extracting warranty")
-            null
+
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                delay(backoffDelayMs(attempt))
+            }
         }
+
+        null
     }
 
     private fun buildPrompt(receipt: ScannedReceipt, shouldRedactBeforeCloud: Boolean): String {
@@ -140,13 +204,19 @@ class CloudWarrantyExtractionService @Inject constructor(
         """.trimIndent()
     }
 
-    private fun parseResponse(responseBody: String?, receipt: ScannedReceipt): Warranty? {
-        if (responseBody == null) return null
+    private fun parseResponse(responseBody: String?, receipt: ScannedReceipt, correlationId: String): Warranty? {
+        if (responseBody == null) {
+            Timber.w("CloudWarrantyExtractionService: empty response body correlationId=%s", correlationId)
+            return null
+        }
 
         return try {
             val json = JSONObject(responseBody)
             val candidates = json.getJSONArray("candidates")
-            if (candidates.length() == 0) return null
+            if (candidates.length() == 0) {
+                Timber.w("CloudWarrantyExtractionService: No candidates in response correlationId=%s", correlationId)
+                return null
+            }
 
             val content = candidates.getJSONObject(0)
                 .getJSONObject("content")
@@ -159,9 +229,10 @@ class CloudWarrantyExtractionService @Inject constructor(
             
             if (jsonMatch == null) {
                 Timber.w(
-                    "No JSON found in response (contentLength=%d, contentHash=%s)",
+                    "CloudWarrantyExtractionService: No JSON found in response (contentLength=%d, contentHash=%s, correlationId=%s)",
                     content.length,
-                    content.sha256Prefix()
+                    content.sha256Prefix(),
+                    correlationId
                 )
                 return null
             }
@@ -197,10 +268,11 @@ class CloudWarrantyExtractionService @Inject constructor(
             val parseErrorCode = e::class.simpleName ?: "ParseError"
             Timber.e(
                 e,
-                "Error parsing warranty response (errorCode=%s, bodyLength=%d, bodyHash=%s)",
+                "CloudWarrantyExtractionService: Error parsing warranty response (errorCode=%s, bodyLength=%d, bodyHash=%s, correlationId=%s)",
                 parseErrorCode,
                 responseBody.length,
-                responseBody.sha256Prefix()
+                responseBody.sha256Prefix(),
+                correlationId
             )
             null
         }
@@ -288,6 +360,10 @@ class CloudWarrantyExtractionService @Inject constructor(
     }
 
     private companion object {
+        private const val MAX_RETRY_ATTEMPTS = 3
+        private const val BASE_RETRY_BACKOFF_MS = 250L
+        private const val MAX_RETRY_BACKOFF_MS = 1_500L
+        private const val RETRY_JITTER_MS = 200L
         private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
         private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
         private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")
@@ -296,8 +372,21 @@ class CloudWarrantyExtractionService @Inject constructor(
         private val LONG_NUMBER_REGEX = Regex("""\b\d{10,}\b""")
     }
 
+    private fun isRetryableHttpStatus(code: Int): Boolean = code in 500..599
+
+    private fun IOException.isConnectionReset(): Boolean =
+        message?.contains("connection reset", ignoreCase = true) == true
+
+    private fun backoffDelayMs(attempt: Int): Long {
+        val exponential = (BASE_RETRY_BACKOFF_MS shl (attempt - 1)).coerceAtMost(MAX_RETRY_BACKOFF_MS)
+        val jitter = Random.nextLong(0, RETRY_JITTER_MS + 1)
+        return exponential + jitter
+    }
+
     private fun String.sha256Prefix(): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
         return digest.take(6).joinToString("") { "%02x".format(it) }
     }
+
+    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 }

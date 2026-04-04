@@ -393,7 +393,14 @@ class NotificationProcessingPipeline @Inject constructor(
             dao.markRelevance(rawId, true)
             sourceStatsDao.incrementTotalAndAccepted(notification.packageName, timeProvider.now())
             if (expense.transactionType == TransactionType.TRANSFER || expense.transactionType == TransactionType.DEPOSIT) {
-                if (direction != null) analytics.recordAutoDetection(direction, accountName, wasCorrect = true)
+                if (direction != null) {
+                    analytics.recordAutoDetection(
+                        direction = direction,
+                        accountName = accountName,
+                        wasCorrect = true,
+                        transferId = expenseId
+                    )
+                }
                 else analytics.recordUnknownDirection()
             }
             budgetMonitor.checkBudgets()

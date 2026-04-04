@@ -72,6 +72,17 @@ interface MerchantNormalizationDao {
         limit: Int = 20
     ): List<MerchantAlias>
 
+    @Query("""
+        SELECT * FROM merchant_aliases
+        WHERE normalizedKey LIKE '%' || :normalizedQuery || '%'
+        ORDER BY occurrenceCount DESC
+        LIMIT :limit
+    """)
+    suspend fun searchAliasesByContains(
+        normalizedQuery: String,
+        limit: Int = 20
+    ): List<MerchantAlias>
+
     /**
      * Index-friendly prefix search using a range scan on normalizedKey.
      * This avoids LIKE-pattern scans and keeps lookups on the normalizedKey index.

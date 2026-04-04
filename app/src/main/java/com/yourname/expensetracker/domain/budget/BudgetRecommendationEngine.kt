@@ -1,8 +1,5 @@
 package com.yourname.expensetracker.domain.budget
 
-import com.yourname.expensetracker.data.database.entity.Budget
-import com.yourname.expensetracker.data.database.entity.BudgetForecast
-import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import javax.inject.Inject
@@ -46,8 +43,8 @@ class BudgetRecommendationEngine @Inject constructor() {
      * Generate recommendations based on a budget forecast.
      */
     fun generateRecommendations(
-        budget: Budget,
-        forecast: BudgetForecast,
+        budget: BudgetRecommendationBudget,
+        forecast: BudgetRecommendationForecast,
         currentSpending: Double
     ): List<BudgetRecommendation> {
         val recommendations = mutableListOf<BudgetRecommendation>()
@@ -57,8 +54,8 @@ class BudgetRecommendationEngine @Inject constructor() {
         val percentUsed = if (budget.amount > 0) (currentSpending / budget.amount) * 100 else 0.0
         
         // High risk recommendations
-        if (forecast.riskLevel == ForecastRiskLevel.HIGH || 
-            forecast.riskLevel == ForecastRiskLevel.CRITICAL) {
+        if (forecast.riskLevel == BudgetRecommendationRiskLevel.HIGH || 
+            forecast.riskLevel == BudgetRecommendationRiskLevel.CRITICAL) {
             recommendations.add(
                 BudgetRecommendation(
                     type = RecommendationType.REDUCE_SPENDING,
@@ -87,7 +84,7 @@ class BudgetRecommendationEngine @Inject constructor() {
         }
         
         // Medium risk recommendations
-        if (forecast.riskLevel == ForecastRiskLevel.MEDIUM) {
+        if (forecast.riskLevel == BudgetRecommendationRiskLevel.MEDIUM) {
             recommendations.add(
                 BudgetRecommendation(
                     type = RecommendationType.REVIEW_SUBSCRIPTIONS,
@@ -147,8 +144,8 @@ class BudgetRecommendationEngine @Inject constructor() {
      * Get a summary of the budget health.
      */
     fun getBudgetHealthSummary(
-        budget: Budget,
-        forecast: BudgetForecast,
+        budget: BudgetRecommendationBudget,
+        forecast: BudgetRecommendationForecast,
         currentSpending: Double
     ): String {
         val remaining = budget.amount - currentSpending
@@ -172,24 +169,24 @@ class BudgetRecommendationEngine @Inject constructor() {
     /**
      * Get emoji indicator for risk level.
      */
-    fun getRiskEmoji(riskLevel: ForecastRiskLevel): String {
+    fun getRiskEmoji(riskLevel: BudgetRecommendationRiskLevel): String {
         return when (riskLevel) {
-            ForecastRiskLevel.LOW -> "✅"
-            ForecastRiskLevel.MEDIUM -> "⚠️"
-            ForecastRiskLevel.HIGH -> "🔴"
-            ForecastRiskLevel.CRITICAL -> "🚨"
+            BudgetRecommendationRiskLevel.LOW -> "✅"
+            BudgetRecommendationRiskLevel.MEDIUM -> "⚠️"
+            BudgetRecommendationRiskLevel.HIGH -> "🔴"
+            BudgetRecommendationRiskLevel.CRITICAL -> "🚨"
         }
     }
     
     /**
      * Get color code for risk level (for UI).
      */
-    fun getRiskColor(riskLevel: ForecastRiskLevel): String {
+    fun getRiskColor(riskLevel: BudgetRecommendationRiskLevel): String {
         return when (riskLevel) {
-            ForecastRiskLevel.LOW -> "#4CAF50" // Green
-            ForecastRiskLevel.MEDIUM -> "#FF9800" // Orange
-            ForecastRiskLevel.HIGH -> "#F44336" // Red
-            ForecastRiskLevel.CRITICAL -> "#B71C1C" // Dark Red
+            BudgetRecommendationRiskLevel.LOW -> "#4CAF50" // Green
+            BudgetRecommendationRiskLevel.MEDIUM -> "#FF9800" // Orange
+            BudgetRecommendationRiskLevel.HIGH -> "#F44336" // Red
+            BudgetRecommendationRiskLevel.CRITICAL -> "#B71C1C" // Dark Red
         }
     }
 }

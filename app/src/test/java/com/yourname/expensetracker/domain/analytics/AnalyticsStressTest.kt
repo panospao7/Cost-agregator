@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -64,7 +65,8 @@ class AnalyticsStressTest {
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
-            merchantNormalizer = mockk(relaxed = true)
+            merchantNormalizer = mockk(relaxed = true),
+            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
         )
 
         val engine = AdvancedAnalyticsEngine(

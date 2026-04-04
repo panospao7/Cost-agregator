@@ -21,6 +21,10 @@ class GroupsRepositoryImpl @Inject constructor(
     private val coordinator: GroupTransactionCoordinator
 ) : GroupsRepository {
 
+    private companion object {
+        private const val GROUP_IDS_QUERY_CHUNK_SIZE = 500
+    }
+
     override suspend fun getActiveGroupsWithDetails(): List<GroupDetailsAggregate> = withContext(Dispatchers.IO) {
         val groups = groupDao.getActive()
         if (groups.isEmpty()) {
@@ -28,11 +32,13 @@ class GroupsRepositoryImpl @Inject constructor(
         }
 
         val groupIds = groups.map { it.id }
-        val membersByGroupId = memberDao
-            .getAllForGroups(groupIds)
+        val membersByGroupId = groupIds
+            .chunked(GROUP_IDS_QUERY_CHUNK_SIZE)
+            .flatMap { chunk -> memberDao.getAllForGroups(chunk) }
             .groupBy { it.groupId }
-        val expensesByGroupId = groupExpenseDao
-            .getExpensesForGroups(groupIds)
+        val expensesByGroupId = groupIds
+            .chunked(GROUP_IDS_QUERY_CHUNK_SIZE)
+            .flatMap { chunk -> groupExpenseDao.getExpensesForGroups(chunk) }
             .groupBy { it.groupId }
 
         groups.map { group ->

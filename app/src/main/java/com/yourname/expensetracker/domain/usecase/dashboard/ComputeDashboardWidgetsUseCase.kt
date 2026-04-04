@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
-import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
@@ -15,6 +14,8 @@ import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.model.dashboard.DomainBlockStatus
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.model.dashboard.DashboardCategoryBreakdown
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
@@ -62,7 +63,7 @@ sealed class DashboardWidget {
     ) : DashboardWidget()
 
     data class BudgetHealthWidget(
-        val statuses: List<com.yourname.expensetracker.domain.budget.BudgetStatus>,
+        val statuses: List<BudgetStatusSnapshot>,
         val summary: UiText?
     ) : DashboardWidget()
 
@@ -236,9 +237,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
         val daysRemaining = daysInMonth - dayOfMonth
 
-        val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
+        val overallBudget = budgetStatuses.find { it.budgetCategoryId == null }
         val safeToSpend = weather.discretionaryBudget
-        val totalBudgetAmount = overallBudget?.budget?.amount ?: 0.0
+        val totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0
 
         val expenseEntitiesForEngines = expenses.map { it.toEntityExpense() }
 
@@ -382,19 +383,19 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val categoryTotals = categoryBreakdown.map {
             CategorySpending(
                 category = CategoryInfo(
-                    id = it.category.id,
-                    name = it.category.name,
-                    icon = it.category.icon,
-                    color = it.category.color,
+                    id = it.categoryId,
+                    name = it.categoryName,
+                    icon = it.categoryIcon,
+                    color = it.categoryColor,
                     isIncome = false
                 ),
-                total = it.total,
-                percentage = it.percentage
+                total = it.amount,
+                percentage = it.percentage.toFloat()
             )
         }
 
         // ── Spending Pace widget ─────────────────────────────────────────────
-        val baseline = overallBudget?.budget?.amount
+        val baseline = overallBudget?.budgetAmount
             ?: if (previousMonthTotal > 0) previousMonthTotal else null
 
         val dayOfMonthCoerced = dayOfMonth.coerceAtLeast(1)
@@ -579,7 +580,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             add(
                 DashboardWidget.SafeToSpend(
                     amount = if (overallBudget != null) safeToSpend else monthSpent,
-                    totalBudget = overallBudget?.budget?.amount,
+                    totalBudget = overallBudget?.budgetAmount,
                     daysRemaining = daysRemaining
                 )
             )
@@ -653,6 +654,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                     !it.isNotMine
             }
             .map { TimePeriodUtils.getStartOfDay(it.date) }
+            .filter { it <= todayStart }
             .distinct()
             .sorted()
 

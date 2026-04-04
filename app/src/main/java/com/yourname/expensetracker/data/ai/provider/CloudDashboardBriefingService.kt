@@ -47,7 +47,13 @@ class CloudDashboardBriefingService @Inject constructor(
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     override suspend fun generate(input: DashboardBriefingInput): AiServiceResult<DashboardBriefing> {
-        Timber.d("CloudDashboardBriefingService: Starting generation for: ${input.weatherSummary}")
+        Timber.d(
+            "CloudDashboardBriefingService: Starting generation (dateKey=%s, weatherSummaryLength=%d, topCategoriesCount=%d, pendingReviewCount=%d)",
+            input.dateKey,
+            input.weatherSummary.length,
+            input.topCategories.size,
+            input.pendingReviewCount
+        )
         
         if (apiKey.isBlank()) {
             Timber.w("CloudDashboardBriefingService: FAILED - Gemini API key missing/blank")

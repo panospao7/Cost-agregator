@@ -1,11 +1,11 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
-import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
-import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.model.dashboard.DashboardCategory
+import com.yourname.expensetracker.domain.model.dashboard.DashboardCategoryBreakdown
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
@@ -20,7 +20,7 @@ interface DashboardCategoryRepository {
 }
 
 interface DashboardBudgetRepository {
-    fun observeBudgetStatuses(): Flow<List<BudgetStatus>>
+    fun observeBudgetStatuses(): Flow<List<BudgetStatusSnapshot>>
 }
 
 interface DashboardReviewQueueRepository {
@@ -39,5 +39,5 @@ interface DashboardSavingsGoalRepository {
 
 interface DashboardAnalyticsRepository {
     fun observeSpendingSummary(start: Long, end: Long): Flow<SpendingSummary>
-    fun observeCategoryBreakdown(start: Long, end: Long): Flow<List<CategoryBreakdown>>
+    fun observeCategoryBreakdown(start: Long, end: Long): Flow<List<DashboardCategoryBreakdown>>
 }

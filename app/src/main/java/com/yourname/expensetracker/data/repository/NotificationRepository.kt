@@ -161,9 +161,11 @@ class NotificationRepository @Inject constructor(
     }
 
     suspend fun restoreSourceStatsSnapshot(stats: List<SourceStats>) {
-        sourceStatsDao.deleteAll()
-        if (stats.isNotEmpty()) {
-            sourceStatsDao.insertAll(stats)
+        database.withTransaction {
+            sourceStatsDao.deleteAll()
+            if (stats.isNotEmpty()) {
+                sourceStatsDao.insertAll(stats)
+            }
         }
     }
 }

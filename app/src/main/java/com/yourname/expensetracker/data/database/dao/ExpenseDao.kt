@@ -227,6 +227,12 @@ interface ExpenseDao {
                 endDate = endDate,
                 minAmount = minAmount,
                 maxAmount = maxAmount
+            ) || existsByMerchantInRange(
+                merchant = merchant,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount
             )
         } else {
             existsByMerchantInRange(
@@ -357,7 +363,10 @@ interface ExpenseDao {
                s.txCount AS txCount
         FROM stats s
         JOIN latest l ON l.merchantKey = s.merchantKey
-        ORDER BY s.txCount DESC, s.latestDate DESC
+        ORDER BY s.txCount DESC,
+                 s.latestDate DESC,
+                 l.merchant COLLATE NOCASE ASC,
+                 l.merchantKey ASC
         LIMIT 10
     """)
     suspend fun searchMerchants(query: String): List<MerchantSuggestion>

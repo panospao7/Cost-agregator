@@ -29,12 +29,21 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
                 aiPolicy.shouldRedact(settings, AiCapability.QUERY_INTERPRETATION)
         val categories = categoryRepository.getAll()
         val merchants = expenseRepository.getRecentMerchantNames()
+        val categoryNames = if (shouldRedact) {
+            categories
+                .map { sanitizeCategoryContext(it.name, shouldRedact = true) }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .sorted()
+        } else {
+            categories.map { it.name }.sorted()
+        }
 
         return FinancialQueryInterpretationInput(
             rawQuery = sanitizeFreeText(rawQuery, shouldRedact)
                 .take(AppConfig.Ai.MAX_QUERY_INPUT_CHARS),
             currentTimeMs = timeProvider.now(),
-            categoryNames = categories.map { it.name }.sorted(),
+            categoryNames = categoryNames,
             merchantNames = merchants
                 .map { sanitizeMerchantContext(it, shouldRedact) }
                 .filter { it.isNotBlank() }
@@ -60,6 +69,13 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
         if (!shouldRedact) return trimmed
         if (trimmed.isBlank()) return ""
         return "merchant_${trimmed.sha256Prefix()}"
+    }
+
+    private fun sanitizeCategoryContext(value: String, shouldRedact: Boolean): String {
+        val trimmed = value.trim().take(80)
+        if (!shouldRedact) return trimmed
+        if (trimmed.isBlank()) return ""
+        return "category_${trimmed.sha256Prefix()}"
     }
 
     private fun sanitizeFreeText(text: String, shouldRedact: Boolean): String {

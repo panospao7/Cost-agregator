@@ -1,10 +1,7 @@
 package com.yourname.expensetracker.metrics
 
-import com.yourname.expensetracker.data.database.entity.Budget
-import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
@@ -15,7 +12,6 @@ import com.yourname.expensetracker.domain.health.FinancialHealthResult
 import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
 import com.yourname.expensetracker.domain.health.HealthTrend
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.BlockPartyStatus
 import com.yourname.expensetracker.domain.model.PlannedExpense
@@ -23,6 +19,7 @@ import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
@@ -167,9 +164,10 @@ class DashboardWidgetConsistencyTest {
         val planned = listOf(
             PlannedExpense(0, "Trip", 500.0, monthStart + 25 * 86400000L, null, false, PlannedExpensePriority.MUST)
         )
-        val budgetStatus = BudgetStatus(
-            budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = monthStart),
-            category = null,
+        val budgetStatus = BudgetStatusSnapshot(
+            budgetCategoryId = null,
+            budgetAmount = 1000.0,
+            categoryName = null,
             spentAmount = 100.0,
             remainingAmount = 900.0,
             percentUsed = 10f,
@@ -206,9 +204,10 @@ class DashboardWidgetConsistencyTest {
             predictedDiscretionary = discretionaryBudget,
             discretionaryBudget = discretionaryBudget
         )
-        val budgetStatus = BudgetStatus(
-            budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = ts(2024, 5, 1)),
-            category = null,
+        val budgetStatus = BudgetStatusSnapshot(
+            budgetCategoryId = null,
+            budgetAmount = 1000.0,
+            categoryName = null,
             spentAmount = 500.0,
             remainingAmount = 500.0,
             percentUsed = 50f,
@@ -255,7 +254,7 @@ class DashboardWidgetConsistencyTest {
             predictedDiscretionary = 0.0,
             discretionaryBudget = 0.0
         ),
-        budgetStatuses: List<BudgetStatus> = emptyList(),
+        budgetStatuses: List<BudgetStatusSnapshot> = emptyList(),
         recurringPatterns: List<RecurringPattern> = emptyList(),
         plannedExpenses: List<PlannedExpense> = emptyList()
     ): ProcessedDashboardData {

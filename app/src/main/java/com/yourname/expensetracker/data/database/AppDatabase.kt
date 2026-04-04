@@ -3454,7 +3454,10 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses(date)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_merchantKey_date_amount ON expenses(merchantKey, date, amount)")
                     database.execSQL("ALTER TABLE pending_reviews ADD COLUMN suggestedMerchantKey TEXT")
-                    database.execSQL("UPDATE pending_reviews SET suggestedMerchantKey = LOWER(REPLACE(REPLACE(REPLACE(suggestedMerchant, '.', ''), '''', ''), ' ', '')) WHERE suggestedMerchantKey IS NULL")
+                    // Intentionally do not backfill suggestedMerchantKey in SQL here.
+                    // MerchantKeyGenerator performs richer normalization (e.g., transliteration)
+                    // and SQL LOWER/REPLACE would create incompatible keys that block fallback
+                    // paths relying on suggestedMerchantKey IS NULL.
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_suggestedMerchantKey ON pending_reviews(suggestedMerchantKey)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_suggestedMerchantKey_suggestedDate ON pending_reviews(status, suggestedMerchantKey, suggestedDate)")
 

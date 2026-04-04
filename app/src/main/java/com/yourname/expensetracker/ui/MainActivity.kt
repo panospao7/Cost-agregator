@@ -536,7 +536,8 @@ fun MainScreen(
                         onCreateChallenge = { 
                             // Show "Coming soon" since create challenge flow not implemented
                             navigation.navigateBack()
-                        }
+                        },
+                        actionRegistry = actionRegistry
                     )
                 }
                 is NavigationDestination.AdvancedAnalytics -> {

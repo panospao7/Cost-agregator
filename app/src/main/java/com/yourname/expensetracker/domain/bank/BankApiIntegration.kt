@@ -179,7 +179,16 @@ class BankApiIntegration @Inject constructor(
      */
     private suspend fun refreshToken(connection: BankConnection): Boolean {
         // In real implementation, this would use refresh_token to get new access_token
-        return BankTokenCipher.decryptIfNeeded(connection.refreshToken) != null
+        val decryptedRefresh = BankTokenCipher.decryptIfNeeded(connection.refreshToken)
+        if (decryptedRefresh == null) {
+            Timber.w(
+                "Refresh token is missing/invalid for bank %s; explicit re-auth required",
+                connection.bankId
+            )
+            return false
+        }
+
+        return true
     }
     
     /**

@@ -184,7 +184,8 @@ class SmartSavingsEngine @Inject constructor(
 
             // If projected spending is under control, suggest saving 20% of discretionary
             val discretionary = 500.0 * horizonMultiplier // Assume €500/month discretionary baseline
-            val remaining = discretionary - (projectedSpending * 0.3) // 30% of projected
+            val projectedHorizonSpending = projectedSpending * horizonMultiplier
+            val remaining = discretionary - (projectedHorizonSpending * 0.3) // 30% of projected horizon spending
             if (remaining > 0) remaining * 0.2 else 0.0
         } ?: 0.0
     }

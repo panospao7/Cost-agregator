@@ -2,7 +2,7 @@ package com.yourname.expensetracker.domain.health
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -36,7 +36,7 @@ class FinancialHealthCalculator @Inject constructor(
      */
     fun calculateHealthScores(
         expenses: List<Expense>,
-        budgetStatuses: List<BudgetStatus>,
+        budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         todayStreak: Int,
         weekStreak: Int,
@@ -79,7 +79,7 @@ class FinancialHealthCalculator @Inject constructor(
 
     private fun calculateTodayScore(
         expenses: List<Expense>,
-        budgetStatuses: List<BudgetStatus>,
+        budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         streak: Int,
         noSpendStreak: Int
@@ -122,7 +122,7 @@ class FinancialHealthCalculator @Inject constructor(
 
     private fun calculateWeekScore(
         expenses: List<Expense>,
-        budgetStatuses: List<BudgetStatus>,
+        budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         streak: Int,
         noSpendStreak: Int
@@ -169,7 +169,7 @@ class FinancialHealthCalculator @Inject constructor(
 
     private fun calculateMonthScore(
         expenses: List<Expense>,
-        budgetStatuses: List<BudgetStatus>,
+        budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         streak: Int,
         noSpendStreak: Int
@@ -215,7 +215,7 @@ class FinancialHealthCalculator @Inject constructor(
     }
 
     private fun calculateBudgetHealthScore(
-        budgetStatuses: List<BudgetStatus>,
+        budgetStatuses: List<BudgetStatusSnapshot>,
         periodExpenses: List<Expense>
     ): Int {
         if (budgetStatuses.isEmpty()) return 25 // Default if no budgets set
@@ -238,11 +238,11 @@ class FinancialHealthCalculator @Inject constructor(
 
     private fun calculateDailySpendingControl(
         spentToday: Double,
-        budgetStatuses: List<BudgetStatus>
+        budgetStatuses: List<BudgetStatusSnapshot>
     ): Int {
         // Calculate daily budget target
         val dailyBudget = if (budgetStatuses.isNotEmpty()) {
-            budgetStatuses.sumOf { it.budget.amount } / 30.0 // Approximate daily budget
+            budgetStatuses.sumOf { it.budgetAmount } / 30.0 // Approximate daily budget
         } else {
             50.0 // Default daily target if no budgets
         }
@@ -260,11 +260,11 @@ class FinancialHealthCalculator @Inject constructor(
 
     private fun calculateWeeklySpendingControl(
         spentThisWeek: Double,
-        budgetStatuses: List<BudgetStatus>,
+        budgetStatuses: List<BudgetStatusSnapshot>,
         volatility: Double
     ): Int {
         val weeklyBudget = if (budgetStatuses.isNotEmpty()) {
-            budgetStatuses.sumOf { it.budget.amount } / 4.0 // Weekly portion
+            budgetStatuses.sumOf { it.budgetAmount } / 4.0 // Weekly portion
         } else {
             350.0 // Default weekly target
         }
@@ -285,11 +285,11 @@ class FinancialHealthCalculator @Inject constructor(
 
     private fun calculateMonthlySpendingControl(
         spentThisMonth: Double,
-        budgetStatuses: List<BudgetStatus>,
+        budgetStatuses: List<BudgetStatusSnapshot>,
         volatility: Double
     ): Int {
         val monthlyBudget = if (budgetStatuses.isNotEmpty()) {
-            budgetStatuses.sumOf { it.budget.amount }
+            budgetStatuses.sumOf { it.budgetAmount }
         } else {
             1500.0 // Default monthly target
         }

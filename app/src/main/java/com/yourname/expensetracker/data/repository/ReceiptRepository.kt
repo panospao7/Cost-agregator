@@ -68,6 +68,15 @@ class ReceiptRepository @Inject constructor(
         private const val AMOUNT_TOLERANCE = 0.01
     }
 
+    private enum class StatementInsertOutcome {
+        INSERTED,
+        REPLACED_AND_INSERTED,
+        SKIPPED_EXPENSE_DUPLICATE,
+        SKIPPED_PENDING_EXISTING,
+        SKIPPED_DISCARD_NEW,
+        SKIPPED_PENDING_DUPLICATE_RACE
+    }
+
     val allReceipts: Flow<List<ScannedReceipt>> = scannedReceiptDao.getAllFlow()
 
     /**
@@ -456,67 +465,6 @@ class ReceiptRepository @Inject constructor(
                 val minAmount = tx.amount - AMOUNT_TOLERANCE
                 val maxAmount = tx.amount + AMOUNT_TOLERANCE
 
-                // 1. Check duplicates via indexed, DB-side window queries (no capped snapshots).
-                val hasExpenseDuplicate = hasExpenseDuplicateInRange(
-                    merchantKey = merchantKey,
-                    merchantName = normalizedMerchant,
-                    startDate = startDate,
-                    endDate = endDate,
-                    minAmount = minAmount,
-                    maxAmount = maxAmount
-                )
-
-                if (hasExpenseDuplicate) {
-                    parsingLogs.add("SKIP: Duplicate in Expenses for ${tx.merchant} €${tx.amount}")
-                    return@forEach
-                }
-
-                // 2. Check for duplicates in PendingReview table (Review Zone Expansion)
-                val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRange(
-                    merchantKey = merchantKey,
-                    merchantName = normalizedMerchant,
-                    startDate = startDate,
-                    endDate = endDate,
-                    minAmount = minAmount,
-                    maxAmount = maxAmount,
-                    currency = tx.currency
-                )
-
-                if (hasPendingDuplicate) {
-                    val pendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRange(
-                        merchantKey = merchantKey,
-                        merchantName = normalizedMerchant,
-                        startDate = startDate,
-                        endDate = endDate,
-                        minAmount = minAmount,
-                        maxAmount = maxAmount,
-                        currency = tx.currency
-                    ) ?: run {
-                        parsingLogs.add("SKIP: Pending review duplicate exists for ${tx.merchant} €${tx.amount}")
-                        return@forEach
-                    }
-
-                    val resolution = crossSourceDeduplication.resolvePendingReviewDuplicate(
-                        existingReview = pendingReviewDuplicate,
-                        newSource = "statement"
-                    )
-                    
-                    when (resolution) {
-                        com.yourname.expensetracker.domain.intelligence.DuplicateResolution.KeepExisting -> {
-                            parsingLogs.add("SKIP: Pending review already exists for ${tx.merchant} €${tx.amount}")
-                            return@forEach
-                        }
-                        com.yourname.expensetracker.domain.intelligence.DuplicateResolution.ReplaceExisting -> {
-                            parsingLogs.add("REPLACE: Replacing existing pending review with statement data for ${tx.merchant}")
-                            pendingReviewDao.delete(pendingReviewDuplicate)
-                        }
-                        com.yourname.expensetracker.domain.intelligence.DuplicateResolution.DiscardNew -> {
-                            parsingLogs.add("SKIP: Discarding new transaction ${tx.merchant} €${tx.amount}")
-                            return@forEach
-                        }
-                    }
-                }
-
                 val review = PendingReview(
                     rawNotificationId = null,
                     scannedReceiptId = receiptId,
@@ -532,8 +480,95 @@ class ReceiptRepository @Inject constructor(
                     notificationTitle = "Bank Screenshot",
                     notificationText = "Imported from screenshot: ${tx.merchant}"
                 )
-                pendingReviewDao.insert(review)
-                successCount++
+
+                // Window-based duplicate logic (merchant/date/amount/currency ± tolerance)
+                // cannot be fully enforced with a strict DB unique index. Keep read+write
+                // in one transaction to avoid non-atomic check/delete/insert races.
+                val outcome = database.withTransaction {
+                    val hasExpenseDuplicate = hasExpenseDuplicateInRange(
+                        merchantKey = merchantKey,
+                        merchantName = normalizedMerchant,
+                        startDate = startDate,
+                        endDate = endDate,
+                        minAmount = minAmount,
+                        maxAmount = maxAmount
+                    )
+
+                    if (hasExpenseDuplicate) {
+                        return@withTransaction StatementInsertOutcome.SKIPPED_EXPENSE_DUPLICATE
+                    }
+
+                    val pendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRange(
+                        merchantKey = merchantKey,
+                        merchantName = normalizedMerchant,
+                        startDate = startDate,
+                        endDate = endDate,
+                        minAmount = minAmount,
+                        maxAmount = maxAmount,
+                        currency = tx.currency
+                    )
+
+                    if (pendingReviewDuplicate != null) {
+                        val resolution = crossSourceDeduplication.resolvePendingReviewDuplicate(
+                            existingReview = pendingReviewDuplicate,
+                            newSource = "statement"
+                        )
+
+                        when (resolution) {
+                            com.yourname.expensetracker.domain.intelligence.DuplicateResolution.KeepExisting -> {
+                                return@withTransaction StatementInsertOutcome.SKIPPED_PENDING_EXISTING
+                            }
+
+                            com.yourname.expensetracker.domain.intelligence.DuplicateResolution.ReplaceExisting -> {
+                                pendingReviewDao.delete(pendingReviewDuplicate)
+                                val insertedId = pendingReviewDao.insert(review)
+                                return@withTransaction if (insertedId > 0) {
+                                    StatementInsertOutcome.REPLACED_AND_INSERTED
+                                } else {
+                                    StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE
+                                }
+                            }
+
+                            com.yourname.expensetracker.domain.intelligence.DuplicateResolution.DiscardNew -> {
+                                return@withTransaction StatementInsertOutcome.SKIPPED_DISCARD_NEW
+                            }
+                        }
+                    }
+
+                    val insertedId = pendingReviewDao.insert(review)
+                    if (insertedId > 0) {
+                        StatementInsertOutcome.INSERTED
+                    } else {
+                        StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE
+                    }
+                }
+
+                when (outcome) {
+                    StatementInsertOutcome.INSERTED -> {
+                        successCount++
+                    }
+
+                    StatementInsertOutcome.REPLACED_AND_INSERTED -> {
+                        parsingLogs.add("REPLACE: Replacing existing pending review with statement data for ${tx.merchant}")
+                        successCount++
+                    }
+
+                    StatementInsertOutcome.SKIPPED_EXPENSE_DUPLICATE -> {
+                        parsingLogs.add("SKIP: Duplicate in Expenses for ${tx.merchant} €${tx.amount}")
+                    }
+
+                    StatementInsertOutcome.SKIPPED_PENDING_EXISTING -> {
+                        parsingLogs.add("SKIP: Pending review already exists for ${tx.merchant} €${tx.amount}")
+                    }
+
+                    StatementInsertOutcome.SKIPPED_DISCARD_NEW -> {
+                        parsingLogs.add("SKIP: Discarding new transaction ${tx.merchant} €${tx.amount}")
+                    }
+
+                    StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE -> {
+                        parsingLogs.add("SKIP: Pending review duplicate exists for ${tx.merchant} €${tx.amount}")
+                    }
+                }
             } catch (e: Exception) {
                 val errorMsg = "Failed to save transaction ${tx.merchant}: ${e.message}"
                 errors.add(errorMsg)

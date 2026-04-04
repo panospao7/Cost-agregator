@@ -245,6 +245,11 @@ class BudgetForecastingEngine @Inject constructor(
         spentToDate: Double,
         confidence: Double
     ): Double {
+        // Deterministic overspend: already over budget before any forecast uncertainty.
+        if (spentToDate >= budgetAmount) {
+            return 1.0
+        }
+
         val projectedTotal = spentToDate + predictedSpending
         val buffer = budgetAmount - projectedTotal
         val probability = when {
@@ -354,8 +359,15 @@ class BudgetForecastingEngine @Inject constructor(
 
                     val currentMonth = cal.get(Calendar.MONTH)
                     val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+                    val adjustedAnniversaryDay = Calendar.getInstance().apply {
+                        timeInMillis = startOfToday
+                        set(Calendar.DAY_OF_MONTH, 1)
+                        set(Calendar.MONTH, anchorMonth)
+                    }.getActualMaximum(Calendar.DAY_OF_MONTH).let { maxDayOfAnchorMonthInCurrentYear ->
+                        anchorDay.coerceAtMost(maxDayOfAnchorMonthInCurrentYear)
+                    }
                     val passedAnniversary = currentMonth > anchorMonth ||
-                        (currentMonth == anchorMonth && currentDay >= anchorDay)
+                        (currentMonth == anchorMonth && currentDay >= adjustedAnniversaryDay)
 
                     if (!passedAnniversary) {
                         cal.add(Calendar.YEAR, -1)

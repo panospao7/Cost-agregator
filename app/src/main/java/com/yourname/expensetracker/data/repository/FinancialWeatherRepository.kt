@@ -2,8 +2,6 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
-import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
@@ -11,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedPriority
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel as EntityGoalProtection
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority as DomainPlannedPriority
@@ -67,6 +66,19 @@ class FinancialWeatherRepository @Inject constructor(
         plannedExpenseRepository.getAllPlannedExpenses().catch { emit(emptyList()) },
         savingsGoalRepository.getAllGoals().catch { emit(emptyList()) }
     ) { expenses, budgetStatuses, recurringEntities, plannedEntities, goalEntities ->
+        val budgetSnapshots = budgetStatuses.map { status ->
+            BudgetStatusSnapshot(
+                budgetCategoryId = status.budget.categoryId,
+                budgetAmount = status.budget.amount,
+                categoryName = status.category?.name,
+                spentAmount = status.spentAmount,
+                remainingAmount = status.remainingAmount,
+                percentUsed = status.percentUsed,
+                healthStatus = status.healthStatus,
+                periodStart = status.periodStart,
+                periodEnd = status.periodEnd
+            )
+        }
         
         val plannedExpenses = plannedEntities.map { it.toDomain() }
         
@@ -115,7 +127,8 @@ class FinancialWeatherRepository @Inject constructor(
                     EntityGoalProtection.STRICT -> DomainGoalProtection.STRICT
                     EntityGoalProtection.WARNING -> DomainGoalProtection.WARNING
                     EntityGoalProtection.TRACKING -> DomainGoalProtection.TRACKING
-                }
+                },
+                createdAt = entity.createdAt
             )
         }
         
@@ -158,12 +171,12 @@ class FinancialWeatherRepository @Inject constructor(
             recurringPatterns = allRecurringPatterns,
             plannedExpenses = plannedExpenses,
             savingsGoals = savingsGoals,
-            budgetStatuses = budgetStatuses,
+            budgetStatuses = budgetSnapshots,
             spendingPace = pace
         )
         
         // 4. Generate Narrative
-        val narrative = narrativeGenerator.generate(forecast, budgetStatuses)
+        val narrative = narrativeGenerator.generate(forecast, budgetSnapshots)
 
         // 5. Map to UI Model
         FinancialWeather(

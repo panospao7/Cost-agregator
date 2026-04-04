@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.analytics.MonthlyComparisonCalculator
 import com.yourname.expensetracker.domain.analytics.PeriodRange
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
@@ -50,7 +51,8 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
-            merchantNormalizer = mockk(relaxed = true)
+            merchantNormalizer = mockk(relaxed = true),
+            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
         )
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)

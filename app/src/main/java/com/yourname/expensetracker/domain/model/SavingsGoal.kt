@@ -6,7 +6,8 @@ data class SavingsGoal(
     val targetAmount: Double,
     val currentAmount: Double,
     val targetDate: Long?,
-    val protectionLevel: GoalProtectionLevel
+    val protectionLevel: GoalProtectionLevel,
+    val createdAt: Long = 0L
 )
 
 enum class GoalProtectionLevel {

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.domain.savings.*
+import com.yourname.expensetracker.domain.savings.SavingsGoalRepository as DomainSavingsGoalRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -46,7 +47,7 @@ object SavingsModule {
     @Provides
     @Singleton
     fun provideSavingsGamificationEngine(
-        savingsGoalRepository: com.yourname.expensetracker.data.repository.SavingsGoalRepository,
+        savingsGoalRepository: DomainSavingsGoalRepository,
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
     ): SavingsGamificationEngine = SavingsGamificationEngine(
         savingsGoalRepository,

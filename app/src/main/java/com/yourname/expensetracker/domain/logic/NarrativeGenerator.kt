@@ -7,8 +7,8 @@ import com.yourname.expensetracker.domain.model.WeatherNarrative
 import com.yourname.expensetracker.domain.model.NarrativeSection
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.UiText
-import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -18,7 +18,7 @@ class NarrativeGenerator @Inject constructor() {
 
     fun generate(
         forecast: FinancialForecast, 
-        budgetStatuses: List<com.yourname.expensetracker.domain.budget.BudgetStatus>
+        budgetStatuses: List<BudgetStatusSnapshot>
     ): WeatherNarrative {
         val components = forecast.components
         val risk = components.riskLevel
@@ -74,15 +74,15 @@ class NarrativeGenerator @Inject constructor() {
 
     private fun buildDetails(
         forecast: FinancialForecast,
-        budgetStatuses: List<com.yourname.expensetracker.domain.budget.BudgetStatus>
+        budgetStatuses: List<BudgetStatusSnapshot>
     ): List<NarrativeSection> {
         val sections = mutableListOf<NarrativeSection>()
         val components = forecast.components
 
         // 1. Budget Health Section (Momentum Engine)
         val criticalBudgets = budgetStatuses.filter { 
-            it.healthStatus == com.yourname.expensetracker.domain.budget.BudgetHealthStatus.EXCEEDED ||
-            it.healthStatus == com.yourname.expensetracker.domain.budget.BudgetHealthStatus.CRITICAL 
+            it.healthStatus == BudgetHealthStatus.EXCEEDED ||
+            it.healthStatus == BudgetHealthStatus.CRITICAL 
         }
         if (criticalBudgets.isNotEmpty()) {
             sections.add(
@@ -90,7 +90,7 @@ class NarrativeGenerator @Inject constructor() {
                     title = UiText.from(R.string.domain_narrative_budget_alerts),
                     icon = "🚨",
                     items = criticalBudgets.map { 
-                        val name = it.category?.name ?: "Total Budget"
+                        val name = it.categoryName ?: "Total Budget"
                         "$name is ${it.healthStatus.name}: €${String.format(java.util.Locale.US, "%.0f", it.spentAmount)} spent"
                     }
                 )

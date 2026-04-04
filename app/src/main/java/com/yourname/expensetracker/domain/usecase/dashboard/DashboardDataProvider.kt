@@ -1,12 +1,12 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
-import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.model.dashboard.DashboardCategory
+import com.yourname.expensetracker.domain.model.dashboard.DashboardCategoryBreakdown
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
-import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.PlannedExpense
@@ -141,7 +141,7 @@ class DashboardDataProvider @Inject constructor(
 data class BaseData(
     val expenses: List<DashboardExpense>,
     val categories: List<DashboardCategory>,
-    val budgetStatuses: List<BudgetStatus>
+    val budgetStatuses: List<BudgetStatusSnapshot>
 )
 
 data class PlanningData(
@@ -154,7 +154,7 @@ data class PlanningData(
 data class DashboardData(
     val expenses: List<DashboardExpense>,
     val categories: List<DashboardCategory>,
-    val budgetStatuses: List<BudgetStatus>,
+    val budgetStatuses: List<BudgetStatusSnapshot>,
     val pendingCount: Int,
     val weather: FinancialWeather,
     val recurringPatterns: List<RecurringPattern>,
@@ -165,5 +165,5 @@ data class DashboardData(
 data class ProcessedDashboardData(
     val data: DashboardData,
     val summary: SpendingSummary,
-    val categoryBreakdown: List<CategoryBreakdown>
+    val categoryBreakdown: List<DashboardCategoryBreakdown>
 )

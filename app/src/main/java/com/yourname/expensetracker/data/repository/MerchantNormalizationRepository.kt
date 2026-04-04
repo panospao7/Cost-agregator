@@ -57,8 +57,25 @@ class MerchantNormalizationRepository @Inject constructor(
     suspend fun getAliasesForCanonical(canonicalId: Long): List<MerchantAlias> =
         dao.getAliasesForCanonical(canonicalId)
 
-    suspend fun searchAliases(query: String, limit: Int = 20): List<MerchantAlias> =
-        dao.searchAliasesByPrefix(MerchantKeyGenerator.generate(query), limit)
+    suspend fun searchAliases(query: String, limit: Int = 20): List<MerchantAlias> {
+        val normalizedQuery = MerchantKeyGenerator.generate(query)
+        if (normalizedQuery.isBlank()) return emptyList()
+
+        val prefixMatches = dao.searchAliasesByPrefix(normalizedQuery, limit)
+        if (prefixMatches.size >= limit) {
+            return prefixMatches
+        }
+
+        val remaining = limit - prefixMatches.size
+        val containsMatches = dao.searchAliasesByContains(normalizedQuery, remaining * 3)
+        if (containsMatches.isEmpty()) {
+            return prefixMatches
+        }
+
+        val seenIds = prefixMatches.asSequence().map { it.id }.toHashSet()
+        val dedupedContains = containsMatches.filter { seenIds.add(it.id) }
+        return (prefixMatches + dedupedContains).take(limit)
+    }
 
     suspend fun deleteUnusedAliasesOlderThan(olderThan: Long): Int =
         dao.deleteUnusedAliasesOlderThan(olderThan)

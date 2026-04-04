@@ -3,8 +3,8 @@ package com.yourname.expensetracker.domain.logic
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
@@ -56,7 +56,7 @@ class SynthesisEngine @Inject constructor(
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
         savingsGoals: List<SavingsGoal>,
-        budgetStatuses: List<BudgetStatus>,
+        budgetStatuses: List<BudgetStatusSnapshot>,
         spendingPace: SpendingPace
     ): FinancialForecast {
         return try {
@@ -89,7 +89,7 @@ class SynthesisEngine @Inject constructor(
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
         savingsGoals: List<SavingsGoal>,
-        budgetStatuses: List<BudgetStatus>,
+        budgetStatuses: List<BudgetStatusSnapshot>,
         spendingPace: SpendingPace
     ): FinancialForecast {
         val now = timeProvider.now()
@@ -213,8 +213,8 @@ class SynthesisEngine @Inject constructor(
         }
         
         // 5. Calculate Discretionary (Available)
-        val overallBudget = budgetStatuses.find { it.budget.categoryId == null }?.budget?.amount ?: 0.0
-        val categoryBudgetsSum = budgetStatuses.filter { it.budget.categoryId != null }.sumOf { it.budget.amount }
+        val overallBudget = budgetStatuses.find { it.budgetCategoryId == null }?.budgetAmount ?: 0.0
+        val categoryBudgetsSum = budgetStatuses.filter { it.budgetCategoryId != null }.sumOf { it.budgetAmount }
         val budgetLimit = if (overallBudget > 0) overallBudget else categoryBudgetsSum
         
         val spentSoFar = spendingPace.currentMonthSpent
@@ -470,7 +470,7 @@ class SynthesisEngine @Inject constructor(
 
     private fun determineRiskLevel(
         pace: SpendingPace,
-        budgets: List<BudgetStatus>,
+        budgets: List<BudgetStatusSnapshot>,
         discretionary: Double,
         limit: Double
     ): RiskLevel {
@@ -505,7 +505,7 @@ class SynthesisEngine @Inject constructor(
 
     private fun buildInsights(
         risk: RiskLevel,
-        budgets: List<BudgetStatus>,
+        budgets: List<BudgetStatusSnapshot>,
         pace: SpendingPace,
         planned: List<PlannedExpense>,
         goals: List<SavingsGoal>

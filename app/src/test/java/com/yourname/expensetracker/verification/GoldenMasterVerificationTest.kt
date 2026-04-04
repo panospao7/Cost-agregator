@@ -31,6 +31,7 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.PeriodRange
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
+import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.analytics.fixtures.GoldenDataSets
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
@@ -140,7 +141,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             userCorrectionDao = mockk(relaxed = true),
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
-            merchantNormalizer = mockk(relaxed = true)
+            merchantNormalizer = mockk(relaxed = true),
+            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
         )
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
