@@ -54,7 +54,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             exp("2026-02-10", 200.0),
             exp("2026-03-10", 300.0)
         )
-        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns expenses
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns expenses
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
@@ -69,7 +69,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `single month history yields stable trend and zero stddev path`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 500.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns
             listOf(exp("2026-03-05", 120.0))
 
         val forecast = engine.generateForecast(budget)
@@ -87,7 +87,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             exp("2026-02-05", 100.0),
             exp("2026-03-05", 100.0)
         )
-        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns expenses
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns expenses
 
         val forecast = engine.generateForecast(budget)
 
@@ -97,15 +97,15 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `budget zero produces zero prediction and high risk`() = runTest {
+    fun `budget zero still forecasts history and is critical risk`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 0.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns
             listOf(exp("2026-03-05", 100.0), exp("2026-02-05", 100.0), exp("2026-01-05", 100.0))
 
         val forecast = engine.generateForecast(budget)
 
-        assertApproxEquals(0.0, forecast.predictedSpending, 0.0)
-        assertEquals(ForecastRiskLevel.HIGH, forecast.riskLevel)
+        assertApproxEquals(100.0, forecast.predictedSpending, 0.01)
+        assertEquals(ForecastRiskLevel.CRITICAL, forecast.riskLevel)
         assertTrue(forecast.overspendProbability in 0.0..1.0)
     }
 
@@ -127,12 +127,57 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             exp("2026-10-10", 100.0),
             exp("2026-11-10", 100.0)
         )
-        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns sixMonthsFlat
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns sixMonthsFlat
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
         // STABLE trend + >=6 months history => seasonal factor applies.
         assertApproxEquals(120.0, forecast.predictedSpending, 0.01)
+    }
+
+    @Test
+    fun `two month history increasing trend applies increasing multiplier`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        val expenses = listOf(
+            exp("2026-02-10", 100.0),
+            exp("2026-03-10", 130.0)
+        )
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns expenses
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // avg=115, increasing trend => *1.1
+        assertApproxEquals(126.5, forecast.predictedSpending, 0.01)
+    }
+
+    @Test
+    fun `two month history decreasing trend applies decreasing multiplier`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        val expenses = listOf(
+            exp("2026-02-10", 130.0),
+            exp("2026-03-10", 100.0)
+        )
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns expenses
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // avg=115, decreasing trend => *0.9
+        assertApproxEquals(103.5, forecast.predictedSpending, 0.01)
+    }
+
+    @Test
+    fun `two month history stable trend keeps base prediction`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        val expenses = listOf(
+            exp("2026-02-10", 100.0),
+            exp("2026-03-10", 105.0)
+        )
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns expenses
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // avg=102.5, stable trend => unchanged
+        assertApproxEquals(102.5, forecast.predictedSpending, 0.01)
     }
 
     private fun exp(date: String, amount: Double) =

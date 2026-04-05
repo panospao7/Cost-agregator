@@ -1,13 +1,12 @@
 package com.yourname.expensetracker.integration
 
-import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.dao.ExchangeRateDao
-import com.yourname.expensetracker.data.database.entity.ExchangeRate
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.DomainExchangeRate
+import com.yourname.expensetracker.domain.currency.ExchangeRateStore
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -24,16 +23,28 @@ class MultiCurrencyAnalyticsTest {
     @Test
     fun `multi_currency_analytics_contract`() = runTest {
         val expenseDao = mockk<ExpenseDao>(relaxed = true)
-        val exchangeRateDao = mockk<ExchangeRateDao>(relaxed = true)
+        val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
         val timeProvider = mockk<TimeProvider>(relaxed = true)
         every { timeProvider.now() } returns ms(2026, 4, 15)
 
-        val converter = CurrencyConverter(exchangeRateDao)
+        val converter = CurrencyConverter(exchangeRateStore)
         val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider)
 
-        coEvery { exchangeRateDao.getRate("USD", "EUR") } returns ExchangeRate(fromCurrency = "USD", toCurrency = "EUR", rate = 0.8)
-        coEvery { exchangeRateDao.getRate("EUR", "EUR") } returns ExchangeRate(fromCurrency = "EUR", toCurrency = "EUR", rate = 1.0)
-        coEvery { exchangeRateDao.getRate("JPY", "EUR") } returns null // fallback path
+        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
+            fromCurrency = "USD",
+            toCurrency = "EUR",
+            rate = 0.8,
+            lastUpdated = ms(2026, 4, 1),
+            source = "test"
+        )
+        coEvery { exchangeRateStore.getRate("EUR", "EUR") } returns DomainExchangeRate(
+            fromCurrency = "EUR",
+            toCurrency = "EUR",
+            rate = 1.0,
+            lastUpdated = ms(2026, 4, 1),
+            source = "test"
+        )
+        coEvery { exchangeRateStore.getRate("JPY", "EUR") } returns null
 
         val start = ms(2026, 4, 1)
         val end = ms(2026, 5, 1)
@@ -45,9 +56,10 @@ class MultiCurrencyAnalyticsTest {
 
         val totalInEur = repository.getTotalExpensesInHomeCurrency(start, end, homeCurrency = "EUR")
 
-        // 100 EUR + (50 USD * 0.8) + (1000 JPY fallback as-is when no rate)
-        assertTrue(totalInEur is Result.Success)
-        assertApproxEquals(1140.0, (totalInEur as Result.Success).data, 0.0001)
+        // Missing JPY->EUR rate should fail instead of mixing currencies in total.
+        assertTrue(totalInEur is Result.Error)
+        val message = (totalInEur as Result.Error).message.orEmpty()
+        assertTrue(message.contains("Missing exchange rates"))
     }
 
     private fun expense(id: Long, amount: Double, currency: String, type: TransactionType, date: Long) = Expense(

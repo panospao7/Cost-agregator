@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.debug
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -87,7 +88,7 @@ class DebugDataStorage @Inject constructor(
                     amount = txObj.optDouble("amount", 0.0),
                     currency = txObj.optString("currency", "EUR"),
                     merchant = txObj.optString("merchant", ""),
-                    type = com.yourname.expensetracker.data.database.entity.TransactionType.valueOf(
+                    type = ParsedTransactionType.valueOf(
                         txObj.optString("type", "PURCHASE")
                     ),
                     confidence = txObj.optDouble("confidence", 0.0).toFloat(),

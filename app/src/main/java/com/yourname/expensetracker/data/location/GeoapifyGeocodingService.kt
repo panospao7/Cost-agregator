@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeoapifyKey
 import com.yourname.expensetracker.di.LocationHttpClient
@@ -103,12 +104,13 @@ class GeoapifyGeocodingService @Inject constructor(
             try {
                 val response = client.newCall(request).execute()
                 if (response.code >= 500 || response.code == 429) {
-                    response.close()
                     if (attempt < maxAttempts - 1) {
+                        response.close()
                         delay(currentDelay)
                         currentDelay = (currentDelay * 2).coerceAtMost(2000)
+                        return@repeat
                     }
-                    return@repeat
+                    return response
                 }
                 return response
             } catch (e: IOException) {
@@ -148,7 +150,7 @@ class GeoapifyGeocodingService @Inject constructor(
 
     private fun buildSafeLogRoute(query: String, biasLat: Double?, biasLon: Double?, limit: Int): String {
         val bias = if (biasLat != null && biasLon != null) {
-            "proximity:$biasLon,$biasLat"
+            "proximity:<redacted:${"$biasLon,$biasLat".anonymizeForLog()}>"
         } else {
             "countrycode:gr"
         }

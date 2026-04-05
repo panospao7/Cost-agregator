@@ -2,12 +2,15 @@ package com.yourname.expensetracker.domain.savings
 
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -31,6 +34,7 @@ enum class RecommendationSource {
 @Singleton
 class SmartSavingsEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
+    private val categoryRepository: CategoryRepository,
     private val budgetRepository: BudgetRepository,
     private val budgetCalculator: BudgetCalculator,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
@@ -83,18 +87,11 @@ class SmartSavingsEngine @Inject constructor(
     
     private suspend fun analyzeSpendingPace(timeHorizon: TimeHorizon): Double {
         val now = timeProvider.now()
-        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = now }
-        val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
-        val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        val dayOfMonth = TimePeriodUtils.getDayOfMonth(now).coerceAtLeast(1)
+        val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
         
         // Get current month's spending
-        val monthStart = (calendar.clone() as java.util.Calendar).apply {
-            set(java.util.Calendar.DAY_OF_MONTH, 1)
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }.timeInMillis
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
         
         val expenses = expenseRepository.getExpensesBetween(monthStart, now)
         val totalSpent = expenses
@@ -149,21 +146,32 @@ class SmartSavingsEngine @Inject constructor(
         timeHorizon: TimeHorizon
     ): Double {
         // Calculate current spending to date
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = now
-        val monthStart = calendar.apply {
-            set(java.util.Calendar.DAY_OF_MONTH, 1)
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }.timeInMillis
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
         
         val expenses = expenseRepository.getExpensesBetween(monthStart, now)
         val spentToDate = expenses
             .asSequence()
             .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
             .sumOf { it.effectiveAmount }
+
+        // Derive monthly discretionary baseline from recent real spending
+        val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
+        val categoriesById = categoryRepository.getAll().associateBy { it.id }
+        val historicalPurchases = expenseRepository.getExpensesBetween(threeMonthsAgo, now)
+            .asSequence()
+            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .toList()
+        val discretionaryHistoricalTotal = historicalPurchases
+            .asSequence()
+            .filter {
+                isDiscretionaryCategory(it.categoryId, categoriesById)
+            }
+            .sumOf { it.effectiveAmount }
+        val monthlyDiscretionary = if (historicalPurchases.isNotEmpty()) {
+            discretionaryHistoricalTotal / 3.0
+        } else {
+            500.0
+        }
         
         // Assume no known upcoming expenses for this calculation
         val knownUpcoming = 0.0
@@ -183,7 +191,7 @@ class SmartSavingsEngine @Inject constructor(
             }
 
             // If projected spending is under control, suggest saving 20% of discretionary
-            val discretionary = 500.0 * horizonMultiplier // Assume €500/month discretionary baseline
+            val discretionary = monthlyDiscretionary * horizonMultiplier
             val projectedHorizonSpending = projectedSpending * horizonMultiplier
             val remaining = discretionary - (projectedHorizonSpending * 0.3) // 30% of projected horizon spending
             if (remaining > 0) remaining * 0.2 else 0.0
@@ -262,6 +270,24 @@ class SmartSavingsEngine @Inject constructor(
             spendingPace > budgetSurplus && spendingPace > monteCarloResult -> RecommendationSource.SPENDING_PACE
             else -> RecommendationSource.MONTE_CARLO
         }
+    }
+
+    private fun isDiscretionaryCategory(
+        categoryId: Long?,
+        categoriesById: Map<Long, Category>
+    ): Boolean {
+        val essentialCategories = setOf(
+            "groceries", "rent", "utilities", "transport",
+            "insurance", "healthcare", "bills", "mortgage", "education", "loan"
+        )
+
+        val categoryName = categoryId
+            ?.let { categoriesById[it]?.name }
+            ?.trim()
+            ?.lowercase()
+
+        // Treat uncategorized entries as discretionary by default.
+        return categoryName == null || categoryName !in essentialCategories
     }
 
     private data class HorizonWeights(

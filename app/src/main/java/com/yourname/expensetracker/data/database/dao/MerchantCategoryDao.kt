@@ -26,6 +26,9 @@ interface MerchantCategoryDao {
     @Query("SELECT * FROM merchant_categories")
     suspend fun getAll(): List<MerchantCategory>
 
+    @Query("SELECT COUNT(*) FROM merchant_categories")
+    suspend fun getCount(): Int
+
     @Query("DELETE FROM merchant_categories")
     suspend fun deleteAll()
 }

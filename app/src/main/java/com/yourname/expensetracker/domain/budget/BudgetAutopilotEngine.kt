@@ -280,7 +280,7 @@ class BudgetAutopilotEngine @Inject constructor(
         return when {
             trend > TREND_THRESHOLD -> {
                 "Spending in this category is increasing (+${(trend * 100).toInt()}%/month). " +
-                "Consider increasing budget by ${((recommendedBudget - currentBudget) / currentBudget * 100).toInt()}% to avoid overspending."
+                buildIncreaseBudgetGuidance(currentBudget, recommendedBudget)
             }
             trend < -TREND_THRESHOLD -> {
                 "Spending in this category is decreasing (${(trend * 100).toInt()}%/month). " +
@@ -299,6 +299,17 @@ class BudgetAutopilotEngine @Inject constructor(
             else -> {
                 "Stable spending pattern. Budget aligned with historical average."
             }
+        }
+    }
+
+    /**
+     * Build safe increase guidance without dividing by zero.
+     */
+    private fun buildIncreaseBudgetGuidance(currentBudget: Double, recommendedBudget: Double): String {
+        return if (currentBudget > 0.0) {
+            "Consider increasing budget by ${((recommendedBudget - currentBudget) / currentBudget * 100).toInt()}% to avoid overspending."
+        } else {
+            "Consider setting an initial budget to avoid overspending."
         }
     }
     

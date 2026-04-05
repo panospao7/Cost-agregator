@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.currency
 
-import com.yourname.expensetracker.data.database.dao.ExchangeRateDao
-import com.yourname.expensetracker.data.database.entity.ExchangeRate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -49,9 +47,24 @@ data class ConversionResult(
     val timestamp: Long
 )
 
+data class FailedConversion(
+    val originalAmount: Double,
+    val originalCurrency: String,
+    val targetCurrency: String,
+    val reason: String
+)
+
+data class MultiConversionAggregate(
+    val total: Double,
+    val targetCurrency: String,
+    val failedConversions: List<FailedConversion>
+) {
+    val hasFailures: Boolean get() = failedConversions.isNotEmpty()
+}
+
 @Singleton
 class CurrencyConverter @Inject constructor(
-    private val exchangeRateDao: ExchangeRateDao
+    private val exchangeRateStore: ExchangeRateStore
 ) {
     companion object {
         const val DEFAULT_BASE_CURRENCY = "EUR"
@@ -78,7 +91,7 @@ class CurrencyConverter @Inject constructor(
         }
 
         // Try direct rate first
-        val directRate = exchangeRateDao.getRate(
+        val directRate = exchangeRateStore.getRate(
             fromCurrency.uppercase(),
             toCurrency.uppercase()
         )
@@ -95,11 +108,11 @@ class CurrencyConverter @Inject constructor(
         }
 
         // Try via EUR as intermediate
-        val toEurRate = exchangeRateDao.getRate(
+        val toEurRate = exchangeRateStore.getRate(
             fromCurrency.uppercase(),
             DEFAULT_BASE_CURRENCY
         )
-        val fromEurRate = exchangeRateDao.getRate(
+        val fromEurRate = exchangeRateStore.getRate(
             DEFAULT_BASE_CURRENCY,
             toCurrency.uppercase()
         )
@@ -122,24 +135,37 @@ class CurrencyConverter @Inject constructor(
 
     /**
      * Convert a list of amounts in various currencies to a single target currency.
-     * Returns the total in the target currency.
+     * Returns a strict aggregate result in the target currency and a list of failures.
+     *
+     * IMPORTANT: Failed conversions are NOT added to total to avoid mixing currencies.
      */
     suspend fun convertMultiple(
         amounts: List<Pair<Double, String>>,
         targetCurrency: String
-    ): Double = withContext(Dispatchers.IO) {
+    ): MultiConversionAggregate = withContext(Dispatchers.IO) {
         var total = 0.0
+        val failures = mutableListOf<FailedConversion>()
+
         for ((amount, currency) in amounts) {
             val converted = convert(amount, currency, targetCurrency)
             if (converted != null) {
                 total += converted.convertedAmount
             } else {
-                // If conversion fails, add amount as-is (assumes it's already in target currency)
-                total += amount
+                failures += FailedConversion(
+                    originalAmount = amount,
+                    originalCurrency = currency,
+                    targetCurrency = targetCurrency,
+                    reason = "Missing exchange rate from ${currency.uppercase()} to ${targetCurrency.uppercase()}"
+                )
                 Timber.w("Could not convert $amount $currency to $targetCurrency")
             }
         }
-        total
+
+        MultiConversionAggregate(
+            total = total,
+            targetCurrency = targetCurrency,
+            failedConversions = failures
+        )
     }
 
     /**
@@ -151,13 +177,14 @@ class CurrencyConverter @Inject constructor(
         rate: Double,
         source: String = "manual"
     ) {
-        val exchangeRate = ExchangeRate(
+        val exchangeRate = DomainExchangeRate(
             fromCurrency = fromCurrency.uppercase(),
             toCurrency = toCurrency.uppercase(),
             rate = rate,
+            lastUpdated = System.currentTimeMillis(),
             source = source
         )
-        exchangeRateDao.insertOrUpdate(exchangeRate)
+        exchangeRateStore.insertOrUpdate(exchangeRate)
     }
 
     /**
@@ -168,41 +195,42 @@ class CurrencyConverter @Inject constructor(
         source: String = "api"
     ) {
         val exchangeRates = rates.map { (from, to, rate) ->
-            ExchangeRate(
+            DomainExchangeRate(
                 fromCurrency = from.uppercase(),
                 toCurrency = to.uppercase(),
                 rate = rate,
+                lastUpdated = System.currentTimeMillis(),
                 source = source
             )
         }
-        exchangeRateDao.insertOrUpdateAll(exchangeRates)
+        exchangeRateStore.insertOrUpdateAll(exchangeRates)
     }
 
     /**
      * Check if an exchange rate exists for a currency pair.
      */
     suspend fun hasRate(fromCurrency: String, toCurrency: String): Boolean {
-        return exchangeRateDao.getRate(fromCurrency.uppercase(), toCurrency.uppercase()) != null
+        return exchangeRateStore.getRate(fromCurrency.uppercase(), toCurrency.uppercase()) != null
     }
 
     /**
      * Get the last time exchange rates were updated.
      */
     suspend fun getLastUpdateTime(): Long? {
-        return exchangeRateDao.getLatestRate()?.lastUpdated
+        return exchangeRateStore.getLatestRate()?.lastUpdated
     }
 
     /**
      * Get all available rates for a base currency.
      */
     fun getAllRatesForBase(baseCurrency: String) =
-        exchangeRateDao.getAllRatesForBase(baseCurrency.uppercase())
+        exchangeRateStore.getAllRatesForBase(baseCurrency.uppercase())
 
     /**
      * Delete old exchange rates (older than specified time).
      */
     suspend fun cleanupOldRates(olderThan: Long) {
-        exchangeRateDao.deleteOldRates(olderThan)
+        exchangeRateStore.deleteOldRates(olderThan)
     }
 
     /**

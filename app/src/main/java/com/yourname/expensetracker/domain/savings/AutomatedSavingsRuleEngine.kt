@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 data class AutomatedSavingsRule(
     val id: Long = 0,
@@ -55,6 +56,8 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         expense: Expense,
         rules: List<AutomatedSavingsRule>
     ): List<RuleExecution> {
+        pruneOldMonthlyCapEntries(timeProvider.now())
+
         val executions = mutableListOf<RuleExecution>()
         
         for (rule in rules) {
@@ -110,20 +113,68 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         rule: AutomatedSavingsRule
     ): RuleExecution? {
         // Only process purchases
-        if (expense.transactionType != TransactionType.PURCHASE || expense.amount <= 0) {
+        if (expense.transactionType != TransactionType.PURCHASE) {
+            return null
+        }
+
+        if (expense.isNotMine) {
+            return null
+        }
+
+        val candidateAmount = expense.effectiveAmount
+        if (candidateAmount <= 0.0) {
             return null
         }
         
         val roundUpTo = rule.roundUpTo ?: 5.0
-        val remainder = expense.amount % roundUpTo
+        if (!roundUpTo.isFinite() || roundUpTo <= 0.0) {
+            Timber.tag("AutomatedSavingsRuleEngine").w(
+                "Skipping ROUND_UP rule %s due to invalid roundUpTo=%s",
+                rule.id,
+                roundUpTo
+            )
+            return null
+        }
+
+        val remainder = candidateAmount % roundUpTo
+        if (!remainder.isFinite()) {
+            Timber.tag("AutomatedSavingsRuleEngine").w(
+                "Skipping ROUND_UP rule %s due to non-finite remainder for amount=%.2f roundUpTo=%s",
+                rule.id,
+                candidateAmount,
+                roundUpTo
+            )
+            return null
+        }
         
         if (remainder > 0) {
             val roundUpAmount = roundUpTo - remainder
+            if (!roundUpAmount.isFinite() || roundUpAmount <= 0.0) {
+                Timber.tag("AutomatedSavingsRuleEngine").w(
+                    "Skipping ROUND_UP rule %s due to invalid roundUpAmount=%s (amount=%.2f roundUpTo=%s)",
+                    rule.id,
+                    roundUpAmount,
+                    candidateAmount,
+                    roundUpTo
+                )
+                return null
+            }
+
+            val roundedTarget = kotlin.math.ceil(candidateAmount / roundUpTo) * roundUpTo
+            if (!roundedTarget.isFinite()) {
+                Timber.tag("AutomatedSavingsRuleEngine").w(
+                    "Skipping ROUND_UP rule %s due to non-finite rounded target (amount=%.2f roundUpTo=%s)",
+                    rule.id,
+                    candidateAmount,
+                    roundUpTo
+                )
+                return null
+            }
             
             return RuleExecution(
                 rule = rule,
                 amount = roundUpAmount,
-                reason = "Round up €${String.format("%.2f", expense.amount)} to €${String.format("%.2f", kotlin.math.ceil(expense.amount / roundUpTo) * roundUpTo)}",
+                reason = "Round up €${String.format("%.2f", candidateAmount)} to €${String.format("%.2f", roundedTarget)}",
                 timestamp = timeProvider.now()
             )
         }
@@ -136,15 +187,24 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         rule: AutomatedSavingsRule
     ): RuleExecution? {
         // Save small purchases (coffee, snacks, etc.)
-        if (expense.transactionType != TransactionType.PURCHASE || expense.amount <= 0) {
+        if (expense.transactionType != TransactionType.PURCHASE) {
             return null
         }
 
-        if (expense.amount in 1.0..10.0) {
+        if (expense.isNotMine) {
+            return null
+        }
+
+        val candidateAmount = expense.effectiveAmount
+        if (candidateAmount <= 0.0) {
+            return null
+        }
+
+        if (candidateAmount in 1.0..10.0) {
             return RuleExecution(
                 rule = rule,
-                amount = expense.amount,
-                reason = "Spare change: ${expense.merchant} €${String.format("%.2f", expense.amount)}",
+                amount = candidateAmount,
+                reason = "Spare change: ${expense.merchant} €${String.format("%.2f", candidateAmount)}",
                 timestamp = timeProvider.now()
             )
         }
@@ -234,6 +294,15 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     private fun buildMonthKey(timestamp: Long): String {
         val calendar = Calendar.getInstance().apply { timeInMillis = timestamp }
         return "${calendar.get(Calendar.YEAR)}-${calendar.get(Calendar.MONTH)}"
+    }
+
+    private suspend fun pruneOldMonthlyCapEntries(referenceTimestamp: Long) {
+        val currentMonthKey = buildMonthKey(referenceTimestamp)
+        monthlyCapMutex.withLock {
+            monthToDateRuleTotals.keys.removeAll { key ->
+                !key.endsWith("-$currentMonthKey")
+            }
+        }
     }
 
     private fun isEssentialCategory(

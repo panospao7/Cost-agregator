@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.domain.parser.parsers
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 import java.util.regex.Pattern
 
 /**
@@ -56,6 +56,13 @@ class SmsParser @Inject constructor(
         // Greek salary/income
         "μισθός", " salary", "wages", "επιστροφή", "refund"
     )
+
+    private val TRANSFER_KEYWORDS = listOf(
+        // English transfer keywords
+        "transfer", "transferred", "sent to",
+        // Greek/Greeklish transfer keywords
+        "μεταφορ", "εμβασ", "metafor", "embasma"
+    )
     
     // Direction detection patterns
     private val INCOMING_PATTERNS = listOf(
@@ -90,17 +97,18 @@ class SmsParser @Inject constructor(
         if (!isBankSms) return null
 
 
-        // Must contain transaction keywords (purchase OR deposit)
+        // Must contain transaction keywords (purchase, deposit OR transfer)
         val hasPurchaseKeyword = TRANSACTION_KEYWORDS.any { lowerBody.contains(it) }
         val hasDepositKeyword = DEPOSIT_KEYWORDS.any { lowerBody.contains(it) }
+        val hasTransferKeyword = TRANSFER_KEYWORDS.any { lowerBody.contains(it) }
         
-        if (!hasPurchaseKeyword && !hasDepositKeyword) return null
+        if (!hasPurchaseKeyword && !hasDepositKeyword && !hasTransferKeyword) return null
 
-        // Determine transaction type based on keywords
-        val transactionType = if (hasDepositKeyword && !hasPurchaseKeyword) {
-            TransactionType.DEPOSIT
-        } else {
-            TransactionType.PURCHASE
+        // Determine transaction type precedence: transfer > deposit > purchase
+        val transactionType = when {
+            hasTransferKeyword -> ParsedTransactionType.TRANSFER
+            hasDepositKeyword && !hasPurchaseKeyword -> ParsedTransactionType.DEPOSIT
+            else -> ParsedTransactionType.PURCHASE
         }
 
         // Extract amount
@@ -129,8 +137,8 @@ class SmsParser @Inject constructor(
             transferDirection = direction,
             transferAccountName = accountName?.let { 
                 when (direction) {
-                    TransferDirection.INCOMING -> "From: $it"
-                    TransferDirection.OUTGOING -> "To: $it"
+                    ParsedTransferDirection.INCOMING -> "From: $it"
+                    ParsedTransferDirection.OUTGOING -> "To: $it"
                     else -> null
                 }
             }
@@ -140,9 +148,9 @@ class SmsParser @Inject constructor(
     /**
      * Detects transfer direction from SMS text.
      */
-    private fun detectSmsDirection(text: String, transactionType: TransactionType): TransferDirection? {
-        if (transactionType != TransactionType.DEPOSIT && 
-            transactionType != TransactionType.TRANSFER) {
+    private fun detectSmsDirection(text: String, transactionType: ParsedTransactionType): ParsedTransferDirection? {
+        if (transactionType != ParsedTransactionType.DEPOSIT && 
+            transactionType != ParsedTransactionType.TRANSFER) {
             return null
         }
         
@@ -150,9 +158,9 @@ class SmsParser @Inject constructor(
         val outgoingScore = OUTGOING_PATTERNS.count { text.contains(it) }
         
         return when {
-            incomingScore > outgoingScore -> TransferDirection.INCOMING
-            outgoingScore > incomingScore -> TransferDirection.OUTGOING
-            else -> TransferDirection.INCOMING  // Default to incoming for deposits
+            incomingScore > outgoingScore -> ParsedTransferDirection.INCOMING
+            outgoingScore > incomingScore -> ParsedTransferDirection.OUTGOING
+            else -> ParsedTransferDirection.INCOMING  // Default to incoming for deposits
         }
     }
     

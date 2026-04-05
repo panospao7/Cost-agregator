@@ -26,6 +26,7 @@ data class ReceiptAssistInput(
     val imageMimeType: String?,
     // NEW: Flag to indicate AI should use vision/image analysis mode
     val isImageAnalysisMode: Boolean = false,
+    val redactBeforeCloud: Boolean = false,
     val parsedMerchant: String?,
     val parsedTotal: Double?,
     val parsedDate: Long?,

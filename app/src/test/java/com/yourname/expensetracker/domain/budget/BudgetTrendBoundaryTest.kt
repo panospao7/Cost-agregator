@@ -46,28 +46,28 @@ class BudgetTrendBoundaryTest {
     fun `budget_trend_boundary_exactly_10_percent_is_stable`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 10_000.0, period = BudgetPeriod.MONTHLY, startDate = now)
 
-        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns listOf(
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns listOf(
             exp("2026-01-10", 100.0),
             exp("2026-02-10", 110.0),
             exp("2026-03-10", 110.0)
         )
         val exactlyPlus10 = engine.generateForecast(budget)
 
-        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns listOf(
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns listOf(
             exp("2026-01-10", 100.0),
             exp("2026-02-10", 90.0),
             exp("2026-03-10", 90.0)
         )
         val exactlyMinus10 = engine.generateForecast(budget)
 
-        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns listOf(
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns listOf(
             exp("2026-01-10", 100.0),
             exp("2026-02-10", 110.01),
             exp("2026-03-10", 110.01)
         )
         val plus1001 = engine.generateForecast(budget)
 
-        coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } returns listOf(
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns listOf(
             exp("2026-01-10", 100.0),
             exp("2026-02-10", 89.99),
             exp("2026-03-10", 89.99)

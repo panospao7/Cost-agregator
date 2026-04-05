@@ -1,9 +1,12 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.CategorizedReceiptItem
+import com.yourname.expensetracker.domain.ai.model.CloudCategoryOption
 import com.yourname.expensetracker.domain.ai.model.CategorySuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
@@ -23,11 +26,9 @@ import timber.log.Timber
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.security.MessageDigest
-import java.util.UUID
 import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.random.Random
 
 @Singleton
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
@@ -50,7 +51,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
             return null
         }
 
-        val correlationId = newCorrelationId()
+        val correlationId = CloudCorrelation.newCorrelationId()
         
         return withContext(Dispatchers.IO) {
             val prompt = buildPrompt(input)
@@ -63,7 +64,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                 .header("x-goog-api-key", apiKey)
                 .build()
 
-            for (attempt in 1..MAX_RETRY_ATTEMPTS) {
+            for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                 var retryableHttpFailure = false
                 try {
                     val parsed = client.newCall(request).execute().use { response ->
@@ -71,7 +72,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
 
                         if (!response.isSuccessful) {
                             val errorClass = "HTTP_${response.code}"
-                            if (isRetryableHttpStatus(response.code) && attempt < MAX_RETRY_ATTEMPTS) {
+                            if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                                 retryableHttpFailure = true
                                 Timber.w(
                                     "CloudReceiptItemCategorizationService: retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
@@ -79,7 +80,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                                     errorClass,
                                     correlationId,
                                     attempt,
-                                    MAX_RETRY_ATTEMPTS
+                                    CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                                 )
                             } else {
                                 Timber.w(
@@ -100,18 +101,18 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                             return@use null
                         }
 
-                        parseResponse(body, correlationId)
+                        parseResponse(body, correlationId, input)
                     }
 
                     if (parsed != null) return@withContext parsed
                     if (!retryableHttpFailure) return@withContext null
                 } catch (e: SocketTimeoutException) {
-                    if (attempt < MAX_RETRY_ATTEMPTS) {
+                    if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
                             e,
                             "CloudReceiptItemCategorizationService: timeout, retrying (%d/%d) correlationId=%s",
                             attempt,
-                            MAX_RETRY_ATTEMPTS,
+                            CloudRetryPolicy.MAX_RETRY_ATTEMPTS,
                             correlationId
                         )
                     } else {
@@ -130,13 +131,13 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                     )
                     return@withContext null
                 } catch (e: IOException) {
-                    val retryable = e.isConnectionReset()
-                    if (retryable && attempt < MAX_RETRY_ATTEMPTS) {
+                    val retryable = CloudRetryPolicy.isRetryableIoException(e)
+                    if (retryable && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(
                             e,
                             "CloudReceiptItemCategorizationService: connection reset, retrying (%d/%d) correlationId=%s",
                             attempt,
-                            MAX_RETRY_ATTEMPTS,
+                            CloudRetryPolicy.MAX_RETRY_ATTEMPTS,
                             correlationId
                         )
                     } else {
@@ -156,8 +157,8 @@ class CloudReceiptItemCategorizationService @Inject constructor(
                     return@withContext null
                 }
 
-                if (attempt < MAX_RETRY_ATTEMPTS) {
-                    delay(backoffDelayMs(attempt))
+                if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
                 }
             }
 
@@ -172,7 +173,12 @@ class CloudReceiptItemCategorizationService @Inject constructor(
             input.merchant
         }
 
-        val categoriesList = input.userCategories.joinToString(", ") { "${it.name} (id: ${it.id})" }
+        val cloudOptions = cloudCategoryOptionsForPrompt(input)
+        val categoriesList = if (input.redactBeforeCloud) {
+            cloudOptions.joinToString(", ") { "${it.cloudName} (id: ${it.categoryId})" }
+        } else {
+            input.userCategories.joinToString(", ") { "${it.name} (id: ${it.id})" }
+        }
         
         val itemsList = input.lineItems.joinToString("\n") { item ->
             val safeDescription = if (input.redactBeforeCloud) {
@@ -248,9 +254,11 @@ Output JSON format:
     
     private fun parseResponse(
         body: String,
-        correlationId: String
+        correlationId: String,
+        input: ReceiptItemCategorizationInput
     ): ReceiptItemCategorizationResult? {
         return try {
+            val effectiveCloudCategoryOptions = cloudCategoryOptionsForPrompt(input)
             val root = JSONObject(body)
             val candidates = root.optJSONArray("candidates") ?: run {
                 Timber.w(
@@ -295,7 +303,12 @@ Output JSON format:
                 val confidence = item.optFiniteDoubleStrictOrNull("confidence")
                     ?: throw JSONException("Missing numeric 'confidence' in items[$i]")
                 val categoryId = item.optStrictLongStrictOrNull("categoryId")?.takeIf { it > 0 }
-                val categoryName = item.optString("categoryName", "Unknown")
+                val categoryName = mapCloudCategoryNameToRaw(
+                    rawCategoryName = item.optString("categoryName", "Unknown"),
+                    categoryId = categoryId,
+                    input = input,
+                    effectiveCloudCategoryOptions = effectiveCloudCategoryOptions
+                )
                 
                 val alternatives = mutableListOf<CategorySuggestion>()
                 item.optJSONArray("alternatives")?.let { altArray ->
@@ -303,9 +316,15 @@ Output JSON format:
                         val alt = altArray.getJSONObject(j)
                         val altConfidence = alt.optFiniteDoubleStrictOrNull("confidence")
                             ?: throw JSONException("Missing numeric 'confidence' in alternatives[$j]")
+                        val altCategoryId = alt.optStrictLongStrictOrNull("categoryId")?.takeIf { it > 0 }
                         alternatives.add(CategorySuggestion(
-                            categoryId = alt.optStrictLongStrictOrNull("categoryId")?.takeIf { it > 0 },
-                            categoryName = alt.optString("categoryName", ""),
+                            categoryId = altCategoryId,
+                            categoryName = mapCloudCategoryNameToRaw(
+                                rawCategoryName = alt.optString("categoryName", ""),
+                                categoryId = altCategoryId,
+                                input = input,
+                                effectiveCloudCategoryOptions = effectiveCloudCategoryOptions
+                            ),
                             confidence = altConfidence.toFloat()
                         ))
                     }
@@ -447,17 +466,6 @@ Output JSON format:
         return asLong
     }
 
-    private fun isRetryableHttpStatus(code: Int): Boolean = code in 500..599
-
-    private fun IOException.isConnectionReset(): Boolean =
-        message?.contains("connection reset", ignoreCase = true) == true
-
-    private fun backoffDelayMs(attempt: Int): Long {
-        val exponential = (BASE_RETRY_BACKOFF_MS shl (attempt - 1)).coerceAtMost(MAX_RETRY_BACKOFF_MS)
-        val jitter = Random.nextLong(0, RETRY_JITTER_MS + 1)
-        return exponential + jitter
-    }
-
     private fun sanitizeCloudText(raw: String, maxChars: Int, fallbackPrefix: String): String {
         val trimmed = raw.trim().take(maxChars)
         val redacted = trimmed
@@ -477,17 +485,53 @@ Output JSON format:
         }
     }
 
+    private fun cloudCategoryOptionsForPrompt(input: ReceiptItemCategorizationInput): List<CloudCategoryOption> {
+        if (!input.redactBeforeCloud) return emptyList()
+        if (input.cloudCategoryOptions.isNotEmpty()) return input.cloudCategoryOptions
+
+        return input.userCategories.map {
+            CloudCategoryOption(
+                categoryId = it.id,
+                cloudName = "cat_${it.id}"
+            )
+        }
+    }
+
+    private fun mapCloudCategoryNameToRaw(
+        rawCategoryName: String,
+        categoryId: Long?,
+        input: ReceiptItemCategorizationInput,
+        effectiveCloudCategoryOptions: List<CloudCategoryOption>
+    ): String {
+        if (!input.redactBeforeCloud) return rawCategoryName
+
+        val normalizedRawCategoryName = rawCategoryName.trim()
+        val resolvedCategoryId = categoryId
+            ?: effectiveCloudCategoryOptions.firstOrNull {
+                it.cloudName.trim().equals(normalizedRawCategoryName, ignoreCase = true)
+            }?.categoryId
+            ?: extractFallbackCategoryId(normalizedRawCategoryName)
+
+        if (resolvedCategoryId != null) {
+            input.userCategories.firstOrNull { it.id == resolvedCategoryId }?.let { return it.name }
+        }
+
+        return rawCategoryName
+    }
+
+    private fun extractFallbackCategoryId(rawCategoryName: String): Long? {
+        val match = FALLBACK_REDACTED_CATEGORY_REGEX.matchEntire(rawCategoryName) ?: return null
+        return match.groupValues.getOrNull(1)?.toLongOrNull()
+    }
+
     private fun String.sha256Prefix(length: Int = 12): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
         return digest.joinToString(separator = "") { "%02x".format(it) }.take(length)
     }
 
     private companion object {
-        private const val MAX_RETRY_ATTEMPTS = 3
-        private const val BASE_RETRY_BACKOFF_MS = 250L
-        private const val MAX_RETRY_BACKOFF_MS = 1_500L
-        private const val RETRY_JITTER_MS = 200L
         private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
+        private val FALLBACK_REDACTED_CATEGORY_REGEX = Regex("""cat_(\d+)""", RegexOption.IGNORE_CASE)
         private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
         private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")
         private val CARD_REGEX = Regex("""\b(?:\d[ -]?){13,19}\b""")
@@ -495,5 +539,4 @@ Output JSON format:
         private val LONG_NUMBER_REGEX = Regex("""\b\d{10,}\b""")
     }
 
-    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 }

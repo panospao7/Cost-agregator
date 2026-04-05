@@ -52,6 +52,10 @@ class FinancialHealthScoreV2 @Inject constructor(
         
         // Trend calculation threshold
         private const val TREND_THRESHOLD_POINTS = 5 // Score change of 5+ indicates trend
+
+        // Runway stabilization policy
+        private const val RUNWAY_BASELINE_LOOKBACK_DAYS = 90
+        private const val RUNWAY_MIN_COVERAGE_WITHOUT_BASELINE = 0.15
     }
 
     /**
@@ -83,7 +87,12 @@ class FinancialHealthScoreV2 @Inject constructor(
             
             // Calculate individual component scores
             val savingsRateScore = calculateSavingsRateScore(deposits, purchases)
-            val runwayScore = calculateRunwayScore(purchases, savingsGoals)
+            val runwayScore = calculateRunwayScore(
+                purchases = purchases,
+                savingsGoals = savingsGoals,
+                periodStart = periodStart,
+                periodEnd = periodEnd
+            )
             val budgetAdherenceScore = calculateBudgetAdherenceScore(budgetStatuses)
             val billReliabilityScore = calculateBillReliabilityScore(expenses, periodStart, periodEnd)
             
@@ -220,12 +229,51 @@ class FinancialHealthScoreV2 @Inject constructor(
      * Runway = currentBalance / monthlyExpenses
      * Score: <1 month = 0 points, 6+ months = 100 points
      */
-    private fun calculateRunwayScore(
+    private suspend fun calculateRunwayScore(
         purchases: List<com.yourname.expensetracker.data.database.entity.Expense>,
-        savingsGoals: List<com.yourname.expensetracker.data.database.entity.SavingsGoal>
+        savingsGoals: List<com.yourname.expensetracker.data.database.entity.SavingsGoal>,
+        periodStart: Long,
+        periodEnd: Long
     ): Int {
-        // Calculate monthly expenses from actual spending
-        val monthlyExpenses = purchases.sumOf { it.effectiveAmount }
+        val now = timeProvider.now()
+        val effectivePeriodEnd = minOf(now, periodEnd)
+        if (effectivePeriodEnd <= periodStart) {
+            return 50
+        }
+
+        val periodDays = TimePeriodUtils.daysBetween(periodStart, periodEnd).coerceAtLeast(1)
+        val elapsedDays = if (effectivePeriodEnd >= periodEnd) {
+            periodDays
+        } else {
+            (TimePeriodUtils.daysBetween(periodStart, effectivePeriodEnd) + 1).coerceAtLeast(1)
+        }
+        val coverage = (elapsedDays.toDouble() / periodDays.toDouble()).coerceIn(0.0, 1.0)
+
+        val observedSpend = purchases
+            .filter { it.date < effectivePeriodEnd }
+            .sumOf { it.effectiveAmount }
+        val daysInReferenceMonth = TimePeriodUtils.getDaysInMonth(periodStart)
+        val projectedMonthlyBurn = if (observedSpend > 0.0 && elapsedDays > 0) {
+            observedSpend / elapsedDays.toDouble() * daysInReferenceMonth.toDouble()
+        } else {
+            0.0
+        }
+
+        val historicalMonthlyBaseline = calculateHistoricalMonthlyBaseline(periodStart)
+
+        if (historicalMonthlyBaseline == null && coverage < RUNWAY_MIN_COVERAGE_WITHOUT_BASELINE) {
+            // Too little data to infer a stable burn rate without historical baseline.
+            return 50
+        }
+
+        // Blend toward current projection as period coverage grows.
+        val monthlyExpenses = when {
+            historicalMonthlyBaseline != null && projectedMonthlyBurn > 0.0 -> {
+                (coverage * projectedMonthlyBurn) + ((1.0 - coverage) * historicalMonthlyBaseline)
+            }
+            historicalMonthlyBaseline != null -> historicalMonthlyBaseline
+            else -> projectedMonthlyBurn
+        }
 
         // Use accumulated savings, not unspent monthly budget, for runway calculation.
         val totalSavings = savingsGoals.sumOf { it.currentAmount }
@@ -234,6 +282,15 @@ class FinancialHealthScoreV2 @Inject constructor(
         if (monthlyExpenses <= 0) {
             return 50
         }
+
+        Timber.d(
+            "Runway stabilization: observed=%.2f, projectedMonthly=%.2f, historicalBaseline=%.2f, coverage=%.3f, effectiveMonthly=%.2f",
+            observedSpend,
+            projectedMonthlyBurn,
+            historicalMonthlyBaseline ?: 0.0,
+            coverage,
+            monthlyExpenses
+        )
 
         // Calculate runway in months
         val runwayMonths = if (monthlyExpenses > 0) {
@@ -246,6 +303,31 @@ class FinancialHealthScoreV2 @Inject constructor(
         return ((runwayMonths / RUNWAY_TARGET_MONTHS) * 100)
             .toInt()
             .coerceIn(0, 100)
+    }
+
+    private suspend fun calculateHistoricalMonthlyBaseline(currentPeriodStart: Long): Double? {
+        val baselineStart = TimePeriodUtils.getStartOfMonth(
+            TimePeriodUtils.addMonths(currentPeriodStart, -3)
+        )
+        val historicalExpenses = expenseRepository
+            .getExpensesBetween(baselineStart, currentPeriodStart)
+            .filter {
+                it.transactionType == TransactionType.PURCHASE && !it.isNotMine && it.date < currentPeriodStart
+            }
+
+        if (historicalExpenses.isEmpty()) {
+            return null
+        }
+
+        val monthlyTotals = historicalExpenses
+            .groupBy {
+                "${TimePeriodUtils.getYear(it.date)}-${TimePeriodUtils.getMonth(it.date)}"
+            }
+            .values
+            .map { monthRows -> monthRows.sumOf { it.effectiveAmount } }
+            .filter { it > 0.0 }
+
+        return monthlyTotals.takeIf { it.isNotEmpty() }?.average()
     }
     
     /**

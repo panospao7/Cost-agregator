@@ -3,12 +3,11 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.FailedConversion
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
@@ -45,7 +44,14 @@ class MultiCurrencyRepository @Inject constructor(
         runCatching {
             val expenses = expenseDao.getExpensesBetween(startDate, endDate)
             val amounts = expenses.map { Pair(it.amount, it.currency) }
-            currencyConverter.convertMultiple(amounts, homeCurrency)
+            val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
+            if (aggregate.hasFailures) {
+                throw MissingExchangeRateException(
+                    buildMissingRateMessage(aggregate.failedConversions, homeCurrency),
+                    aggregate.failedConversions
+                )
+            }
+            aggregate.total
         }.fold(
             onSuccess = { Result.Success(it) },
             onFailure = {
@@ -103,9 +109,14 @@ class MultiCurrencyRepository @Inject constructor(
                 result.add(
                     ConvertedExpense(
                         expense = expense,
-                        homeCurrencyAmount = conversion?.convertedAmount ?: expense.amount,
-                        conversionRate = conversion?.rateUsed ?: 1.0,
-                        homeCurrency = homeCurrency
+                        homeCurrencyAmount = conversion?.convertedAmount,
+                        conversionRate = conversion?.rateUsed,
+                        homeCurrency = homeCurrency,
+                        conversionWarning = if (conversion == null) {
+                            "Missing exchange rate from ${expense.currency.uppercase()} to ${homeCurrency.uppercase()}"
+                        } else {
+                            null
+                        }
                     )
                 )
             }
@@ -131,6 +142,7 @@ class MultiCurrencyRepository @Inject constructor(
         runCatching {
             val expenses = expenseDao.getExpensesBetween(startDate, endDate)
             val result = mutableMapOf<Long?, Double>()
+            val failedConversions = mutableListOf<FailedConversion>()
 
             for (expense in expenses) {
                 val conversion = currencyConverter.convert(
@@ -139,9 +151,26 @@ class MultiCurrencyRepository @Inject constructor(
                     homeCurrency
                 )
 
-                val convertedAmount = conversion?.convertedAmount ?: expense.amount
+                if (conversion == null) {
+                    failedConversions += FailedConversion(
+                        originalAmount = expense.amount,
+                        originalCurrency = expense.currency,
+                        targetCurrency = homeCurrency,
+                        reason = "Missing exchange rate from ${expense.currency.uppercase()} to ${homeCurrency.uppercase()}"
+                    )
+                    continue
+                }
+
+                val convertedAmount = conversion.convertedAmount
                 val current = result[expense.categoryId] ?: 0.0
                 result[expense.categoryId] = current + convertedAmount
+            }
+
+            if (failedConversions.isNotEmpty()) {
+                throw MissingExchangeRateException(
+                    buildMissingRateMessage(failedConversions, homeCurrency),
+                    failedConversions
+                )
             }
 
             result
@@ -165,6 +194,7 @@ class MultiCurrencyRepository @Inject constructor(
         runCatching {
             val expenses = expenseDao.getExpensesBetween(startDate, endDate)
             val result = mutableMapOf<String, Double>()
+            val failedConversions = mutableListOf<FailedConversion>()
 
             for (expense in expenses) {
                 val conversion = currencyConverter.convert(
@@ -173,10 +203,27 @@ class MultiCurrencyRepository @Inject constructor(
                     homeCurrency
                 )
 
-                val convertedAmount = conversion?.convertedAmount ?: expense.amount
+                if (conversion == null) {
+                    failedConversions += FailedConversion(
+                        originalAmount = expense.amount,
+                        originalCurrency = expense.currency,
+                        targetCurrency = homeCurrency,
+                        reason = "Missing exchange rate from ${expense.currency.uppercase()} to ${homeCurrency.uppercase()}"
+                    )
+                    continue
+                }
+
+                val convertedAmount = conversion.convertedAmount
                 val merchant = expense.merchant
                 val current = result[merchant] ?: 0.0
                 result[merchant] = current + convertedAmount
+            }
+
+            if (failedConversions.isNotEmpty()) {
+                throw MissingExchangeRateException(
+                    buildMissingRateMessage(failedConversions, homeCurrency),
+                    failedConversions
+                )
             }
 
             result.toList().sortedByDescending { it.second }.toMap()
@@ -209,12 +256,13 @@ class MultiCurrencyRepository @Inject constructor(
 
             val result = mutableListOf<MonthTotal>()
             for ((monthKey, amounts) in monthlyMap.toSortedMap()) {
-                val total = currencyConverter.convertMultiple(amounts, homeCurrency)
+                val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
                 result.add(
                     MonthTotal(
                         monthKey = monthKey,
-                        total = total,
-                        homeCurrency = homeCurrency
+                        total = aggregate.total,
+                        homeCurrency = homeCurrency,
+                        failedConversions = aggregate.failedConversions
                     )
                 )
             }
@@ -259,6 +307,8 @@ class MultiCurrencyRepository @Inject constructor(
 
     private fun classifyErrorMessage(throwable: Throwable): String {
         return when {
+            throwable is MissingExchangeRateException ->
+                throwable.message ?: "Missing exchange rates for one or more conversions"
             throwable is android.database.SQLException ->
                 CurrencyRepositoryError.Dao("Database operation failed", throwable).message
             throwable is IllegalArgumentException ->
@@ -267,16 +317,33 @@ class MultiCurrencyRepository @Inject constructor(
                 CurrencyRepositoryError.Unknown("Unexpected multi-currency error", throwable).message
         }
     }
+
+    private fun buildMissingRateMessage(
+        failedConversions: List<FailedConversion>,
+        homeCurrency: String
+    ): String {
+        val missingPairs = failedConversions
+            .map { "${it.originalCurrency.uppercase()}→${homeCurrency.uppercase()}" }
+            .distinct()
+            .sorted()
+        return "Missing exchange rates: ${missingPairs.joinToString(", ")}".trim()
+    }
 }
+
+private class MissingExchangeRateException(
+    override val message: String,
+    val failedConversions: List<FailedConversion>
+) : IllegalStateException(message)
 
 /**
  * Expense with converted amount information.
  */
 data class ConvertedExpense(
     val expense: Expense,
-    val homeCurrencyAmount: Double,
-    val conversionRate: Double,
-    val homeCurrency: String
+    val homeCurrencyAmount: Double?,
+    val conversionRate: Double?,
+    val homeCurrency: String,
+    val conversionWarning: String? = null
 )
 
 /**
@@ -285,5 +352,6 @@ data class ConvertedExpense(
 data class MonthTotal(
     val monthKey: String,
     val total: Double,
-    val homeCurrency: String
+    val homeCurrency: String,
+    val failedConversions: List<FailedConversion> = emptyList()
 )

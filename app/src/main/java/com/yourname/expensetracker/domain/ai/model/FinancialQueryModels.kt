@@ -67,6 +67,8 @@ data class FinancialQueryInterpretationInput(
     val localeTag: String = "en-US",
     val categoryNames: List<String> = emptyList(),
     val merchantNames: List<String> = emptyList(),
+    val merchantAliasMap: Map<String, String> = emptyMap(),
+    val categoryAliasMap: Map<String, String> = emptyMap(),
     val conversationHistory: List<AiChatMessage> = emptyList()
 )
 

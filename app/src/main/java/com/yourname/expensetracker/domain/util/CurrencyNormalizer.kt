@@ -21,6 +21,7 @@ class CurrencyNormalizer @Inject constructor() {
             "€", "EUR", "EURO", "E" -> "EUR"
             "$", "USD", "DOLLAR" -> "USD"
             "£", "GBP", "POUND" -> "GBP"
+            "₹", "INR", "RUPEE", "RUPEES" -> "INR"
             "CHF", "FRANC" -> "CHF"
             "¥", "JPY", "YEN" -> "JPY"
             else -> {

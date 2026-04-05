@@ -696,6 +696,7 @@ private fun AiCapability.label(): String = when (this) {
     AiCapability.REVIEW_EXPLANATION -> stringResource(R.string.ai_capability_review)
     AiCapability.QUERY_INTERPRETATION -> stringResource(R.string.ai_capability_query)
     AiCapability.RECEIPT_EXTRACTION -> stringResource(R.string.ai_capability_receipt)
+    AiCapability.WARRANTY_EXTRACTION -> stringResource(R.string.ai_capability_warranty_extraction)
     AiCapability.CATEGORIZATION_FALLBACK -> stringResource(R.string.ai_capability_categorization)
     AiCapability.DEDUPE_JUDGE -> stringResource(R.string.ai_capability_duplicate)
     AiCapability.LOCATION_SUMMARY -> stringResource(R.string.ai_capability_location_summary)

@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import org.junit.Assert.*
 import org.junit.Before
@@ -20,6 +19,7 @@ class GoogleWalletParserTest {
                     "€", "E", "EUR" -> "EUR"
                     "$", "USD" -> "USD"
                     "£", "GBP" -> "GBP"
+                    "₹", "INR" -> "INR"
                     else -> arg ?: "EUR"
                 }
             }
@@ -155,5 +155,37 @@ class GoogleWalletParserTest {
         assertNotNull(result)
         assertEquals(8.00, result!!.amount, 0.01)
         assertEquals("EUR", result.currency)
+    }
+
+    @Test
+    fun `parse INR amount with rupee symbol and merchant`() {
+        val result = parser.parse(
+            title = "Payment",
+            text = "₹123.45 at Merchant",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.nbu.paisa.user"
+        )
+
+        assertNotNull(result)
+        assertEquals(123.45, result!!.amount, 0.01)
+        assertEquals("INR", result.currency)
+        assertEquals("Merchant", result.merchant)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+    }
+
+    @Test
+    fun `parse INR amount with code prefix`() {
+        val result = parser.parse(
+            title = "Payment",
+            text = "INR 123.45",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.nbu.paisa.user"
+        )
+
+        assertNotNull(result)
+        assertEquals(123.45, result!!.amount, 0.01)
+        assertEquals("INR", result.currency)
     }
 }

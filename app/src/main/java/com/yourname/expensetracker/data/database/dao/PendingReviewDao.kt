@@ -29,6 +29,9 @@ interface PendingReviewDao {
     @Query("SELECT COUNT(*) FROM pending_reviews WHERE status = 'PENDING'")
     fun getPendingCountFlow(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM pending_reviews WHERE status = 'PENDING'")
+    suspend fun getPendingCount(): Int
+
     @Query("SELECT * FROM pending_reviews WHERE id = :id")
     suspend fun getById(id: Long): PendingReview?
 

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
 import com.yourname.expensetracker.domain.model.CategoryInfo
 import com.yourname.expensetracker.domain.model.PeriodStatus
@@ -9,7 +10,7 @@ import com.yourname.expensetracker.domain.model.PeriodTotal
 import com.yourname.expensetracker.domain.model.PeriodType
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.time.format.DateTimeFormatter
@@ -20,7 +21,8 @@ import javax.inject.Singleton
 @Singleton
 class TotalsAggregationEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     companion object {
         // HIGH-01 FIX: Use DateTimeFormatter (thread-safe) instead of SimpleDateFormat
@@ -29,7 +31,7 @@ class TotalsAggregationEngine @Inject constructor(
         private val MONTH_YEAR_FORMAT = DateTimeFormatter.ofPattern("MMM yyyy", Locale.getDefault())
     }
 
-    suspend fun getMonthlyTotals(year: Int): List<PeriodTotal> = withContext(Dispatchers.IO) {
+    suspend fun getMonthlyTotals(year: Int): List<PeriodTotal> = withContext(ioDispatcher) {
         try {
             val (startMs, endMs) = getYearRange(year)
             val monthlyTotals = expenseRepository.getMonthlyTotalsForPeriod(startMs, endMs)
@@ -56,7 +58,7 @@ class TotalsAggregationEngine @Inject constructor(
         }
     }
 
-    suspend fun getWeeklyTotals(year: Int, month: Int): List<PeriodTotal> = withContext(Dispatchers.IO) {
+    suspend fun getWeeklyTotals(year: Int, month: Int): List<PeriodTotal> = withContext(ioDispatcher) {
         try {
             val (monthStartMs, monthEndMs) = getMonthRange(year, month)
             val weeklyTotals = expenseRepository.getWeeklyTotalsForPeriod(monthStartMs, monthEndMs)
@@ -103,7 +105,7 @@ class TotalsAggregationEngine @Inject constructor(
         }
     }
 
-    suspend fun getDailyTotals(year: Int, weekOfYear: Int): List<PeriodTotal> = withContext(Dispatchers.IO) {
+    suspend fun getDailyTotals(year: Int, weekOfYear: Int): List<PeriodTotal> = withContext(ioDispatcher) {
         try {
             val (startMs, endMs) = getWeekRange(year, weekOfYear)
             val dailyTotals = expenseRepository.getDailyTotalsWithDatesForPeriod(startMs, endMs)
@@ -134,7 +136,7 @@ class TotalsAggregationEngine @Inject constructor(
      * Get daily totals for a specific date range.
      * Used for drill-down to prevent duplicate days from week boundary mismatches.
      */
-    suspend fun getDailyTotalsForRange(startMs: Long, endMs: Long): List<PeriodTotal> = withContext(Dispatchers.IO) {
+    suspend fun getDailyTotalsForRange(startMs: Long, endMs: Long): List<PeriodTotal> = withContext(ioDispatcher) {
         try {
             val dailyTotals = expenseRepository.getDailyTotalsWithDatesForPeriod(startMs, endMs)
             val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
@@ -160,7 +162,7 @@ class TotalsAggregationEngine @Inject constructor(
         }
     }
 
-    suspend fun getYearlyTotals(): List<PeriodTotal> = withContext(Dispatchers.IO) {
+    suspend fun getYearlyTotals(): List<PeriodTotal> = withContext(ioDispatcher) {
         try {
             val now = timeProvider.now()
             val currentYear = TimePeriodUtils.getYear(now)
@@ -191,7 +193,7 @@ class TotalsAggregationEngine @Inject constructor(
         }
     }
 
-    suspend fun getCategoryBreakdown(startMs: Long, endMs: Long, periodLabel: String): List<CategoryBreakdown> = withContext(Dispatchers.IO) {
+    suspend fun getCategoryBreakdown(startMs: Long, endMs: Long, periodLabel: String): List<CategoryBreakdown> = withContext(ioDispatcher) {
         try {
             val categoryResults = expenseRepository.getCategoryBreakdown(startMs, endMs)
             val grandTotal = categoryResults.sumOf { it.total }
@@ -227,20 +229,19 @@ class TotalsAggregationEngine @Inject constructor(
         }
     }
 
-    suspend fun getAverageForPeriodType(periodType: PeriodType, excludeCurrent: Boolean): Double = withContext(Dispatchers.IO) {
+    suspend fun getAverageForPeriodType(periodType: PeriodType, excludeCurrent: Boolean): Double = withContext(ioDispatcher) {
         try {
             val now = timeProvider.now()
 
             when (periodType) {
                 PeriodType.YEAR -> {
                     val currentYear = TimePeriodUtils.getYear(now)
-                    val (startMs, _) = getYearRange(currentYear)
-                    val allMonths = expenseRepository.getMonthlyTotalsForPeriod(startMs, now)
-                    if (excludeCurrent) {
-                        allMonths.dropLast(1).map { it.total }.average().takeIf { !it.isNaN() } ?: 0.0
-                    } else {
-                        allMonths.map { it.total }.average().takeIf { !it.isNaN() } ?: 0.0
+                    val yearTotals = (currentYear - 4 until currentYear).mapNotNull { year ->
+                        val (startMs, endMs) = getYearRange(year)
+                        val total = expenseRepository.getTotalForPeriod(startMs, endMs)
+                        if (total > 0) total else null
                     }
+                    yearTotals.takeIf { it.isNotEmpty() }?.average() ?: 0.0
                 }
                 PeriodType.MONTH -> {
                     val startMs = TimePeriodUtils.getStartOfMonth(TimePeriodUtils.addMonths(now, -12))

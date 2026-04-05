@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -39,7 +40,9 @@ class TimePeriodAlignmentTest {
             mockk(relaxed = true),
             mockk(relaxed = true),
             mockk(relaxed = true),
-            timeProvider
+            timeProvider,
+            Dispatchers.Unconfined,
+            Dispatchers.Unconfined
         )
     }
 

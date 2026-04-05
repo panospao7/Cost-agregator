@@ -11,9 +11,15 @@ data class ReceiptItemCategorizationInput(
     val merchant: String,
     val lineItems: List<ReceiptParser.LineItem>,
     val userCategories: List<Category>,
+    val cloudCategoryOptions: List<CloudCategoryOption> = emptyList(),
     val totalTax: Double?,
     val currency: String,
     val redactBeforeCloud: Boolean = false
+)
+
+data class CloudCategoryOption(
+    val categoryId: Long,
+    val cloudName: String
 )
 
 /**

@@ -1,11 +1,10 @@
 package com.yourname.expensetracker.domain.currency
 
 import com.google.common.truth.Truth.assertThat
-import com.yourname.expensetracker.data.database.dao.ExchangeRateDao
-import com.yourname.expensetracker.data.database.entity.ExchangeRate
+import com.yourname.expensetracker.domain.currency.DomainExchangeRate
+import com.yourname.expensetracker.domain.currency.ExchangeRateStore
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -18,12 +17,12 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class CurrencyConversionTest {
 
-    private val exchangeRateDao = mockk<ExchangeRateDao>(relaxed = true)
+    private val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
     private lateinit var converter: CurrencyConverter
 
     @Before
     fun setup() {
-        converter = CurrencyConverter(exchangeRateDao)
+        converter = CurrencyConverter(exchangeRateStore)
     }
 
     @Test
@@ -39,11 +38,13 @@ class CurrencyConversionTest {
     @Test
     fun `convert uses direct rate when available`() = runTest {
         coEvery { 
-            exchangeRateDao.getRate("USD", "EUR") 
-        } returns ExchangeRate(
+            exchangeRateStore.getRate("USD", "EUR") 
+        } returns DomainExchangeRate(
             fromCurrency = "USD",
             toCurrency = "EUR",
-            rate = 0.85
+            rate = 0.85,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
         
         val result = converter.convert(100.0, "USD", "EUR")
@@ -56,14 +57,18 @@ class CurrencyConversionTest {
     @Test
     fun `convert uses EUR as intermediate when no direct rate`() = runTest {
         // No direct USD->GBP rate
-        coEvery { exchangeRateDao.getRate("USD", "GBP") } returns null
+        coEvery { exchangeRateStore.getRate("USD", "GBP") } returns null
         
         // But have USD->EUR and EUR->GBP
-        coEvery { exchangeRateDao.getRate("USD", "EUR") } returns ExchangeRate(
-            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85
+        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
+            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
-        coEvery { exchangeRateDao.getRate("EUR", "GBP") } returns ExchangeRate(
-            fromCurrency = "EUR", toCurrency = "GBP", rate = 0.88
+        coEvery { exchangeRateStore.getRate("EUR", "GBP") } returns DomainExchangeRate(
+            fromCurrency = "EUR", toCurrency = "GBP", rate = 0.88,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
         
         val result = converter.convert(100.0, "USD", "GBP")
@@ -76,7 +81,7 @@ class CurrencyConversionTest {
 
     @Test
     fun `convert returns null when no rate available`() = runTest {
-        coEvery { exchangeRateDao.getRate(any(), any()) } returns null
+        coEvery { exchangeRateStore.getRate(any(), any()) } returns null
         
         val result = converter.convert(100.0, "XYZ", "ABC")
         
@@ -86,23 +91,27 @@ class CurrencyConversionTest {
     @Test
     fun `convert handles case insensitive currency codes`() = runTest {
         coEvery { 
-            exchangeRateDao.getRate("USD", "EUR") 
-        } returns ExchangeRate(
-            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85
+            exchangeRateStore.getRate("USD", "EUR") 
+        } returns DomainExchangeRate(
+            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
         
         val result = converter.convert(100.0, "usd", "eur")
         
         assertThat(result).isNotNull()
-        coVerify { exchangeRateDao.getRate("USD", "EUR") }
+        coVerify { exchangeRateStore.getRate("USD", "EUR") }
     }
 
     @Test
     fun `convert includes original and target currencies in result`() = runTest {
         coEvery { 
-            exchangeRateDao.getRate("USD", "EUR") 
-        } returns ExchangeRate(
-            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85
+            exchangeRateStore.getRate("USD", "EUR") 
+        } returns DomainExchangeRate(
+            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
         
         val result = converter.convert(100.0, "USD", "EUR")
@@ -115,12 +124,13 @@ class CurrencyConversionTest {
     fun `convert includes timestamp from exchange rate`() = runTest {
         val timestamp = 1234567890L
         coEvery { 
-            exchangeRateDao.getRate("USD", "EUR") 
-        } returns ExchangeRate(
+            exchangeRateStore.getRate("USD", "EUR") 
+        } returns DomainExchangeRate(
             fromCurrency = "USD",
             toCurrency = "EUR",
             rate = 0.85,
-            lastUpdated = timestamp
+            lastUpdated = timestamp,
+            source = "test"
         )
         
         val result = converter.convert(100.0, "USD", "EUR")
@@ -130,11 +140,15 @@ class CurrencyConversionTest {
 
     @Test
     fun `convertMultiple sums converted amounts`() = runTest {
-        coEvery { exchangeRateDao.getRate("USD", "EUR") } returns ExchangeRate(
-            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85
+        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
+            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
-        coEvery { exchangeRateDao.getRate("GBP", "EUR") } returns ExchangeRate(
-            fromCurrency = "GBP", toCurrency = "EUR", rate = 1.14
+        coEvery { exchangeRateStore.getRate("GBP", "EUR") } returns DomainExchangeRate(
+            fromCurrency = "GBP", toCurrency = "EUR", rate = 1.14,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
         
         val amounts = listOf(
@@ -145,29 +159,30 @@ class CurrencyConversionTest {
         val total = converter.convertMultiple(amounts, "EUR")
         
         // 100 USD = 85 EUR, 50 GBP = 57 EUR, Total = 142 EUR
-        assertThat(total).isEqualTo(142.0)
+        assertThat(total.total).isEqualTo(142.0)
+        assertThat(total.failedConversions).isEmpty()
     }
 
     @Test
-    fun `convertMultiple adds amount as-is when conversion fails`() = runTest {
-        coEvery { exchangeRateDao.getRate(any(), any()) } returns null
+    fun `convertMultiple records failure when conversion fails`() = runTest {
+        coEvery { exchangeRateStore.getRate(any(), any()) } returns null
         
         val amounts = listOf(100.0 to "XYZ")
         
         val total = converter.convertMultiple(amounts, "EUR")
         
-        // Falls back to original amount
-        assertThat(total).isEqualTo(100.0)
+        assertThat(total.total).isEqualTo(0.0)
+        assertThat(total.failedConversions).hasSize(1)
     }
 
     @Test
     fun `storeRate inserts exchange rate`() = runTest {
-        coEvery { exchangeRateDao.insertOrUpdate(any()) } returns 1L
+        coEvery { exchangeRateStore.insertOrUpdate(any()) } just runs
         
         converter.storeRate("USD", "EUR", 0.85)
         
-        val rateSlot = slot<ExchangeRate>()
-        coVerify { exchangeRateDao.insertOrUpdate(capture(rateSlot)) }
+        val rateSlot = slot<DomainExchangeRate>()
+        coVerify { exchangeRateStore.insertOrUpdate(capture(rateSlot)) }
         
         assertThat(rateSlot.captured.fromCurrency).isEqualTo("USD")
         assertThat(rateSlot.captured.toCurrency).isEqualTo("EUR")
@@ -177,7 +192,7 @@ class CurrencyConversionTest {
 
     @Test
     fun `storeRates inserts multiple rates`() = runTest {
-        coEvery { exchangeRateDao.insertOrUpdateAll(any()) } just runs
+        coEvery { exchangeRateStore.insertOrUpdateAll(any()) } just runs
         
         val rates = listOf(
             Triple("USD", "EUR", 0.85),
@@ -187,8 +202,8 @@ class CurrencyConversionTest {
         
         converter.storeRates(rates, "api")
         
-        val ratesSlot = slot<List<ExchangeRate>>()
-        coVerify { exchangeRateDao.insertOrUpdateAll(capture(ratesSlot)) }
+        val ratesSlot = slot<List<DomainExchangeRate>>()
+        coVerify { exchangeRateStore.insertOrUpdateAll(capture(ratesSlot)) }
         
         assertThat(ratesSlot.captured).hasSize(3)
         assertThat(ratesSlot.captured.all { it.source == "api" }).isTrue()
@@ -197,9 +212,11 @@ class CurrencyConversionTest {
     @Test
     fun `hasRate returns true when rate exists`() = runTest {
         coEvery { 
-            exchangeRateDao.getRate("USD", "EUR") 
-        } returns ExchangeRate(
-            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85
+            exchangeRateStore.getRate("USD", "EUR") 
+        } returns DomainExchangeRate(
+            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
         
         val hasRate = converter.hasRate("USD", "EUR")
@@ -209,7 +226,7 @@ class CurrencyConversionTest {
 
     @Test
     fun `hasRate returns false when rate does not exist`() = runTest {
-        coEvery { exchangeRateDao.getRate("USD", "EUR") } returns null
+        coEvery { exchangeRateStore.getRate("USD", "EUR") } returns null
         
         val hasRate = converter.hasRate("USD", "EUR")
         
@@ -219,11 +236,12 @@ class CurrencyConversionTest {
     @Test
     fun `getLastUpdateTime returns timestamp of latest rate`() = runTest {
         val timestamp = 1234567890L
-        coEvery { exchangeRateDao.getLatestRate() } returns ExchangeRate(
+        coEvery { exchangeRateStore.getLatestRate() } returns DomainExchangeRate(
             fromCurrency = "USD",
             toCurrency = "EUR",
             rate = 0.85,
-            lastUpdated = timestamp
+            lastUpdated = timestamp,
+            source = "test"
         )
         
         val lastUpdate = converter.getLastUpdateTime()
@@ -233,7 +251,7 @@ class CurrencyConversionTest {
 
     @Test
     fun `getLastUpdateTime returns null when no rates`() = runTest {
-        coEvery { exchangeRateDao.getLatestRate() } returns null
+        coEvery { exchangeRateStore.getLatestRate() } returns null
         
         val lastUpdate = converter.getLastUpdateTime()
         
@@ -242,12 +260,12 @@ class CurrencyConversionTest {
 
     @Test
     fun `cleanupOldRates removes rates older than timestamp`() = runTest {
-        coEvery { exchangeRateDao.deleteOldRates(any()) } just runs
+        coEvery { exchangeRateStore.deleteOldRates(any()) } just runs
         
         val cutoff = 1234567890L
         converter.cleanupOldRates(cutoff)
         
-        coVerify { exchangeRateDao.deleteOldRates(cutoff) }
+        coVerify { exchangeRateStore.deleteOldRates(cutoff) }
     }
 
     @Test
@@ -312,9 +330,11 @@ class CurrencyConversionTest {
     @Test
     fun `convert with negative amount works correctly`() = runTest {
         coEvery { 
-            exchangeRateDao.getRate("USD", "EUR") 
-        } returns ExchangeRate(
-            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85
+            exchangeRateStore.getRate("USD", "EUR") 
+        } returns DomainExchangeRate(
+            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
         
         val result = converter.convert(-100.0, "USD", "EUR")
@@ -325,9 +345,11 @@ class CurrencyConversionTest {
     @Test
     fun `convert with zero amount returns zero`() = runTest {
         coEvery { 
-            exchangeRateDao.getRate("USD", "EUR") 
-        } returns ExchangeRate(
-            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85
+            exchangeRateStore.getRate("USD", "EUR") 
+        } returns DomainExchangeRate(
+            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
         
         val result = converter.convert(0.0, "USD", "EUR")
@@ -339,31 +361,35 @@ class CurrencyConversionTest {
     fun `convertMultiple with empty list returns zero`() = runTest {
         val total = converter.convertMultiple(emptyList(), "EUR")
         
-        assertThat(total).isEqualTo(0.0)
+        assertThat(total.total).isEqualTo(0.0)
+        assertThat(total.failedConversions).isEmpty()
     }
 
     @Test
     fun `rate lookup is case insensitive`() = runTest {
         coEvery { 
-            exchangeRateDao.getRate("USD", "EUR") 
-        } returns ExchangeRate(
-            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85
+            exchangeRateStore.getRate("USD", "EUR") 
+        } returns DomainExchangeRate(
+            fromCurrency = "USD", toCurrency = "EUR", rate = 0.85,
+            lastUpdated = System.currentTimeMillis(),
+            source = "test"
         )
         
         converter.convert(100.0, "usd", "eur")
         
-        coVerify { exchangeRateDao.getRate("USD", "EUR") }
+        coVerify { exchangeRateStore.getRate("USD", "EUR") }
     }
 
     @Test
     fun `conversion result contains all required fields`() = runTest {
         coEvery { 
-            exchangeRateDao.getRate("USD", "EUR") 
-        } returns ExchangeRate(
+            exchangeRateStore.getRate("USD", "EUR") 
+        } returns DomainExchangeRate(
             fromCurrency = "USD",
             toCurrency = "EUR",
             rate = 0.85,
-            lastUpdated = 1234567890L
+            lastUpdated = 1234567890L,
+            source = "test"
         )
         
         val result = converter.convert(100.0, "USD", "EUR")

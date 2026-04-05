@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.CloudCategoryOption
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
@@ -40,16 +41,32 @@ class ReceiptItemCategorizationInputBuilder @Inject constructor(
         
         // Get user's categories
         val categories = categoryRepository.getAll()
+        val cloudCategoryOptions = if (shouldRedact) {
+            categories.map { category ->
+                CloudCategoryOption(
+                    categoryId = category.id,
+                    cloudName = cloudSafeCategoryName(category.id, category.name)
+                )
+            }
+        } else {
+            emptyList()
+        }
         
         return ReceiptItemCategorizationInput(
             receiptId = receipt.id,
             merchant = sanitizeMerchant(receipt.parsedMerchant ?: "Unknown Merchant", shouldRedact),
             lineItems = lineItems,
             userCategories = categories,
+            cloudCategoryOptions = cloudCategoryOptions,
             totalTax = receipt.parsedTaxAmount,
             currency = receipt.currency,
             redactBeforeCloud = shouldRedact
         )
+    }
+
+    private fun cloudSafeCategoryName(categoryId: Long, rawName: String): String {
+        val seed = "$categoryId:$rawName"
+        return "cat_${seed.sha256Prefix()}"
     }
 
     private fun sanitizeMerchant(raw: String, shouldRedact: Boolean): String {

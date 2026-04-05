@@ -396,8 +396,17 @@ interface ExpenseDao {
     """)
     suspend fun getAmountsForPercentileCalc(startMs: Long, endMs: Long): List<Double>
 
-    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun getExpensesBetween(startDate: Long, endDate: Long, limit: Int = 2000, offset: Int = 0): List<Expense>
+
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date ASC, id ASC, merchant COLLATE NOCASE ASC LIMIT :limit OFFSET :offset")
+    suspend fun getExpensesBetweenForExport(startDate: Long, endDate: Long, limit: Int = 2000, offset: Int = 0): List<Expense>
+
+    @Query("SELECT COUNT(*) FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0")
+    suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int
+
+    @Query("SELECT COUNT(*) FROM expenses")
+    suspend fun getTotalCount(): Int
 
     @Query("""
         SELECT * FROM expenses

@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.LocalDate
@@ -452,8 +453,15 @@ class AnalyticsPipelineIntegrationTest {
             merchantNormalizer = mockk(relaxed = true),
             transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
         )
-        val totalsEngine = TotalsAggregationEngine(repository, timeProvider)
-        val advancedEngine = AdvancedAnalyticsEngine(repository, categoryRepository, budgetRepository, timeProvider)
+        val totalsEngine = TotalsAggregationEngine(repository, timeProvider, Dispatchers.Unconfined)
+        val advancedEngine = AdvancedAnalyticsEngine(
+            repository,
+            categoryRepository,
+            budgetRepository,
+            timeProvider,
+            Dispatchers.Unconfined,
+            Dispatchers.Unconfined
+        )
 
         val expected = 140.0 // 100 + 40(shared myShare), deposit + not-mine excluded
         val daoTotal = expenseDao.getTotalForPeriod(marchStart, aprilStart)

@@ -230,6 +230,25 @@ class BudgetAutopilotEngineTest {
         assertApproxEquals(100.0, rec.recommendedBudget, 0.01)
     }
 
+    @Test
+    fun `generateRecommendations with zero current budget uses safe initial budget phrasing`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = 1L, amount = 0.0)
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            purchase(1L, 100.0, millis(2026, Calendar.JANUARY, 20), 1L),
+            purchase(2L, 200.0, millis(2026, Calendar.FEBRUARY, 20), 1L),
+            purchase(3L, 300.0, millis(2026, Calendar.MARCH, 20), 1L)
+        )
+
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
+
+        assertEquals(BudgetTrend.INCREASING, rec.trend)
+        assertTrue(rec.reason.contains("setting an initial budget", ignoreCase = true))
+        assertTrue(!rec.reason.contains("NaN"))
+        assertTrue(!rec.reason.contains("Infinity"))
+    }
+
     private fun budget(id: Long, categoryId: Long?, amount: Double): Budget {
         return Budget(
             id = id,

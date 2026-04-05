@@ -3,12 +3,17 @@ package com.yourname.expensetracker.domain.debug
 import android.content.Context
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /** Detects and categorizes issues in debug data. */
-object DebugIssueDetector {
+@Singleton
+class DebugIssueDetector @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
 
     fun detectIssues(
-        context: Context,
         rawText: String,
         transactions: List<ParsedTransaction>,
         processingTimeMs: Long

@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.domain.parser.parsers
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
@@ -93,7 +93,7 @@ class RevolutParser @Inject constructor(
                         amount = amount, 
                         currency = currency, 
                         merchant = merchant, 
-                        type = TransactionType.PURCHASE, 
+                        type = ParsedTransactionType.PURCHASE, 
                         confidence = 0.95f
                     )
                 }
@@ -108,9 +108,9 @@ class RevolutParser @Inject constructor(
                         amount = amount, 
                         currency = currency, 
                         merchant = recipient, 
-                        type = TransactionType.TRANSFER, 
+                        type = ParsedTransactionType.TRANSFER, 
                         confidence = 0.92f,
-                        transferDirection = TransferDirection.OUTGOING,
+                        transferDirection = ParsedTransferDirection.OUTGOING,
                         transferAccountName = "To: $recipient"
                     )
                 }
@@ -128,9 +128,9 @@ class RevolutParser @Inject constructor(
                         amount = amount, 
                         currency = currency, 
                         merchant = sender ?: "Revolut", 
-                        type = if (isFromPerson) TransactionType.TRANSFER else TransactionType.DEPOSIT, 
+                        type = if (isFromPerson) ParsedTransactionType.TRANSFER else ParsedTransactionType.DEPOSIT, 
                         confidence = if (isFromPerson) 0.92f else 0.88f,
-                        transferDirection = TransferDirection.INCOMING,
+                        transferDirection = ParsedTransferDirection.INCOMING,
                         transferAccountName = sender?.let { "From: $it" }
                     )
                 }
@@ -143,7 +143,7 @@ class RevolutParser @Inject constructor(
                         amount = amount, 
                         currency = currency, 
                         merchant = "ATM Withdrawal", 
-                        type = TransactionType.WITHDRAWAL, 
+                        type = ParsedTransactionType.WITHDRAWAL, 
                         confidence = 0.95f
                     )
                 }

@@ -5,7 +5,11 @@ import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionInput
+import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -14,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,6 +30,7 @@ class WarrantyTrackerRepository @Inject constructor(
     private val cloudExtractionService: CloudWarrantyExtractionService,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiPolicy: AiPolicy,
+    private val aiCapabilityRouter: AiCapabilityRouter,
     private val timeProvider: TimeProvider
 ) {
     private companion object {
@@ -116,11 +122,62 @@ class WarrantyTrackerRepository @Inject constructor(
     // AI extraction
     suspend fun extractWarrantyFromReceipt(receipt: ScannedReceipt): Warranty? {
         val settings = aiSettingsRepository.settings().first()
-        if (!aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION)) {
+        val routeDecision = aiCapabilityRouter.decide(AiCapability.WARRANTY_EXTRACTION, settings)
+        Timber.d(
+            "WarrantyTrackerRepository: warranty extraction route=%s reason=%s provider=%s model=%s",
+            routeDecision.route,
+            routeDecision.reason,
+            routeDecision.providerName,
+            routeDecision.modelName
+        )
+
+        if (routeDecision.route != AiRoute.CLOUD) {
+            Timber.d(
+                "WarrantyTrackerRepository: skipping cloud warranty extraction route=%s receiptId=%d",
+                routeDecision.route,
+                receipt.id
+            )
             return null
         }
-        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.RECEIPT_EXTRACTION)
-        return cloudExtractionService.extractWarranty(receipt, shouldRedact)
+
+        val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.WARRANTY_EXTRACTION)
+        val input = WarrantyExtractionInput(
+            receiptText = receipt.rawOcrText,
+            merchant = receipt.parsedMerchant,
+            totalAmount = receipt.parsedTotal,
+            purchaseDate = receipt.parsedDate,
+            currency = receipt.currency
+        )
+
+        val extractionResult = cloudExtractionService.extractWarranty(input, shouldRedact) ?: return null
+        return extractionResult.toWarrantyEntity(receipt)
+    }
+
+    private fun WarrantyExtractionResult.toWarrantyEntity(receipt: ScannedReceipt): Warranty {
+        val purchaseDate = receipt.parsedDate ?: receipt.createdAt
+        val warrantyEndDate = purchaseDate + (warrantyMonths * 30L * 24 * 60 * 60 * 1000)
+
+        return Warranty(
+            receiptId = receipt.id,
+            expenseId = receipt.expenseId,
+            productName = productName,
+            merchantName = receipt.parsedMerchant ?: "Unknown",
+            purchaseDate = purchaseDate,
+            warrantyDurationMonths = warrantyMonths,
+            warrantyEndDate = warrantyEndDate,
+            warrantyType = parseWarrantyType(warrantyType),
+            supportPhone = supportPhone,
+            supportEmail = supportEmail,
+            notes = returnConditions
+        )
+    }
+
+    private fun parseWarrantyType(type: String): WarrantyType {
+        return try {
+            WarrantyType.valueOf(type.uppercase())
+        } catch (_: IllegalArgumentException) {
+            WarrantyType.MANUFACTURER
+        }
     }
     
     // Extract return window from warranty extraction result

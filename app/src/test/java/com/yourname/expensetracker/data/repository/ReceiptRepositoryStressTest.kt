@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.data.repository
 
-import android.content.Context
 import android.net.Uri
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -12,6 +11,7 @@ import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.debug.DebugIssueDetector
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
 import com.yourname.expensetracker.domain.intelligence.ml.ClassificationResult
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -32,6 +32,7 @@ import io.mockk.mockk
 import io.mockk.just
 import io.mockk.runs
 import io.mockk.verify
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -61,9 +62,9 @@ class ReceiptRepositoryStressTest {
     private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
     private val anomalyAlertOrchestrator = mockk<AnomalyAlertOrchestrator>(relaxed = true)
     private val crossSourceDeduplication = mockk<CrossSourceDeduplication>(relaxed = true)
+    private val debugIssueDetector = mockk<DebugIssueDetector>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val warrantyUseCase = mockk<AutoCreateWarrantyFromReceiptUseCase>(relaxed = true)
-    private val context = mockk<Context>(relaxed = true)
 
     private lateinit var repository: ReceiptRepository
 
@@ -88,7 +89,6 @@ class ReceiptRepositoryStressTest {
         coEvery { warrantyUseCase.execute(any(), any()) } returns WarrantyCreationResult.Failure("test")
 
         repository = ReceiptRepository(
-            context = context,
             database = database,
             scannedReceiptDao = scannedReceiptDao,
             expenseDao = expenseDao,
@@ -103,6 +103,8 @@ class ReceiptRepositoryStressTest {
             budgetMonitor = budgetMonitor,
             anomalyAlertOrchestrator = anomalyAlertOrchestrator,
             crossSourceDeduplication = crossSourceDeduplication,
+            debugIssueDetector = debugIssueDetector,
+            ioDispatcher = Dispatchers.Unconfined,
             timeProvider = timeProvider,
             warrantyUseCase = warrantyUseCase
         )
@@ -156,11 +158,7 @@ class ReceiptRepositoryStressTest {
     fun `stress - processReceipt OCR failure falls back to manual record`() = runTest {
         val uri = Uri.parse("content://test/receipt.jpg")
         coEvery { ocrService.processUri(uri) } throws RuntimeException("OCR failed")
-        coEvery { ocrService.processImage(uri) } returns OcrResult(
-            fullText = "",
-            blocks = emptyList(),
-            savedImagePath = "/fallback/path.jpg"
-        )
+        every { ocrService.persistImageCopy(uri) } returns "/fallback/path.jpg"
 
         val (receipt, parsed) = repository.processReceipt(uri)
 
@@ -169,6 +167,8 @@ class ReceiptRepositoryStressTest {
         assertEquals(null, parsed.total)
         coVerify { scannedReceiptDao.insert(any()) }
         coVerify { scannedReceiptDao.update(any()) }
+        verify(exactly = 1) { ocrService.persistImageCopy(uri) }
+        coVerify(exactly = 0) { ocrService.processImage(uri) }
     }
 
     @Test
@@ -196,11 +196,7 @@ class ReceiptRepositoryStressTest {
     @Test
     fun `stress - saveManualReceiptRecord returns receipt when OCR fails`() = runTest {
         val uri = Uri.parse("content://test/image.jpg")
-        coEvery { ocrService.processImage(uri) } returns OcrResult(
-            fullText = "",
-            blocks = emptyList(),
-            savedImagePath = "/manual/path.jpg"
-        )
+        every { ocrService.persistImageCopy(uri) } returns "/manual/path.jpg"
 
         val (receipt, parsed) = repository.saveManualReceiptRecord(uri)
 
@@ -209,6 +205,8 @@ class ReceiptRepositoryStressTest {
         assertEquals(null, parsed.merchantName)
         assertEquals(null, parsed.total)
         coVerify { scannedReceiptDao.insert(any()) }
+        verify(exactly = 1) { ocrService.persistImageCopy(uri) }
+        coVerify(exactly = 0) { ocrService.processImage(uri) }
     }
 
     @Test
@@ -276,7 +274,7 @@ class ReceiptRepositoryStressTest {
 
         coEvery { ocrService.processUri(uris[0]) } returns ocrResult
         coEvery { ocrService.processUri(uris[1]) } throws RuntimeException("OCR error")
-        coEvery { ocrService.processImage(uris[1]) } returns OcrResult("", emptyList(), "/fallback.jpg")
+        every { ocrService.persistImageCopy(uris[1]) } returns "/fallback.jpg"
         every { receiptParser.parse(any()) } returns parsed
         every { receiptParser.lineItemsToJson(any()) } returns "[]"
         coEvery { merchantNormalizer.normalize(any(), any(), any()) } returns MerchantLookupResult(
@@ -290,6 +288,8 @@ class ReceiptRepositoryStressTest {
 
         assertEquals(2, result.successCount)
         assertEquals(0, result.failureCount)
+        verify(exactly = 1) { ocrService.persistImageCopy(uris[1]) }
+        coVerify(exactly = 0) { ocrService.processImage(uris[1]) }
     }
 
     @Test

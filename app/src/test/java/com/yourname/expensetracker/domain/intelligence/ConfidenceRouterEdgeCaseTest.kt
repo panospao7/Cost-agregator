@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.data.repository.SourceStatsRepository
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import com.yourname.expensetracker.data.database.entity.SourceStats
@@ -37,7 +37,7 @@ class ConfidenceRouterEdgeCaseTest {
     }
 
     private fun makeParsed(confidence: Float, merchant: String = "TestMerchant") =
-        ParsedTransaction(10.0, "EUR", merchant, TransactionType.PURCHASE, confidence)
+        ParsedTransaction(10.0, "EUR", merchant, ParsedTransactionType.PURCHASE, confidence)
 
     @Test
     fun `exact threshold boundary - auto accept at exactly 0_85`() = runBlocking {

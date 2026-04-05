@@ -130,11 +130,12 @@ class BudgetCalculator @Inject constructor(
                 
                 val currentMonth = cal.get(Calendar.MONTH)
                 val currentDay = cal.get(Calendar.DAY_OF_MONTH)
+                val adjustedDay = anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH))
 
                 // Check if we passed the anniversary this year
                 var passed = false
                 if (currentMonth > anchorMonth) passed = true
-                else if (currentMonth == anchorMonth && currentDay >= anchorDay) passed = true
+                else if (currentMonth == anchorMonth && currentDay >= adjustedDay) passed = true
                 
                 if (!passed) {
                     cal.add(Calendar.YEAR, -1)

@@ -13,6 +13,7 @@ import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -70,10 +71,10 @@ class FinancialHealthScoreV2Test {
     @Test
     fun `calculateHealthScore applies weighted formula thirty twentyfive twentyfive twenty`() = runTest {
         // Savings component: income 1000, expenses 900 => rate 10% => score 50
-        // Runway: savingsGoals currentAmount total 900, monthlyExpenses 900 => 1 month => score 16
+        // Runway (stabilized): day-15 projection monthlyExpenses ~= 1800 => 0.5 month => score 8
         // Budget adherence: one budget 1000 spent 1100 => overspend ratio 0.1 => score 90
         // Bills: no patterns => default 75
-        // Overall = 0.30*50 + 0.25*16 + 0.25*90 + 0.20*75 = 56.5 -> 56
+        // Overall = 0.30*50 + 0.25*8 + 0.25*90 + 0.20*75 = 54.5 -> 54
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(1L, 1000.0, TransactionType.DEPOSIT, now - 10 * dayMs),
             expense(2L, 900.0, TransactionType.PURCHASE, now - 9 * dayMs)
@@ -88,10 +89,10 @@ class FinancialHealthScoreV2Test {
         val result = calculator.calculateHealthScore()
 
         assertEquals(50, result.savingsRateScore)
-        assertEquals(16, result.runwayScore)
+        assertEquals(8, result.runwayScore)
         assertEquals(90, result.budgetAdherenceScore)
         assertEquals(75, result.billReliabilityScore)
-        assertEquals(56, result.overallScore)
+        assertEquals(54, result.overallScore)
     }
 
     @Test
@@ -104,7 +105,7 @@ class FinancialHealthScoreV2Test {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(amount = 5000.0, spent = 500.0))
         )
-        // Savings goals total currentAmount = 1000 => runwayMonths = 2 => score 33
+        // Savings goals total currentAmount = 1000, stabilized monthly burn on day-15 ~= 1000 => 1 month => score 16
         every { savingsGoalRepository.getAllGoals() } returns flowOf(
             listOf(
                 goal(1L, target = 10_000.0, current = 700.0),
@@ -114,7 +115,67 @@ class FinancialHealthScoreV2Test {
 
         val result = calculator.calculateHealthScore()
 
-        assertEquals(33, result.runwayScore)
+        assertEquals(16, result.runwayScore)
+    }
+
+    @Test
+    fun `calculateHealthScore runway uses baseline blend for early month stability`() = runTest {
+        val earlyNow = millis(2026, Calendar.APRIL, 2)
+        every { timeProvider.now() } returns earlyNow
+
+        val periodStart = TimePeriodUtils.getStartOfMonth(earlyNow)
+        val periodEnd = TimePeriodUtils.getEndOfMonth(earlyNow)
+
+        val currentPurchases = listOf(
+            expense(100L, 50.0, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 1))
+        )
+        val historicalPurchases = listOf(
+            expense(200L, 900.0, TransactionType.PURCHASE, millis(2026, Calendar.JANUARY, 15)),
+            expense(201L, 900.0, TransactionType.PURCHASE, millis(2026, Calendar.FEBRUARY, 15)),
+            expense(202L, 900.0, TransactionType.PURCHASE, millis(2026, Calendar.MARCH, 15))
+        )
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val start = invocation.args[0] as Long
+            val end = invocation.args[1] as Long
+            if (start == periodStart && end == periodEnd) currentPurchases else historicalPurchases
+        }
+
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+            listOf(goal(1L, target = 5000.0, current = 900.0))
+        )
+
+        val result = calculator.calculateHealthScore(periodStart, periodEnd)
+
+        // Early month day-2 with history should stay near 1 month runway
+        // instead of inflating from sparse MTD data.
+        assertEquals(16, result.runwayScore)
+    }
+
+    @Test
+    fun `calculateHealthScore runway returns neutral with very low coverage and no baseline`() = runTest {
+        val firstDayNow = millis(2026, Calendar.APRIL, 1)
+        every { timeProvider.now() } returns firstDayNow
+
+        val periodStart = TimePeriodUtils.getStartOfMonth(firstDayNow)
+        val periodEnd = TimePeriodUtils.getEndOfMonth(firstDayNow)
+
+        val currentPurchases = listOf(
+            expense(300L, 20.0, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 1))
+        )
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val start = invocation.args[0] as Long
+            val end = invocation.args[1] as Long
+            if (start == periodStart && end == periodEnd) currentPurchases else emptyList()
+        }
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+            listOf(goal(1L, target = 5000.0, current = 1000.0))
+        )
+
+        val result = calculator.calculateHealthScore(periodStart, periodEnd)
+
+        assertEquals(50, result.runwayScore)
     }
 
     @Test

@@ -39,7 +39,7 @@ class AppParserRegistryRoutingTest {
             packageName = "com.revolut.revolut"
         )
         assertNotNull(result)
-        assertEquals(com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, result!!.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
         assertTrue(result.confidence >= 0.90f)
     }
 
@@ -52,7 +52,7 @@ class AppParserRegistryRoutingTest {
             packageName = "com.google.android.apps.walletnfcrel"
         )
         assertNotNull(result)
-        assertEquals(com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, result!!.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
         assertTrue(result.confidence >= 0.85f)
     }
 
@@ -65,7 +65,7 @@ class AppParserRegistryRoutingTest {
             packageName = "gr.nbg.mobilebanking"
         )
         assertNotNull(result)
-        assertEquals(com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, result!!.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
         assertTrue(result.confidence >= 0.90f)
     }
 
@@ -78,7 +78,7 @@ class AppParserRegistryRoutingTest {
             packageName = "com.completely.unknown.app"
         )
         assertNotNull(result)
-        assertEquals(com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, result!!.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
         assertTrue(result.confidence >= 0.60f)
     }
 
@@ -92,7 +92,7 @@ class AppParserRegistryRoutingTest {
             packageName = "com.revolut.revolut"
         )
         assertNotNull(result)
-        assertEquals(com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE, result!!.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
         assertEquals(12.5, result.amount, 0.01)
     }
 

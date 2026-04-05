@@ -16,6 +16,7 @@ data class GroupDetailsAggregate(
 sealed class DeleteGroupMemberResult {
     data object Success : DeleteGroupMemberResult()
     data class CannotDeleteMemberWithExpenses(val expenseCount: Int) : DeleteGroupMemberResult()
+    data class CannotDeleteMemberReferencedInSplits(val expenseCount: Int) : DeleteGroupMemberResult()
     data class Error(val message: String) : DeleteGroupMemberResult()
 }
 

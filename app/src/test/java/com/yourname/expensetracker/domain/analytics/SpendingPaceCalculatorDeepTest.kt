@@ -50,7 +50,7 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `projected total uses conservative mode for first three days`() {
+    fun `projected total uses blended smoothing in first week`() {
         runTest {
             every { timeProvider.now() } returns createDate(2026, 4, 2)
 
@@ -61,15 +61,16 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 allExpenses = listOf(createExpense(date = "2026-04-01", amount = 200.0))
             )
 
-            // 200 * (30/10) = 600
-            assertApproxEquals(600.0, result.projectedTotal)
+            // day=2, weight=2/7, linear=3000, conservative=600
+            // projection=(2/7*3000)+(5/7*600)=1285.714...
+            assertApproxEquals(1285.714, result.projectedTotal)
             assertEquals(2, result.daysElapsed)
             assertEquals(30, result.daysInMonth)
         }
     }
 
     @Test
-    fun `projected total uses standard formula from day four onward`() {
+    fun `projected total transitions smoothly on day four`() {
         runTest {
             every { timeProvider.now() } returns createDate(2026, 4, 4)
 
@@ -80,8 +81,9 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 allExpenses = listOf(createExpense(date = "2026-04-01", amount = 400.0))
             )
 
-            // 400 * (30 / 4) = 3000
-            assertApproxEquals(3000.0, result.projectedTotal)
+            // day=4, weight=4/7, linear=3000, conservative=1200
+            // projection=(4/7*3000)+(3/7*1200)=2228.571...
+            assertApproxEquals(2228.571, result.projectedTotal)
         }
     }
 

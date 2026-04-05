@@ -65,6 +65,14 @@ class CurrencyNormalizerConsistencyTest {
     }
 
     @Test
+    fun `consistency - same INR variants normalize to INR`() {
+        val variants = listOf("₹", "INR", "RUPEE", "RUPEES", "inr")
+        for (v in variants) {
+            assertEquals("Variant '$v' must normalize to INR", "INR", currencyNormalizer.normalize(v))
+        }
+    }
+
+    @Test
     fun `consistency - null or blank default to EUR`() {
         assertEquals("EUR", currencyNormalizer.normalize(null))
         assertEquals("EUR", currencyNormalizer.normalize(""))

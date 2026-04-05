@@ -41,6 +41,7 @@ class ReceiptAssistInputBuilderTest {
         assertEquals(null, result.imagePath)
         assertEquals(null, result.imageMimeType)
         assertEquals(receipt.parsedItems, result.lineItemsJson)
+        assertFalse(result.redactBeforeCloud)
         assertEquals(timeProvider.now(), result.currentTimeMs)
     }
 
@@ -73,6 +74,7 @@ class ReceiptAssistInputBuilderTest {
         assertEquals(null, result.imagePath)
         assertEquals(null, result.imageMimeType)
         assertEquals(null, result.lineItemsJson)
+        assertTrue(result.redactBeforeCloud)
     }
 
     private fun makeReceipt(

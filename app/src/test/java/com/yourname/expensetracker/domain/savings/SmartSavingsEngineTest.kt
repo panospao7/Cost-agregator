@@ -4,6 +4,7 @@ import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
@@ -45,6 +46,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
     override fun setUp() {
         super.setUp()
         expenseRepository = mockk(relaxed = true)
+        categoryRepository = mockk(relaxed = true)
         budgetRepository = mockk(relaxed = true)
         budgetCalculator = mockk(relaxed = true)
         monteCarloSimulator = mockk(relaxed = true)
@@ -54,6 +56,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
 
         engine = SmartSavingsEngine(
             expenseRepository = expenseRepository,
+            categoryRepository = categoryRepository,
             budgetRepository = budgetRepository,
             budgetCalculator = budgetCalculator,
             monteCarloSimulator = monteCarloSimulator,
@@ -86,9 +89,12 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             )
         )
         val historicalExpenses = listOf(
-            com.yourname.expensetracker.data.database.entity.Expense(amount = 600.0, merchant = "H1", transactionType = TransactionType.PURCHASE, date = now),
-            com.yourname.expensetracker.data.database.entity.Expense(amount = 600.0, merchant = "H2", transactionType = TransactionType.PURCHASE, date = now),
-            com.yourname.expensetracker.data.database.entity.Expense(amount = 600.0, merchant = "H3", transactionType = TransactionType.PURCHASE, date = now)
+            com.yourname.expensetracker.data.database.entity.Expense(amount = 600.0, merchant = "H1", categoryId = 1L, transactionType = TransactionType.PURCHASE, date = now),
+            com.yourname.expensetracker.data.database.entity.Expense(amount = 600.0, merchant = "H2", categoryId = 1L, transactionType = TransactionType.PURCHASE, date = now),
+            com.yourname.expensetracker.data.database.entity.Expense(amount = 600.0, merchant = "H3", categoryId = 1L, transactionType = TransactionType.PURCHASE, date = now)
+        )
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 1L, name = "Entertainment", icon = "🎬", color = "#FF0000")
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
             val start = firstArg<Long>()
@@ -102,10 +108,52 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
 
         // surplus = (100 + 200) * 0.5 = 150
         // pace: totalSpent=150, day=15, projected=300, avgMonthly=1800/3=600 => (600-300)*0.3 = 90
-        // mc: (500 - 400*0.3) * 0.2 = 76
-        // safe = 150*0.4 + 90*0.3 + 76*0.3 = 109.8
-        assertApproxEquals(109.8, result.safeAmount, 0.01)
+        // mc: monthly discretionary from 3-month history = 1800/3 = 600
+        //     (600 - 400*0.3) * 0.2 = 96
+        // safe = 150*0.4 + 90*0.3 + 96*0.3 = 115.8
+        assertApproxEquals(115.8, result.safeAmount, 0.01)
         assertApproxEquals(0.95, result.confidence, 0.001)
+    }
+
+    @Test
+    fun `monte carlo discretionary baseline excludes essential categories`() = runTest {
+        io.mockk.every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        // Month-to-date and historical requests both return this list in this test.
+        val mixedExpenses = listOf(
+            // Essential spending (should be excluded from discretionary baseline)
+            com.yourname.expensetracker.data.database.entity.Expense(
+                amount = 300.0,
+                merchant = "Supermarket",
+                categoryId = 1L,
+                transactionType = TransactionType.PURCHASE,
+                date = now
+            ),
+            // Discretionary spending (should be included)
+            com.yourname.expensetracker.data.database.entity.Expense(
+                amount = 90.0,
+                merchant = "Cinema",
+                categoryId = 2L,
+                transactionType = TransactionType.PURCHASE,
+                date = now
+            )
+        )
+
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 1L, name = "Groceries", icon = "🛒", color = "#00FF00"),
+            Category(id = 2L, name = "Entertainment", icon = "🎬", color = "#FF0000")
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns mixedExpenses
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarloResult(400.0)
+
+        val result = engine.calculateSafeToSaveAmount(
+            SavingsGoal(name = "Trip", targetAmount = 2000.0, currentAmount = 200.0)
+        )
+
+        // monthly discretionary baseline uses only discretionary purchases: 90 / 3 = 30
+        // monte-carlo component => remaining = 30 - (400 * 0.3) < 0 => 0
+        // pace also 0 (projected above baseline), budget surplus 0 => safe amount 0
+        assertApproxEquals(0.0, result.safeAmount)
     }
 
     @Test

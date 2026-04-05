@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -58,8 +59,10 @@ class CategorizationAssistInputBuilderTest {
         val result = builder.build(makeItem(), AiSettings())
 
         assertEquals(listOf("Groceries", "Transport"), result.candidateCategories.map { it.name })
+        assertEquals("Lidl", result.merchant)
         assertNotNull(result.supportingText)
         assertEquals("fallback", result.deterministicMatchType)
+        assertEquals("weak deterministic match", result.deterministicExplanation)
     }
 
     @Test
@@ -77,6 +80,9 @@ class CategorizationAssistInputBuilderTest {
         val result = builder.build(makeItem(), AiSettings(redactBeforeCloud = true))
 
         assertNull(result.supportingText)
+        assertNull(result.deterministicExplanation)
+        assertTrue(result.merchant.startsWith("merchant_"))
+        assertTrue(result.merchant != "Lidl")
     }
 
     @Test
@@ -110,6 +116,32 @@ class CategorizationAssistInputBuilderTest {
         assertEquals("Groceries", result.candidateCategories.single().name)
         assertNotNull(result.supportingText)
         assertEquals(null, result.deterministicMatchType)
+    }
+
+    @Test
+    fun `build receipt input redacts merchant when redaction enabled`() = runTest {
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns true
+        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+            canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
+            alias = null,
+            confidence = 0.9f,
+            matchType = MatchType.EXACT_MATCH
+        )
+        coEvery { expenseRepository.getRecentTransactionsForMerchant(any(), any()) } returns emptyList()
+
+        val receipt = makeItem().receipt!!
+        val result = builder.build(
+            receipt = receipt,
+            draftMerchant = "Lidl",
+            draftAmount = 22.5,
+            draftDate = 1234L,
+            currentCategoryId = null,
+            settings = AiSettings(redactBeforeCloud = true)
+        )
+
+        assertTrue(result.merchant.startsWith("merchant_"))
+        assertNull(result.supportingText)
     }
 
     private fun makeItem(): PendingReviewWithReceipt {

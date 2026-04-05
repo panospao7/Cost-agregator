@@ -3,11 +3,13 @@ package com.yourname.expensetracker.data.repository
 import android.content.Context
 import android.os.Environment
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
 import com.yourname.expensetracker.domain.backup.DatabaseStats
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
@@ -19,68 +21,47 @@ import javax.inject.Singleton
 @Singleton
 class DatabaseBackupRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val database: AppDatabase
+    private val database: AppDatabase,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DatabaseBackupRepository {
     
     companion object {
         private const val DATABASE_NAME = "expense_tracker_db"
         private const val BACKUP_PREFIX = "expense_tracker_backup_"
         private const val DATE_FORMAT = "yyyy-MM-dd_HH-mm-ss"
+        private const val EXPORT_SUBDIR = "exports"
+        private const val MIN_SUPPORTED_SCHEMA_VERSION = 6
+        private const val FALLBACK_CURRENT_SCHEMA_VERSION = 70
+
+        private val CURRENT_SUPPORTED_SCHEMA_VERSION: Int by lazy {
+            AppDatabase::class.java
+                .getAnnotation(androidx.room.Database::class.java)
+                ?.version
+                ?: FALLBACK_CURRENT_SCHEMA_VERSION
+        }
     }
     
-    override suspend fun exportDatabase(): Result<File> = withContext(Dispatchers.IO) {
+    override suspend fun exportDatabase(): Result<File> = withContext(ioDispatcher) {
         try {
             val dbFile = context.getDatabasePath(DATABASE_NAME)
             if (!dbFile.exists()) {
                 return@withContext Result.failure(Exception("Database file not found"))
             }
             
-            // First, checkpoint WAL to ensure all data is in the main database file
-            // This makes the backup self-contained and eliminates need for companion files
-            // Note: Do NOT use runInTransaction for checkpoint - it causes SQLITE_LOCKED
-            // PRAGMA wal_checkpoint returns a result, so we must use rawQuery not execSQL
-            var checkpointSuccess = false
-            var attempts = 0
-            val maxAttempts = 3
-            while (!checkpointSuccess && attempts < maxAttempts) {
-                try {
-                    val cursor = database.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)")
-                    var busy = 1
-                    if (cursor.moveToFirst()) {
-                        busy = cursor.getInt(0) // First column is busy (0=success, 1=blocked)
-                    }
-                    cursor.close()
-                    
-                    if (busy == 0) {
-                        checkpointSuccess = true
-                        Timber.d("WAL checkpoint completed before export (attempt ${attempts + 1})")
-                    } else {
-                        attempts++
-                        if (attempts >= maxAttempts) {
-                            Timber.e("Checkpoint busy after $maxAttempts attempts, failing export")
-                            return@withContext Result.failure(Exception("Database is busy (WAL checkpoint blocked). Please try again."))
-                        }
-                        Timber.w("Checkpoint busy (code $busy), retrying in 200ms (attempt $attempts)")
-                        kotlinx.coroutines.delay(200)
-                    }
-                } catch (e: android.database.sqlite.SQLiteDatabaseLockedException) {
-                    attempts++
-                    if (attempts >= maxAttempts) {
-                        Timber.e("Checkpoint locked after $maxAttempts attempts, failing export")
-                        return@withContext Result.failure(Exception("Database is locked. Please try again."))
-                    }
-                    Timber.w("Checkpoint locked, retrying in 200ms (attempt $attempts)")
-                    kotlinx.coroutines.delay(200)
-                }
+            val checkpointResult = checkpointWal()
+            if (checkpointResult.isFailure) {
+                return@withContext Result.failure(
+                    checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
+                )
             }
             
             // Create timestamped filename
             val timestamp = SimpleDateFormat(DATE_FORMAT, Locale.getDefault()).format(Date())
             val backupFileName = "${BACKUP_PREFIX}${timestamp}.db"
             
-            // Save to Downloads folder
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val backupFile = File(downloadsDir, backupFileName)
+            // Save to app-private storage by default
+            val exportDir = File(context.filesDir, EXPORT_SUBDIR).apply { mkdirs() }
+            val backupFile = File(exportDir, backupFileName)
             
             // Copy database file (now self-contained after checkpoint)
             dbFile.inputStream().use { input ->
@@ -96,8 +77,31 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             Result.failure(e)
         }
     }
+
+    override suspend fun getLegacyPublicBackupNotice(): String? = withContext(ioDispatcher) {
+        runCatching {
+            val downloads = File(Environment.getExternalStorageDirectory(), Environment.DIRECTORY_DOWNLOADS)
+            if (!downloads.exists() || !downloads.isDirectory) {
+                return@runCatching null
+            }
+
+            val legacyBackups = downloads.listFiles { file ->
+                file.isFile &&
+                    file.name.startsWith(BACKUP_PREFIX) &&
+                    file.name.endsWith(".db")
+            }?.toList().orEmpty()
+
+            if (legacyBackups.isEmpty()) return@runCatching null
+
+            "Found ${legacyBackups.size} legacy database backup(s) in public Downloads from older app versions. " +
+                "These files may be readable by other apps. Move or delete them after securely re-exporting from the app."
+        }.getOrElse { err ->
+            Timber.w(err, "Failed to check legacy public backups")
+            null
+        }
+    }
     
-    override suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary> = withContext(Dispatchers.IO) {
+    override suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary> = withContext(ioDispatcher) {
         try {
             // Validate source file exists and is readable
             if (!sourceFile.exists()) {
@@ -134,8 +138,18 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // First, create safety backup
             val safetyBackupResult = createSafetyBackup()
             if (safetyBackupResult.isFailure) {
-                Timber.w("Failed to create safety backup, but proceeding with import")
+                val reason = safetyBackupResult.exceptionOrNull()?.message
+                    ?: "Unknown backup error"
+                Timber.e("Database import aborted: safety backup failed: $reason")
+                return@withContext Result.failure(
+                    Exception(
+                        "Import cancelled because safety backup failed. " +
+                            "Please free storage/permissions and retry. Details: $reason"
+                    )
+                )
             }
+            val safetyBackupFile = safetyBackupResult.getOrNull()
+                ?: return@withContext Result.failure(Exception("Safety backup was created but path is unavailable"))
             
             // Close database and clear connection pool before replacing files
             runCatching { database.close() }
@@ -149,6 +163,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             
             // Atomic replacement: copy to temp, then rename
             val tempFile = File(dbFile.parent, "${DATABASE_NAME}_temp")
+            var destinationFilesMutated = false
+            var importSucceeded = false
             try {
                 // Copy source to temp file
                 sourceFile.inputStream().use { input ->
@@ -158,6 +174,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
                 
                 // Delete old database files
+                destinationFilesMutated = true
                 dbFile.delete()
                 dbWalFile.delete()
                 dbShmFile.delete()
@@ -182,8 +199,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // Compare source vs destination
                 if (sourceSummary.transactionCount > 0 && destSummary.transactionCount == 0) {
                     Timber.e("Data loss detected! Source had ${sourceSummary.transactionCount} transactions but destination has 0")
-                    return@withContext Result.failure(
-                        Exception("Data integrity check failed: Expected ${sourceSummary.transactionCount} transactions but got ${destSummary.transactionCount}")
+                    throw Exception(
+                        "Data integrity check failed: Expected ${sourceSummary.transactionCount} transactions but got ${destSummary.transactionCount}"
                     )
                 }
                 
@@ -198,7 +215,39 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
                 Timber.d("Import verified: ${finalSummary.transactionCount} transactions, ${finalSummary.categoryCount} categories")
+                importSucceeded = true
                 Result.success(finalSummary)
+            } catch (importError: Exception) {
+                if (destinationFilesMutated && !importSucceeded) {
+                    val rollbackResult = restoreFromSafetyBackup(
+                        safetyBackupFile = safetyBackupFile,
+                        dbFile = dbFile,
+                        dbWalFile = dbWalFile,
+                        dbShmFile = dbShmFile
+                    )
+
+                    return@withContext if (rollbackResult.isSuccess) {
+                        Result.failure(
+                            Exception(
+                                "Import failed and database was restored from safety backup. " +
+                                    "Reason: ${importError.message}",
+                                importError
+                            )
+                        )
+                    } else {
+                        val rollbackError = rollbackResult.exceptionOrNull()
+                        Result.failure(
+                            Exception(
+                                "Import failed and automatic restore also failed. " +
+                                    "Manual recovery may be required. " +
+                                    "Import error: ${importError.message}. " +
+                                    "Restore error: ${rollbackError?.message}",
+                                importError
+                            )
+                        )
+                    }
+                }
+                throw importError
                 
             } finally {
                 // Cleanup temp file if still exists
@@ -242,11 +291,23 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 val schemaVersion = if (versionCursor.moveToFirst()) versionCursor.getInt(0) else 0
                 versionCursor.close()
                 
-                // Reject old schemas that would trigger destructive migration
-                if (schemaVersion in 1..5) {
-                    Timber.e("Source database schema version $schemaVersion is too old (1-5). Destructive migration would wipe data.")
+                // Reject unsupported schema versions before touching destination files.
+                val currentSupportedVersion = CURRENT_SUPPORTED_SCHEMA_VERSION
+                if (schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION || schemaVersion > currentSupportedVersion) {
+                    Timber.e(
+                        "Source database schema version $schemaVersion is unsupported. " +
+                            "Supported range: $MIN_SUPPORTED_SCHEMA_VERSION..$currentSupportedVersion"
+                    )
+                    val message = if (schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION) {
+                        "Backup from old app version (schema $schemaVersion). " +
+                            "Supported schema range is $MIN_SUPPORTED_SCHEMA_VERSION..$currentSupportedVersion. " +
+                            "Migration would destroy data. Please use a newer backup or manually migrate first."
+                    } else {
+                        "Backup uses newer schema $schemaVersion than this app supports ($currentSupportedVersion). " +
+                            "Please update the app or export from a compatible version."
+                    }
                     return Result.failure(
-                        Exception("Backup from old app version (schema $schemaVersion). Migration would destroy data. Please use a newer backup or manually migrate first.")
+                        Exception(message)
                     )
                 }
                 
@@ -351,7 +412,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
     }
     
-    private suspend fun verifyImportedDatabase(): DatabaseImportSummary = withContext(Dispatchers.IO) {
+    private suspend fun verifyImportedDatabase(): DatabaseImportSummary = withContext(ioDispatcher) {
         try {
             // Reopen with a fresh connection and refresh invalidation state
             database.openHelper.writableDatabase
@@ -365,11 +426,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             val budgetDao = database.budgetDao()
             
             // Get actual counts from the imported database
-            val expenseCount = expenseDao.getAll().size
-            val categoryCount = categoryDao.getAll().size
-            val merchantCount = merchantDao.getAll().size
-            val pendingReviewCount = pendingReviewDao.getPending().size
-            val budgetCount = budgetDao.getAll().size
+            val expenseCount = expenseDao.getTotalCount()
+            val categoryCount = categoryDao.getCount()
+            val merchantCount = merchantDao.getCount()
+            val pendingReviewCount = pendingReviewDao.getPendingCount()
+            val budgetCount = budgetDao.getCount()
             
             DatabaseImportSummary(
                 transactionCount = expenseCount,
@@ -406,8 +467,62 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             Timber.w("Could not invoke Room invalidation refresh method")
         }
     }
+
+    private fun restoreFromSafetyBackup(
+        safetyBackupFile: File,
+        dbFile: File,
+        dbWalFile: File,
+        dbShmFile: File
+    ): Result<Unit> {
+        return runCatching {
+            runCatching { database.close() }
+                .onFailure { Timber.w(it, "Failed to close Room database before rollback restore") }
+            runCatching { database.openHelper.close() }
+                .onFailure { Timber.w(it, "Failed to close Room openHelper before rollback restore") }
+
+            if (!safetyBackupFile.exists() || !safetyBackupFile.canRead()) {
+                throw Exception("Safety backup is not accessible: ${safetyBackupFile.absolutePath}")
+            }
+
+            val backupWalFile = File(safetyBackupFile.parentFile, "${safetyBackupFile.name}-wal")
+            val backupShmFile = File(safetyBackupFile.parentFile, "${safetyBackupFile.name}-shm")
+
+            dbFile.delete()
+            dbWalFile.delete()
+            dbShmFile.delete()
+
+            safetyBackupFile.inputStream().use { input ->
+                dbFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            if (backupWalFile.exists()) {
+                backupWalFile.inputStream().use { input ->
+                    dbWalFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+
+            if (backupShmFile.exists()) {
+                backupShmFile.inputStream().use { input ->
+                    dbShmFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+
+            database.openHelper.writableDatabase
+            refreshInvalidationTrackerSafely()
+        }.onSuccess {
+            Timber.w("Import rollback succeeded using safety backup: ${safetyBackupFile.absolutePath}")
+        }.onFailure {
+            Timber.e(it, "Import rollback failed using safety backup: ${safetyBackupFile.absolutePath}")
+        }
+    }
     
-    override suspend fun getDatabaseStats(): DatabaseStats = withContext(Dispatchers.IO) {
+    override suspend fun getDatabaseStats(): DatabaseStats = withContext(ioDispatcher) {
         try {
             val expenseDao = database.expenseDao()
             val categoryDao = database.categoryDao()
@@ -415,10 +530,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             val pendingReviewDao = database.pendingReviewDao()
             
             DatabaseStats(
-                transactionCount = expenseDao.getAll().size,
-                categoryCount = categoryDao.getAll().size,
-                merchantCount = merchantDao.getAll().size,
-                pendingReviewCount = pendingReviewDao.getPending().size
+                transactionCount = expenseDao.getTotalCount(),
+                categoryCount = categoryDao.getCount(),
+                merchantCount = merchantDao.getCount(),
+                pendingReviewCount = pendingReviewDao.getPendingCount()
             )
         } catch (e: Exception) {
             Timber.e(e, "Failed to get database stats")
@@ -426,49 +541,18 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
     }
     
-    override suspend fun createSafetyBackup(): Result<File> = withContext(Dispatchers.IO) {
+    override suspend fun createSafetyBackup(): Result<File> = withContext(ioDispatcher) {
         try {
             val dbFile = context.getDatabasePath(DATABASE_NAME)
             if (!dbFile.exists()) {
                 return@withContext Result.failure(Exception("Database file not found"))
             }
             
-            // Checkpoint WAL to ensure all data is in the main database file
-            // Note: Do NOT use runInTransaction for checkpoint - it causes SQLITE_LOCKED
-            // PRAGMA wal_checkpoint returns a result, so we must use rawQuery not execSQL
-            var checkpointSuccess = false
-            var attempts = 0
-            val maxAttempts = 3
-            while (!checkpointSuccess && attempts < maxAttempts) {
-                try {
-                    val cursor = database.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)")
-                    var busy = 1
-                    if (cursor.moveToFirst()) {
-                        busy = cursor.getInt(0) // First column is busy (0=success, 1=blocked)
-                    }
-                    cursor.close()
-                    
-                    if (busy == 0) {
-                        checkpointSuccess = true
-                        Timber.d("WAL checkpoint completed before safety backup (attempt ${attempts + 1})")
-                    } else {
-                        attempts++
-                        if (attempts >= maxAttempts) {
-                            Timber.e("Checkpoint busy after $maxAttempts attempts, failing safety backup")
-                            return@withContext Result.failure(Exception("Database is busy (WAL checkpoint blocked). Please try again."))
-                        }
-                        Timber.w("Checkpoint busy (code $busy), retrying in 200ms (attempt $attempts)")
-                        kotlinx.coroutines.delay(200)
-                    }
-                } catch (e: android.database.sqlite.SQLiteDatabaseLockedException) {
-                    attempts++
-                    if (attempts >= maxAttempts) {
-                        Timber.e("Checkpoint locked after $maxAttempts attempts, failing safety backup")
-                        return@withContext Result.failure(Exception("Database is locked. Please try again."))
-                    }
-                    Timber.w("Checkpoint locked, retrying in 200ms (attempt $attempts)")
-                    kotlinx.coroutines.delay(200)
-                }
+            val checkpointResult = checkpointWal()
+            if (checkpointResult.isFailure) {
+                return@withContext Result.failure(
+                    checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
+                )
             }
             
             val timestamp = SimpleDateFormat(DATE_FORMAT, Locale.getDefault()).format(Date())
@@ -498,7 +582,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
     }
     
-    override suspend fun resetDatabase(): Result<Unit> = withContext(Dispatchers.IO) {
+    override suspend fun resetDatabase(): Result<Unit> = withContext(ioDispatcher) {
         try {
             // Create safety backup first
             val safetyBackupResult = createSafetyBackup()
@@ -543,5 +627,43 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         if (backups.size > 3) {
             backups.take(backups.size - 3).forEach { it.delete() }
         }
+    }
+
+    private suspend fun checkpointWal(): Result<Unit> {
+        val maxAttempts = 3
+        repeat(maxAttempts) { attempt ->
+            try {
+                val busy = database.openHelper.writableDatabase
+                    .query("PRAGMA wal_checkpoint(FULL)")
+                    .use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 1
+                    }
+
+                if (busy == 0) {
+                    Timber.d("WAL checkpoint completed (attempt ${attempt + 1})")
+                    return Result.success(Unit)
+                }
+
+                val attemptsSoFar = attempt + 1
+                if (attemptsSoFar >= maxAttempts) {
+                    Timber.e("Checkpoint busy after $maxAttempts attempts")
+                    return Result.failure(Exception("Database is busy (WAL checkpoint blocked). Please try again."))
+                }
+
+                Timber.w("Checkpoint busy (code $busy), retrying in 200ms (attempt $attemptsSoFar)")
+                delay(200)
+            } catch (e: android.database.sqlite.SQLiteDatabaseLockedException) {
+                val attemptsSoFar = attempt + 1
+                if (attemptsSoFar >= maxAttempts) {
+                    Timber.e("Checkpoint locked after $maxAttempts attempts")
+                    return Result.failure(Exception("Database is locked. Please try again."))
+                }
+
+                Timber.w("Checkpoint locked, retrying in 200ms (attempt $attemptsSoFar)")
+                delay(200)
+            }
+        }
+
+        return Result.failure(Exception("Failed to checkpoint WAL"))
     }
 }

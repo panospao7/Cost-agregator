@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
@@ -27,24 +25,24 @@ data class ParsedTransaction(
     val amount: Double,
     val currency: String,
     val merchant: String,
-    val type: TransactionType,
+    val type: ParsedTransactionType,
     val confidence: Float, // 0.0 to 1.0
     val date: Long? = null,
     // Transfer direction fields (auto-detected for transfers/deposits)
-    val transferDirection: TransferDirection? = null,
+    val transferDirection: ParsedTransferDirection? = null,
     val transferAccountName: String? = null
 ) {
     /**
      * Helper property to quickly check if this is an incoming transaction
      */
     val isIncoming: Boolean?
-        get() = transferDirection?.let { it == TransferDirection.INCOMING }
+        get() = transferDirection?.let { it == ParsedTransferDirection.INCOMING }
     
     /**
      * Helper property to quickly check if this is an outgoing transaction
      */
     val isOutgoing: Boolean?
-        get() = transferDirection?.let { it == TransferDirection.OUTGOING }
+        get() = transferDirection?.let { it == ParsedTransferDirection.OUTGOING }
 
     init {
         require(amount.isFinite() && amount > 0) { 
@@ -71,7 +69,7 @@ data class ParsedTransaction(
         
         // Validate transfer direction consistency
         transferDirection?.let { direction ->
-            require(type == TransactionType.TRANSFER || type == TransactionType.DEPOSIT) {
+            require(type == ParsedTransactionType.TRANSFER || type == ParsedTransactionType.DEPOSIT) {
                 "TransferDirection should only be set for TRANSFER or DEPOSIT types, not $type"
             }
         }

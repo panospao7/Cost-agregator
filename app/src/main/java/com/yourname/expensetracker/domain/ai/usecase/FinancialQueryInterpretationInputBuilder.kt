@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
+import com.yourname.expensetracker.data.ai.provider.internal.sha256Prefix
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -9,7 +10,6 @@ import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationI
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
-import java.security.MessageDigest
 import javax.inject.Inject
 
 class FinancialQueryInterpretationInputBuilder @Inject constructor(
@@ -29,26 +29,43 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
                 aiPolicy.shouldRedact(settings, AiCapability.QUERY_INTERPRETATION)
         val categories = categoryRepository.getAll()
         val merchants = expenseRepository.getRecentMerchantNames()
+        val merchantAliases = mutableMapOf<String, String>()
+        val categoryAliases = mutableMapOf<String, String>()
         val categoryNames = if (shouldRedact) {
             categories
-                .map { sanitizeCategoryContext(it.name, shouldRedact = true) }
+                .map { category ->
+                    val alias = sanitizeCategoryContext(category.name, shouldRedact = true)
+                    if (alias.isNotBlank()) {
+                        categoryAliases[alias] = category.name
+                    }
+                    alias
+                }
                 .filter { it.isNotBlank() }
                 .distinct()
                 .sorted()
         } else {
             categories.map { it.name }.sorted()
         }
+        val merchantNames = merchants
+            .map { merchant ->
+                val alias = sanitizeMerchantContext(merchant, shouldRedact)
+                if (shouldRedact && alias.isNotBlank()) {
+                    merchantAliases[alias] = merchant
+                }
+                alias
+            }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(100)
 
         return FinancialQueryInterpretationInput(
             rawQuery = sanitizeFreeText(rawQuery, shouldRedact)
                 .take(AppConfig.Ai.MAX_QUERY_INPUT_CHARS),
             currentTimeMs = timeProvider.now(),
             categoryNames = categoryNames,
-            merchantNames = merchants
-                .map { sanitizeMerchantContext(it, shouldRedact) }
-                .filter { it.isNotBlank() }
-                .distinct()
-                .take(100),
+            merchantNames = merchantNames,
+            merchantAliasMap = merchantAliases,
+            categoryAliasMap = categoryAliases,
             conversationHistory = conversationHistory
                 .takeLast(AppConfig.Ai.MAX_QUERY_HISTORY_TURNS_FOR_MODEL)
                 .map { message ->
@@ -93,11 +110,6 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
             .replace(Regex("\\s+"), " ")
             .trim()
             .take(AppConfig.Ai.MAX_QUERY_INPUT_CHARS)
-    }
-
-    private fun String.sha256Prefix(length: Int = 12): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
-        return digest.joinToString(separator = "") { "%02x".format(it) }.take(length)
     }
 
     private companion object {

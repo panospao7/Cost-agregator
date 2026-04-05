@@ -8,10 +8,11 @@ import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as DomainCoordinator
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -35,7 +36,8 @@ class GroupTransactionCoordinator @Inject constructor(
     private val database: AppDatabase,
     private val groupDao: ExpenseGroupDao,
     private val memberDao: GroupMemberDao,
-    private val groupExpenseDao: GroupExpenseDao
+    private val groupExpenseDao: GroupExpenseDao,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DomainCoordinator {
     
     // ==================== Interface Implementation ====================
@@ -48,7 +50,7 @@ class GroupTransactionCoordinator @Inject constructor(
         description: String?,
         currency: String,
         members: List<GroupMember>
-    ): GroupCreationResult = withContext(Dispatchers.IO) {
+    ): GroupCreationResult = withContext(ioDispatcher) {
         try {
             val group = ExpenseGroup(
                 name = name,
@@ -83,7 +85,7 @@ class GroupTransactionCoordinator @Inject constructor(
         name: String,
         email: String?,
         isCurrentUser: Boolean
-    ): Long? = withContext(Dispatchers.IO) {
+    ): Long? = withContext(ioDispatcher) {
         try {
             // Verify group exists and is active
             val group = groupDao.getById(groupId)
@@ -113,9 +115,10 @@ class GroupTransactionCoordinator @Inject constructor(
         description: String,
         amount: Double,
         paidById: Long,
+        currency: String?,
         splitType: SplitType,
         date: Long
-    ): GroupExpenseCreationResult = withContext(Dispatchers.IO) {
+    ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
             // Verify group exists and is active
             val group = groupDao.getById(groupId)
@@ -128,6 +131,8 @@ class GroupTransactionCoordinator @Inject constructor(
             if (members.none { it.id == paidById }) {
                 return@withContext GroupExpenseCreationResult.Error("Payer is not a member of this group")
             }
+
+            val expenseCurrency = currency ?: group.defaultCurrency
             
             // Create the group expense (without system link - expenseId is null for standalone)
             val expense = GroupExpense(
@@ -137,6 +142,7 @@ class GroupTransactionCoordinator @Inject constructor(
                 totalAmount = amount,
                 paidById = paidById,
                 date = date,
+                currency = expenseCurrency,
                 splitType = splitType
             )
             
@@ -165,10 +171,11 @@ class GroupTransactionCoordinator @Inject constructor(
         description: String,
         amount: Double,
         paidById: Long,
+        currency: String?,
         splitType: SplitType,
         customSplitsJson: String?,
         date: Long
-    ): GroupExpenseCreationResult = withContext(Dispatchers.IO) {
+    ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
             // Verify group exists and is active
             val group = groupDao.getById(groupId)
@@ -181,6 +188,8 @@ class GroupTransactionCoordinator @Inject constructor(
             if (members.none { it.id == paidById }) {
                 return@withContext GroupExpenseCreationResult.Error("Payer is not a member of this group")
             }
+
+            val expenseCurrency = currency ?: group.defaultCurrency
             
             // Create the group expense with system link
             val expense = GroupExpense(
@@ -190,6 +199,7 @@ class GroupTransactionCoordinator @Inject constructor(
                 totalAmount = amount,
                 paidById = paidById,
                 date = date,
+                currency = expenseCurrency,
                 splitType = splitType,
                 customSplitsJson = customSplitsJson
             )
@@ -213,7 +223,7 @@ class GroupTransactionCoordinator @Inject constructor(
      * Delete a group and all associated data (members, expenses).
      * This is a soft delete - sets isActive = false.
      */
-    override suspend fun deleteGroup(groupId: Long): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun deleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         try {
             groupDao.archiveGroup(groupId)
             true
@@ -226,20 +236,9 @@ class GroupTransactionCoordinator @Inject constructor(
      * Permanently delete a group and all associated data.
      * WARNING: This cannot be undone.
      */
-    override suspend fun permanentlyDeleteGroup(groupId: Long): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun permanentlyDeleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         try {
-            // Delete all expenses first
-            groupExpenseDao.deleteAllForGroup(groupId)
-            
-            // Delete all members
-            memberDao.deleteAllForGroup(groupId)
-            
-            // Finally delete the group
-            val group = groupDao.getById(groupId)
-            if (group != null) {
-                groupDao.delete(group)
-            }
-            
+            deleteGroupAtomic(groupId)
             true
         } catch (e: Exception) {
             false

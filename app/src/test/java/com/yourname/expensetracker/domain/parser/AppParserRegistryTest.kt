@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
@@ -44,7 +43,7 @@ class AppParserRegistryTest {
         assertNotNull(result)
         assertEquals(12.50, result?.amount!!, 0.01)
         assertEquals("SKLAVENITIS", result.merchant)
-        assertEquals(TransactionType.PURCHASE, result.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
     }
 
     @Test

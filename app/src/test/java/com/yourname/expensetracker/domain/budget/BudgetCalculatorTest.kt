@@ -156,6 +156,32 @@ class BudgetCalculatorTest {
         assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
     }
 
+    @Test
+    fun `calculatePeriodWindow YEARLY treats Feb 29 anchor as passed on Feb 28 in non leap year`() {
+        // Anchor: Feb 29 2024 (leap year)
+        val anchorCal = Calendar.getInstance()
+        anchorCal.set(2024, Calendar.FEBRUARY, 29, 0, 0, 0)
+        val anchor = anchorCal.timeInMillis
+
+        // Eval: Feb 28 2025 (non-leap year)
+        val evalCal = Calendar.getInstance()
+        evalCal.set(2025, Calendar.FEBRUARY, 28, 12, 0, 0)
+
+        val window = calculator.calculatePeriodWindowForTime(BudgetPeriod.YEARLY, anchor, evalCal.timeInMillis)
+
+        val startCal = Calendar.getInstance().apply { timeInMillis = window.start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = window.end }
+
+        // Feb 28 2025 -> Feb 28 2026 (treated as anniversary passed)
+        assertEquals(2025, startCal.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, startCal.get(Calendar.MONTH))
+        assertEquals(28, startCal.get(Calendar.DAY_OF_MONTH))
+
+        assertEquals(2026, endCal.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
+        assertEquals(28, endCal.get(Calendar.DAY_OF_MONTH))
+    }
+
     // Critical edge cases from analysis document
     @Test
     fun `calculatePeriodWindow MONTHLY anchor Jan 31 leap year`() {

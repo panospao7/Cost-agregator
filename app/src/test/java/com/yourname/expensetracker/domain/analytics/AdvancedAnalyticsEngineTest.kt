@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.every
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -33,7 +34,14 @@ class AdvancedAnalyticsEngineTest {
         categoryRepository = mockk()
         budgetRepository = mockk()
         every { timeProvider.now() } returns 1705320000000L // Jan 15, 2024
-        engine = AdvancedAnalyticsEngine(expenseRepository, categoryRepository, budgetRepository, timeProvider)
+        engine = AdvancedAnalyticsEngine(
+            expenseRepository,
+            categoryRepository,
+            budgetRepository,
+            timeProvider,
+            Dispatchers.Unconfined,
+            Dispatchers.Unconfined
+        )
     }
 
     @Test

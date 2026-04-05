@@ -7,8 +7,12 @@ import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
+import com.yourname.expensetracker.domain.logic.CustomSplitMode
+import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
+import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
@@ -20,6 +24,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
+import java.math.RoundingMode
 import javax.inject.Inject
 
 /**
@@ -54,7 +60,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     private val groupsRepository: GroupsRepository,
     private val addGroupExpenseUseCase: AddGroupExpenseUseCase,
     private val deleteGroupUseCase: DeleteGroupUseCase,
-    private val manualExpenseRepository: ManualExpenseRepository
+    private val manualExpenseRepository: ManualExpenseRepository,
+    private val expenseRepository: ExpenseRepository
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(GroupsUiState())
@@ -189,11 +196,28 @@ class SharedExpenseGroupsViewModel @Inject constructor(
         customSplits: Map<Long, Double>? = null
     ) {
         viewModelScope.launch {
+            var createdSystemExpenseId: Long? = null
             try {
                 // Step 1: Create system expense first
                 val group = groupsRepository.getGroupById(groupId)
                 val currency = group?.defaultCurrency ?: "EUR"
                 val payer = groupsRepository.getMemberById(paidById)
+                val groupMembers = resolveGroupMembers(groupId)
+
+                val customSplitPayload = serializeAndValidateCustomSplits(
+                    splitType = splitType,
+                    customSplits = customSplits,
+                    totalAmount = amount,
+                    members = groupMembers
+                )
+                val validatedCustomSplits = when (customSplitPayload) {
+                    is CustomSplitPayload.Invalid -> {
+                        _uiState.value = _uiState.value.copy(error = customSplitPayload.reason)
+                        return@launch
+                    }
+
+                    is CustomSplitPayload.Valid -> customSplitPayload.serialized
+                }
                 
                 val expenseResult = manualExpenseRepository.addManualExpense(
                     merchant = description,
@@ -208,6 +232,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                 when (expenseResult) {
                     is Result.Success -> {
                         val systemExpenseId = expenseResult.data
+                        createdSystemExpenseId = systemExpenseId
                         when (val linkResult = addGroupExpenseUseCase(
                             groupId = groupId,
                             systemExpenseId = systemExpenseId,
@@ -215,18 +240,22 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                             amount = amount,
                             paidById = paidById,
                             splitType = splitType,
-                            customSplitsJson = customSplits
-                                ?.entries
-                                ?.joinToString(",") { (memberId, splitValue) ->
-                                    "$memberId:$splitValue"
-                                }
+                            customSplitsJson = validatedCustomSplits
                         )) {
                             is GroupExpenseCreationResult.Success -> {
+                                createdSystemExpenseId = null
                                 loadGroups()
                                 _uiState.value = _uiState.value.copy(addingExpense = false)
                             }
                             is GroupExpenseCreationResult.Error -> {
-                                _uiState.value = _uiState.value.copy(error = linkResult.message)
+                                val rollbackSucceeded = cleanupOrphanedSystemExpense(systemExpenseId)
+                                createdSystemExpenseId = null
+                                val errorMessage = if (rollbackSucceeded) {
+                                    linkResult.message
+                                } else {
+                                    "${linkResult.message} (rollback failed; cleanup may be required)"
+                                }
+                                _uiState.value = _uiState.value.copy(error = errorMessage)
                             }
                         }
                     }
@@ -245,10 +274,29 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
+                val rollbackFailed = createdSystemExpenseId
+                    ?.let { !cleanupOrphanedSystemExpense(it) }
+                    ?: false
                 _uiState.value = _uiState.value.copy(
-                    error = "Failed to add expense: ${e.message}"
+                    error = if (rollbackFailed) {
+                        "Failed to add expense: ${e.message} (rollback failed; cleanup may be required)"
+                    } else {
+                        "Failed to add expense: ${e.message}"
+                    }
                 )
             }
+        }
+    }
+
+    private suspend fun cleanupOrphanedSystemExpense(expenseId: Long): Boolean {
+        return try {
+            val createdExpense = expenseRepository.getExpenseById(expenseId)
+            if (createdExpense != null) {
+                expenseRepository.deleteExpense(createdExpense)
+            }
+            true
+        } catch (_: Exception) {
+            false
         }
     }
     
@@ -309,5 +357,80 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)
+    }
+
+    private suspend fun resolveGroupMembers(groupId: Long): List<GroupMember> {
+        _uiState.value.selectedGroup
+            ?.takeIf { it.group.id == groupId }
+            ?.members
+            ?.let { return it }
+
+        _uiState.value.groups.firstOrNull { it.group.id == groupId }?.members?.let { return it }
+
+        return groupsRepository.getActiveGroupsWithDetails()
+            .firstOrNull { it.group.id == groupId }
+            ?.members
+            .orEmpty()
+    }
+
+    private fun serializeAndValidateCustomSplits(
+        splitType: SplitType,
+        customSplits: Map<Long, Double>?,
+        totalAmount: Double,
+        members: List<GroupMember>
+    ): CustomSplitPayload {
+        if (splitType == SplitType.EQUAL) {
+            return CustomSplitPayload.Valid(null)
+        }
+
+        if (members.isEmpty()) {
+            return CustomSplitPayload.Invalid("Cannot validate custom splits without group members")
+        }
+
+        if (customSplits.isNullOrEmpty()) {
+            return CustomSplitPayload.Invalid("Custom split payload is missing")
+        }
+
+        if (customSplits.values.any { !it.isFinite() }) {
+            return CustomSplitPayload.Invalid("Custom split values must be finite numbers")
+        }
+
+        val serialized = customSplits
+            .toList()
+            .sortedBy { it.first }
+            .joinToString(",") { (memberId, value) ->
+                "$memberId:${value.toCanonicalSplitString()}"
+            }
+
+        return when (val parseResult = CustomSplitParser.parseAndValidate(
+            splitsString = serialized,
+            splitType = splitType.toCustomSplitMode(),
+            totalAmount = totalAmount,
+            groupMemberIds = members.map { it.id }.toSet()
+        )) {
+            is CustomSplitParseResult.Valid -> CustomSplitPayload.Valid(serialized)
+            is CustomSplitParseResult.Invalid -> CustomSplitPayload.Invalid(parseResult.reason)
+        }
+    }
+
+    private fun SplitType.toCustomSplitMode(): CustomSplitMode {
+        return when (this) {
+            SplitType.EQUAL -> CustomSplitMode.EQUAL
+            SplitType.CUSTOM_AMOUNT -> CustomSplitMode.CUSTOM_AMOUNT
+            SplitType.CUSTOM_PERCENT -> CustomSplitMode.CUSTOM_PERCENT
+            SplitType.UNEQUAL -> CustomSplitMode.UNEQUAL
+        }
+    }
+
+    private fun Double.toCanonicalSplitString(): String {
+        return BigDecimal.valueOf(this)
+            .setScale(6, RoundingMode.HALF_UP)
+            .stripTrailingZeros()
+            .toPlainString()
+    }
+
+    private sealed class CustomSplitPayload {
+        data class Valid(val serialized: String?) : CustomSplitPayload()
+        data class Invalid(val reason: String) : CustomSplitPayload()
     }
 }

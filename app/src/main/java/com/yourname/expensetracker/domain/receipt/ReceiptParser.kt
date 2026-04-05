@@ -9,14 +9,13 @@ import java.text.SimpleDateFormat
 import javax.inject.Inject
 import javax.inject.Singleton
 
-import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import timber.log.Timber
 
 @Singleton
 class ReceiptParser @Inject constructor(
-    private val merchantRules: MerchantRulesRepository
+    private val merchantRules: MerchantRulesPolicy
 ) {
     companion object {
         // Pre-compiled regex patterns for performance (Issue 2.13)

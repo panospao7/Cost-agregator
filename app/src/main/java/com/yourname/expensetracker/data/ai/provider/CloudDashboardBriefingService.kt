@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -22,7 +24,9 @@ import java.net.SocketTimeoutException
 import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
-import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 @Singleton
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
@@ -76,59 +80,105 @@ class CloudDashboardBriefingService @Inject constructor(
             .header("x-goog-api-key", apiKey)
             .build()
 
-        return try {
-            Timber.d("CloudDashboardBriefingService: Executing HTTP request...")
-            client.newCall(request).execute().use { response ->
-                Timber.d("CloudDashboardBriefingService: HTTP response code: ${response.code}")
-                
-                if (!response.isSuccessful) {
-                    val correlationId = newCorrelationId()
-                    val errorClass = "HTTP_${response.code}"
-                    Timber.w(
-                        "CloudDashboardBriefingService: HTTP %d class=%s correlationId=%s",
-                        response.code,
-                        errorClass,
-                        correlationId
+        return withContext(Dispatchers.IO) {
+            for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                try {
+                    Timber.d(
+                        "CloudDashboardBriefingService: Executing HTTP request (attempt %d/%d)...",
+                        attempt,
+                        CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                     )
-                    return@use AiServiceResult.Failure(
-                        AiServiceError.HttpError(
-                            response.code,
-                            "errorClass=$errorClass correlationId=$correlationId"
+                    val outcome = client.newCall(request).execute().use { response ->
+                        Timber.d("CloudDashboardBriefingService: HTTP response code: ${response.code}")
+
+                        if (!response.isSuccessful) {
+                            val correlationId = CloudCorrelation.newCorrelationId()
+                            val errorClass = "HTTP_${response.code}"
+                            if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                                Timber.w(
+                                    "CloudDashboardBriefingService: retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
+                                    response.code,
+                                    errorClass,
+                                    correlationId,
+                                    attempt,
+                                    CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                                )
+                                null
+                            } else {
+                                Timber.w(
+                                    "CloudDashboardBriefingService: HTTP %d class=%s correlationId=%s",
+                                    response.code,
+                                    errorClass,
+                                    correlationId
+                                )
+                                AiServiceResult.Failure(
+                                    AiServiceError.HttpError(
+                                        response.code,
+                                        "errorClass=$errorClass correlationId=$correlationId"
+                                    )
+                                )
+                            }
+                        } else {
+                            val body = response.body?.string() ?: run {
+                                Timber.w("CloudDashboardBriefingService: Response body was null/empty")
+                                return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                            }
+
+                            Timber.d("CloudDashboardBriefingService: Response body length: ${body.length}")
+                            val briefing = parseResponse(body)
+
+                            if (briefing != null) {
+                                Timber.d("CloudDashboardBriefingService: SUCCESS - briefing text length: ${briefing.text.length}")
+                                AiServiceResult.Success(briefing)
+                            } else {
+                                Timber.w("CloudDashboardBriefingService: FAILED - parseResponse returned null")
+                                AiServiceResult.Failure(AiServiceError.ParseError("No usable briefing in response"))
+                            }
+                        }
+                    }
+
+                    if (outcome != null) return@withContext outcome
+                } catch (e: SocketTimeoutException) {
+                    if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        Timber.w(
+                            e,
+                            "CloudDashboardBriefingService: timeout, retrying (%d/%d)",
+                            attempt,
+                            CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
-                    )
+                    } else {
+                        Timber.w(e, "CloudDashboardBriefingService: FAILED - timeout")
+                        return@withContext AiServiceResult.Failure(AiServiceError.Timeout)
+                    }
+                } catch (e: SSLException) {
+                    Timber.w(e, "CloudDashboardBriefingService: FAILED - SSL error")
+                    return@withContext AiServiceResult.Failure(AiServiceError.SslError)
+                } catch (e: IOException) {
+                    if (CloudRetryPolicy.isRetryableIoException(e) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        Timber.w(
+                            e,
+                            "CloudDashboardBriefingService: network failure, retrying (%d/%d)",
+                            attempt,
+                            CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                        )
+                    } else {
+                        Timber.w(e, "CloudDashboardBriefingService: FAILED - network failure")
+                        return@withContext AiServiceResult.Failure(AiServiceError.Offline)
+                    }
+                } catch (e: JSONException) {
+                    Timber.w(e, "CloudDashboardBriefingService: FAILED - json parse failure")
+                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError(e.message))
+                } catch (e: Exception) {
+                    Timber.w(e, "CloudDashboardBriefingService: FAILED - parse failure")
+                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
                 }
 
-                val body = response.body?.string() ?: run {
-                    Timber.w("CloudDashboardBriefingService: Response body was null/empty")
-                    return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
-                }
-                
-                Timber.d("CloudDashboardBriefingService: Response body length: ${body.length}")
-                val briefing = parseResponse(body)
-                
-                if (briefing != null) {
-                    Timber.d("CloudDashboardBriefingService: SUCCESS - briefing text length: ${briefing.text.length}")
-                    AiServiceResult.Success(briefing)
-                } else {
-                    Timber.w("CloudDashboardBriefingService: FAILED - parseResponse returned null")
-                    AiServiceResult.Failure(AiServiceError.ParseError("No usable briefing in response"))
+                if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
                 }
             }
-        } catch (e: SocketTimeoutException) {
-            Timber.w(e, "CloudDashboardBriefingService: FAILED - timeout")
-            AiServiceResult.Failure(AiServiceError.Timeout)
-        } catch (e: SSLException) {
-            Timber.w(e, "CloudDashboardBriefingService: FAILED - SSL error")
-            AiServiceResult.Failure(AiServiceError.SslError)
-        } catch (e: IOException) {
-            Timber.w(e, "CloudDashboardBriefingService: FAILED - network failure")
-            AiServiceResult.Failure(AiServiceError.Offline)
-        } catch (e: JSONException) {
-            Timber.w(e, "CloudDashboardBriefingService: FAILED - json parse failure")
-            AiServiceResult.Failure(AiServiceError.ParseError(e.message))
-        } catch (e: Exception) {
-            Timber.w(e, "CloudDashboardBriefingService: FAILED - parse failure")
-            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+
+            AiServiceResult.Failure(AiServiceError.Unknown("Retry attempts exhausted"))
         }
     }
 
@@ -179,6 +229,4 @@ class CloudDashboardBriefingService @Inject constructor(
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
-
-    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 }

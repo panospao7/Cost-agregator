@@ -50,22 +50,26 @@ fun ExportOptionsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showDatePicker by remember { mutableStateOf(false) }
     var isPickingStartDate by remember { mutableStateOf(true) }
-    var pendingExportData by remember { mutableStateOf<String?>(null) }
+    var pendingExportFilePath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     val saveLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain")
     ) { uri: Uri? ->
-        val content = pendingExportData
-        if (uri == null || content == null) {
-            pendingExportData = null
+        val sourcePath = pendingExportFilePath
+        if (uri == null || sourcePath == null) {
+            pendingExportFilePath = null
             return@rememberLauncherForActivityResult
         }
         scope.launch {
             try {
                 withContext(Dispatchers.IO) {
+                    val source = File(sourcePath)
+                    if (!source.exists()) error("Export file is missing")
                     context.contentResolver.openOutputStream(uri)?.use { output ->
-                        output.writer().use { writer -> writer.write(content) }
+                        source.inputStream().use { input ->
+                            input.copyTo(output)
+                        }
                     } ?: error("Cannot open destination file")
                 }
                 snackbarHostState.showSnackbar(context.getString(R.string.export_save_success))
@@ -74,7 +78,7 @@ fun ExportOptionsScreen(
                     context.getString(R.string.export_save_failed, t.message ?: "unknown error")
                 )
             }
-            pendingExportData = null
+            pendingExportFilePath = null
         }
     }
 
@@ -196,20 +200,34 @@ fun ExportOptionsScreen(
                 }
                 
                 // Export Result
-                if (uiState.exportSuccess && uiState.exportData != null) {
+                if (uiState.exportSuccess && uiState.exportFilePath != null) {
                     item {
                         ExportResultCard(
-                            exportData = uiState.exportData!!,
+                            exportPreview = uiState.exportPreview.orEmpty(),
+                            previewTruncated = uiState.exportPreviewTruncated,
                             onCopy = {
-                                clipboardManager.setText(AnnotatedString(uiState.exportData!!))
                                 scope.launch {
-                                    snackbarHostState.showSnackbar(context.getString(R.string.export_copy_success))
+                                    try {
+                                        val fullText = withContext(Dispatchers.IO) {
+                                            val path = uiState.exportFilePath ?: error("Export file path unavailable")
+                                            File(path).also {
+                                                if (!it.exists()) error("Export file is missing")
+                                            }.readText()
+                                        }
+                                        clipboardManager.setText(AnnotatedString(fullText))
+                                        snackbarHostState.showSnackbar(context.getString(R.string.export_copy_success))
+                                    } catch (t: Throwable) {
+                                        snackbarHostState.showSnackbar(
+                                            context.getString(R.string.export_save_failed, t.message ?: "unknown error")
+                                        )
+                                    }
                                 }
                             },
                             onSave = {
-                                pendingExportData = uiState.exportData
+                                pendingExportFilePath = uiState.exportFilePath
                                 val ext = when (uiState.selectedFormat) {
                                     "quickbooks" -> "iif"
+                                    "json" -> "json"
                                     else -> "csv"
                                 }
                                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
@@ -220,13 +238,13 @@ fun ExportOptionsScreen(
                                     try {
                                         val ext = when (uiState.selectedFormat) {
                                             "quickbooks" -> "iif"
+                                            "json" -> "json"
                                             else -> "csv"
                                         }
-                                        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
                                         val file = withContext(Dispatchers.IO) {
-                                            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-                                            File(exportDir, "expenses_$timestamp.$ext").apply {
-                                                writeText(uiState.exportData!!)
+                                            val path = uiState.exportFilePath ?: error("Export file path unavailable")
+                                            File(path).also {
+                                                if (!it.exists()) error("Export file is missing")
                                             }
                                         }
                                         val uri = FileProvider.getUriForFile(
@@ -235,7 +253,11 @@ fun ExportOptionsScreen(
                                             file
                                         )
                                         val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                            type = if (ext == "iif") "application/octet-stream" else "text/csv"
+                                            type = when (ext) {
+                                                "iif" -> "application/octet-stream"
+                                                "json" -> "application/json"
+                                                else -> "text/csv"
+                                            }
                                             putExtra(Intent.EXTRA_STREAM, uri)
                                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                         }
@@ -329,7 +351,7 @@ fun ExportOptionsScreen(
     }
 
     DisposableEffect(Unit) {
-        onDispose { pendingExportData = null }
+        onDispose { pendingExportFilePath = null }
     }
 }
 
@@ -448,6 +470,7 @@ private fun ExportFormatCard(
                 "xero" -> Icons.Rounded.AccountBalance
                 "quickbooks" -> Icons.Rounded.Calculate
                 "freshbooks" -> Icons.Rounded.Receipt
+                "json" -> Icons.Rounded.TableChart
                 else -> Icons.Rounded.TableChart
             }
             
@@ -505,7 +528,8 @@ private fun ExportFormatCard(
 
 @Composable
 private fun ExportResultCard(
-    exportData: String,
+    exportPreview: String,
+    previewTruncated: Boolean,
     onCopy: () -> Unit,
     onSave: () -> Unit,
     onShare: () -> Unit,
@@ -548,7 +572,7 @@ private fun ExportResultCard(
             
             // Preview of data
             Text(
-                text = exportData.take(500) + if (exportData.length > 500) "..." else "",
+                text = exportPreview + if (previewTruncated) "..." else "",
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextSecondary,
                 modifier = Modifier
@@ -596,7 +620,7 @@ private fun ExportResultCard(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = stringResource(R.string.export_tip_format, ".csv or .iif"),
+                text = stringResource(R.string.export_tip_format, ".csv, .json or .iif"),
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextSecondary,
                 textAlign = TextAlign.Center

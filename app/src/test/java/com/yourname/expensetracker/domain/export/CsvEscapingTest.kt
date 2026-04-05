@@ -1,8 +1,6 @@
 package com.yourname.expensetracker.domain.export
 
 import com.google.common.truth.Truth.assertThat
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import org.junit.Test
 import java.util.Date
 
@@ -379,15 +377,14 @@ class CsvEscapingTest {
         notes: String? = null,
         categoryId: Long = 1,
         date: Long = Date().time
-    ): Expense {
-        return Expense(
+    ): ExportTransaction {
+        return ExportTransaction(
             id = id,
             merchant = merchant,
             amount = amount,
             date = date,
             categoryId = categoryId,
-            notes = notes,
-            transactionType = TransactionType.PURCHASE
+            notes = notes
         )
     }
 }

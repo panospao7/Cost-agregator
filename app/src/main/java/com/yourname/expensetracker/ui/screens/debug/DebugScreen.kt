@@ -839,6 +839,7 @@ private fun AiCapability.supportsCloudFallback(): Boolean = when (this) {
     AiCapability.REVIEW_EXPLANATION,
     AiCapability.QUERY_INTERPRETATION,
     AiCapability.RECEIPT_EXTRACTION,
+    AiCapability.WARRANTY_EXTRACTION,
     AiCapability.RECEIPT_ITEM_CATEGORIZATION,
     AiCapability.CATEGORIZATION_FALLBACK,
     AiCapability.DEDUPE_JUDGE -> true
@@ -853,6 +854,7 @@ private fun AiCapability.debugRuntimeLabel(): String = when (this) {
     AiCapability.REVIEW_EXPLANATION -> "review explanations"
     AiCapability.QUERY_INTERPRETATION -> "AI"
     AiCapability.RECEIPT_EXTRACTION -> "receipt assist"
+    AiCapability.WARRANTY_EXTRACTION -> "warranty extraction"
     AiCapability.CATEGORIZATION_FALLBACK -> "categorization"
     AiCapability.DEDUPE_JUDGE -> "duplicate detection"
     AiCapability.LOCATION_SUMMARY -> "location summaries"
@@ -1130,12 +1132,20 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
     LaunchedEffect(exportResult) {
         when (exportResult) {
             is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success -> {
-                val path = (exportResult as com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success).filePath
+                val result = exportResult as com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success
+                val path = result.filePath
                 android.widget.Toast.makeText(
                     context,
                     context.getString(R.string.debug_toast_export_success, path),
                     android.widget.Toast.LENGTH_LONG
                 ).show()
+                result.warning?.let { warning ->
+                    android.widget.Toast.makeText(
+                        context,
+                        warning,
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
                 viewModel.clearExportResult()
             }
             is com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error -> {

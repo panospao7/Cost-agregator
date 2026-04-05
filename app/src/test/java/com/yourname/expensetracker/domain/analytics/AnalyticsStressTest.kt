@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
@@ -73,7 +74,9 @@ class AnalyticsStressTest {
             expenseRepository = repository,
             categoryRepository = categoryRepository,
             budgetRepository = budgetRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            defaultDispatcher = Dispatchers.Unconfined,
+            ioDispatcher = Dispatchers.Unconfined
         )
 
         val startedAt = System.nanoTime()

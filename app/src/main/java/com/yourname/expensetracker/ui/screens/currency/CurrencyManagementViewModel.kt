@@ -110,9 +110,11 @@ class CurrencyManagementViewModel @Inject constructor(
                 
                 // Check if rates are stale (older than 24 hours)
                 val isRatesStale = settingsRepository.areRatesStale()
-                
-                // Check if we're offline (no rates available and stale)
-                val isOffline = rates.isEmpty() || (isRatesStale && rates.isNotEmpty())
+
+                // Explicit semantics:
+                // - isRatesStale: rates are older than freshness threshold
+                // - isOffline: there are no usable rates for conversions
+                val isOffline = !hasUsableRates(rates)
                 
                 _uiState.value = _uiState.value.copy(
                     supportedCurrencies = currencies,
@@ -124,10 +126,14 @@ class CurrencyManagementViewModel @Inject constructor(
                     error = null
                 )
             } catch (e: Exception) {
+                val currentRates = _uiState.value.exchangeRates
+                val isRatesStale = runCatching { settingsRepository.areRatesStale() }
+                    .getOrElse { _uiState.value.isRatesStale }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     error = "Failed to load currency data: ${e.message}",
-                    isOffline = true
+                    isRatesStale = isRatesStale,
+                    isOffline = !hasUsableRates(currentRates)
                 )
             }
         }
@@ -191,14 +197,20 @@ class CurrencyManagementViewModel @Inject constructor(
                 }
                 loadCurrencyData()
             } catch (e: Exception) {
+                val currentRates = _uiState.value.exchangeRates
+                val isRatesStale = runCatching { settingsRepository.areRatesStale() }
+                    .getOrElse { _uiState.value.isRatesStale }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     error = "Failed to refresh rates: ${e.message}",
-                    isOffline = true
+                    isRatesStale = isRatesStale,
+                    isOffline = !hasUsableRates(currentRates)
                 )
             }
         }
     }
+
+    private fun hasUsableRates(rates: List<ExchangeRateInfo>): Boolean = rates.isNotEmpty()
     
     /**
      * Clear any error state.

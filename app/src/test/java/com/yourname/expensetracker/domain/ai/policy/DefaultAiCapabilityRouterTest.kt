@@ -161,6 +161,27 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
+    fun `decide routes warranty extraction to cloud in auto when network available`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.WARRANTY_EXTRACTION) } returns OnDeviceModelStatus.UNAVAILABLE
+
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            allowOnDeviceAi = true,
+            receiptAssistEnabled = true,
+            preferredMode = AiMode.AUTO
+        )
+
+        val result = router.decide(AiCapability.WARRANTY_EXTRACTION, settings)
+
+        assertEquals(AiRoute.CLOUD, result.route)
+        assertEquals(AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER, result.providerName)
+        assertEquals(AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL, result.modelName)
+    }
+
+    @Test
     fun `decide respects wifiOnlyForCloud and falls back when wifi unavailable`() = runTest {
         every { environmentMonitor.isNetworkAvailable() } returns true
         every { environmentMonitor.isWifiConnected() } returns false

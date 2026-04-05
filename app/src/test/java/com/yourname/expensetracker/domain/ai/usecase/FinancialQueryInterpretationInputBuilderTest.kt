@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
+import com.yourname.expensetracker.data.ai.provider.internal.sha256Prefix
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -78,6 +79,8 @@ class FinancialQueryInterpretationInputBuilderTest {
         assertEquals(timeProvider.now(), result.currentTimeMs)
         assertEquals(listOf("Groceries", "Transport"), result.categoryNames)
         assertEquals(listOf("Lidl", "Spotify"), result.merchantNames)
+        assertTrue(result.merchantAliasMap.isEmpty())
+        assertTrue(result.categoryAliasMap.isEmpty())
         assertEquals(AppConfig.Ai.MAX_QUERY_HISTORY_TURNS_FOR_MODEL, result.conversationHistory.size)
         assertEquals(
             history.takeLast(AppConfig.Ai.MAX_QUERY_HISTORY_TURNS_FOR_MODEL),
@@ -95,5 +98,36 @@ class FinancialQueryInterpretationInputBuilderTest {
         assertEquals(100, result.merchantNames.size)
         assertEquals("Merchant 1", result.merchantNames.first())
         assertEquals("Merchant 100", result.merchantNames.last())
+    }
+
+    @Test
+    fun `build creates reversible alias maps when redaction is enabled`() = runTest {
+        every { aiPolicy.shouldRedact(any(), AiCapability.QUERY_INTERPRETATION) } returns true
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 1L, name = "Groceries", icon = "G", color = "#00FF00"),
+            Category(id = 2L, name = "Transport", icon = "T", color = "#0000FF")
+        )
+        coEvery { expenseRepository.getRecentMerchantNames() } returns listOf("Lidl", "Uber")
+
+        val result = builder.build(
+            rawQuery = "Card 4242 4242 4242 4242",
+            settings = AiSettings()
+        )
+
+        val lidlAlias = "merchant_${"Lidl".sha256Prefix()}"
+        val uberAlias = "merchant_${"Uber".sha256Prefix()}"
+        val groceriesAlias = "category_${"Groceries".sha256Prefix()}"
+        val transportAlias = "category_${"Transport".sha256Prefix()}"
+
+        assertEquals(listOf(lidlAlias, uberAlias), result.merchantNames)
+        assertEquals("Lidl", result.merchantAliasMap[lidlAlias])
+        assertEquals("Uber", result.merchantAliasMap[uberAlias])
+
+        assertTrue(result.categoryNames.contains(groceriesAlias))
+        assertTrue(result.categoryNames.contains(transportAlias))
+        assertEquals("Groceries", result.categoryAliasMap[groceriesAlias])
+        assertEquals("Transport", result.categoryAliasMap[transportAlias])
+
+        assertTrue(result.rawQuery.contains("[REDACTED_CARD]"))
     }
 }

@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.domain.intelligence
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.SourceStatsRepository
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.runBlocking
@@ -34,7 +34,7 @@ class ConfidenceRouterTest {
     }
 
     private fun makeParsed(confidence: Float, merchant: String = "TestMerchant") =
-        ParsedTransaction(10.0, "EUR", merchant, TransactionType.PURCHASE, confidence)
+        ParsedTransaction(10.0, "EUR", merchant, ParsedTransactionType.PURCHASE, confidence)
 
     @Test
     fun `high confidence auto-accepts`() = runBlocking {

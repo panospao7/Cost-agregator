@@ -1,16 +1,19 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.BuildConfig
 import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.di.DefaultDispatcher
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
@@ -31,7 +34,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val budgetRepository: BudgetRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    @DefaultDispatcher private val defaultDispatcher: CoroutineDispatcher,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     companion object {
         private const val TAG = "AdvancedAnalytics"
@@ -129,19 +134,19 @@ class AdvancedAnalyticsEngine @Inject constructor(
     /**
      * Generates enhanced analytics for all categories within the specified period.
      */
-    suspend fun getCategoryAnalytics(period: PeriodRange): List<EnhancedCategoryAnalytics> = withContext(Dispatchers.Default) {
+    suspend fun getCategoryAnalytics(period: PeriodRange): List<EnhancedCategoryAnalytics> = withContext(defaultDispatcher) {
         coroutineScope {
         // Fetch all required data in parallel
-        val currentExpensesDeferred = async { 
+        val currentExpensesDeferred = async(ioDispatcher) { 
             expenseRepository.getExpensesBetween(period.startMs, period.endMs) 
         }
-        val previousExpensesDeferred = async { 
+        val previousExpensesDeferred = async(ioDispatcher) { 
             period.comparisonRange?.let { 
                 expenseRepository.getExpensesBetween(it.startMs, it.endMs) 
             } ?: emptyList()
         }
-        val categoriesDeferred = async { categoryRepository.getAll() }
-        val budgetsDeferred = async { budgetRepository.getActiveBudgets() }
+        val categoriesDeferred = async(ioDispatcher) { categoryRepository.getAll() }
+        val budgetsDeferred = async(ioDispatcher) { budgetRepository.getActiveBudgets() }
         
         val currentExpenses = currentExpensesDeferred.await()
         val previousExpenses = previousExpensesDeferred.await()
@@ -225,15 +230,15 @@ class AdvancedAnalyticsEngine @Inject constructor(
     suspend fun getMerchantAnalytics(
         period: PeriodRange,
         limit: Int = 20
-    ): List<EnhancedMerchantAnalytics> = withContext(Dispatchers.Default) {
+    ): List<EnhancedMerchantAnalytics> = withContext(defaultDispatcher) {
         coroutineScope {
-        val currentExpensesDeferred = async { 
+        val currentExpensesDeferred = async(ioDispatcher) { 
             expenseRepository.getExpensesBetween(period.startMs, period.endMs) 
         }
         
         // Get historical data for price trends (6 months back)
         val historicalStart = period.startMs - (180L * TimePeriodUtils.DAY_IN_MILLIS)
-        val historicalExpensesDeferred = async { 
+        val historicalExpensesDeferred = async(ioDispatcher) { 
             expenseRepository.getExpensesSince(historicalStart) 
         }
         
@@ -251,7 +256,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 
                 // Historical context for price trends
                 val historicalForMerchant = historicalExpenses
-                    .filter { it.merchant.equals(merchant, ignoreCase = true) }
+                    .filter {
+                        it.transactionType == TransactionType.PURCHASE &&
+                        !it.isNotMine &&
+                        it.merchant.equals(merchant, ignoreCase = true)
+                    }
                     .sortedBy { it.date }
                 
                 // Visit frequency analysis
@@ -315,9 +324,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
     /**
      * Analyzes spending patterns including day-of-week distribution and detected behaviors.
      */
-    suspend fun getSpendingPatterns(period: PeriodRange): SpendingPatternAnalysis = withContext(Dispatchers.Default) {
+    suspend fun getSpendingPatterns(period: PeriodRange): SpendingPatternAnalysis = withContext(defaultDispatcher) {
         coroutineScope {
-            val expenses = expenseRepository.getExpensesBetween(period.startMs, period.endMs)
+            val expenses = withContext(ioDispatcher) {
+                expenseRepository.getExpensesBetween(period.startMs, period.endMs)
+            }
             val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
         
         if (purchases.isEmpty()) {
@@ -412,16 +423,18 @@ class AdvancedAnalyticsEngine @Inject constructor(
     /**
      * Calculates statistical insights for the specified period.
      */
-    suspend fun getStatisticalInsights(period: PeriodRange): StatisticalInsights = withContext(Dispatchers.Default) {
+    suspend fun getStatisticalInsights(period: PeriodRange): StatisticalInsights = withContext(defaultDispatcher) {
         coroutineScope {
-            val expenses = expenseRepository.getExpensesBetween(period.startMs, period.endMs)
+            val expenses = withContext(ioDispatcher) {
+                expenseRepository.getExpensesBetween(period.startMs, period.endMs)
+            }
             val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
         
         if (purchases.isEmpty()) {
             return@coroutineScope createEmptyStatisticalInsights(period)
         }
         
-        val amounts = purchases.map { it.amount }
+        val amounts = purchases.map { it.effectiveAmount }
         val sortedAmounts = amounts.sorted()
         
         val mean = amounts.average()
@@ -454,23 +467,24 @@ class AdvancedAnalyticsEngine @Inject constructor(
         
         val periodDays = ((period.endMs - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt().coerceAtLeast(1)
         
-        // === ANALYTICS DEBUG ===
         val totalAmount = purchases.sumOf { it.effectiveAmount }
         val averageDailySpend = totalAmount / periodDays
-        fun formatTimestamp(ms: Long): String = java.time.Instant.ofEpochMilli(ms)
-            .atZone(java.time.ZoneId.systemDefault())
-            .format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm"))
 
-        Timber.d("=== STATISTICAL INSIGHTS DEBUG ===")
-        Timber.d("Period: ${period.period} (${period.label})")
-        Timber.d("Period Range: ${formatTimestamp(period.startMs)} → ${formatTimestamp(period.endMs)}")
-        Timber.d("Period Days: $periodDays")
-        Timber.d("Transactions: ${purchases.size}")
-        Timber.d("Total: €$totalAmount")
-        Timber.d("Daily Totals: $dailyTotals")
-        Timber.d("Average Daily: €$averageDailySpend (€$totalAmount / $periodDays days)")
-        Timber.d("========================")
-        // === END DEBUG ===
+        if (Timber.treeCount > 0 && BuildConfig.DEBUG) {
+            fun formatTimestamp(ms: Long): String = java.time.Instant.ofEpochMilli(ms)
+                .atZone(java.time.ZoneId.systemDefault())
+                .format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm"))
+
+            Timber.d("=== STATISTICAL INSIGHTS DEBUG ===")
+            Timber.d("Period: ${period.period} (${period.label})")
+            Timber.d("Period Range: ${formatTimestamp(period.startMs)} → ${formatTimestamp(period.endMs)}")
+            Timber.d("Period Days: $periodDays")
+            Timber.d("Transactions: ${purchases.size}")
+            Timber.d("Total: €$totalAmount")
+            Timber.d("Daily Totals: $dailyTotals")
+            Timber.d("Average Daily: €$averageDailySpend (€$totalAmount / $periodDays days)")
+            Timber.d("========================")
+        }
         
         StatisticalInsights(
             period = period,
@@ -483,10 +497,10 @@ class AdvancedAnalyticsEngine @Inject constructor(
             medianTransaction = percentiles.p50,
             modeTransaction = findMode(amounts),
             largestTransaction = purchases
-                .maxByOrNull { it.amount }
+                .maxByOrNull { it.effectiveAmount }
                 ?.toAnalyticsTransactionSummary(),
             smallestTransaction = purchases
-                .minByOrNull { it.amount }
+                .minByOrNull { it.effectiveAmount }
                 ?.toAnalyticsTransactionSummary(),
             averageDailySpend = averageDailySpend,
             maxDailySpend = dailyTotals.values.maxOrNull() ?: 0.0,
@@ -688,12 +702,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
         
         val sorted = historicalExpenses.sortedBy { it.date }
-        val first = sorted.first().amount
-        val last = sorted.last().amount
+        val first = sorted.first().effectiveAmount
+        val last = sorted.last().effectiveAmount
         val change = if (first > 0) ((last - first) / first * 100).toFloat() else null
         
         // Collinear points (all same amount): treat as STABLE (LOW bug fix)
-        val allSame = sorted.all { kotlin.math.abs(it.amount - first) < 0.001 }
+        val allSame = sorted.all { kotlin.math.abs(it.effectiveAmount - first) < 0.001 }
         val trend = when {
             change == null -> MerchantPriceTrend.INSUFFICIENT_DATA
             allSame -> MerchantPriceTrend.STABLE

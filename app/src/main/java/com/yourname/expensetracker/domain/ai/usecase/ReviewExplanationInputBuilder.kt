@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
+import com.yourname.expensetracker.data.ai.provider.internal.sha256Prefix
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
@@ -14,9 +15,10 @@ import javax.inject.Inject
  *
  * Responsibilities:
  * 1. Field mapping — copies the deterministic fields from [PendingReview].
- * 2. Redaction — when [AiPolicy.shouldRedact] is true, strips the raw
- *    notification text (replaces with null) before it can reach a cloud
- *    provider.
+ * 2. Redaction — when [AiPolicy.shouldRedact] is true, pseudonymizes merchant
+ *    and package name, and strips potentially sensitive free-form fields
+ *    (notification title/text and deterministic explanation) before they can
+ *    reach a cloud provider.
  * 3. Clamping — even when redaction is off, the notification text is clamped
  *    to [AppConfig.Ai.MAX_REVIEW_TEXT_CHARS_FOR_CLOUD] characters to cap the
  *    payload size sent to any cloud endpoint.
@@ -35,15 +37,23 @@ class ReviewExplanationInputBuilder @Inject constructor(
 
         return ReviewExplanationInput(
             reviewId              = review.id,
-            merchant              = review.suggestedMerchant,
+            merchant              = if (shouldRedact) {
+                "merchant_${review.suggestedMerchant.sha256Prefix()}"
+            } else {
+                review.suggestedMerchant
+            },
             amount                = review.suggestedAmount,
             currency              = review.suggestedCurrency,
             suggestedType         = review.suggestedType,
             suggestedCategoryId   = review.suggestedCategoryId,
             confidence            = review.confidence,
             matchType             = review.matchType,
-            explanation           = review.explanation,
-            packageName           = review.packageName,
+            explanation           = if (shouldRedact) null else review.explanation,
+            packageName           = if (shouldRedact) {
+                "app_${review.packageName.sha256Prefix()}"
+            } else {
+                review.packageName
+            },
             notificationTitle     = if (shouldRedact) null else review.notificationTitle,
             notificationText      = safeNotificationText
         )

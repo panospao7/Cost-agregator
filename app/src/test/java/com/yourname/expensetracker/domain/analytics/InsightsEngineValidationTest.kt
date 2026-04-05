@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -105,6 +106,16 @@ class InsightsEngineValidationTest {
         coEvery { expenseRepository.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
         coEvery { expenseRepository.getLargestExpenseForPeriod(any(), any()) } returns null
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
+        every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
+            currentMonthSpent = 0.0,
+            daysElapsed = 0,
+            daysInMonth = 30,
+            projectedTotal = 0.0,
+            previousMonthTotal = null,
+            averageMonthlyTotal = null,
+            pacePercentage = 0.0f,
+            paceStatus = PaceStatus.NO_BASELINE
+        )
     }
 
     // ========== SCENARIO 1: Monthly Comparison Calculations ==========
@@ -356,6 +367,37 @@ class InsightsEngineValidationTest {
         // Then: Projected total should use conservative estimate (900, not 3000)
         assertEquals(900.0, snapshot.spendingPace.projectedTotal, 0.01)
         assertEquals(PaceStatus.UNDER_PACE, snapshot.spendingPace.paceStatus)
+    }
+
+    @Test
+    fun `spending pace delegates to SpendingPaceCalculator canonical output`() = runTest {
+        val now = createDate(2024, 4, 10, 12, 0)
+        every { timeProvider.now() } returns now
+
+        val expenses = listOf(
+            createExpense(id = 1, amount = 200.0, date = createDate(2024, 4, 2)),
+            createExpense(id = 2, amount = 600.0, date = createDate(2024, 3, 5))
+        )
+
+        every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
+            currentMonthSpent = 200.0,
+            daysElapsed = 10,
+            daysInMonth = 30,
+            projectedTotal = 600.0,
+            previousMonthTotal = 600.0,
+            averageMonthlyTotal = null,
+            pacePercentage = 100.0f,
+            paceStatus = PaceStatus.ON_PACE
+        )
+
+        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val snapshot = engine.generateInsights(categories, expenses)
+
+        verify(exactly = 1) {
+            spendingPaceCalculator.calculate(any(), any(), any(), expenses)
+        }
+        assertEquals(100.0f, snapshot.spendingPace.pacePercentage, 0.01f)
+        assertEquals(PaceStatus.ON_PACE, snapshot.spendingPace.paceStatus)
     }
 
     // ========== SCENARIO 4: Day of Week Patterns ==========

@@ -1649,6 +1649,7 @@
     <string name="ai_capability_dashboard">Dashboard briefing</string>
     <string name="ai_capability_review">Review explanation</string>
     <string name="ai_capability_receipt">Receipt assist</string>
+    <string name="ai_capability_warranty_extraction">Warranty extraction</string>
     <string name="ai_toggle_receipt_image">Allow receipt image for cloud assist</string>
     <string name="ai_receipt_image_desc">When enabled, cloud receipt assist may inspect the saved receipt image in addition to OCR text for harder scans like Greek receipts. This stays suggestion-only and never saves automatically.</string>
     <string name="ai_capability_categorization">Categorization fallback</string>

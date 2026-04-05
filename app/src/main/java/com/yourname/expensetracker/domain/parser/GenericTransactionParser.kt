@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.util.AppConstants
 import java.util.regex.Pattern
 
@@ -102,7 +100,7 @@ class GenericTransactionParser @Inject constructor(
         val merchant = extractMerchant(fullText, title)
 
         // 7. Determine transaction type
-        val transactionType = if (hasDepositSignal) TransactionType.DEPOSIT else TransactionType.PURCHASE
+        val transactionType = if (hasDepositSignal) ParsedTransactionType.DEPOSIT else ParsedTransactionType.PURCHASE
         
         // 8. Detect transfer direction for deposits/transfers
         val direction = directionDetector.detectDirection(title, text, bigText, transactionType)
@@ -121,8 +119,8 @@ class GenericTransactionParser @Inject constructor(
             transferDirection = direction,
             transferAccountName = accountName?.let { 
                 when (direction) {
-                    TransferDirection.INCOMING -> "From: $it"
-                    TransferDirection.OUTGOING -> "To: $it"
+                    ParsedTransferDirection.INCOMING -> "From: $it"
+                    ParsedTransferDirection.OUTGOING -> "To: $it"
                     else -> null
                 }
             }

@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -30,7 +31,7 @@ class TotalsAggregationEngineDeepTest {
     fun setup() {
         expenseRepository = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
-        engine = TotalsAggregationEngine(expenseRepository, timeProvider)
+        engine = TotalsAggregationEngine(expenseRepository, timeProvider, Dispatchers.Unconfined)
         every { timeProvider.now() } returns dateMs(2026, 4, 15)
     }
 

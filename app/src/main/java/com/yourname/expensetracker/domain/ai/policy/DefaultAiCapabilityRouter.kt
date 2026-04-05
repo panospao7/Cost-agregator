@@ -240,6 +240,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.REVIEW_EXPLANATION -> settings.reviewExplanationEnabled
             AiCapability.QUERY_INTERPRETATION -> settings.queryInterpretationEnabled
             AiCapability.RECEIPT_EXTRACTION -> settings.receiptAssistEnabled
+            AiCapability.WARRANTY_EXTRACTION -> settings.receiptAssistEnabled
             AiCapability.CATEGORIZATION_FALLBACK -> settings.categorizationFallbackEnabled
             AiCapability.DEDUPE_JUDGE -> settings.dedupeJudgeEnabled
             AiCapability.LOCATION_SUMMARY -> settings.aiEnabled
@@ -267,6 +268,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_EXPLANATION -> "Review explanation"
         AiCapability.QUERY_INTERPRETATION -> "Query interpretation"
         AiCapability.RECEIPT_EXTRACTION -> "Receipt assist"
+        AiCapability.WARRANTY_EXTRACTION -> "Warranty extraction"
         AiCapability.CATEGORIZATION_FALLBACK -> "Categorization fallback"
         AiCapability.DEDUPE_JUDGE -> "Duplicate detection"
         AiCapability.LOCATION_SUMMARY -> "Location summary"
@@ -281,6 +283,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_PROVIDER
         AiCapability.QUERY_INTERPRETATION -> AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_PROVIDER
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER
+        AiCapability.WARRANTY_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_PROVIDER
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_PROVIDER
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.DEDUPE_JUDGE_CLOUD_PROVIDER
         AiCapability.LOCATION_SUMMARY -> "google-ai-studio"
@@ -295,6 +298,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_MODEL
         AiCapability.QUERY_INTERPRETATION -> AppConfig.Ai.QUERY_INTERPRETATION_CLOUD_MODEL
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL
+        AiCapability.WARRANTY_EXTRACTION -> AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL
         AiCapability.LOCATION_SUMMARY -> "gemini-cloud-location"
@@ -309,6 +313,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
         AiCapability.REVIEW_EXPLANATION -> AppConfig.Ai.ON_DEVICE_REVIEW_MODEL
         AiCapability.QUERY_INTERPRETATION -> AppConfig.Ai.ON_DEVICE_QUERY_MODEL
         AiCapability.RECEIPT_EXTRACTION -> AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL
+        AiCapability.WARRANTY_EXTRACTION -> AppConfig.Ai.ON_DEVICE_RECEIPT_MODEL
         AiCapability.CATEGORIZATION_FALLBACK -> AppConfig.Ai.ON_DEVICE_CATEGORIZATION_MODEL
         AiCapability.DEDUPE_JUDGE -> AppConfig.Ai.ON_DEVICE_DEDUPE_MODEL
         AiCapability.LOCATION_SUMMARY -> "gemini-nano-location"
@@ -322,7 +327,8 @@ class DefaultAiCapabilityRouter @Inject constructor(
         val CLOUD_FIRST_CAPABILITIES = setOf(
             AiCapability.DASHBOARD_BRIEFING,
             AiCapability.REVIEW_EXPLANATION,
-            AiCapability.DEDUPE_JUDGE
+            AiCapability.DEDUPE_JUDGE,
+            AiCapability.WARRANTY_EXTRACTION
         )
 
         val ON_DEVICE_IMPLEMENTED_CAPABILITIES = setOf(

@@ -199,7 +199,7 @@ class SpendingPaceCalculatorValidationTest {
     }
 
     @Test
-    fun `projected total uses conservative estimate for first 3 days`() {
+    fun `projected total uses blended smoothing for early days`() {
         // Given: Current date is April 2, 2024 (2nd day of month)
         val currentDate = createDate(2024, 4, 2, 12, 0)
         every { timeProvider.now() } returns currentDate
@@ -221,15 +221,16 @@ class SpendingPaceCalculatorValidationTest {
             allExpenses = currentExpenses
         )
         
-        // Then: Projected total should use conservative estimate
-        // Conservative: 200 * (30/10) = 600 (not 200 * 30/2 = 3000)
-        assertEquals(600.0, result.projectedTotal, 0.01)
+        // Then: Projected total should use blended smoothing
+        // day=2, weight=2/7, linear=200*30/2=3000, conservative=200*3=600
+        // projection=(2/7*3000)+(5/7*600)=1285.714...
+        assertEquals(1285.714, result.projectedTotal, 0.01)
         assertEquals(2, result.daysElapsed)
         assertEquals(30, result.daysInMonth)
     }
 
     @Test
-    fun `projected total for day 4 uses normal calculation`() {
+    fun `projected total for day 4 remains smooth and below full linear`() {
         // Given: Current date is April 4, 2024 (4th day of month)
         val currentDate = createDate(2024, 4, 4, 12, 0)
         every { timeProvider.now() } returns currentDate
@@ -251,8 +252,10 @@ class SpendingPaceCalculatorValidationTest {
             allExpenses = currentExpenses
         )
         
-        // Then: Projected total should use normal calculation (400 * 30/4 = 3000)
-        assertEquals(3000.0, result.projectedTotal, 0.01)
+        // Then: Projected total should still be blended
+        // day=4, weight=4/7, linear=400*30/4=3000, conservative=400*3=1200
+        // projection=(4/7*3000)+(3/7*1200)=2228.571...
+        assertEquals(2228.571, result.projectedTotal, 0.01)
         assertEquals(4, result.daysElapsed)
         assertEquals(30, result.daysInMonth)
     }

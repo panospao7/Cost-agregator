@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -78,7 +79,9 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
             expenseRepository = repository,
             categoryRepository = categoryRepository,
             budgetRepository = budgetRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            defaultDispatcher = Dispatchers.Unconfined,
+            ioDispatcher = Dispatchers.Unconfined
         )
 
         dashboardEngine = AdvancedAnalyticsDashboard(
@@ -89,7 +92,8 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
 
         totalsAggregationEngine = TotalsAggregationEngine(
             expenseRepository = repository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            ioDispatcher = Dispatchers.Unconfined
         )
 
         coEvery { expenseDao.getMerchantStats() } returns emptyList()

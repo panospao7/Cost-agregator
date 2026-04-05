@@ -56,4 +56,23 @@ interface GroupExpenseDao {
 
     @Query("SELECT COUNT(*) FROM group_expenses WHERE groupId = :groupId AND paidById = :memberId")
     suspend fun countExpensesPaidByMember(groupId: Long, memberId: Long): Int
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM group_expenses
+        WHERE groupId = :groupId
+          AND splitType != 'EQUAL'
+          AND customSplitsJson IS NOT NULL
+          AND TRIM(customSplitsJson) != ''
+          AND (
+              REPLACE(customSplitsJson, ' ', '') LIKE :memberPrefixPattern
+              OR REPLACE(customSplitsJson, ' ', '') LIKE :memberMiddlePattern
+          )
+        """
+    )
+    suspend fun countPotentialSplitReferences(
+        groupId: Long,
+        memberPrefixPattern: String,
+        memberMiddlePattern: String
+    ): Int
 }

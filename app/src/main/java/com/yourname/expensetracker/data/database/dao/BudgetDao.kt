@@ -21,6 +21,9 @@ interface BudgetDao {
     @Query("SELECT * FROM budgets")
     suspend fun getAll(): List<Budget>
 
+    @Query("SELECT COUNT(*) FROM budgets")
+    suspend fun getCount(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(budgets: List<Budget>)
 

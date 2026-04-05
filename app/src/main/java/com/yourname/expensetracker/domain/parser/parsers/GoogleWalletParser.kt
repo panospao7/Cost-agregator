@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.parser.parsers
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import java.util.regex.Pattern
 
@@ -22,7 +22,7 @@ class GoogleWalletParser @Inject constructor(
 
     private val amountPattern by lazy {
         Pattern.compile(
-            """([€$£E])\s*(\d+[.,]\d{2})|(\d+[.,]\d{2})\s*([€$£E]|EUR|USD|GBP)|([€$£E]\d+[.,]\d{2})""",
+            """([€$£₹E]|EUR|USD|GBP|INR)\s*(\d+[.,]\d{2})|(\d+[.,]\d{2})\s*([€$£₹E]|EUR|USD|GBP|INR)""",
             Pattern.CASE_INSENSITIVE
         )
     }
@@ -50,10 +50,10 @@ class GoogleWalletParser @Inject constructor(
         subText: String?,
         packageName: String
     ): ParsedTransaction? {
-        // Note: € symbol sometimes becomes E in notifications, but amountPattern
-        // already handles E as a currency prefix (see [€$£E] in pattern).
-        // CurrencyNormalizer maps "E" → "EUR". No global text replacement needed,
-        // as it would corrupt merchant names containing 'E' before digits.
+        // Note: € symbol sometimes becomes E in notifications, and INR may appear
+        // as either ₹ or INR. amountPattern handles both forms directly.
+        // CurrencyNormalizer maps symbols/codes to ISO values. No global text
+        // replacement needed, as it can corrupt merchant names.
         val fullText = listOfNotNull(title, text, bigText).joinToString(" ")
         val lowerFull = fullText.lowercase()
 
@@ -72,7 +72,7 @@ class GoogleWalletParser @Inject constructor(
             amount = amount.first,
             currency = amount.second,
             merchant = merchant,
-            type = if (isDeposit) TransactionType.DEPOSIT else TransactionType.PURCHASE,
+            type = if (isDeposit) ParsedTransactionType.DEPOSIT else ParsedTransactionType.PURCHASE,
             confidence = 0.90f
         )
     }
@@ -80,13 +80,12 @@ class GoogleWalletParser @Inject constructor(
     private fun extractAmount(text: String): Pair<Double, String>? {
         val matcher = amountPattern.matcher(text)
         if (matcher.find()) {
-            // Group 1: currency prefix with space (€ 8.00)
+            // Group 1: currency prefix with/without space (€8.00, INR 8.00)
             // Group 2: amount after space
             // Group 3: amount before currency
-            // Group 4: currency suffix  
-            // Group 5: currency + amount no space (€8.00 or E8.00)
-            val prefixCurrency = matcher.group(1) ?: matcher.group(4) ?: (matcher.group(5)?.firstOrNull()?.toString())
-            val amountStr = (matcher.group(2) ?: matcher.group(3) ?: matcher.group(5)?.drop(1)) ?: return null
+            // Group 4: currency suffix
+            val prefixCurrency = matcher.group(1) ?: matcher.group(4)
+            val amountStr = matcher.group(2) ?: matcher.group(3) ?: return null
             val amount = AmountUtils.parseAmount(amountStr) ?: return null
             // Filter unrealistic amounts
             if (amount < 0.01 || amount > 50000) return null

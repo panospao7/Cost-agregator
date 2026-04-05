@@ -1577,55 +1577,66 @@ abstract class AppDatabase : RoomDatabase() {
         // annotations to match. This migration recreates the table to ensure schema consistency.
         val MIGRATION_48_49 = object : androidx.room.migration.Migration(48, 49) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                database.beginTransaction()
+                database.execSQL("PRAGMA foreign_keys=OFF")
                 try {
-                    // Create new table with correct schema including DEFAULT constraints
-                    database.execSQL("""
-                        CREATE TABLE scanned_receipts_new (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                            imagePath TEXT NOT NULL,
-                            rawOcrText TEXT NOT NULL,
-                            parsedTotal REAL,
-                            parsedMerchant TEXT,
-                            parsedDate INTEGER,
-                            parsedItems TEXT,
-                            parsedTaxAmount REAL,
-                            currency TEXT NOT NULL DEFAULT 'EUR',
-                            confidence REAL NOT NULL,
-                            expenseId INTEGER,
-                            matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED',
-                            matchConfidence REAL,
-                            suggestedExpenseId INTEGER,
-                            createdAt INTEGER NOT NULL,
-                            itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING',
-                            FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
-                        )
-                    """.trimIndent())
-                    
-                    // Copy data from old table
-                    database.execSQL("""
-                        INSERT INTO scanned_receipts_new 
-                        SELECT id, imagePath, rawOcrText, parsedTotal, parsedMerchant, 
-                               parsedDate, parsedItems, parsedTaxAmount, currency, 
-                               confidence, expenseId, matchStatus, matchConfidence, 
-                               suggestedExpenseId, createdAt, itemCategorizationStatus 
-                        FROM scanned_receipts
-                    """.trimIndent())
-                    
-                    // Drop old table
-                    database.execSQL("DROP TABLE scanned_receipts")
-                    
-                    // Rename new table
-                    database.execSQL("ALTER TABLE scanned_receipts_new RENAME TO scanned_receipts")
-                    
-                    // Recreate indices
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
-                    
-                    database.setTransactionSuccessful()
+                    database.beginTransaction()
+                    try {
+                        // Create new table with correct schema including DEFAULT constraints
+                        database.execSQL("""
+                            CREATE TABLE scanned_receipts_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                imagePath TEXT NOT NULL,
+                                rawOcrText TEXT NOT NULL,
+                                parsedTotal REAL,
+                                parsedMerchant TEXT,
+                                parsedDate INTEGER,
+                                parsedItems TEXT,
+                                parsedTaxAmount REAL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                confidence REAL NOT NULL,
+                                expenseId INTEGER,
+                                matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED',
+                                matchConfidence REAL,
+                                suggestedExpenseId INTEGER,
+                                createdAt INTEGER NOT NULL,
+                                itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING',
+                                FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent())
+                        
+                        // Copy data from old table
+                        database.execSQL("""
+                            INSERT INTO scanned_receipts_new 
+                            SELECT id, imagePath, rawOcrText, parsedTotal, parsedMerchant, 
+                                   parsedDate, parsedItems, parsedTaxAmount, currency, 
+                                   confidence, expenseId, matchStatus, matchConfidence, 
+                                   suggestedExpenseId, createdAt, itemCategorizationStatus 
+                            FROM scanned_receipts
+                        """.trimIndent())
+                        
+                        // Drop old table
+                        database.execSQL("DROP TABLE scanned_receipts")
+                        
+                        // Rename new table
+                        database.execSQL("ALTER TABLE scanned_receipts_new RENAME TO scanned_receipts")
+                        
+                        // Recreate indices
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
+                        
+                        database.query("PRAGMA foreign_key_check").use { violations ->
+                            if (violations.moveToFirst()) {
+                                throw IllegalStateException("Migration produced FK violations")
+                            }
+                        }
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
                 } finally {
-                    database.endTransaction()
+                    database.execSQL("PRAGMA foreign_keys=ON")
                 }
             }
         }
@@ -2324,6 +2335,15 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_categories_categoryId ON merchant_categories (categoryId)")
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_categories_normalizedCanonicalName ON merchant_categories (normalizedCanonicalName)")
                     
+                    if (fkEnabled) {
+                        val violations = database.query("PRAGMA foreign_key_check")
+                        violations.use {
+                            if (it.moveToFirst()) {
+                                throw IllegalStateException("Migration 49->50 produced FK violations")
+                            }
+                        }
+                    }
+
                     database.setTransactionSuccessful()
                 } finally {
                     database.endTransaction()
@@ -2331,12 +2351,6 @@ abstract class AppDatabase : RoomDatabase() {
             } finally {
                 if (fkEnabled) {
                     database.execSQL("PRAGMA foreign_keys=ON")
-                    val violations = database.query("PRAGMA foreign_key_check")
-                    violations.use {
-                        if (it.moveToFirst()) {
-                            throw IllegalStateException("Migration 49->50 produced FK violations")
-                        }
-                    }
                 }
             }
         }
@@ -2947,48 +2961,59 @@ abstract class AppDatabase : RoomDatabase() {
         // Migration 65 -> 66: Allow nullable imagePath for email-ingested receipts
         val MIGRATION_65_66 = object : androidx.room.migration.Migration(65, 66) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                database.beginTransaction()
+                database.execSQL("PRAGMA foreign_keys=OFF")
                 try {
-                    database.execSQL("""
-                        CREATE TABLE scanned_receipts_new (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                            imagePath TEXT,
-                            rawOcrText TEXT NOT NULL,
-                            parsedTotal REAL,
-                            parsedMerchant TEXT,
-                            parsedDate INTEGER,
-                            parsedItems TEXT,
-                            parsedTaxAmount REAL,
-                            currency TEXT NOT NULL DEFAULT 'EUR',
-                            confidence REAL NOT NULL,
-                            expenseId INTEGER,
-                            matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED',
-                            matchConfidence REAL,
-                            suggestedExpenseId INTEGER,
-                            createdAt INTEGER NOT NULL,
-                            itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING',
-                            FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
-                        )
-                    """.trimIndent())
+                    database.beginTransaction()
+                    try {
+                        database.execSQL("""
+                            CREATE TABLE scanned_receipts_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                imagePath TEXT,
+                                rawOcrText TEXT NOT NULL,
+                                parsedTotal REAL,
+                                parsedMerchant TEXT,
+                                parsedDate INTEGER,
+                                parsedItems TEXT,
+                                parsedTaxAmount REAL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                confidence REAL NOT NULL,
+                                expenseId INTEGER,
+                                matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED',
+                                matchConfidence REAL,
+                                suggestedExpenseId INTEGER,
+                                createdAt INTEGER NOT NULL,
+                                itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING',
+                                FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent())
 
-                    database.execSQL("""
-                        INSERT INTO scanned_receipts_new
-                        SELECT id, imagePath, rawOcrText, parsedTotal, parsedMerchant,
-                               parsedDate, parsedItems, parsedTaxAmount, currency,
-                               confidence, expenseId, matchStatus, matchConfidence,
-                               suggestedExpenseId, createdAt, itemCategorizationStatus
-                        FROM scanned_receipts
-                    """.trimIndent())
+                        database.execSQL("""
+                            INSERT INTO scanned_receipts_new
+                            SELECT id, imagePath, rawOcrText, parsedTotal, parsedMerchant,
+                                   parsedDate, parsedItems, parsedTaxAmount, currency,
+                                   confidence, expenseId, matchStatus, matchConfidence,
+                                   suggestedExpenseId, createdAt, itemCategorizationStatus
+                            FROM scanned_receipts
+                        """.trimIndent())
 
-                    database.execSQL("DROP TABLE scanned_receipts")
-                    database.execSQL("ALTER TABLE scanned_receipts_new RENAME TO scanned_receipts")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
-                    database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
+                        database.execSQL("DROP TABLE scanned_receipts")
+                        database.execSQL("ALTER TABLE scanned_receipts_new RENAME TO scanned_receipts")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_expenseId ON scanned_receipts (expenseId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_createdAt ON scanned_receipts (createdAt)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_matchStatus ON scanned_receipts (matchStatus)")
 
-                    database.setTransactionSuccessful()
+                        database.query("PRAGMA foreign_key_check").use { violations ->
+                            if (violations.moveToFirst()) {
+                                throw IllegalStateException("Migration produced FK violations")
+                            }
+                        }
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
                 } finally {
-                    database.endTransaction()
+                    database.execSQL("PRAGMA foreign_keys=ON")
                 }
             }
         }

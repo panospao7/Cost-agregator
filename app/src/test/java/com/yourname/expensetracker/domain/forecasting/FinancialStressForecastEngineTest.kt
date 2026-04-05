@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -121,6 +123,21 @@ class FinancialStressForecastEngineTest {
     }
 
     @Test
+    fun `computeStressForecast when calculation fails returns degraded non-low fallback`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } throws IllegalStateException("boom")
+
+        val result = engine.computeStressForecast()
+
+        assertEquals(StressRiskLevel.MODERATE, result.overallRiskLevel)
+        assertNull(result.earliestCrunchDate)
+        assertEquals(listOf(30, 60, 90), result.horizons.map { it.daysAhead })
+        assertTrue(result.horizons.all { it.riskLevel == StressRiskLevel.MODERATE })
+        assertTrue(result.horizons.all { it.probabilityOfCrunch == 0.20 })
+        assertTrue(result.recommendations.any { it.contains("temporarily unavailable", ignoreCase = true) })
+        assertTrue(result.recommendations.any { it.contains("degraded", ignoreCase = true) })
+    }
+
+    @Test
     fun `classifyRiskLevel maps probabilities to all five tiers`() {
         assertEquals(StressRiskLevel.LOW, classifyRiskLevelViaReflection(0.00))
         assertEquals(StressRiskLevel.MODERATE, classifyRiskLevelViaReflection(0.10))
@@ -173,6 +190,35 @@ class FinancialStressForecastEngineTest {
         }
     }
 
+    @Test
+    fun `computeStressForecast recurring-only purchase history keeps Monte Carlo discretionary at zero`() = runTest {
+        val salary = expense(300L, 3000.0, TransactionType.DEPOSIT, now - 2 * dayMs, merchant = "Employer")
+        val recurring1 = expense(301L, 45.0, TransactionType.PURCHASE, now - 20 * dayMs, merchant = "NETFLIX")
+        val recurring2 = expense(302L, 45.0, TransactionType.PURCHASE, now - 10 * dayMs, merchant = "Netflix")
+        val recurring3 = expense(303L, 45.0, TransactionType.PURCHASE, now - 3 * dayMs, merchant = "Netflix ")
+
+        allExpenses = listOf(salary, recurring1, recurring2, recurring3)
+        allDeposits = listOf(salary)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1200.0, spent = 0.0)))
+        coEvery { recurringExpenseEngine.getPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Netflix",
+                amount = 45.0,
+                nextDate = now + dayMs,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 0.95f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        result.horizons.forEach { horizon ->
+            // When recurring purchases are excluded from discretionary empirical input,
+            // p50 and p90 discretionary spend collapse to the same value (0 in this fixture).
+            assertApproxEquals(horizon.projectedBalance, horizon.minProjectedBalance, 0.0001)
+        }
+    }
+
     private fun classifyRiskLevelViaReflection(probability: Double): StressRiskLevel {
         val method = FinancialStressForecastEngine::class.java.getDeclaredMethod(
             "classifyRiskLevel",
@@ -202,15 +248,42 @@ class FinancialStressForecastEngineTest {
         )
     }
 
-    private fun expense(id: Long, amount: Double, type: TransactionType, date: Long): Expense {
+    private fun expense(
+        id: Long,
+        amount: Double,
+        type: TransactionType,
+        date: Long,
+        merchant: String = "M$id",
+        isNotMine: Boolean = false
+    ): Expense {
         return Expense(
             id = id,
             amount = amount,
-            merchant = "M$id",
+            merchant = merchant,
             transactionType = type,
             date = date,
             categoryId = 1L,
-            isNotMine = false
+            isNotMine = isNotMine
+        )
+    }
+
+    private fun recurringPattern(
+        merchant: String,
+        amount: Double,
+        nextDate: Long,
+        frequency: RecurrenceFrequency,
+        confidence: Float
+    ): RecurringPattern {
+        return RecurringPattern(
+            merchantName = merchant,
+            averageAmount = amount,
+            currency = "EUR",
+            frequency = frequency,
+            periodVarianceDays = 0,
+            amountVariancePercent = 0.0,
+            nextExpectedDate = nextDate,
+            confidence = confidence,
+            previousDates = emptyList()
         )
     }
 

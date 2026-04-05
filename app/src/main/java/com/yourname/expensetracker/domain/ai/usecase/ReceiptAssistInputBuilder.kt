@@ -49,6 +49,7 @@ class ReceiptAssistInputBuilder @Inject constructor(
             imageMimeType = imageMimeType,
             // NEW: Flag to indicate AI should use vision analysis
             isImageAnalysisMode = isImageAnalysisMode,
+            redactBeforeCloud = shouldRedact,
             // OCR text is now secondary context
             rawOcrText = sanitizedOcrText,
             // Include existing parsed data as hints

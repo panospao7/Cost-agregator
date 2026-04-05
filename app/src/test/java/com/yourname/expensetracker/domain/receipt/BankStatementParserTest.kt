@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.receipt
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -51,17 +51,17 @@ class BankStatementParserTest {
         // Check first transaction
         assertEquals(12.50, results[0].amount, 0.01)
         assertEquals("SKLAVENITIS", results[0].merchant)
-        assertEquals(TransactionType.PURCHASE, results[0].type)
+        assertEquals(ParsedTransactionType.PURCHASE, results[0].type)
         
         // Check second transaction
         assertEquals(25.0, results[1].amount, 0.01)
         assertEquals("LIDL", results[1].merchant)
-        assertEquals(TransactionType.PURCHASE, results[1].type)
+        assertEquals(ParsedTransactionType.PURCHASE, results[1].type)
         
         // Check third transaction
         assertEquals(1500.0, results[2].amount, 0.01)
         assertEquals("SALARY", results[2].merchant)
-        assertEquals(TransactionType.DEPOSIT, results[2].type)
+        assertEquals(ParsedTransactionType.DEPOSIT, results[2].type)
     }
 
     @Test

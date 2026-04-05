@@ -9,27 +9,32 @@ import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorizatio
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
-import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiLoadState
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.toDiagnosticsOrNull
 import com.yourname.expensetracker.domain.ai.model.toDisplayText
+import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
-import com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCase
-import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
-import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
-import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.model.Result
-import com.yourname.expensetracker.ui.screens.debug.DebugData
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.ui.screens.debug.DebugData
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -39,8 +44,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import com.yourname.expensetracker.domain.util.TimeProvider
-import com.yourname.expensetracker.domain.util.AmountUtils
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -129,9 +132,14 @@ sealed class SaveReceiptResult {
 }
 
 @HiltViewModel
+/**
+ * Note: [com.yourname.expensetracker.domain.receipt.ReceiptOcrService] is app-scoped
+ * (`@Singleton`) and its lifecycle is managed by DI/app process, not by this ViewModel.
+ */
 class ReceiptScanViewModel @Inject constructor(
     private val receiptRepository: ReceiptRepository,
     private val categoryRepository: CategoryRepository,
+    private val currencySettingsRepository: CurrencySettingsRepository,
     private val aiSettingsRepository: AiSettingsRepository,
     private val savedStateHandle: androidx.lifecycle.SavedStateHandle,
     private val timeProvider: TimeProvider,
@@ -140,8 +148,7 @@ class ReceiptScanViewModel @Inject constructor(
     private val categorizeReceiptItemsUseCase: CategorizeReceiptItemsUseCase,
     private val receiptItemCategorizationRepository: ReceiptItemCategorizationRepository,
     private val aiArtifactRepository: AiArtifactRepository,
-    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
-    private val receiptOcrService: ReceiptOcrService
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReceiptScanState(
@@ -152,6 +159,8 @@ class ReceiptScanViewModel @Inject constructor(
 
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private var itemAnalysisJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -193,6 +202,8 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     private fun processImageUri(uri: Uri) {
+        itemAnalysisJob?.cancel()
+
         _state.update {
             it.copy(
                 step = ScanStep.PROCESSING,
@@ -205,7 +216,7 @@ class ReceiptScanViewModel @Inject constructor(
                 categoryAssistMessage = null,
                 categoryAssistDiagnostics = null,
                 quickSavePreview = null
-            )
+            ).clearItemAnalysisState()
         }
 
         viewModelScope.launch {
@@ -227,7 +238,7 @@ class ReceiptScanViewModel @Inject constructor(
                                 amount = total,
                                 currency = "EUR",
                                 merchant = parsed.merchantName ?: "Unknown",
-                                type = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+                                type = ParsedTransactionType.PURCHASE,
                                 confidence = parsed.confidence,
                                 date = parsed.date
                             )
@@ -262,15 +273,16 @@ class ReceiptScanViewModel @Inject constructor(
                         categoryAssistDiagnostics = null,
                         quickSavePreview = null,
                         debugData = debugData
-                    )
+                    ).clearItemAnalysisState()
                 }
                 
                 // Auto-trigger item categorization if AI enabled and items exist
                 if (parsed.lineItems.isNotEmpty()) {
-                    viewModelScope.launch {
+                    itemAnalysisJob?.cancel()
+                    itemAnalysisJob = viewModelScope.launch {
                         val settings = aiSettingsRepository.settings().first()
                         if (settings.aiEnabled && settings.receiptItemCategorizationEnabled) {
-                            analyzeReceiptItems()
+                            analyzeReceiptItemsInternal(receipt.id)
                         }
                     }
                 }
@@ -279,6 +291,7 @@ class ReceiptScanViewModel @Inject constructor(
                 
                 try {
                     val (receipt, parsed) = receiptRepository.saveManualReceiptRecord(uri)
+                    val now = timeProvider.now()
                     
                     val debugData = DebugData(
                         rawText = "",
@@ -292,9 +305,21 @@ class ReceiptScanViewModel @Inject constructor(
                         it.copy(
                             step = ScanStep.REVIEW,
                             imageUri = uri,
+                            tempCameraUri = null,
                             parsedReceipt = parsed,
                             receiptId = receipt.id,
+                            rawOcrText = receipt.rawOcrText,
+                            showRawText = false,
+                            editMerchant = "",
+                            editAmount = "",
+                            editDate = now,
+                            selectedCategoryId = null,
+                            paymentMethod = PaymentMethod.CARD,
+                            notes = "",
+                            ocrConfidence = 0f,
                             errorMessage = "OCR Failed: ${e.message}. You can enter details manually.",
+                            isSaving = false,
+                            saveResult = null,
                             receiptAssistState = AiLoadState.Idle,
                             receiptAssistMessage = null,
                             receiptAssistDiagnostics = null,
@@ -303,25 +328,48 @@ class ReceiptScanViewModel @Inject constructor(
                             categoryAssistDiagnostics = null,
                             quickSavePreview = null,
                             debugData = debugData
-                        )
+                        ).clearItemAnalysisState()
                     }
                 } catch (fallbackError: Exception) {
                     parsingLogs.add("Fallback Error: ${fallbackError.message}")
+                    val now = timeProvider.now()
                     
                     val debugData = DebugData(
                         rawText = "",
                         parsedTransactions = emptyList(),
                         parsingLogs = parsingLogs,
-                        processingTimeMs = System.currentTimeMillis() - startTime,
+                        processingTimeMs = timeProvider.now() - startTime,
                         parserUsed = "Failed"
                     )
                     
                     _state.update {
                         it.copy(
                             step = ScanStep.ERROR,
+                            imageUri = uri,
+                            tempCameraUri = null,
+                            parsedReceipt = null,
+                            receiptId = null,
+                            rawOcrText = "",
+                            showRawText = false,
+                            editMerchant = "",
+                            editAmount = "",
+                            editDate = now,
+                            selectedCategoryId = null,
+                            paymentMethod = PaymentMethod.CARD,
+                            notes = "",
+                            ocrConfidence = 0f,
                             errorMessage = "Total failure: ${fallbackError.message}",
+                            isSaving = false,
+                            saveResult = null,
+                            receiptAssistState = AiLoadState.Idle,
+                            receiptAssistMessage = null,
+                            receiptAssistDiagnostics = null,
+                            categoryAssistState = AiLoadState.Idle,
+                            categoryAssistMessage = null,
+                            categoryAssistDiagnostics = null,
+                            quickSavePreview = null,
                             debugData = debugData
-                        )
+                        ).clearItemAnalysisState()
                     }
                 }
             }
@@ -771,6 +819,7 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun retry() {
+        itemAnalysisJob?.cancel()
         _state.update {
             ReceiptScanState(
                 editDate = timeProvider.now(),
@@ -780,6 +829,7 @@ class ReceiptScanViewModel @Inject constructor(
     }
 
     fun reset() {
+        itemAnalysisJob?.cancel()
         _state.update {
             ReceiptScanState(
                 editDate = timeProvider.now(),
@@ -920,11 +970,22 @@ class ReceiptScanViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
+                val defaultCurrency = try {
+                    currencySettingsRepository.homeCurrency().first()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    "EUR"
+                }
+                val resolvedCurrency = _state.value.parsedReceipt?.currency
+                    ?.takeIf { it.isNotBlank() }
+                    ?: defaultCurrency
+
                 val result = receiptRepository.createExpenseFromReceipt(
                     receiptId = request.receiptId,
                     merchant = request.merchant,
                     amount = request.amount,
-                    currency = "EUR",
+                    currency = resolvedCurrency,
                     categoryId = request.categoryId,
                     date = request.date,
                     paymentMethod = request.paymentMethod,
@@ -990,52 +1051,71 @@ class ReceiptScanViewModel @Inject constructor(
 
     fun analyzeReceiptItems() {
         val receiptId = _state.value.receiptId ?: return
-        
-        viewModelScope.launch {
-            _state.update { it.copy(isAnalyzingItems = true, itemAnalysisError = null) }
-            
-            try {
-                val result = categorizeReceiptItemsUseCase(receiptId)
-                
-                when (result) {
-                    is com.yourname.expensetracker.domain.ai.model.CategorizationResult.Success -> {
-                        // Load the stored categorizations
-                        val items = receiptItemCategorizationRepository.getByReceiptId(receiptId)
-                        _state.update { 
-                            it.copy(
-                                itemCategorizations = items,
-                                showItemBreakdown = true,
-                                isAnalyzingItems = false,
-                                itemAnalysisError = null
-                            )
-                        }
-                    }
-                    is com.yourname.expensetracker.domain.ai.model.CategorizationResult.AlreadyAnalyzed -> {
-                        _state.update { 
-                            it.copy(
-                                itemCategorizations = result.items,
-                                showItemBreakdown = true,
-                                isAnalyzingItems = false,
-                                itemAnalysisError = null
-                            )
-                        }
-                    }
-                    else -> {
-                        _state.update {
-                            it.copy(
-                                isAnalyzingItems = false,
-                                itemAnalysisError = "Item analysis returned no categorizations."
-                            )
-                        }
+        itemAnalysisJob?.cancel()
+        itemAnalysisJob = viewModelScope.launch {
+            analyzeReceiptItemsInternal(receiptId)
+        }
+    }
+
+    private suspend fun analyzeReceiptItemsInternal(receiptId: Long) {
+        if (!_state.value.matchesReceiptForAnalysis(receiptId)) return
+
+        _state.update { current ->
+            if (!current.matchesReceiptForAnalysis(receiptId)) current
+            else current.copy(isAnalyzingItems = true, itemAnalysisError = null)
+        }
+
+        try {
+            val result = categorizeReceiptItemsUseCase(receiptId)
+            if (!_state.value.matchesReceiptForAnalysis(receiptId)) return
+
+            when (result) {
+                is com.yourname.expensetracker.domain.ai.model.CategorizationResult.Success -> {
+                    val items = receiptItemCategorizationRepository.getByReceiptId(receiptId)
+                    if (!_state.value.matchesReceiptForAnalysis(receiptId)) return
+
+                    _state.update { current ->
+                        if (!current.matchesReceiptForAnalysis(receiptId)) current
+                        else current.copy(
+                            itemCategorizations = items,
+                            showItemBreakdown = true,
+                            isAnalyzingItems = false,
+                            itemAnalysisError = null
+                        )
                     }
                 }
-            } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        isAnalyzingItems = false,
-                        itemAnalysisError = e.message ?: "Item analysis failed."
-                    )
+
+                is com.yourname.expensetracker.domain.ai.model.CategorizationResult.AlreadyAnalyzed -> {
+                    _state.update { current ->
+                        if (!current.matchesReceiptForAnalysis(receiptId)) current
+                        else current.copy(
+                            itemCategorizations = result.items,
+                            showItemBreakdown = true,
+                            isAnalyzingItems = false,
+                            itemAnalysisError = null
+                        )
+                    }
                 }
+
+                else -> {
+                    _state.update { current ->
+                        if (!current.matchesReceiptForAnalysis(receiptId)) current
+                        else current.copy(
+                            isAnalyzingItems = false,
+                            itemAnalysisError = "Item analysis returned no categorizations."
+                        )
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _state.update { current ->
+                if (!current.matchesReceiptForAnalysis(receiptId)) current
+                else current.copy(
+                    isAnalyzingItems = false,
+                    itemAnalysisError = e.message ?: "Item analysis failed."
+                )
             }
         }
     }
@@ -1073,8 +1153,17 @@ class ReceiptScanViewModel @Inject constructor(
         Timber.d("Item rationale: ${item.aiRationale}")
     }
 
-    override fun onCleared() {
-        super.onCleared()
-        receiptOcrService.close()
+    private fun ReceiptScanState.clearItemAnalysisState(): ReceiptScanState {
+        return copy(
+            itemCategorizations = emptyList(),
+            isAnalyzingItems = false,
+            showItemBreakdown = false,
+            itemAnalysisError = null
+        )
     }
+
+    private fun ReceiptScanState.matchesReceiptForAnalysis(receiptId: Long): Boolean {
+        return step == ScanStep.REVIEW && this.receiptId == receiptId
+    }
+
 }

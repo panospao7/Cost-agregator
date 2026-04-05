@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.ai.model
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 
 /**
  * Input data for AI notification parsing.
@@ -34,8 +34,8 @@ data class NotificationParseResult(
     val amount: Double,
     val currency: String,
     val merchant: String,
-    val transactionType: TransactionType,
-    val direction: TransferDirection?,
+    val transactionType: ParsedTransactionType,
+    val direction: ParsedTransferDirection?,
     val confidence: Float,
     val reasoning: String?
 )

@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -21,9 +23,9 @@ import java.net.SocketTimeoutException
 import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlin.random.Random
-import java.util.UUID
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 @Singleton
@@ -61,88 +63,90 @@ class CloudReviewExplanationService @Inject constructor(
             .header("x-goog-api-key", apiKey)
             .build()
 
-        for (attempt in 1..MAX_RETRY_ATTEMPTS) {
-            try {
-                val outcome = client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val correlationId = newCorrelationId()
-                        val errorClass = "HTTP_${response.code}"
-                        if (isRetryableHttpStatus(response.code) && attempt < MAX_RETRY_ATTEMPTS) {
-                            Timber.w(
-                                "CloudReviewExplanationService: retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
-                                response.code,
-                                errorClass,
-                                correlationId,
-                                attempt,
-                                MAX_RETRY_ATTEMPTS
-                            )
-                            null
-                        } else {
-                            Timber.w(
-                                "CloudReviewExplanationService: HTTP %d class=%s correlationId=%s",
-                                response.code,
-                                errorClass,
-                                correlationId
-                            )
-                            AiServiceResult.Failure(
-                                AiServiceError.HttpError(
+        return withContext(Dispatchers.IO) {
+            for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                try {
+                    val outcome = client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            val correlationId = CloudCorrelation.newCorrelationId()
+                            val errorClass = "HTTP_${response.code}"
+                            if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                                Timber.w(
+                                    "CloudReviewExplanationService: retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
                                     response.code,
-                                    "errorClass=$errorClass correlationId=$correlationId"
+                                    errorClass,
+                                    correlationId,
+                                    attempt,
+                                    CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                                 )
-                            )
+                                null
+                            } else {
+                                Timber.w(
+                                    "CloudReviewExplanationService: HTTP %d class=%s correlationId=%s",
+                                    response.code,
+                                    errorClass,
+                                    correlationId
+                                )
+                                AiServiceResult.Failure(
+                                    AiServiceError.HttpError(
+                                        response.code,
+                                        "errorClass=$errorClass correlationId=$correlationId"
+                                    )
+                                )
+                            }
+                        } else {
+                            val body = response.body?.string()
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                            val parsed = parseResponse(body)
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable explanation in response"))
+                            AiServiceResult.Success(parsed)
                         }
-                    } else {
-                        val body = response.body?.string()
-                            ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
-                        val parsed = parseResponse(body)
-                            ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable explanation in response"))
-                        AiServiceResult.Success(parsed)
                     }
+
+                    if (outcome != null) return@withContext outcome
+                } catch (e: SocketTimeoutException) {
+                    if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        Timber.w(
+                            e,
+                            "CloudReviewExplanationService: timeout, retrying (%d/%d)",
+                            attempt,
+                            CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                        )
+                    } else {
+                        Timber.w(e, "CloudReviewExplanationService: timeout")
+                        return@withContext AiServiceResult.Failure(AiServiceError.Timeout)
+                    }
+                } catch (e: SSLException) {
+                    Timber.w(e, "CloudReviewExplanationService: SSL failure")
+                    return@withContext AiServiceResult.Failure(AiServiceError.SslError)
+                } catch (e: IOException) {
+                    val retryable = CloudRetryPolicy.isRetryableIoException(e)
+                    if (retryable && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        Timber.w(
+                            e,
+                            "CloudReviewExplanationService: connection reset, retrying (%d/%d)",
+                            attempt,
+                            CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                        )
+                    } else {
+                        Timber.w(e, "CloudReviewExplanationService: network failure")
+                        return@withContext AiServiceResult.Failure(AiServiceError.Offline)
+                    }
+                } catch (e: JSONException) {
+                    Timber.w(e, "CloudReviewExplanationService: parse failure")
+                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError(e.message))
+                } catch (e: Exception) {
+                    Timber.w(e, "CloudReviewExplanationService: parse failure")
+                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
                 }
 
-                if (outcome != null) return outcome
-            } catch (e: SocketTimeoutException) {
-                if (attempt < MAX_RETRY_ATTEMPTS) {
-                    Timber.w(
-                        e,
-                        "CloudReviewExplanationService: timeout, retrying (%d/%d)",
-                        attempt,
-                        MAX_RETRY_ATTEMPTS
-                    )
-                } else {
-                    Timber.w(e, "CloudReviewExplanationService: timeout")
-                    return AiServiceResult.Failure(AiServiceError.Timeout)
+                if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
                 }
-            } catch (e: SSLException) {
-                Timber.w(e, "CloudReviewExplanationService: SSL failure")
-                return AiServiceResult.Failure(AiServiceError.SslError)
-            } catch (e: IOException) {
-                val retryable = e.isConnectionReset()
-                if (retryable && attempt < MAX_RETRY_ATTEMPTS) {
-                    Timber.w(
-                        e,
-                        "CloudReviewExplanationService: connection reset, retrying (%d/%d)",
-                        attempt,
-                        MAX_RETRY_ATTEMPTS
-                    )
-                } else {
-                    Timber.w(e, "CloudReviewExplanationService: network failure")
-                    return AiServiceResult.Failure(AiServiceError.Offline)
-                }
-            } catch (e: JSONException) {
-                Timber.w(e, "CloudReviewExplanationService: parse failure")
-                return AiServiceResult.Failure(AiServiceError.ParseError(e.message))
-            } catch (e: Exception) {
-                Timber.w(e, "CloudReviewExplanationService: parse failure")
-                return AiServiceResult.Failure(AiServiceError.Unknown(e.message))
             }
 
-            if (attempt < MAX_RETRY_ATTEMPTS) {
-                delay(backoffDelayMs(attempt))
-            }
+            AiServiceResult.Failure(AiServiceError.Unknown("Retry attempts exhausted"))
         }
-
-        return AiServiceResult.Failure(AiServiceError.Unknown("Retry attempts exhausted"))
     }
 
     private fun buildRequestBody(input: ReviewExplanationInput): String {
@@ -291,25 +295,8 @@ class CloudReviewExplanationService @Inject constructor(
         return extractFirstJsonObject(fencedBody)
     }
 
-    private fun isRetryableHttpStatus(code: Int): Boolean = code in 500..599
-
-    private fun IOException.isConnectionReset(): Boolean =
-        message?.contains("connection reset", ignoreCase = true) == true
-
-    private fun backoffDelayMs(attempt: Int): Long {
-        val exponential = (BASE_RETRY_BACKOFF_MS shl (attempt - 1)).coerceAtMost(MAX_RETRY_BACKOFF_MS)
-        val jitter = Random.nextLong(0, RETRY_JITTER_MS + 1)
-        return exponential + jitter
-    }
-
-    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
-
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        private const val MAX_RETRY_ATTEMPTS = 3
-        private const val BASE_RETRY_BACKOFF_MS = 250L
-        private const val MAX_RETRY_BACKOFF_MS = 1_500L
-        private const val RETRY_JITTER_MS = 200L
         private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
     }
 }

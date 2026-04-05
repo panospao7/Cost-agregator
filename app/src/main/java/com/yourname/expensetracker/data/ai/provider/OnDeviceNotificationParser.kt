@@ -5,8 +5,6 @@ import com.google.mlkit.genai.prompt.GenerateContentRequest
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.TextPart
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.ai.model.NotificationParseResult
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
@@ -14,6 +12,8 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.NotificationFallbackParser
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 import timber.log.Timber
@@ -163,18 +163,18 @@ class OnDeviceNotificationParser @Inject constructor(
             // Parse transaction type
             val typeStr = json.optString("type", "PURCHASE").uppercase()
             val transactionType = try {
-                TransactionType.valueOf(typeStr)
+                ParsedTransactionType.valueOf(typeStr)
             } catch (e: IllegalArgumentException) {
                 Timber.w("OnDeviceNotificationParser: Unknown transaction type: $typeStr, defaulting to PURCHASE")
-                TransactionType.PURCHASE
+                ParsedTransactionType.PURCHASE
             }
 
             // Parse direction
             val directionStr = json.optString("direction", "")
             val direction = when {
                 directionStr.isBlank() -> null
-                directionStr.equals("INCOMING", ignoreCase = true) -> TransferDirection.INCOMING
-                directionStr.equals("OUTGOING", ignoreCase = true) -> TransferDirection.OUTGOING
+                directionStr.equals("INCOMING", ignoreCase = true) -> ParsedTransferDirection.INCOMING
+                directionStr.equals("OUTGOING", ignoreCase = true) -> ParsedTransferDirection.OUTGOING
                 else -> null
             }
 
@@ -196,8 +196,8 @@ class OnDeviceNotificationParser @Inject constructor(
                 transferDirection = direction,
                 transferAccountName = direction?.let {
                     when (it) {
-                        TransferDirection.INCOMING -> "From: $merchant"
-                        TransferDirection.OUTGOING -> "To: $merchant"
+                        ParsedTransferDirection.INCOMING -> "From: $merchant"
+                        ParsedTransferDirection.OUTGOING -> "To: $merchant"
                     }
                 }
             )

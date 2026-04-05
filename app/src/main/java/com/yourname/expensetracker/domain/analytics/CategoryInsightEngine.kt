@@ -11,9 +11,9 @@ import javax.inject.Singleton
 @Singleton
 class CategoryInsightEngine @Inject constructor() {
 
-    private val missingCategoryHitCount = ConcurrentHashMap<Long, Int>()
-
     companion object {
+        private const val MAX_MISSING_CATEGORY_TRACKED = 100
+
         private val FALLBACK_CATEGORY = Category(
             id = -1,
             name = "Uncategorized",
@@ -22,6 +22,8 @@ class CategoryInsightEngine @Inject constructor() {
             isDefault = true
         )
     }
+
+    private val missingCategoryHitCount = ConcurrentHashMap<Long, Int>()
 
     fun calculate(
         currentMonth: MonthPeriod,
@@ -61,6 +63,7 @@ class CategoryInsightEngine @Inject constructor() {
             missingCategoryUsage.forEach { (categoryId, count) ->
                 missingCategoryHitCount.merge(categoryId, count, Int::plus)
             }
+            pruneMissingCategoryHitsIfNeeded()
             val sample = missingCategoryUsage.entries
                 .sortedByDescending { it.value }
                 .take(5)
@@ -109,5 +112,21 @@ class CategoryInsightEngine @Inject constructor() {
                 changeFromAverage = null
             )
         }.sortedByDescending { it.currentTotal }
+    }
+
+    private fun pruneMissingCategoryHitsIfNeeded() {
+        if (missingCategoryHitCount.size <= MAX_MISSING_CATEGORY_TRACKED) return
+
+        val retainedKeys = missingCategoryHitCount.entries
+            .sortedByDescending { it.value }
+            .take(MAX_MISSING_CATEGORY_TRACKED)
+            .map { it.key }
+            .toHashSet()
+
+        missingCategoryHitCount.keys.forEach { key ->
+            if (!retainedKeys.contains(key)) {
+                missingCategoryHitCount.remove(key)
+            }
+        }
     }
 }

@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.receipt
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import java.util.regex.Pattern
 import java.util.Calendar
 import java.util.Locale
@@ -245,7 +245,7 @@ class BankStatementParser @Inject constructor(
                        rowText.contains("Transfer from", ignoreCase = true) ||
                        rowText.contains("Promo", ignoreCase = true)
 
-        val type = if (isMoneyIn) TransactionType.DEPOSIT else TransactionType.PURCHASE
+        val type = if (isMoneyIn) ParsedTransactionType.DEPOSIT else ParsedTransactionType.PURCHASE
         
         // Merchant is usually between the date and the first amount
         // Use the index of the MatchResult to correctly handle variable spacing
@@ -316,9 +316,9 @@ class BankStatementParser @Inject constructor(
             
             // Extract transaction type
             val type = when (parts[typeIndex]) {
-                "Χ" -> TransactionType.PURCHASE  // ΧΡΕΩΣΗ (debit)
-                "Π" -> TransactionType.DEPOSIT   // ΠΙΣΤΩΣΗ (credit/transfer)
-                else -> TransactionType.PURCHASE
+                "Χ" -> ParsedTransactionType.PURCHASE  // ΧΡΕΩΣΗ (debit)
+                "Π" -> ParsedTransactionType.DEPOSIT   // ΠΙΣΤΩΣΗ (credit/transfer)
+                else -> ParsedTransactionType.PURCHASE
             }
             
             // Extract amount (next part after Χ/Π)
@@ -509,10 +509,10 @@ class BankStatementParser @Inject constructor(
                         upperRow.contains("SALARY") || upperRow.contains("WAGES") || upperRow.contains("ΜΙΣΘΟΔΟΣΙΑ")
 
         val type = when {
-            isDeposit -> TransactionType.DEPOSIT
-            isPurchase -> TransactionType.PURCHASE
-            amountStr.contains("-") -> TransactionType.PURCHASE
-            else -> TransactionType.PURCHASE 
+            isDeposit -> ParsedTransactionType.DEPOSIT
+            isPurchase -> ParsedTransactionType.PURCHASE
+            amountStr.contains("-") -> ParsedTransactionType.PURCHASE
+            else -> ParsedTransactionType.PURCHASE 
         }
 
         // 4. Extract dates - prioritize transaction date (first date) over value date (second date)

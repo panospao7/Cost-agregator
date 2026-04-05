@@ -1,11 +1,12 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.data.database.entity.ScannedReceipt
-import com.yourname.expensetracker.data.database.entity.Warranty
-import com.yourname.expensetracker.data.database.entity.WarrantyType
+import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
+import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionInput
+import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
 import com.yourname.expensetracker.domain.config.AppConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -20,11 +21,9 @@ import timber.log.Timber
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.security.MessageDigest
-import java.util.UUID
 import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.random.Random
 
 /**
  * CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig.
@@ -49,16 +48,16 @@ class CloudWarrantyExtractionService @Inject constructor(
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     suspend fun extractWarranty(
-        receipt: ScannedReceipt,
+        input: WarrantyExtractionInput,
         shouldRedactBeforeCloud: Boolean
-    ): Warranty? = withContext(Dispatchers.IO) {
+    ): WarrantyExtractionResult? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {
             Timber.d("CloudWarrantyExtractionService: Gemini API key missing, skipping.")
             return@withContext null
         }
 
-        val correlationId = newCorrelationId()
-        val prompt = buildPrompt(receipt, shouldRedactBeforeCloud)
+        val correlationId = CloudCorrelation.newCorrelationId()
+        val prompt = buildPrompt(input, shouldRedactBeforeCloud)
         
         val requestBody = JSONObject().apply {
             put("contents", JSONArray().apply {
@@ -84,12 +83,12 @@ class CloudWarrantyExtractionService @Inject constructor(
             .header("x-goog-api-key", apiKey)
             .build()
 
-        for (attempt in 1..MAX_RETRY_ATTEMPTS) {
+        for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
             var retryableHttpFailure = false
             try {
                 val parsed = client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        if (isRetryableHttpStatus(response.code) && attempt < MAX_RETRY_ATTEMPTS) {
+                        if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                             retryableHttpFailure = true
                             val errorClass = "HTTP_${response.code}"
                             Timber.w(
@@ -98,7 +97,7 @@ class CloudWarrantyExtractionService @Inject constructor(
                                 errorClass,
                                 correlationId,
                                 attempt,
-                                MAX_RETRY_ATTEMPTS
+                                CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                             )
                         } else {
                             val errorClass = "HTTP_${response.code}"
@@ -113,19 +112,19 @@ class CloudWarrantyExtractionService @Inject constructor(
                     }
 
                     val responseBody = response.body?.string()
-                    parseResponse(responseBody, receipt, correlationId)
+                    parseResponse(responseBody, correlationId)
                 }
 
                 if (parsed != null) return@withContext parsed
                 if (!retryableHttpFailure) return@withContext null
             } catch (e: SocketTimeoutException) {
-                if (attempt < MAX_RETRY_ATTEMPTS) {
+                if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                     Timber.w(
                         e,
                         "CloudWarrantyExtractionService: timeout correlationId=%s, retrying (%d/%d)",
                         correlationId,
                         attempt,
-                        MAX_RETRY_ATTEMPTS
+                        CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                     )
                 } else {
                     Timber.e(e, "CloudWarrantyExtractionService: timeout correlationId=%s", correlationId)
@@ -135,14 +134,14 @@ class CloudWarrantyExtractionService @Inject constructor(
                 Timber.e(e, "CloudWarrantyExtractionService: SSL error correlationId=%s", correlationId)
                 return@withContext null
             } catch (e: IOException) {
-                val retryable = e.isConnectionReset()
-                if (retryable && attempt < MAX_RETRY_ATTEMPTS) {
+                val retryable = CloudRetryPolicy.isRetryableIoException(e)
+                if (retryable && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                     Timber.w(
                         e,
                         "CloudWarrantyExtractionService: connection reset correlationId=%s, retrying (%d/%d)",
                         correlationId,
                         attempt,
-                        MAX_RETRY_ATTEMPTS
+                        CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                     )
                 } else {
                     Timber.e(e, "CloudWarrantyExtractionService: network error extracting warranty correlationId=%s", correlationId)
@@ -153,17 +152,17 @@ class CloudWarrantyExtractionService @Inject constructor(
                 return@withContext null
             }
 
-            if (attempt < MAX_RETRY_ATTEMPTS) {
-                delay(backoffDelayMs(attempt))
+            if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                delay(CloudRetryPolicy.backoffDelayMs(attempt))
             }
         }
 
         null
     }
 
-    private fun buildPrompt(receipt: ScannedReceipt, shouldRedactBeforeCloud: Boolean): String {
-        val safeReceiptText = sanitizeReceiptText(receipt.rawOcrText, shouldRedactBeforeCloud)
-        val safeMerchant = sanitizeMerchant(receipt.parsedMerchant, shouldRedactBeforeCloud)
+    private fun buildPrompt(input: WarrantyExtractionInput, shouldRedactBeforeCloud: Boolean): String {
+        val safeReceiptText = sanitizeReceiptText(input.receiptText, shouldRedactBeforeCloud)
+        val safeMerchant = sanitizeMerchant(input.merchant, shouldRedactBeforeCloud)
 
         return """
             Analyze this receipt and extract warranty information.
@@ -172,8 +171,8 @@ class CloudWarrantyExtractionService @Inject constructor(
             $safeReceiptText
             
             Merchant: $safeMerchant
-            Total Amount: ${receipt.parsedTotal ?: "Unknown"}
-            Date: ${receipt.parsedDate ?: "Unknown"}
+            Total Amount: ${input.totalAmount ?: "Unknown"}
+            Date: ${input.purchaseDate ?: "Unknown"}
             
             Extract the following warranty information:
             1. Product name (if multiple items, list the most expensive or main item)
@@ -204,7 +203,7 @@ class CloudWarrantyExtractionService @Inject constructor(
         """.trimIndent()
     }
 
-    private fun parseResponse(responseBody: String?, receipt: ScannedReceipt, correlationId: String): Warranty? {
+    private fun parseResponse(responseBody: String?, correlationId: String): WarrantyExtractionResult? {
         if (responseBody == null) {
             Timber.w("CloudWarrantyExtractionService: empty response body correlationId=%s", correlationId)
             return null
@@ -248,21 +247,15 @@ class CloudWarrantyExtractionService @Inject constructor(
                 return null // No valid warranty duration
             }
 
-            val purchaseDate = receipt.parsedDate ?: receipt.createdAt
-            val warrantyEndDate = purchaseDate + (warrantyMonths * 30L * 24 * 60 * 60 * 1000)
-
-            Warranty(
-                receiptId = receipt.id,
-                expenseId = receipt.expenseId,
+            WarrantyExtractionResult(
                 productName = warrantyJson.optString("productName", "Unknown Product"),
-                merchantName = receipt.parsedMerchant ?: "Unknown",
-                purchaseDate = purchaseDate,
-                warrantyDurationMonths = warrantyMonths,
-                warrantyEndDate = warrantyEndDate,
                 warrantyType = parseWarrantyType(warrantyJson.optString("warrantyType", "MANUFACTURER")),
+                warrantyMonths = warrantyMonths,
                 supportPhone = warrantyJson.optString("supportPhone").takeIf { it.isNotBlank() },
                 supportEmail = warrantyJson.optString("supportEmail").takeIf { it.isNotBlank() },
-                notes = warrantyJson.optString("returnConditions").takeIf { it.isNotBlank() }
+                returnDays = warrantyJson.optInt("returnDays", 0).takeIf { it > 0 },
+                returnConditions = warrantyJson.optString("returnConditions").takeIf { it.isNotBlank() },
+                confidence = warrantyJson.optDouble("confidence", 0.0).toFloat()
             )
         } catch (e: Exception) {
             val parseErrorCode = e::class.simpleName ?: "ParseError"
@@ -299,11 +292,12 @@ class CloudWarrantyExtractionService @Inject constructor(
             .take(AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI)
     }
 
-    private fun parseWarrantyType(type: String): WarrantyType {
-        return try {
-            WarrantyType.valueOf(type.uppercase())
-        } catch (e: IllegalArgumentException) {
-            WarrantyType.MANUFACTURER
+    private fun parseWarrantyType(type: String): String {
+        val normalized = type.uppercase()
+        return if (normalized in SUPPORTED_WARRANTY_TYPES) {
+            normalized
+        } else {
+            "MANUFACTURER"
         }
     }
 
@@ -360,33 +354,17 @@ class CloudWarrantyExtractionService @Inject constructor(
     }
 
     private companion object {
-        private const val MAX_RETRY_ATTEMPTS = 3
-        private const val BASE_RETRY_BACKOFF_MS = 250L
-        private const val MAX_RETRY_BACKOFF_MS = 1_500L
-        private const val RETRY_JITTER_MS = 200L
         private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
         private val EMAIL_REGEX = Regex("""\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b""")
         private val IBAN_REGEX = Regex("""\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b""")
         private val CARD_REGEX = Regex("""\b(?:\d[ -]?){13,19}\b""")
         private val PHONE_REGEX = Regex("""\+?\d[\d\s().-]{6,}\d""")
         private val LONG_NUMBER_REGEX = Regex("""\b\d{10,}\b""")
-    }
-
-    private fun isRetryableHttpStatus(code: Int): Boolean = code in 500..599
-
-    private fun IOException.isConnectionReset(): Boolean =
-        message?.contains("connection reset", ignoreCase = true) == true
-
-    private fun backoffDelayMs(attempt: Int): Long {
-        val exponential = (BASE_RETRY_BACKOFF_MS shl (attempt - 1)).coerceAtMost(MAX_RETRY_BACKOFF_MS)
-        val jitter = Random.nextLong(0, RETRY_JITTER_MS + 1)
-        return exponential + jitter
+        private val SUPPORTED_WARRANTY_TYPES = setOf("MANUFACTURER", "EXTENDED", "STORE", "THIRD_PARTY")
     }
 
     private fun String.sha256Prefix(): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
         return digest.take(6).joinToString("") { "%02x".format(it) }
     }
-
-    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 }

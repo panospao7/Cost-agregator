@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.data.repository
 
-import android.content.Context
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
@@ -37,8 +36,6 @@ class ReviewQueueRepositoryStressTest {
     private val parserRegistry = mockk<AppParserRegistry>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
-    private val context = mockk<Context>(relaxed = true)
-
     private lateinit var repository: ReviewQueueRepository
 
     @Before
@@ -73,7 +70,6 @@ class ReviewQueueRepositoryStressTest {
         every { timeProvider.now() } returns System.currentTimeMillis()
 
         repository = ReviewQueueRepository(
-            context = context,
             database = database,
             pendingReviewDao = pendingReviewDao,
             rawNotificationDao = rawNotificationDao,

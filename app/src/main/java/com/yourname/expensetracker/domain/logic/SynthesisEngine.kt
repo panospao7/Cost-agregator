@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.logic
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -49,6 +50,8 @@ class SynthesisEngine @Inject constructor(
     companion object {
         private const val TAG = "SynthesisEngine"
         private const val LIKELY_EXPENSE_WEIGHT = 0.7 // 70% weight for LIKELY planned expenses - middle ground
+        private const val BIWEEKLY_CYCLE_DAYS = 14
+        private const val BIWEEKLY_TOLERANCE_DAYS = 2
     }
 
     fun synthesize(
@@ -98,7 +101,7 @@ class SynthesisEngine @Inject constructor(
         val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-        val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(1)
+        val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(0)
 
         val (_, endOfMonthExclusive) = TimePeriodUtils.getMonthRange(now)
         val startOfToday = TimePeriodUtils.getStartOfDay(now)
@@ -316,7 +319,12 @@ class SynthesisEngine @Inject constructor(
         // Optimization: Group raw expenses by day once O(N) - use timestamp range filter
         // Pre-sort expenses by amount within each day for top 3 transactions
         val dayBucketCalendar = Calendar.getInstance()
-        val expensesByDay = expenses.filter { it.date >= startOfMonth && it.date < endOfMonthExclusive }
+        val expensesByDay = expenses.filter {
+            it.date >= startOfMonth &&
+                it.date < endOfMonthExclusive &&
+                it.transactionType == TransactionType.PURCHASE &&
+                !it.isNotMine
+        }
             .groupBy { expense ->
                 dayBucketCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
             }
@@ -422,11 +430,10 @@ class SynthesisEngine @Inject constructor(
                 dateCal.get(Calendar.DAY_OF_WEEK) == anchorCal.get(Calendar.DAY_OF_WEEK)
             }
             RecurrenceFrequency.BIWEEKLY -> {
-                // Check day-of-week matches (like weekly) and allow ±2 day tolerance
-                val dayOfWeekMatch = dateCal.get(Calendar.DAY_OF_WEEK) == anchorCal.get(Calendar.DAY_OF_WEEK)
-                val diff = dateCal.timeInMillis - anchor
-                val daysDiff = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
-                dayOfWeekMatch && (daysDiff in -2L..16L)
+                val daysDiff = TimePeriodUtils.daysBetween(anchor, dateCal.timeInMillis)
+                val mod = Math.floorMod(daysDiff, BIWEEKLY_CYCLE_DAYS)
+                val distanceToCycle = minOf(mod, BIWEEKLY_CYCLE_DAYS - mod)
+                distanceToCycle <= BIWEEKLY_TOLERANCE_DAYS
             }
             RecurrenceFrequency.MONTHLY -> {
                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)

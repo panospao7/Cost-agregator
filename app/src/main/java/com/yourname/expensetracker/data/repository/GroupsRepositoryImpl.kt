@@ -1,31 +1,40 @@
 package com.yourname.expensetracker.data.repository
 
+import android.database.sqlite.SQLiteConstraintException
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
+import com.yourname.expensetracker.domain.logic.CustomSplitMode
+import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class GroupsRepositoryImpl @Inject constructor(
+    private val database: AppDatabase,
     private val groupDao: ExpenseGroupDao,
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
-    private val coordinator: GroupTransactionCoordinator
+    private val coordinator: GroupTransactionCoordinator,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : GroupsRepository {
 
     private companion object {
         private const val GROUP_IDS_QUERY_CHUNK_SIZE = 500
     }
 
-    override suspend fun getActiveGroupsWithDetails(): List<GroupDetailsAggregate> = withContext(Dispatchers.IO) {
+    override suspend fun getActiveGroupsWithDetails(): List<GroupDetailsAggregate> = withContext(ioDispatcher) {
         val groups = groupDao.getActive()
         if (groups.isEmpty()) {
             return@withContext emptyList()
@@ -50,11 +59,11 @@ class GroupsRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun getGroupById(groupId: Long) = withContext(Dispatchers.IO) {
+    override suspend fun getGroupById(groupId: Long) = withContext(ioDispatcher) {
         groupDao.getById(groupId)
     }
 
-    override suspend fun getMemberById(memberId: Long) = withContext(Dispatchers.IO) {
+    override suspend fun getMemberById(memberId: Long) = withContext(ioDispatcher) {
         memberDao.getById(memberId)
     }
 
@@ -63,7 +72,7 @@ class GroupsRepositoryImpl @Inject constructor(
         description: String?,
         currency: String,
         currentUserName: String
-    ): GroupCreationResult = withContext(Dispatchers.IO) {
+    ): GroupCreationResult = withContext(ioDispatcher) {
         coordinator.createGroupWithMembers(
             name = name,
             description = description,
@@ -83,7 +92,7 @@ class GroupsRepositoryImpl @Inject constructor(
         name: String,
         email: String?,
         isCurrentUser: Boolean
-    ): Long? = withContext(Dispatchers.IO) {
+    ): Long? = withContext(ioDispatcher) {
         coordinator.addMemberToGroup(
             groupId = groupId,
             name = name,
@@ -101,41 +110,126 @@ class GroupsRepositoryImpl @Inject constructor(
         splitType: SplitType,
         customSplitsJson: String?,
         date: Long
-    ): GroupExpenseCreationResult = withContext(Dispatchers.IO) {
+    ): GroupExpenseCreationResult = withContext(ioDispatcher) {
+        val groupCurrency = groupDao.getById(groupId)?.defaultCurrency ?: "EUR"
+
         coordinator.addExpenseWithLink(
             groupId = groupId,
             systemExpenseId = systemExpenseId,
             description = description,
             amount = amount,
             paidById = paidById,
+            currency = groupCurrency,
             splitType = splitType,
             customSplitsJson = customSplitsJson,
             date = date
         )
     }
 
-    override suspend fun deleteGroup(groupId: Long): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun deleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         coordinator.deleteGroup(groupId)
     }
 
-    override suspend fun deleteMember(groupId: Long, memberId: Long): DeleteGroupMemberResult = withContext(Dispatchers.IO) {
+    override suspend fun deleteMember(groupId: Long, memberId: Long): DeleteGroupMemberResult = withContext(ioDispatcher) {
         try {
-            val member = memberDao.getById(memberId)
+            val preflightMember = memberDao.getById(memberId)
                 ?: return@withContext DeleteGroupMemberResult.Error("Member not found")
 
-            if (member.groupId != groupId) {
+            if (preflightMember.groupId != groupId) {
                 return@withContext DeleteGroupMemberResult.Error("Member does not belong to this group")
             }
 
-            val expenseCount = groupExpenseDao.countExpensesPaidByMember(groupId, memberId)
-            if (expenseCount > 0) {
-                return@withContext DeleteGroupMemberResult.CannotDeleteMemberWithExpenses(expenseCount)
+            val preflightSplitReferenceCount = countSplitReferences(groupId, memberId)
+            if (preflightSplitReferenceCount > 0) {
+                return@withContext DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits(preflightSplitReferenceCount)
             }
 
-            memberDao.delete(member)
-            DeleteGroupMemberResult.Success
+            val memberPrefixPattern = "${memberId}:%"
+            val memberMiddlePattern = "%,${memberId}:%"
+
+            database.withTransaction {
+                val member = memberDao.getById(memberId)
+                    ?: return@withTransaction DeleteGroupMemberResult.Error("Member not found")
+
+                if (member.groupId != groupId) {
+                    return@withTransaction DeleteGroupMemberResult.Error("Member does not belong to this group")
+                }
+
+                val expenseCount = groupExpenseDao.countExpensesPaidByMember(groupId, memberId)
+                if (expenseCount > 0) {
+                    return@withTransaction DeleteGroupMemberResult.CannotDeleteMemberWithExpenses(expenseCount)
+                }
+
+                val transactionalSplitReferenceCount = groupExpenseDao.countPotentialSplitReferences(
+                    groupId = groupId,
+                    memberPrefixPattern = memberPrefixPattern,
+                    memberMiddlePattern = memberMiddlePattern
+                )
+                if (transactionalSplitReferenceCount > 0) {
+                    val splitReferenceCount = countSplitReferences(groupId, memberId)
+                    if (splitReferenceCount > 0) {
+                        return@withTransaction DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits(splitReferenceCount)
+                    }
+                }
+
+                memberDao.delete(member)
+                DeleteGroupMemberResult.Success
+            }
+        } catch (_: SQLiteConstraintException) {
+            val expenseCount = groupExpenseDao.countExpensesPaidByMember(groupId, memberId)
+            if (expenseCount > 0) {
+                DeleteGroupMemberResult.CannotDeleteMemberWithExpenses(expenseCount)
+            } else {
+                val splitReferenceCount = countSplitReferences(groupId, memberId)
+                if (splitReferenceCount > 0) {
+                    DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits(splitReferenceCount)
+                } else {
+                    DeleteGroupMemberResult.Error("Failed to delete member")
+                }
+            }
         } catch (e: Exception) {
             DeleteGroupMemberResult.Error(e.message ?: "Failed to delete member")
+        }
+    }
+
+    private suspend fun countSplitReferences(groupId: Long, memberId: Long): Int {
+        val memberIds = memberDao.getAllForGroup(groupId).map { it.id }.toSet()
+        if (memberIds.isEmpty()) return 0
+
+        return groupExpenseDao.getExpensesForGroupOnce(groupId)
+            .filter { expense ->
+                if (expense.customSplitsJson.isNullOrBlank()) {
+                    false
+                } else {
+                    val parseResult = when (expense.splitType) {
+                        SplitType.CUSTOM_AMOUNT,
+                        SplitType.CUSTOM_PERCENT,
+                        SplitType.UNEQUAL -> CustomSplitParser.parseAndValidate(
+                            splitsString = expense.customSplitsJson,
+                            splitType = expense.splitType.toCustomSplitMode(),
+                            totalAmount = expense.totalAmount,
+                            groupMemberIds = memberIds
+                        )
+
+                        SplitType.EQUAL -> CustomSplitParseResult.Invalid("No custom split for equal mode")
+                    }
+
+                    CustomSplitParser.referencesMember(
+                        splitsString = expense.customSplitsJson,
+                        memberId = memberId,
+                        parseResult = parseResult
+                    )
+                }
+            }
+            .size
+    }
+
+    private fun SplitType.toCustomSplitMode(): CustomSplitMode {
+        return when (this) {
+            SplitType.EQUAL -> CustomSplitMode.EQUAL
+            SplitType.CUSTOM_AMOUNT -> CustomSplitMode.CUSTOM_AMOUNT
+            SplitType.CUSTOM_PERCENT -> CustomSplitMode.CUSTOM_PERCENT
+            SplitType.UNEQUAL -> CustomSplitMode.UNEQUAL
         }
     }
 }

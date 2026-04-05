@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.data.repository
 
-import android.content.Context
 import android.net.Uri
 import androidx.room.withTransaction
 import java.util.Date
@@ -16,6 +15,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
+import com.yourname.expensetracker.domain.intelligence.DuplicateResolution
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
@@ -26,18 +26,19 @@ import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.debug.DebugIssueDetector
 import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
+import com.yourname.expensetracker.di.IoDispatcher
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.Flow
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
-import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
@@ -45,7 +46,6 @@ import com.yourname.expensetracker.data.database.AppDatabase
 
 @Singleton
 class ReceiptRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val database: AppDatabase,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
@@ -60,6 +60,8 @@ class ReceiptRepository @Inject constructor(
     private val budgetMonitor: BudgetMonitor,
     private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val crossSourceDeduplication: CrossSourceDeduplication,
+    private val debugIssueDetector: DebugIssueDetector,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
     private val warrantyUseCase: AutoCreateWarrantyFromReceiptUseCase
 ) {
@@ -89,142 +91,146 @@ class ReceiptRepository @Inject constructor(
         imageUri: Uri,
         autoCreateReview: Boolean = false
     ): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
-        // 1. Run OCR (Separate Try-Catch to distinguish OCR failure vs Parse failure)
-        val ocrResult = try {
-            ocrService.processUri(imageUri)
-        } catch (e: Exception) {
-            Timber.e(e, "OCR Failed for $imageUri")
-            // Fallback: Try to save the image using manual record logic
-            return saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
-                val failedReceipt = receipt.copy(
-                    rawOcrText = "Scan Failed: ${e.message}", 
-                    confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK
-                )
-                scannedReceiptDao.update(failedReceipt)
-                Pair(failedReceipt, parsed)
-            }
-        }
-
-        try {
-            // 2. Parse the OCR text
-            val parsed = receiptParser.parse(ocrResult.fullText)
-
-            // 3. Normalize merchant if found
-            val lookupResult = parsed.merchantName?.let {
-                merchantNormalizer.normalize(it, autoCreate = true)
-            }
-            val normalizedMerchant = lookupResult?.canonical?.normalizedName
-
-            // 4. Save scanned receipt record
-            val receipt = ScannedReceipt(
-                imagePath = ocrResult.savedImagePath,
-                rawOcrText = ocrResult.fullText,
-                parsedTotal = parsed.total,
-                parsedMerchant = normalizedMerchant ?: parsed.merchantName,
-                parsedDate = parsed.date,
-                parsedItems = if (parsed.lineItems.isNotEmpty())
-                    receiptParser.lineItemsToJson(parsed.lineItems) else null,
-                parsedTaxAmount = parsed.tax,
-                currency = parsed.currency,
-                confidence = parsed.confidence
-            )
-
-            val receiptId = scannedReceiptDao.insert(receipt)
-
-            // F1: Trigger warranty extraction after receipt is saved
-            try {
-                val warrantyResult = warrantyUseCase.execute(receiptId, ocrResult.fullText)
-                when (warrantyResult) {
-                    is WarrantyCreationResult.Success -> {
-                        Timber.d("Warranty created for receipt $receiptId with confidence ${warrantyResult.confidence}%")
-                    }
-                    is WarrantyCreationResult.LowConfidence -> {
-                        // Low-confidence extractions are persisted as needsReview drafts in the use case.
-                        Timber.d("Warranty review draft persisted for receipt $receiptId (confidence ${warrantyResult.extractedData.confidence}%)")
-                    }
-                    is WarrantyCreationResult.AlreadyExists -> {
-                        Timber.d("Warranty already exists for receipt $receiptId (id=${warrantyResult.existingWarrantyId})")
-                    }
-                    is WarrantyCreationResult.Failure -> {
-                        Timber.d("Warranty extraction skipped for receipt $receiptId: ${warrantyResult.error}")
-                    }
-                }
+        return withContext(ioDispatcher) {
+            // 1. Run OCR (Separate Try-Catch to distinguish OCR failure vs Parse failure)
+            val ocrResult = try {
+                ocrService.processUri(imageUri)
             } catch (e: Exception) {
-                Timber.e(e, "Warranty extraction failed for receipt $receiptId")
-                // Don't fail the whole process if warranty extraction fails
+                Timber.e(e, "OCR Failed for $imageUri")
+                // Fallback: Try to save the image using manual record logic
+                return@withContext saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
+                    val failedReceipt = receipt.copy(
+                        rawOcrText = "Scan Failed: ${e.message}", 
+                        confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK
+                    )
+                    scannedReceiptDao.update(failedReceipt)
+                    Pair(failedReceipt, parsed)
+                }
             }
 
-            // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
-            if (autoCreateReview) {
-                val suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant"
-                val review = PendingReview(
-                    rawNotificationId = null,
-                    scannedReceiptId = receiptId,
-                    suggestedAmount = parsed.total ?: 0.0,
-                    suggestedCurrency = parsed.currency,
-                    suggestedMerchant = suggestedMerchant,
-                    suggestedMerchantKey = MerchantKeyGenerator.generate(suggestedMerchant),
-                    suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                    suggestedDate = parsed.date, // Preserving the date found by parser
-                    confidence = parsed.confidence,
-                    packageName = "receipt.scan",
-                    notificationTitle = "Scanned Receipt",
-                    notificationText = ocrResult.fullText.take(200), // Preview snippet
-                    suggestedCategoryId = normalizedMerchant?.let { 
-                         hybridClassifier.classify(it, parsed.total ?: 0.0).categoryId.takeIf { id -> id > 0 }
+            try {
+                // 2. Parse the OCR text
+                val parsed = receiptParser.parse(ocrResult.fullText)
+
+                // 3. Normalize merchant if found
+                val lookupResult = parsed.merchantName?.let {
+                    merchantNormalizer.normalize(it, autoCreate = true)
+                }
+                val normalizedMerchant = lookupResult?.canonical?.normalizedName
+
+                // 4. Save scanned receipt record
+                val receipt = ScannedReceipt(
+                    imagePath = ocrResult.savedImagePath,
+                    rawOcrText = ocrResult.fullText,
+                    parsedTotal = parsed.total,
+                    parsedMerchant = normalizedMerchant ?: parsed.merchantName,
+                    parsedDate = parsed.date,
+                    parsedItems = if (parsed.lineItems.isNotEmpty())
+                        receiptParser.lineItemsToJson(parsed.lineItems) else null,
+                    parsedTaxAmount = parsed.tax,
+                    currency = parsed.currency,
+                    confidence = parsed.confidence
+                )
+
+                val receiptId = database.withTransaction {
+                    val insertedReceiptId = scannedReceiptDao.insert(receipt)
+
+                    // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
+                    if (autoCreateReview) {
+                        val suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant"
+                        val review = PendingReview(
+                            rawNotificationId = null,
+                            scannedReceiptId = insertedReceiptId,
+                            suggestedAmount = parsed.total ?: 0.0,
+                            suggestedCurrency = parsed.currency,
+                            suggestedMerchant = suggestedMerchant,
+                            suggestedMerchantKey = MerchantKeyGenerator.generate(suggestedMerchant),
+                            suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
+                            suggestedDate = parsed.date, // Preserving the date found by parser
+                            confidence = parsed.confidence,
+                            packageName = "receipt.scan",
+                            notificationTitle = "Scanned Receipt",
+                            notificationText = ocrResult.fullText.take(200), // Preview snippet
+                            suggestedCategoryId = normalizedMerchant?.let {
+                                hybridClassifier.classify(it, parsed.total ?: 0.0).categoryId.takeIf { id -> id > 0 }
+                            }
+                        )
+                        pendingReviewDao.insert(review)
                     }
-                )
-                pendingReviewDao.insert(review)
-            }
-            return Pair(receipt.copy(id = receiptId), parsed)
 
-        } catch (e: Exception) {
-            // Parsing Logic Failed, but we HAVE the OCR text!
-            // Save it so user can manually edit without losing the text.
-            Timber.e(e, "Parsing Failed for $imageUri")
-            
-            val failedReceipt = ScannedReceipt(
-                imagePath = ocrResult.savedImagePath,
-                rawOcrText = ocrResult.fullText, // PRESERVED!
-                parsedTotal = null,
-                parsedMerchant = null,
-                parsedDate = null, 
-                parsedItems = null,
-                parsedTaxAmount = null, // Explicitly null for failed parse
-                currency = "EUR",
-                confidence = 0f
-            )
-            val receiptId = scannedReceiptDao.insert(failedReceipt)
-            
-            if (autoCreateReview) {
-                val review = PendingReview(
-                    rawNotificationId = null,
-                    scannedReceiptId = receiptId,
-                    suggestedAmount = 0.0,
-                    suggestedCurrency = "EUR",
-                    suggestedMerchant = "Parsing Failed",
-                    suggestedMerchantKey = MerchantKeyGenerator.generate("Parsing Failed"),
-                    suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                    suggestedCategoryId = null, // No category for failed parse
-                    confidence = 0f,
-                    packageName = "receipt.scan.error",
-                    notificationTitle = "Parsing Failed",
-                    notificationText = "OCR Text preserved. Manual entry required."
-                )
-                pendingReviewDao.insert(review)
-            }
+                    insertedReceiptId
+                }
 
-            return Pair(failedReceipt.copy(id = receiptId), ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f))
+                // F1: Trigger warranty extraction after receipt is saved
+                try {
+                    val warrantyResult = warrantyUseCase.execute(receiptId, ocrResult.fullText)
+                    when (warrantyResult) {
+                        is WarrantyCreationResult.Success -> {
+                            Timber.d("Warranty created for receipt $receiptId with confidence ${warrantyResult.confidence}%")
+                        }
+                        is WarrantyCreationResult.LowConfidence -> {
+                            // Low-confidence extractions are persisted as needsReview drafts in the use case.
+                            Timber.d("Warranty review draft persisted for receipt $receiptId (confidence ${warrantyResult.extractedData.confidence}%)")
+                        }
+                        is WarrantyCreationResult.AlreadyExists -> {
+                            Timber.d("Warranty already exists for receipt $receiptId (id=${warrantyResult.existingWarrantyId})")
+                        }
+                        is WarrantyCreationResult.Failure -> {
+                            Timber.d("Warranty extraction skipped for receipt $receiptId: ${warrantyResult.error}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Warranty extraction failed for receipt $receiptId")
+                    // Don't fail the whole process if warranty extraction fails
+                }
+
+                return@withContext Pair(receipt.copy(id = receiptId), parsed)
+
+            } catch (e: Exception) {
+                // Parsing Logic Failed, but we HAVE the OCR text!
+                // Save it so user can manually edit without losing the text.
+                Timber.e(e, "Parsing Failed for $imageUri")
+                
+                val failedReceipt = ScannedReceipt(
+                    imagePath = ocrResult.savedImagePath,
+                    rawOcrText = ocrResult.fullText, // PRESERVED!
+                    parsedTotal = null,
+                    parsedMerchant = null,
+                    parsedDate = null, 
+                    parsedItems = null,
+                    parsedTaxAmount = null, // Explicitly null for failed parse
+                    currency = "EUR",
+                    confidence = 0f
+                )
+                val receiptId = scannedReceiptDao.insert(failedReceipt)
+                
+                if (autoCreateReview) {
+                    val review = PendingReview(
+                        rawNotificationId = null,
+                        scannedReceiptId = receiptId,
+                        suggestedAmount = 0.0,
+                        suggestedCurrency = "EUR",
+                        suggestedMerchant = "Parsing Failed",
+                        suggestedMerchantKey = MerchantKeyGenerator.generate("Parsing Failed"),
+                        suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
+                        suggestedCategoryId = null, // No category for failed parse
+                        confidence = 0f,
+                        packageName = "receipt.scan.error",
+                        notificationTitle = "Parsing Failed",
+                        notificationText = "OCR Text preserved. Manual entry required."
+                    )
+                    pendingReviewDao.insert(review)
+                }
+
+                return@withContext Pair(failedReceipt.copy(id = receiptId), ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f))
+            }
         }
     }
 
     suspend fun saveManualReceiptRecord(imageUri: android.net.Uri): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
-        // 1. Try to at least copy the image for display if possible, or use original
-        // For simplicity, we'll try to get ocrService to at least give us a path if it can load the bitmap
+        // 1. Persist a display copy without re-running OCR recognition.
         val path = try {
-            // We'll reuse the OCR service's image saving logic if possible
-            // But if it fails, we fall back to the original URI string (not ideal but better than nothing)
-            ocrService.processImage(imageUri).savedImagePath
+            ocrService.persistImageCopy(imageUri)
         } catch (e: Exception) {
             imageUri.toString()
         }
@@ -315,32 +321,56 @@ class ReceiptRepository @Inject constructor(
             return com.yourname.expensetracker.domain.model.Result.Duplicate
         }
 
-        // 4. Check budgets
-        budgetMonitor.checkBudgets()
+        // 4. Check budgets (best-effort, post-commit)
+        runPostCommitSafely(
+            action = "budget check after receipt expense insert (expenseId=$expenseId, receiptId=$receiptId)"
+        ) {
+            budgetMonitor.checkBudgets()
+        }
 
-        // 5. Check for anomalies and alert
-        val enrichedExpense = expense.copy(id = expenseId)
-        val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-            expense = enrichedExpense,
-            category = finalCategoryId?.let { database.categoryDao().getById(it) }
-        )
-        anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+        // 5. Check for anomalies and alert (best-effort, post-commit)
+        runPostCommitSafely(
+            action = "anomaly alert check after receipt expense insert (expenseId=$expenseId, receiptId=$receiptId)"
+        ) {
+            val enrichedExpense = expense.copy(id = expenseId)
+            val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+                expense = enrichedExpense,
+                category = finalCategoryId?.let { database.categoryDao().getById(it) }
+            )
+            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+        }
 
         // 6. Learn merchant → category mapping
         if (finalCategoryId != null) {
-            try {
+            runPostCommitSafely(
+                action = "classifier correction learning after receipt expense insert (expenseId=$expenseId, merchant=$normalizedMerchant)"
+            ) {
                 hybridClassifier.learnFromCorrection(
                     merchantName = normalizedMerchant,
                     correctCategoryId = finalCategoryId,
                     amount = amount
                 )
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to learn categorization")
             }
-            merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
+            runPostCommitSafely(
+                action = "merchant-category pattern learning after receipt expense insert (expenseId=$expenseId, merchant=$normalizedMerchant, categoryId=$finalCategoryId)"
+            ) {
+                merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
+            }
         }
 
         return com.yourname.expensetracker.domain.model.Result.Success(expenseId)
+    }
+
+    private suspend fun runPostCommitSafely(
+        action: String,
+        block: suspend () -> Unit
+    ) {
+        runCatching {
+            block()
+        }.onFailure { error ->
+            if (error is CancellationException) throw error
+            Timber.e(error, "Post-commit action failed: %s", action)
+        }
     }
 
     fun createTempPhotoUri(): Uri {
@@ -373,7 +403,7 @@ class ReceiptRepository @Inject constructor(
 
     /**
      * Process multiple receipts in parallel with a concurrency limit to prevent OOM.
-     * Optimized: Sequential processing with semaphore limits memory usage (Issue 2.16)
+     * Optimized: Coroutine-bounded concurrency to avoid blocking worker threads.
      */
     suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult {
         val uniqueUris = uris.distinctBy { it.toString() }
@@ -381,124 +411,115 @@ class ReceiptRepository @Inject constructor(
             Timber.d("Removed ${uris.size - uniqueUris.size} duplicate URIs")
         }
 
-        val semaphore = java.util.concurrent.Semaphore(3)
+        val maxConcurrency = 3
+        val semaphore = Semaphore(permits = maxConcurrency)
         val total = uniqueUris.size
-        var successes = 0
-        var failures = 0
-        val errors = mutableListOf<String>()
+        val processedCount = AtomicInteger(0)
+        val progressMutex = Mutex()
 
-        for (uri in uniqueUris) {
-            semaphore.acquire()
-            try {
-                processReceipt(uri, autoCreateReview = true)
-                successes++
-            } catch (e: Exception) {
-                failures++
-                errors.add("Failed to process $uri: ${e.message}")
-            } finally {
-                semaphore.release()
-            }
-            onProgress(successes + failures, total)
+        data class BatchItemResult(val success: Boolean, val error: String?)
+
+        val results = coroutineScope {
+            uniqueUris.map { uri ->
+                async {
+                    val result = withContext(ioDispatcher) {
+                        semaphore.withPermit {
+                            try {
+                                processReceipt(uri, autoCreateReview = true)
+                                BatchItemResult(success = true, error = null)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                BatchItemResult(
+                                    success = false,
+                                    error = "Failed to process $uri: ${e.message}"
+                                )
+                            }
+                        }
+                    }
+
+                    val processed = processedCount.incrementAndGet()
+                    progressMutex.withLock {
+                        onProgress(processed, total)
+                    }
+
+                    result
+                }
+            }.awaitAll()
         }
 
-        return BatchResult(successes, failures, errors)
+        val successCount = results.count { it.success }
+        val errors = results.mapNotNull { it.error }
+        return BatchResult(
+            successCount = successCount,
+            failureCount = total - successCount,
+            errors = errors
+        )
     }
 
     /**
      * Process an image URI as a bank statement: extracting multiple transactions
      */
     suspend fun processStatement(imageUri: Uri): BatchResult {
-        val startTime = timeProvider.now()
-        val parsingLogs = mutableListOf<String>()
-        
-        // 1. Run OCR
-        val ocrResult: OcrResult = ocrService.processUri(imageUri)
+        return withContext(ioDispatcher) {
+            val startTime = timeProvider.now()
+            val parsingLogs = mutableListOf<String>()
+            
+            // 1. Run OCR
+            val ocrResult: OcrResult = ocrService.processUri(imageUri)
 
-        // 2. Parse as multiple transactions using spatial data
-        val parsedTransactions = statementParser.parse(ocrResult.blocks)
-        
-        if (parsedTransactions.isEmpty()) {
-            parsingLogs.add("No transactions found in bank statement")
-            val debugData = DebugData(
-                rawText = ocrResult.fullText,
-                parsedTransactions = emptyList(),
-                parsingLogs = parsingLogs,
-                processingTimeMs = timeProvider.now() - startTime,
-                parserUsed = "BankStatementParser"
+            // 2. Parse as multiple transactions using spatial data
+            val parsedTransactions = statementParser.parse(ocrResult.blocks)
+            
+            if (parsedTransactions.isEmpty()) {
+                parsingLogs.add("No transactions found in bank statement")
+                val debugData = DebugData(
+                    rawText = ocrResult.fullText,
+                    parsedTransactions = emptyList(),
+                    parsingLogs = parsingLogs,
+                    processingTimeMs = timeProvider.now() - startTime,
+                    parserUsed = "BankStatementParser"
+                )
+                return@withContext BatchResult(0, 1, listOf("No transactions found in screenshot"), debugData)
+            }
+
+            // 3. Save common scanned receipt record
+            val receiptRecord = ScannedReceipt(
+                imagePath = ocrResult.savedImagePath,
+                rawOcrText = ocrResult.fullText,
+                parsedTotal = null, // Varies per transaction
+                parsedMerchant = "Bank Statement",
+                parsedDate = timeProvider.now(),
+                parsedItems = null,
+                parsedTaxAmount = null,
+                currency = parsedTransactions.firstOrNull()?.currency ?: "EUR",
+                confidence = 0.8f
             )
-            return BatchResult(0, 1, listOf("No transactions found in screenshot"), debugData)
-        }
+            val receiptId = scannedReceiptDao.insert(receiptRecord)
 
-        // 3. Save common scanned receipt record
-        val receiptRecord = ScannedReceipt(
-            imagePath = ocrResult.savedImagePath,
-            rawOcrText = ocrResult.fullText,
-            parsedTotal = null, // Varies per transaction
-            parsedMerchant = "Bank Statement",
-            parsedDate = timeProvider.now(),
-            parsedItems = null,
-            parsedTaxAmount = null,
-            currency = parsedTransactions.firstOrNull()?.currency ?: "EUR",
-            confidence = 0.8f
-        )
-        val receiptId = scannedReceiptDao.insert(receiptRecord)
+            // 4. Create a PendingReview for EACH transaction found
+            var successCount = 0
+            val errors = mutableListOf<String>()
 
-        // 4. Create a PendingReview for EACH transaction found
-        var successCount = 0
-        val errors = mutableListOf<String>()
-
-        parsedTransactions.forEach { tx ->
-            try {
-                // Normalize merchant
-                val lookupResult = merchantNormalizer.normalize(tx.merchant, autoCreate = true)
-                val normalizedMerchant = lookupResult.canonical.normalizedName
-                
-                val classification = hybridClassifier.classify(
-                    merchantName = normalizedMerchant,
-                    amount = tx.amount
-                )
-
-                val transactionDate = tx.date ?: timeProvider.now()
-                val merchantKey = MerchantKeyGenerator.generate(normalizedMerchant)
-                val startDate = transactionDate - STATEMENT_DEDUPE_WINDOW_MS
-                val endDate = transactionDate + STATEMENT_DEDUPE_WINDOW_MS + 1
-                val minAmount = tx.amount - AMOUNT_TOLERANCE
-                val maxAmount = tx.amount + AMOUNT_TOLERANCE
-
-                val review = PendingReview(
-                    rawNotificationId = null,
-                    scannedReceiptId = receiptId,
-                    suggestedAmount = tx.amount,
-                    suggestedCurrency = tx.currency,
-                    suggestedMerchant = normalizedMerchant,
-                    suggestedMerchantKey = MerchantKeyGenerator.generate(normalizedMerchant),
-                    suggestedType = tx.type.name,
-                    suggestedCategoryId = classification.categoryId.takeIf { id -> id > 0 },
-                    suggestedDate = tx.date ?: timeProvider.now(),
-                    confidence = tx.confidence,
-                    packageName = "statement.import",
-                    notificationTitle = "Bank Screenshot",
-                    notificationText = "Imported from screenshot: ${tx.merchant}"
-                )
-
-                // Window-based duplicate logic (merchant/date/amount/currency ± tolerance)
-                // cannot be fully enforced with a strict DB unique index. Keep read+write
-                // in one transaction to avoid non-atomic check/delete/insert races.
-                val outcome = database.withTransaction {
-                    val hasExpenseDuplicate = hasExpenseDuplicateInRange(
-                        merchantKey = merchantKey,
+            parsedTransactions.forEach { tx ->
+                try {
+                    // Normalize merchant
+                    val lookupResult = merchantNormalizer.normalize(tx.merchant, autoCreate = true)
+                    val normalizedMerchant = lookupResult.canonical.normalizedName
+                    
+                    val classification = hybridClassifier.classify(
                         merchantName = normalizedMerchant,
-                        startDate = startDate,
-                        endDate = endDate,
-                        minAmount = minAmount,
-                        maxAmount = maxAmount
+                        amount = tx.amount
                     )
 
-                    if (hasExpenseDuplicate) {
-                        return@withTransaction StatementInsertOutcome.SKIPPED_EXPENSE_DUPLICATE
-                    }
+                    val transactionDate = tx.date ?: timeProvider.now()
+                    val merchantKey = MerchantKeyGenerator.generate(normalizedMerchant)
+                    val startDate = transactionDate - STATEMENT_DEDUPE_WINDOW_MS
+                    val endDate = transactionDate + STATEMENT_DEDUPE_WINDOW_MS + 1
+                    val minAmount = tx.amount - AMOUNT_TOLERANCE
+                    val maxAmount = tx.amount + AMOUNT_TOLERANCE
 
-                    val pendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRange(
+                    val prefetchedPendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRange(
                         merchantKey = merchantKey,
                         merchantName = normalizedMerchant,
                         startDate = startDate,
@@ -507,99 +528,147 @@ class ReceiptRepository @Inject constructor(
                         maxAmount = maxAmount,
                         currency = tx.currency
                     )
-
-                    if (pendingReviewDuplicate != null) {
-                        val resolution = crossSourceDeduplication.resolvePendingReviewDuplicate(
-                            existingReview = pendingReviewDuplicate,
+                    val prefetchedDuplicateResolution = prefetchedPendingReviewDuplicate?.let {
+                        crossSourceDeduplication.resolvePendingReviewDuplicate(
+                            existingReview = it,
                             newSource = "statement"
                         )
+                    }
 
-                        when (resolution) {
-                            com.yourname.expensetracker.domain.intelligence.DuplicateResolution.KeepExisting -> {
-                                return@withTransaction StatementInsertOutcome.SKIPPED_PENDING_EXISTING
+                    val review = PendingReview(
+                        rawNotificationId = null,
+                        scannedReceiptId = receiptId,
+                        suggestedAmount = tx.amount,
+                        suggestedCurrency = tx.currency,
+                        suggestedMerchant = normalizedMerchant,
+                        suggestedMerchantKey = MerchantKeyGenerator.generate(normalizedMerchant),
+                        suggestedType = tx.type.toDbTransactionType().name,
+                        suggestedCategoryId = classification.categoryId.takeIf { id -> id > 0 },
+                        suggestedDate = tx.date ?: timeProvider.now(),
+                        confidence = tx.confidence,
+                        packageName = "statement.import",
+                        notificationTitle = "Bank Screenshot",
+                        notificationText = "Imported from screenshot: ${tx.merchant}"
+                    )
+
+                    // Window-based duplicate logic (merchant/date/amount/currency ± tolerance)
+                    // cannot be fully enforced with a strict DB unique index. Keep read+write
+                    // in one transaction to avoid non-atomic check/delete/insert races.
+                    val outcome = database.withTransaction {
+                        val hasExpenseDuplicate = hasExpenseDuplicateInRange(
+                            merchantKey = merchantKey,
+                            merchantName = normalizedMerchant,
+                            startDate = startDate,
+                            endDate = endDate,
+                            minAmount = minAmount,
+                            maxAmount = maxAmount
+                        )
+
+                        if (hasExpenseDuplicate) {
+                            return@withTransaction StatementInsertOutcome.SKIPPED_EXPENSE_DUPLICATE
+                        }
+
+                        val transactionalPendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRange(
+                            merchantKey = merchantKey,
+                            merchantName = normalizedMerchant,
+                            startDate = startDate,
+                            endDate = endDate,
+                            minAmount = minAmount,
+                            maxAmount = maxAmount,
+                            currency = tx.currency
+                        )
+
+                        if (transactionalPendingReviewDuplicate != null) {
+                            if (prefetchedPendingReviewDuplicate?.id != transactionalPendingReviewDuplicate.id) {
+                                return@withTransaction StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE
                             }
 
-                            com.yourname.expensetracker.domain.intelligence.DuplicateResolution.ReplaceExisting -> {
-                                pendingReviewDao.delete(pendingReviewDuplicate)
-                                val insertedId = pendingReviewDao.insert(review)
-                                return@withTransaction if (insertedId > 0) {
-                                    StatementInsertOutcome.REPLACED_AND_INSERTED
-                                } else {
-                                    StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE
+                            when (prefetchedDuplicateResolution ?: DuplicateResolution.KeepExisting) {
+                                DuplicateResolution.KeepExisting -> {
+                                    return@withTransaction StatementInsertOutcome.SKIPPED_PENDING_EXISTING
+                                }
+
+                                DuplicateResolution.ReplaceExisting -> {
+                                    pendingReviewDao.delete(transactionalPendingReviewDuplicate)
+                                    val insertedId = pendingReviewDao.insert(review)
+                                    return@withTransaction if (insertedId > 0) {
+                                        StatementInsertOutcome.REPLACED_AND_INSERTED
+                                    } else {
+                                        StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE
+                                    }
+                                }
+
+                                DuplicateResolution.DiscardNew -> {
+                                    return@withTransaction StatementInsertOutcome.SKIPPED_DISCARD_NEW
                                 }
                             }
+                        }
 
-                            com.yourname.expensetracker.domain.intelligence.DuplicateResolution.DiscardNew -> {
-                                return@withTransaction StatementInsertOutcome.SKIPPED_DISCARD_NEW
-                            }
+                        val insertedId = pendingReviewDao.insert(review)
+                        if (insertedId > 0) {
+                            StatementInsertOutcome.INSERTED
+                        } else {
+                            StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE
                         }
                     }
 
-                    val insertedId = pendingReviewDao.insert(review)
-                    if (insertedId > 0) {
-                        StatementInsertOutcome.INSERTED
-                    } else {
-                        StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE
+                    when (outcome) {
+                        StatementInsertOutcome.INSERTED -> {
+                            successCount++
+                        }
+
+                        StatementInsertOutcome.REPLACED_AND_INSERTED -> {
+                            parsingLogs.add("REPLACE: Replacing existing pending review with statement data for ${tx.merchant}")
+                            successCount++
+                        }
+
+                        StatementInsertOutcome.SKIPPED_EXPENSE_DUPLICATE -> {
+                            parsingLogs.add("SKIP: Duplicate in Expenses for ${tx.merchant} €${tx.amount}")
+                        }
+
+                        StatementInsertOutcome.SKIPPED_PENDING_EXISTING -> {
+                            parsingLogs.add("SKIP: Pending review already exists for ${tx.merchant} €${tx.amount}")
+                        }
+
+                        StatementInsertOutcome.SKIPPED_DISCARD_NEW -> {
+                            parsingLogs.add("SKIP: Discarding new transaction ${tx.merchant} €${tx.amount}")
+                        }
+
+                        StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE -> {
+                            parsingLogs.add("SKIP: Pending review duplicate exists for ${tx.merchant} €${tx.amount}")
+                        }
                     }
+                } catch (e: Exception) {
+                    val errorMsg = "Failed to save transaction ${tx.merchant}: ${e.message}"
+                    errors.add(errorMsg)
+                    parsingLogs.add(errorMsg)
                 }
-
-                when (outcome) {
-                    StatementInsertOutcome.INSERTED -> {
-                        successCount++
-                    }
-
-                    StatementInsertOutcome.REPLACED_AND_INSERTED -> {
-                        parsingLogs.add("REPLACE: Replacing existing pending review with statement data for ${tx.merchant}")
-                        successCount++
-                    }
-
-                    StatementInsertOutcome.SKIPPED_EXPENSE_DUPLICATE -> {
-                        parsingLogs.add("SKIP: Duplicate in Expenses for ${tx.merchant} €${tx.amount}")
-                    }
-
-                    StatementInsertOutcome.SKIPPED_PENDING_EXISTING -> {
-                        parsingLogs.add("SKIP: Pending review already exists for ${tx.merchant} €${tx.amount}")
-                    }
-
-                    StatementInsertOutcome.SKIPPED_DISCARD_NEW -> {
-                        parsingLogs.add("SKIP: Discarding new transaction ${tx.merchant} €${tx.amount}")
-                    }
-
-                    StatementInsertOutcome.SKIPPED_PENDING_DUPLICATE_RACE -> {
-                        parsingLogs.add("SKIP: Pending review duplicate exists for ${tx.merchant} €${tx.amount}")
-                    }
-                }
-            } catch (e: Exception) {
-                val errorMsg = "Failed to save transaction ${tx.merchant}: ${e.message}"
-                errors.add(errorMsg)
-                parsingLogs.add(errorMsg)
             }
-        }
-        
-        // Add low confidence warnings to logs
-        parsedTransactions.filter { it.confidence < 0.7f }.forEach { tx ->
-            parsingLogs.add("Low confidence (${(tx.confidence * 100).toInt()}%) for ${tx.merchant}")
-        }
-        
-        // Detect issues automatically
-        val issues = DebugIssueDetector.detectIssues(
-            context = context,
-            rawText = ocrResult.fullText,
-            transactions = parsedTransactions,
-            processingTimeMs = timeProvider.now() - startTime
-        )
-        
-        // Create debug data
-        val debugData = DebugData(
-            rawText = ocrResult.fullText,
-            parsedTransactions = parsedTransactions,
-            parsingLogs = parsingLogs,
-            processingTimeMs = timeProvider.now() - startTime,
-            parserUsed = "BankStatementParser (${parsedTransactions.size} transactions)",
-            issues = issues
-        )
+            
+            // Add low confidence warnings to logs
+            parsedTransactions.filter { it.confidence < 0.7f }.forEach { tx ->
+                parsingLogs.add("Low confidence (${(tx.confidence * 100).toInt()}%) for ${tx.merchant}")
+            }
+            
+            // Detect issues automatically
+            val issues = debugIssueDetector.detectIssues(
+                rawText = ocrResult.fullText,
+                transactions = parsedTransactions,
+                processingTimeMs = timeProvider.now() - startTime
+            )
+            
+            // Create debug data
+            val debugData = DebugData(
+                rawText = ocrResult.fullText,
+                parsedTransactions = parsedTransactions,
+                parsingLogs = parsingLogs,
+                processingTimeMs = timeProvider.now() - startTime,
+                parserUsed = "BankStatementParser (${parsedTransactions.size} transactions)",
+                issues = issues
+            )
 
-        return BatchResult(successCount, parsedTransactions.size - successCount, errors, debugData)
+            return@withContext BatchResult(successCount, parsedTransactions.size - successCount, errors, debugData)
+        }
     }
 
     private suspend fun hasExpenseDuplicateInRange(

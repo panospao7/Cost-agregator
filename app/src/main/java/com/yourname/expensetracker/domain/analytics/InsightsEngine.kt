@@ -6,7 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
-import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
+import com.yourname.expensetracker.domain.model.dashboard.toEntityExpense
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -37,9 +37,6 @@ class InsightsEngine @Inject constructor(
 
     companion object {
         private val DAY_NAMES = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-        
-        private const val PACE_UNDER_THRESHOLD = 90f
-        private const val PACE_OVER_THRESHOLD = 110f
     }
 
     suspend fun generateInsights(
@@ -343,6 +340,7 @@ class InsightsEngine @Inject constructor(
         // Group purchases by category, then by month, compute average
         val purchases = allExpenses.filter {
             it.transactionType == TransactionType.PURCHASE
+                    && !it.isNotMine
                     && it.categoryId != null
                     && it.date < currentMonth.startMs // exclude current month
         }
@@ -380,7 +378,7 @@ class InsightsEngine @Inject constructor(
             .groupBy { it.merchantKey }
 
         return stats.map { ms ->
-            val amounts = purchasesByMerchantKey[ms.merchantName]?.map { it.amount } ?: emptyList()
+            val amounts = purchasesByMerchantKey[ms.merchantName]?.map { it.effectiveAmount } ?: emptyList()
             val stdDev = if (amounts.size >= 3) calculateStdDev(amounts) else null
 
             val isRecurring = ms.transactionCount >= 2 &&
@@ -401,80 +399,30 @@ class InsightsEngine @Inject constructor(
 
     // === Spending Pace ===
 
-    private suspend fun buildSpendingPace(
+    private fun buildSpendingPace(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod,
         allExpenses: List<Expense>
-    ): SpendingPace = coroutineScope {
-        val now = timeProvider.now()
-        
-        val currentSpentDeferred = async { expenseRepository.getTotalForPeriod(currentMonth.startMs, currentMonth.endMs) }
-        val previousTotalDeferred = async { expenseRepository.getTotalForPeriod(previousMonth.startMs, previousMonth.endMs) }
-        val previousCountDeferred = async { expenseRepository.getCountForPeriod(previousMonth.startMs, previousMonth.endMs) }
-
-        val currentSpent = currentSpentDeferred.await()
-        val previousTotal = previousTotalDeferred.await()
-        val previousCount = previousCountDeferred.await()
-
-        val dayOfMonth = TimePeriodUtils.getDayOfMonth(now).coerceAtLeast(0)
-        val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
-        val daysInPreviousMonth = TimePeriodUtils.getDaysInMonth(previousMonth.startMs)
-
-        // Calculate average monthly total (excluding current month)
-        val avgMonthly = calculateAverageMonthlySpend(allExpenses, currentMonth)
-
-        // Project: if we've spent X in D days, we'll spend X * (totalDays/D) by month end
-        val projectedTotal = if (dayOfMonth >= 4) {
-            currentSpent * daysInMonth.toDouble() / dayOfMonth
-        } else if (dayOfMonth > 0) {
-            // Conservative estimate for first 3 days to avoid massive multipliers
-            currentSpent * (daysInMonth.toDouble() / 10.0).coerceAtLeast(1.0)
-        } else {
-            currentSpent
-        }
-
-        // Canonical pace formula used across analytics engines:
-        // pace% = (currentDailyRate / baselineDailyRate) * 100
-        // currentDailyRate = currentSpent / daysElapsed
-        // baselineDailyRate = previousMonthTotal / daysInPreviousMonth
-        val currentDailyRate = if (dayOfMonth > 0) currentSpent / dayOfMonth else 0.0
-        val baselineDailyRate = if (previousCount > 0 && daysInPreviousMonth > 0) {
-            previousTotal / daysInPreviousMonth
-        } else {
-            0.0
-        }
-        val hasBaseline = baselineDailyRate > 0.0
-        val pacePercentage = if (hasBaseline) {
-            (currentDailyRate / baselineDailyRate * 100).toFloat()
-        } else 0f
-
-        Timber.tag("InsightsEngine").d(
-            "Pace calculation: currentSpent=%.2f, daysElapsed=%d, currentDailyRate=%.4f, previousTotal=%.2f, daysInPreviousMonth=%d, baselineDailyRate=%.4f, pacePercentage=%.2f",
-            currentSpent,
-            dayOfMonth,
-            currentDailyRate,
-            previousTotal,
-            daysInPreviousMonth,
-            baselineDailyRate,
-            pacePercentage
+    ): SpendingPace {
+        val canonicalPace = spendingPaceCalculator.calculate(
+            currentMonthStart = currentMonth.startMs,
+            previousMonthStart = previousMonth.startMs,
+            previousMonthEnd = previousMonth.endMs,
+            allExpenses = allExpenses
         )
 
-        val paceStatus = when {
-            !hasBaseline -> PaceStatus.NO_BASELINE
-            pacePercentage < PACE_UNDER_THRESHOLD -> PaceStatus.UNDER_PACE
-            pacePercentage > PACE_OVER_THRESHOLD -> PaceStatus.OVER_PACE
-            else -> PaceStatus.ON_PACE
-        }
+        // Preserve Insights-specific enrichment while delegating pace math.
+        val avgMonthly = calculateAverageMonthlySpend(allExpenses, currentMonth)
 
-        SpendingPace(
-            currentMonthSpent = currentSpent,
-            daysElapsed = dayOfMonth,
-            daysInMonth = daysInMonth,
-            projectedTotal = projectedTotal,
-            previousMonthTotal = if (hasBaseline) previousTotal else null,
+        return SpendingPace(
+            currentMonthSpent = canonicalPace.currentMonthSpent,
+            daysElapsed = canonicalPace.daysElapsed,
+            daysInMonth = canonicalPace.daysInMonth,
+            projectedTotal = canonicalPace.projectedTotal,
+            previousMonthTotal = canonicalPace.previousMonthTotal,
             averageMonthlyTotal = avgMonthly,
-            pacePercentage = pacePercentage,
-            paceStatus = paceStatus
+            pacePercentage = canonicalPace.pacePercentage,
+            paceStatus = canonicalPace.paceStatus
         )
     }
 
@@ -484,6 +432,7 @@ class InsightsEngine @Inject constructor(
     ): Double? {
         val purchases = allExpenses.filter {
             it.transactionType == TransactionType.PURCHASE
+                    && !it.isNotMine
                     && it.date < currentMonth.startMs
         }
         if (purchases.isEmpty()) return null
@@ -749,27 +698,6 @@ class InsightsEngine @Inject constructor(
     @JvmName("getSpendingPaceSuspendDashboard")
     suspend fun getSpendingPaceSuspend(expenses: List<DashboardExpense>): SpendingPace {
         return getSpendingPaceSuspend(expenses.map { it.toEntityExpense() })
-    }
-
-    private fun DashboardExpense.toEntityExpense(): Expense {
-        val txType = when (transactionType) {
-            DashboardTransactionType.PURCHASE -> TransactionType.PURCHASE
-            DashboardTransactionType.WITHDRAWAL -> TransactionType.WITHDRAWAL
-            DashboardTransactionType.TRANSFER -> TransactionType.TRANSFER
-            DashboardTransactionType.DEPOSIT -> TransactionType.DEPOSIT
-            DashboardTransactionType.UNKNOWN -> TransactionType.UNKNOWN
-        }
-        return Expense(
-            id = id,
-            amount = amount,
-            merchant = merchant,
-            transactionType = txType,
-            date = date,
-            categoryId = categoryId,
-            isNotMine = isNotMine,
-            isManualEntry = isManualEntry,
-            merchantKey = com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate(merchant)
-        )
     }
 
     private fun fmt(amount: Double): String = String.format(java.util.Locale.getDefault(), "%.2f", amount)

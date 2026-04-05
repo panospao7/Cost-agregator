@@ -7,10 +7,16 @@ import java.io.File
  */
 interface DatabaseBackupRepository {
     /**
-     * Export the current database to a file in Downloads folder.
+     * Export the current database to an app-private file.
      * @return Result containing the exported file path or error message
      */
     suspend fun exportDatabase(): Result<File>
+
+    /**
+     * Returns a user-facing notice when legacy plaintext backups are detected
+     * in public Downloads from older app versions.
+     */
+    suspend fun getLegacyPublicBackupNotice(): String?
     
     /**
      * Import database from a file.

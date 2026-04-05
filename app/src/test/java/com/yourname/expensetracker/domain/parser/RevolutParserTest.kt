@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import org.junit.Assert.*
 import org.junit.Before
@@ -48,7 +47,7 @@ class RevolutParserTest {
         assertEquals(12.50, result!!.amount, 0.01)
         assertEquals("EUR", result.currency)
         assertEquals("SKLAVENITIS", result.merchant)
-        assertEquals(TransactionType.PURCHASE, result.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
         assertTrue(result.confidence >= 0.90f)
     }
 
@@ -97,7 +96,7 @@ class RevolutParserTest {
         assertNotNull(result)
         assertEquals(5.00, result!!.amount, 0.01)
         assertEquals("John", result.merchant)
-        assertEquals(TransactionType.TRANSFER, result.type)
+        assertEquals(ParsedTransactionType.TRANSFER, result.type)
     }
 
     // === DEPOSIT PARSING ===
@@ -112,7 +111,7 @@ class RevolutParserTest {
         assertNotNull(result)
         assertEquals(100.00, result!!.amount, 0.01)
         assertEquals("Maria", result.merchant)
-        assertEquals(TransactionType.TRANSFER, result.type)
+        assertEquals(ParsedTransactionType.TRANSFER, result.type)
     }
 
     // === ATM PARSING ===
@@ -127,7 +126,7 @@ class RevolutParserTest {
         assertNotNull(result)
         assertEquals(50.00, result!!.amount, 0.01)
         assertEquals("ATM Withdrawal", result.merchant)
-        assertEquals(TransactionType.WITHDRAWAL, result.type)
+        assertEquals(ParsedTransactionType.WITHDRAWAL, result.type)
     }
 
     // === REJECTION TESTS ===

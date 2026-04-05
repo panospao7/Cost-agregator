@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
 import com.yourname.expensetracker.di.LocationHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.GeocodingBatchResult
@@ -47,7 +48,7 @@ class PhotonGeocodingService @Inject constructor(
         useGoogle: Boolean
     ): GeocodingBatchResult {
         val url = buildUrl(query, biasLat, biasLon, limit)
-        Log.d(TAG, "==> Photon request: $url")
+        Log.d(TAG, "==> Photon request ${buildSafeLogRoute(query, biasLat, biasLon, limit)}")
 
         val request = Request.Builder()
             .url(url)
@@ -90,12 +91,13 @@ class PhotonGeocodingService @Inject constructor(
             try {
                 val response = client.newCall(request).execute()
                 if (response.code >= 500 || response.code == 429) {
-                    response.close()
                     if (attempt < maxAttempts - 1) {
+                        response.close()
                         delay(currentDelay)
                         currentDelay = (currentDelay * 2).coerceAtMost(2000)
+                        return@repeat
                     }
-                    return@repeat
+                    return response
                 }
                 return response
             } catch (e: IOException) {
@@ -119,6 +121,15 @@ class PhotonGeocodingService @Inject constructor(
             sb.append("&lat=$biasLat&lon=$biasLon")
         }
         return sb.toString()
+    }
+
+    private fun buildSafeLogRoute(query: String, biasLat: Double?, biasLon: Double?, limit: Int): String {
+        val bias = if (biasLat != null && biasLon != null) {
+            "lat=<redacted>&lon=<redacted>&coordsHash=${"$biasLat,$biasLon".anonymizeForLog()}"
+        } else {
+            "lat=<none>&lon=<none>"
+        }
+        return "/api/?q=<redacted:${query.length}>&limit=$limit&lang=en&$bias"
     }
 
     private fun parseResults(body: String): List<GeocodingResult> {

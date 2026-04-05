@@ -72,9 +72,9 @@ class AccountingExportRepository @Inject constructor(
             val exportFile = File(exportDir, fileName)
 
             val content = when (format) {
-                ExportFormat.QUICKBOOKS_IIF -> quickBooksExporter.export(expenses, categories)
-                ExportFormat.XERO_CSV -> xeroExporter.export(expenses, categories)
-                ExportFormat.FRESHBOOKS_CSV -> freshBooksExporter.export(expenses, categories)
+                ExportFormat.QUICKBOOKS_IIF -> quickBooksExporter.export(expenses.map { it.toExportTransaction() }, categories)
+                ExportFormat.XERO_CSV -> xeroExporter.export(expenses.map { it.toExportTransaction() }, categories)
+                ExportFormat.FRESHBOOKS_CSV -> freshBooksExporter.export(expenses.map { it.toExportTransaction() }, categories)
                 ExportFormat.ACCOUNTANT_REPORT_PDF -> {
                     generateSimpleReport(expenses, categories, startDate, endDate)
                 }
@@ -160,4 +160,15 @@ class AccountingExportRepository @Inject constructor(
             }
         }
     }
+}
+
+private fun Expense.toExportTransaction(): ExportTransaction {
+    return ExportTransaction(
+        id = id,
+        date = date,
+        amount = amount,
+        merchant = merchant,
+        notes = notes,
+        categoryId = categoryId
+    )
 }

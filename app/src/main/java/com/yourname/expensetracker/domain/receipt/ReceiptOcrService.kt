@@ -99,9 +99,10 @@ class ReceiptOcrService @Inject constructor(
         
         // Validate file type
         if (mimeType == "application/pdf") {
+            // Apply the same file-size guard used for images.
+            validateFileSize(uri)
             return processPdf(uri)
         } else if (mimeType in ALLOWED_IMAGE_TYPES) {
-            // Validate file size
             validateFileSize(uri)
             return processImage(uri)
         } else {
@@ -120,7 +121,14 @@ class ReceiptOcrService @Inject constructor(
     private fun validateFileSize(uri: Uri) {
         val fileSize = context.contentResolver.openFileDescriptor(uri, "r")?.use {
             it.statSize
-        } ?: 0
+        }
+
+        // Some content providers don't expose size (statSize == -1).
+        // In that case we allow processing and rely on downstream decode/OCR safeguards.
+        if (fileSize == null || fileSize < 0) {
+            Timber.w("Unable to determine file size for URI: $uri. Skipping size validation.")
+            return
+        }
         
         if (fileSize > MAX_FILE_SIZE) {
             throw IllegalArgumentException(
@@ -177,6 +185,23 @@ class ReceiptOcrService @Inject constructor(
             )
         } finally {
             // CRITICAL: Prevent memory leaks during batch processing
+            bitmap.recycle()
+        }
+    }
+
+    /**
+     * Persist a normalized/compressed image copy without running OCR.
+     *
+     * Use for manual fallback flows where recognition already failed
+     * and only a durable preview path is needed.
+     */
+    fun persistImageCopy(imageUri: Uri): String {
+        val bitmap = loadAndCorrectBitmap(imageUri)
+            ?: throw IllegalStateException("Failed to load and correct image: $imageUri")
+
+        return try {
+            saveReceiptImage(bitmap)
+        } finally {
             bitmap.recycle()
         }
     }

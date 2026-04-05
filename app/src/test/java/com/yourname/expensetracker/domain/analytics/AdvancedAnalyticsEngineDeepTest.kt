@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -38,7 +39,14 @@ class AdvancedAnalyticsEngineDeepTest {
         budgetRepository = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
 
-        engine = AdvancedAnalyticsEngine(expenseRepository, categoryRepository, budgetRepository, timeProvider)
+        engine = AdvancedAnalyticsEngine(
+            expenseRepository,
+            categoryRepository,
+            budgetRepository,
+            timeProvider,
+            Dispatchers.Unconfined,
+            Dispatchers.Unconfined
+        )
 
         coEvery { categoryRepository.getAll() } returns listOf(food)
         every { categoryRepository.allCategories } returns flowOf(listOf(food))

@@ -3,6 +3,9 @@ package com.yourname.expensetracker.data.ai.provider
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
+import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
+import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
@@ -25,8 +28,10 @@ import java.net.SocketTimeoutException
 import javax.net.ssl.SSLException
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import java.util.UUID
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 @Singleton
@@ -78,47 +83,90 @@ class CloudReceiptAssistService @Inject constructor(
             .header("x-goog-api-key", apiKey)
             .build()
 
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val correlationId = newCorrelationId()
-                    val errorClass = "HTTP_${response.code}"
-                    Timber.w(
-                        "CloudReceiptAssistService: HTTP %d class=%s correlationId=%s",
-                        response.code,
-                        errorClass,
-                        correlationId
-                    )
-                    return@use AiServiceResult.Failure(
-                        AiServiceError.HttpError(
-                            response.code,
-                            "errorClass=$errorClass correlationId=$correlationId"
+        return withContext(Dispatchers.IO) {
+            for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                try {
+                    val outcome = client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            val correlationId = CloudCorrelation.newCorrelationId()
+                            val errorClass = "HTTP_${response.code}"
+                            if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                                Timber.w(
+                                    "CloudReceiptAssistService: retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
+                                    response.code,
+                                    errorClass,
+                                    correlationId,
+                                    attempt,
+                                    CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                                )
+                                null
+                            } else {
+                                Timber.w(
+                                    "CloudReceiptAssistService: HTTP %d class=%s correlationId=%s",
+                                    response.code,
+                                    errorClass,
+                                    correlationId
+                                )
+                                AiServiceResult.Failure(
+                                    AiServiceError.HttpError(
+                                        response.code,
+                                        "errorClass=$errorClass correlationId=$correlationId"
+                                    )
+                                )
+                            }
+                        } else {
+                            val body = response.body?.string()
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                            val parsed = parseResponse(body)
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable suggestion in response"))
+                            AiServiceResult.Success(
+                                parsed.copy(usedImageInput = requestPayload.actuallyUsedImageInput)
+                            )
+                        }
+                    }
+
+                    if (outcome != null) return@withContext outcome
+                } catch (e: SocketTimeoutException) {
+                    if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        Timber.w(
+                            e,
+                            "CloudReceiptAssistService: timeout, retrying (%d/%d)",
+                            attempt,
+                            CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                         )
-                    )
+                    } else {
+                        Timber.w(e, "CloudReceiptAssistService: timeout")
+                        return@withContext AiServiceResult.Failure(AiServiceError.Timeout)
+                    }
+                } catch (e: SSLException) {
+                    Timber.w(e, "CloudReceiptAssistService: SSL failure")
+                    return@withContext AiServiceResult.Failure(AiServiceError.SslError)
+                } catch (e: IOException) {
+                    if (CloudRetryPolicy.isRetryableIoException(e) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        Timber.w(
+                            e,
+                            "CloudReceiptAssistService: network failure, retrying (%d/%d)",
+                            attempt,
+                            CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                        )
+                    } else {
+                        Timber.w(e, "CloudReceiptAssistService: network failure")
+                        return@withContext AiServiceResult.Failure(AiServiceError.Offline)
+                    }
+                } catch (e: JSONException) {
+                    Timber.w(e, "CloudReceiptAssistService: JSON parse failure")
+                    return@withContext AiServiceResult.Failure(AiServiceError.ParseError(e.message))
+                } catch (e: Exception) {
+                    Timber.w(e, "CloudReceiptAssistService: parse failure")
+                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
                 }
-                val body = response.body?.string()
-                    ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
-                val parsed = parseResponse(body)
-                    ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable suggestion in response"))
-                AiServiceResult.Success(
-                    parsed.copy(usedImageInput = requestPayload.actuallyUsedImageInput)
-                )
+
+                if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
+                }
             }
-        } catch (e: SocketTimeoutException) {
-            Timber.w(e, "CloudReceiptAssistService: timeout")
-            AiServiceResult.Failure(AiServiceError.Timeout)
-        } catch (e: SSLException) {
-            Timber.w(e, "CloudReceiptAssistService: SSL failure")
-            AiServiceResult.Failure(AiServiceError.SslError)
-        } catch (e: IOException) {
-            Timber.w(e, "CloudReceiptAssistService: network failure")
-            AiServiceResult.Failure(AiServiceError.Offline)
-        } catch (e: JSONException) {
-            Timber.w(e, "CloudReceiptAssistService: JSON parse failure")
-            AiServiceResult.Failure(AiServiceError.ParseError(e.message))
-        } catch (e: Exception) {
-            Timber.w(e, "CloudReceiptAssistService: parse failure")
-            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+
+            AiServiceResult.Failure(AiServiceError.Unknown("Retry attempts exhausted"))
         }
     }
 
@@ -163,6 +211,32 @@ class CloudReceiptAssistService @Inject constructor(
     }
 
     private fun buildPrompt(input: ReceiptAssistInput, hasAttachedImage: Boolean): String {
+        val safeParsedMerchant = if (input.redactBeforeCloud) {
+            input.parsedMerchant?.let { CloudPiiSanitizer.sanitizeMerchant(it, shouldRedact = true) }
+        } else {
+            input.parsedMerchant
+        }
+        val safeLineItemsJson = if (input.redactBeforeCloud) {
+            input.lineItemsJson?.let {
+                CloudPiiSanitizer.sanitizeText(
+                    raw = it,
+                    maxChars = AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS,
+                    fallbackPrefix = "line_items"
+                )
+            }
+        } else {
+            input.lineItemsJson
+        }
+        val safeRawOcrText = if (input.redactBeforeCloud) {
+            CloudPiiSanitizer.sanitizeText(
+                raw = input.rawOcrText,
+                maxChars = AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI,
+                fallbackPrefix = "ocr"
+            )
+        } else {
+            input.rawOcrText
+        }
+
         val imageMode = if (hasAttachedImage) {
             """
             |CRITICAL - IMAGE IS SOURCE OF TRUTH:
@@ -217,13 +291,13 @@ class CloudReceiptAssistService @Inject constructor(
 
             Receipt facts (OCR - may be corrupted, especially for Greek characters):
             - currency: ${input.currency}
-            - parsedMerchant: ${input.parsedMerchant ?: "none"}
+            - parsedMerchant: ${safeParsedMerchant ?: "none"}
             - parsedTotal: ${input.parsedTotal?.toString() ?: "none"}
             - parsedDate: ${input.parsedDate?.toString() ?: "none"}
             - parsedTaxAmount: ${input.parsedTaxAmount?.toString() ?: "none"}
-            - lineItemsJson: ${input.lineItemsJson ?: "none"}
+            - lineItemsJson: ${safeLineItemsJson ?: "none"}
             - rawOcrText:
-            ${input.rawOcrText}
+            $safeRawOcrText
         """.trimIndent()
     }
 
@@ -404,5 +478,4 @@ class CloudReceiptAssistService @Inject constructor(
         val actuallyUsedImageInput: Boolean
     )
 
-    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 }

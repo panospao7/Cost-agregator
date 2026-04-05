@@ -357,7 +357,11 @@ class DebugViewModel @Inject constructor(
             _databaseExportResult.value = if (result.isSuccess) {
                 val file = result.getOrNull()
                 if (file != null) {
-                    com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success(file.absolutePath)
+                    val warning = databaseBackupRepository.getLegacyPublicBackupNotice()
+                    com.yourname.expensetracker.domain.backup.DatabaseExportResult.Success(
+                        filePath = file.absolutePath,
+                        warning = warning
+                    )
                 } else {
                     com.yourname.expensetracker.domain.backup.DatabaseExportResult.Error("Export succeeded but file not found")
                 }

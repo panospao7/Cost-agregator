@@ -5,6 +5,8 @@ import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import java.math.BigDecimal
 import java.math.RoundingMode
+import timber.log.Timber
+import kotlin.math.floor
 
 /**
  * Utility class for calculating expense splits and member balances.
@@ -23,6 +25,8 @@ object SplitCalculator {
         expense: GroupExpense,
         members: List<GroupMember>
     ): Map<Long, Double> {
+        if (members.isEmpty()) return emptyMap()
+
         return when (expense.splitType) {
             SplitType.EQUAL -> calculateEqualSplit(expense.totalAmount, members)
             SplitType.CUSTOM_PERCENT -> calculatePercentageSplit(expense, members)
@@ -40,22 +44,15 @@ object SplitCalculator {
         members: List<GroupMember>
     ): Map<Long, Double> {
         if (members.isEmpty()) return emptyMap()
-        
-        val memberCount = members.size
-        val baseAmount = BigDecimal(totalAmount)
-            .divide(BigDecimal(memberCount), 2, RoundingMode.HALF_UP)
-            .toDouble()
-        
-        // Calculate remainder to handle rounding
-        val totalDistributed = baseAmount * memberCount
-        val remainder = BigDecimal(totalAmount)
-            .subtract(BigDecimal(totalDistributed))
-            .toDouble()
-        
+
+        val totalCents = toCents(totalAmount)
+        val memberCount = members.size.coerceAtLeast(1)
+        val baseCents = totalCents / memberCount
+        val remainder = totalCents % memberCount
+
         return members.mapIndexed { index, member ->
-            // Add remainder to first member to ensure total sums correctly
-            val amount = if (index == 0) baseAmount + remainder else baseAmount
-            member.id to amount
+            val memberCents = baseCents + if (index < remainder) 1 else 0
+            member.id to fromCents(memberCents)
         }.toMap()
     }
     
@@ -67,9 +64,23 @@ object SplitCalculator {
         expense: GroupExpense,
         members: List<GroupMember>
     ): Map<Long, Double> {
-        // For now, fall back to equal split
-        // TODO: Implement when percentage data is available in GroupExpense entity
-        return calculateEqualSplit(expense.totalAmount, members)
+        return when (val parseResult = parseCustomSplit(expense, members)) {
+            is CustomSplitParseResult.Valid -> {
+                calculateAmountsFromPercentages(
+                    totalAmount = expense.totalAmount,
+                    percentages = parseResult.splits,
+                    members = members
+                )
+            }
+
+            is CustomSplitParseResult.Invalid -> {
+                fallbackToEqualForInvalidLegacyData(
+                    expense = expense,
+                    members = members,
+                    reason = parseResult.reason
+                )
+            }
+        }
     }
     
     /**
@@ -80,9 +91,19 @@ object SplitCalculator {
         expense: GroupExpense,
         members: List<GroupMember>
     ): Map<Long, Double> {
-        // For now, fall back to equal split
-        // TODO: Implement when amount data is available in GroupExpense entity
-        return calculateEqualSplit(expense.totalAmount, members)
+        return when (val parseResult = parseCustomSplit(expense, members)) {
+            is CustomSplitParseResult.Valid -> members.associate { member ->
+                member.id to (parseResult.splits[member.id] ?: 0.0)
+            }
+
+            is CustomSplitParseResult.Invalid -> {
+                fallbackToEqualForInvalidLegacyData(
+                    expense = expense,
+                    members = members,
+                    reason = parseResult.reason
+                )
+            }
+        }
     }
     
     /**
@@ -93,9 +114,129 @@ object SplitCalculator {
         expense: GroupExpense,
         members: List<GroupMember>
     ): Map<Long, Double> {
-        // For now, fall back to equal split
-        // TODO: Implement when unequal split data is available in GroupExpense entity
+        return when (val parseResult = parseCustomSplit(expense, members)) {
+            is CustomSplitParseResult.Valid -> members.associate { member ->
+                member.id to (parseResult.splits[member.id] ?: 0.0)
+            }
+
+            is CustomSplitParseResult.Invalid -> {
+                fallbackToEqualForInvalidLegacyData(
+                    expense = expense,
+                    members = members,
+                    reason = parseResult.reason
+                )
+            }
+        }
+    }
+
+    private fun parseCustomSplit(
+        expense: GroupExpense,
+        members: List<GroupMember>
+    ): CustomSplitParseResult {
+        return CustomSplitParser.parseAndValidate(
+            splitsString = expense.customSplitsJson,
+            splitType = expense.splitType.toCustomSplitMode(),
+            totalAmount = expense.totalAmount,
+            groupMemberIds = members.map { it.id }.toSet()
+        )
+    }
+
+    private fun SplitType.toCustomSplitMode(): CustomSplitMode {
+        return when (this) {
+            SplitType.EQUAL -> CustomSplitMode.EQUAL
+            SplitType.CUSTOM_AMOUNT -> CustomSplitMode.CUSTOM_AMOUNT
+            SplitType.CUSTOM_PERCENT -> CustomSplitMode.CUSTOM_PERCENT
+            SplitType.UNEQUAL -> CustomSplitMode.UNEQUAL
+        }
+    }
+
+    private fun fallbackToEqualForInvalidLegacyData(
+        expense: GroupExpense,
+        members: List<GroupMember>,
+        reason: String
+    ): Map<Long, Double> {
+        Timber.w(
+            "Invalid legacy custom split data for expenseId=%s splitType=%s. Falling back to equal split. reason=%s",
+            expense.id,
+            expense.splitType,
+            reason
+        )
         return calculateEqualSplit(expense.totalAmount, members)
+    }
+
+    private fun calculateAmountsFromPercentages(
+        totalAmount: Double,
+        percentages: Map<Long, Double>,
+        members: List<GroupMember>
+    ): Map<Long, Double> {
+        data class PercentageShare(
+            val memberId: Long,
+            val order: Int,
+            val baseCents: Int,
+            val fractionalPart: Double
+        )
+
+        if (members.isEmpty()) return emptyMap()
+
+        val totalCents = toCents(totalAmount)
+        val shares = members.mapIndexed { index, member ->
+            val percent = percentages[member.id] ?: 0.0
+            val rawCents = totalCents * (percent / 100.0)
+            val base = floor(rawCents).toInt()
+            PercentageShare(
+                memberId = member.id,
+                order = index,
+                baseCents = base,
+                fractionalPart = rawCents - base
+            )
+        }
+
+        val centsByMember = shares.associate { it.memberId to it.baseCents }.toMutableMap()
+        val baseTotal = shares.sumOf { it.baseCents }
+        var remainder = totalCents - baseTotal
+
+        if (remainder > 0) {
+            val byLargestFraction = shares
+                .sortedWith(compareByDescending<PercentageShare> { it.fractionalPart }.thenBy { it.order })
+            var index = 0
+            while (remainder > 0 && byLargestFraction.isNotEmpty()) {
+                val target = byLargestFraction[index % byLargestFraction.size].memberId
+                centsByMember[target] = (centsByMember[target] ?: 0) + 1
+                remainder--
+                index++
+            }
+        } else if (remainder < 0) {
+            val bySmallestFraction = shares
+                .sortedWith(compareBy<PercentageShare> { it.fractionalPart }.thenBy { it.order })
+            var remainingToRemove = -remainder
+            var index = 0
+            while (remainingToRemove > 0 && bySmallestFraction.isNotEmpty()) {
+                val target = bySmallestFraction[index % bySmallestFraction.size].memberId
+                val current = centsByMember[target] ?: 0
+                if (current > 0) {
+                    centsByMember[target] = current - 1
+                    remainingToRemove--
+                }
+                index++
+            }
+        }
+
+        return members.associate { member ->
+            member.id to fromCents(centsByMember[member.id] ?: 0)
+        }
+    }
+
+    private fun toCents(amount: Double): Int {
+        return BigDecimal.valueOf(amount)
+            .setScale(2, RoundingMode.HALF_UP)
+            .movePointRight(2)
+            .toInt()
+    }
+
+    private fun fromCents(cents: Int): Double {
+        return BigDecimal.valueOf(cents.toLong())
+            .movePointLeft(2)
+            .toDouble()
     }
     
     /**

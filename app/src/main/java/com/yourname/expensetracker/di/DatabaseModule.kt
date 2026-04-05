@@ -13,6 +13,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineDispatcher
 import javax.inject.Singleton
 
 @Module
@@ -46,8 +47,9 @@ object DatabaseModule {
         database: AppDatabase,
         groupDao: ExpenseGroupDao,
         memberDao: GroupMemberDao,
-        groupExpenseDao: GroupExpenseDao
+        groupExpenseDao: GroupExpenseDao,
+        @IoDispatcher ioDispatcher: CoroutineDispatcher
     ): GroupTransactionCoordinatorInterface {
-        return GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao)
+        return GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao, ioDispatcher)
     }
 }

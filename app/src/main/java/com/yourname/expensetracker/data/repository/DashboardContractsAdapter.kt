@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionTy
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardBudgetRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardCategoryRepository
@@ -45,8 +46,12 @@ class DashboardContractsAdapter @Inject constructor(
     DashboardSavingsGoalRepository,
     DashboardAnalyticsRepository {
 
-    override fun observeDashboardExpenses(): Flow<List<DashboardExpense>> =
-        expenseRepository.getAllExpenses().map { list -> list.map { it.toDomainDashboard() } }
+    override fun observeDashboardExpenses(): Flow<List<DashboardExpense>> {
+        val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(System.currentTimeMillis())
+        return expenseRepository
+            .getExpensesWithCategoryInPeriod(monthStart, monthEnd)
+            .map { list -> list.map { it.expense.toDomainDashboard() } }
+    }
 
     override fun observeDashboardCategories(): Flow<List<DashboardCategory>> =
         categoryRepository.allCategories.map { list -> list.map { it.toDashboardCategory() } }

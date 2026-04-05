@@ -96,4 +96,18 @@ class SmsParserTest {
         assertTrue(packages.contains("com.samsung.android.messaging"))
         assertTrue(packages.contains("com.android.mms"))
     }
+
+    @Test
+    fun `parse outgoing transfer SMS as transfer with outgoing direction`() {
+        val result = parser.parse(
+            title = "NBG",
+            text = "Transfer 120,00 EUR sent to John Doe",
+            bigText = null, subText = null,
+            packageName = "com.google.android.apps.messaging"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(ParsedTransferDirection.OUTGOING, result.transferDirection)
+    }
 }

@@ -2,9 +2,11 @@ package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.data.repository.GroupsRepositoryImpl
+import com.yourname.expensetracker.data.repository.SharedExpenseDataPortAdapter
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
+import com.yourname.expensetracker.domain.groups.SharedExpenseDataPort
 import com.yourname.expensetracker.domain.groups.SettlementCalculator
 import com.yourname.expensetracker.domain.groups.SharedExpenseManager
 import dagger.Module
@@ -20,6 +22,12 @@ object GroupsModule {
     @Provides
     @Singleton
     fun provideGroupsRepository(impl: GroupsRepositoryImpl): GroupsRepository = impl
+
+    @Provides
+    @Singleton
+    fun bindSharedExpenseDataPort(
+        adapter: SharedExpenseDataPortAdapter
+    ): SharedExpenseDataPort = adapter
 
     @Provides
     fun provideDeleteGroupMemberUseCase(

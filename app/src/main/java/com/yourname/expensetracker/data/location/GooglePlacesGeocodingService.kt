@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGooglePlacesKey
 import com.yourname.expensetracker.di.LocationHttpClient
@@ -68,7 +69,8 @@ class GooglePlacesGeocodingService @Inject constructor(
 
         val requestBody = buildRequestBody(query, biasLat, biasLon, limit)
         val url = "${AppConfig.Location.GOOGLE_PLACES_BASE_URL}/v1/places:searchText"
-        Log.d(TAG, "==> Google Places request for: $query")
+        val queryHash = query.anonymizeForLog()
+        Log.d(TAG, "==> Google Places request route=${buildSafeLogRoute(query, biasLat, biasLon, limit)}")
 
         val request = Request.Builder()
             .url(url)
@@ -83,7 +85,11 @@ class GooglePlacesGeocodingService @Inject constructor(
             executeWithRetry(request).use { response ->
                 Log.d(TAG, "    HTTP ${response.code}")
                 if (!response.isSuccessful) {
-                    Log.w(TAG, "    Google Places HTTP ${response.code}: ${response.body?.string()?.take(200)}")
+                    val errorPreview = response.body?.string().orEmpty().take(ERROR_PREVIEW_CHAR_COUNT)
+                    Log.w(
+                        TAG,
+                        "    Google Places HTTP ${response.code} queryHash=$queryHash errorPreviewHash=${errorPreview.anonymizeForLog()} (previewChars=${errorPreview.length})"
+                    )
                     return@use GeocodingBatchResult.Failure(
                         if (response.code == 429) GeocodingError.RateLimited else GeocodingError.HttpError(response.code)
                     )
@@ -115,12 +121,13 @@ class GooglePlacesGeocodingService @Inject constructor(
             try {
                 val response = client.newCall(request).execute()
                 if (response.code >= 500 || response.code == 429) {
-                    response.close()
                     if (attempt < maxAttempts - 1) {
+                        response.close()
                         delay(currentDelay)
                         currentDelay = (currentDelay * 2).coerceAtMost(2000)
+                        return@repeat
                     }
-                    return@repeat
+                    return response
                 }
                 return response
             } catch (e: IOException) {
@@ -174,6 +181,15 @@ class GooglePlacesGeocodingService @Inject constructor(
         return obj.toString()
     }
 
+    private fun buildSafeLogRoute(query: String, biasLat: Double?, biasLon: Double?, limit: Int): String {
+        val bias = if (biasLat != null && biasLon != null) {
+            "locationBias=circle(<redacted>)"
+        } else {
+            "locationBias=rectangle(greece-default)"
+        }
+        return "/v1/places:searchText?textQuery=<redacted:${query.length}>&maxResultCount=${limit.coerceIn(1, 20)}&$bias"
+    }
+
     private fun parseResults(body: String): List<GeocodingResult> {
         val root = JSONObject(body)
         val placesArr = root.optJSONArray("places") ?: return emptyList()
@@ -218,5 +234,6 @@ class GooglePlacesGeocodingService @Inject constructor(
 
     private companion object {
         const val TAG = "LocationSearch"
+        const val ERROR_PREVIEW_CHAR_COUNT = 200
     }
 }

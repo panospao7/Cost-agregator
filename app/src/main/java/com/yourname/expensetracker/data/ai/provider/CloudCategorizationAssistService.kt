@@ -3,10 +3,16 @@ package com.yourname.expensetracker.data.ai.provider
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
+import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudJsonParser
+import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -16,7 +22,6 @@ import org.json.JSONObject
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
-import java.util.UUID
 import timber.log.Timber
 
 @Singleton
@@ -47,27 +52,66 @@ class CloudCategorizationAssistService @Inject constructor(
             .header("x-goog-api-key", apiKey)
             .build()
 
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val correlationId = newCorrelationId()
-                    val errorClass = "HTTP_${response.code}"
+        return withContext(Dispatchers.IO) {
+            for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                var retryableHttpFailure = false
+
+                try {
+                    val parsed = client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            val correlationId = CloudCorrelation.newCorrelationId()
+                            val errorClass = "HTTP_${response.code}"
+
+                            if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                                retryableHttpFailure = true
+                                Timber.w(
+                                    "CloudCategorizationAssistService: retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
+                                    response.code,
+                                    errorClass,
+                                    correlationId,
+                                    attempt,
+                                    CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                                )
+                                return@use null
+                            }
+
+                            Timber.w(
+                                "CloudCategorizationAssistService: HTTP %d class=%s correlationId=%s",
+                                response.code,
+                                errorClass,
+                                correlationId
+                            )
+                            return@use null
+                        }
+
+                        val body = response.body?.string() ?: return@use null
+                        parseResponse(body)
+                    }
+
+                    if (parsed != null) return@withContext parsed
+                    if (!retryableHttpFailure) return@withContext null
+                } catch (e: IOException) {
+                    val canRetry = CloudRetryPolicy.isRetryableIoException(e)
+                    if (!canRetry || attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        Timber.w(e, "CloudCategorizationAssistService: network failure")
+                        return@withContext null
+                    }
                     Timber.w(
-                        "CloudCategorizationAssistService: HTTP %d class=%s correlationId=%s",
-                        response.code,
-                        errorClass,
-                        correlationId
+                        e,
+                        "CloudCategorizationAssistService: retryable network failure (attempt %d/%d)",
+                        attempt,
+                        CloudRetryPolicy.MAX_RETRY_ATTEMPTS
                     )
-                    return@use null
+                } catch (e: Exception) {
+                    Timber.w(e, "CloudCategorizationAssistService: parse failure")
+                    return@withContext null
                 }
-                val body = response.body?.string() ?: return@use null
-                parseResponse(body)
+
+                if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
+                }
             }
-        } catch (e: IOException) {
-            Timber.w(e, "CloudCategorizationAssistService: network failure")
-            null
-        } catch (e: Exception) {
-            Timber.w(e, "CloudCategorizationAssistService: parse failure")
+
             null
         }
     }
@@ -180,7 +224,7 @@ class CloudCategorizationAssistService @Inject constructor(
             ?.trim()
             ?: return null
 
-        val jsonText = extractFirstJsonObject(text) ?: return null
+        val jsonText = CloudJsonParser.extractFirstJsonObject(text) ?: return null
         val suggestion = JSONObject(jsonText)
         if (!suggestion.has("categoryId") || suggestion.isNull("categoryId")) return null
         if (!suggestion.has("categoryName") || suggestion.optString("categoryName").isBlank()) return null
@@ -192,13 +236,6 @@ class CloudCategorizationAssistService @Inject constructor(
             rationale = suggestion.optString("rationale").trim().ifBlank { null },
             alternativeCategoryIds = suggestion.optJSONArray("alternativeCategoryIds").toLongList()
         )
-    }
-
-    private fun extractFirstJsonObject(text: String): String? {
-        val start = text.indexOf('{')
-        val end = text.lastIndexOf('}')
-        if (start == -1 || end <= start) return null
-        return text.substring(start, end + 1)
     }
 
     private fun JSONArray?.toLongList(): List<Long> {
@@ -213,6 +250,4 @@ class CloudCategorizationAssistService @Inject constructor(
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
-
-    private fun newCorrelationId(): String = UUID.randomUUID().toString().take(8)
 }

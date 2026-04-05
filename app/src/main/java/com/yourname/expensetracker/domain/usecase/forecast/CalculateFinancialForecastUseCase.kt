@@ -5,10 +5,13 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedExpensePriority
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.FinancialForecast
+import com.yourname.expensetracker.domain.model.PlannedExpensePriority as DomainPlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -71,7 +74,11 @@ class CalculateFinancialForecastUseCase @Inject constructor(
                 date = entity.date,
                 categoryId = entity.categoryId,
                 isRecurring = entity.isRecurring,
-                priority = com.yourname.expensetracker.domain.model.PlannedExpensePriority.OPTIONAL
+                priority = when (entity.priority) {
+                    EntityPlannedExpensePriority.MUST -> DomainPlannedExpensePriority.MUST
+                    EntityPlannedExpensePriority.LIKELY -> DomainPlannedExpensePriority.LIKELY
+                    EntityPlannedExpensePriority.OPTIONAL -> DomainPlannedExpensePriority.OPTIONAL
+                }
             )
         }
         
@@ -93,7 +100,11 @@ class CalculateFinancialForecastUseCase @Inject constructor(
         val currentDay = (((now - monthStart) / 86400000L).toInt() + 1).coerceAtLeast(1)
         
         val monthSpent = expenses
-            .filter { it.date >= monthStart }
+            .filter { expense ->
+                expense.transactionType == TransactionType.PURCHASE &&
+                    !expense.isNotMine &&
+                    expense.date in monthStart..now
+            }
             .sumOf { it.effectiveAmount }
         
         val spendingPace = SpendingPace(

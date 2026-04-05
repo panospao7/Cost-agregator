@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import org.junit.Assert.assertEquals
@@ -20,7 +19,7 @@ class GenericTransactionParserStressTest {
     fun `parses generic purchase with amount and merchant`() {
         val result = parse("Payment of €25.00 at Starbucks")
         assertNotNull(result)
-        assertEquals(TransactionType.PURCHASE, result!!.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
         assertEquals(25.0, result.amount, 0.001)
         assertTrue(result.merchant.contains("Starbucks", ignoreCase = true))
     }
@@ -29,14 +28,14 @@ class GenericTransactionParserStressTest {
     fun `parses incoming deposit signal as deposit type`() {
         val result = parse("Salary credited €1200.00 from ACME")
         assertNotNull(result)
-        assertEquals(TransactionType.DEPOSIT, result!!.type)
+        assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
     }
 
     @Test
     fun `does not reject greek deposit messages containing apo`() {
         val result = parse("Κατάθεση €120,00 από ACME LTD")
         assertNotNull(result)
-        assertEquals(TransactionType.DEPOSIT, result!!.type)
+        assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
         assertEquals(120.0, result.amount, 0.001)
     }
 

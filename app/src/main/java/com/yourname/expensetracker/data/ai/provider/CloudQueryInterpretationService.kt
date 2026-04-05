@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -17,7 +18,9 @@ import timber.log.Timber
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 @Singleton
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
@@ -58,41 +61,60 @@ class CloudQueryInterpretationService @Inject constructor(
             .header("x-goog-api-key", apiKey)
             .build()
 
-        val maxRetries = 2
-        repeat(maxRetries) { attempt ->
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        Timber.w(
-                            "CloudQueryInterpretationService: HTTP ${response.code} (attempt ${attempt + 1})"
-                        )
-                        if (response.code in 500..599 && attempt < maxRetries - 1) {
-                            val delayMs = 1000L * (attempt + 1)
-                            Timber.d("CloudQueryInterpretationService: retrying after ${delayMs}ms")
-                            kotlinx.coroutines.delay(delayMs)
-                            return@repeat
+        return withContext(Dispatchers.IO) {
+            for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                var retryableHttpFailure = false
+
+                try {
+                    val result = client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            Timber.w(
+                                "CloudQueryInterpretationService: HTTP %d (attempt %d/%d)",
+                                response.code,
+                                attempt,
+                                CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                            )
+                            if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                                retryableHttpFailure = true
+                                return@use null
+                            }
+                            return@use unsupported()
                         }
-                        return@use unsupported()
+
+                        val body = response.body?.string() ?: return@use unsupported()
+                        return@use parseResponse(input, body)
                     }
 
-                    val body = response.body?.string() ?: return@use unsupported()
-                    return@use parseResponse(input, body)
+                    if (result != null) {
+                        return@withContext result
+                    }
+                    if (!retryableHttpFailure) {
+                        return@withContext unsupported()
+                    }
+                } catch (e: IOException) {
+                    Timber.w(
+                        e,
+                        "CloudQueryInterpretationService: network failure (attempt %d/%d)",
+                        attempt,
+                        CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                    )
+                    if (!CloudRetryPolicy.isRetryableIoException(e) || attempt >= CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        return@withContext unsupported("Network error: ${e.message}")
+                    }
+                } catch (e: Exception) {
+                    Timber.w(e, "CloudQueryInterpretationService: parse failure")
+                    return@withContext unsupported("Failed to parse response: ${e.message}")
                 }
-            } catch (e: IOException) {
-                Timber.w(e, "CloudQueryInterpretationService: network failure (attempt ${attempt + 1})")
-                if (attempt < maxRetries - 1) {
-                    val delayMs = 1000L * (attempt + 1)
+
+                if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                    val delayMs = CloudRetryPolicy.backoffDelayMs(attempt)
                     Timber.d("CloudQueryInterpretationService: retrying after ${delayMs}ms")
-                    kotlinx.coroutines.delay(delayMs)
-                } else {
-                    return unsupported("Network error: ${e.message}")
+                    delay(delayMs)
                 }
-            } catch (e: Exception) {
-                Timber.w(e, "CloudQueryInterpretationService: parse failure")
-                return unsupported("Failed to parse response: ${e.message}")
             }
+
+            unsupported()
         }
-        return unsupported()
     }
 
     private fun buildRequestBody(input: FinancialQueryInterpretationInput): String {

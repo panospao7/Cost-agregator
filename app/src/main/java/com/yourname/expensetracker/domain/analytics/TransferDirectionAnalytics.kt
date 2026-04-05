@@ -50,6 +50,12 @@ data class TransferInsights(
 @Singleton
 class TransferDirectionAnalytics @Inject constructor() {
 
+    companion object {
+        private const val MAX_TRACKED_TRANSFERS = 10_000
+        private const val TRANSFER_PRUNE_BATCH_SIZE = 2_000
+        private const val MAX_TRACKED_ENDPOINTS = 1_000
+    }
+
     private val _insights = MutableStateFlow(TransferInsights())
     val insights: StateFlow<TransferInsights> = _insights.asStateFlow()
 
@@ -67,9 +73,14 @@ class TransferDirectionAnalytics @Inject constructor() {
         wasCorrect: Boolean = true,
         transferId: Long? = null
     ) {
-        transferId?.let { id ->
-            autoDetectedDirectionByTransferId[id] = direction
-            correctionAppliedByTransferId.remove(id)
+        if (transferId != null) {
+            val existing = autoDetectedDirectionByTransferId.putIfAbsent(transferId, direction)
+            if (existing != null) {
+                // Idempotency: this transfer has already been recorded.
+                return
+            }
+            correctionAppliedByTransferId.remove(transferId)
+            pruneTransferTrackingIfNeeded()
         }
 
         // Track source/destination
@@ -82,6 +93,7 @@ class TransferDirectionAnalytics @Inject constructor() {
                     outgoingDestinations.merge(name, 1, Int::plus)
                 }
             }
+            pruneEndpointTrackingIfNeeded()
         }
 
         _insights.update { current ->
@@ -207,6 +219,45 @@ class TransferDirectionAnalytics @Inject constructor() {
                 correctDetections = correctedCount,
                 accuracyPercentage = newAccuracy
             )
+        }
+    }
+
+    private fun pruneTransferTrackingIfNeeded() {
+        val currentSize = autoDetectedDirectionByTransferId.size
+        if (currentSize <= MAX_TRACKED_TRANSFERS) return
+
+        val toRemoveCount = (currentSize - MAX_TRACKED_TRANSFERS + TRANSFER_PRUNE_BATCH_SIZE)
+            .coerceAtMost(currentSize)
+
+        val idsToRemove = autoDetectedDirectionByTransferId.keys
+            .asSequence()
+            .take(toRemoveCount)
+            .toList()
+
+        idsToRemove.forEach { transferId ->
+            autoDetectedDirectionByTransferId.remove(transferId)
+            correctionAppliedByTransferId.remove(transferId)
+        }
+    }
+
+    private fun pruneEndpointTrackingIfNeeded() {
+        pruneEndpointMap(incomingSources)
+        pruneEndpointMap(outgoingDestinations)
+    }
+
+    private fun pruneEndpointMap(map: ConcurrentHashMap<String, Int>) {
+        if (map.size <= MAX_TRACKED_ENDPOINTS) return
+
+        val retainedKeys = map.entries
+            .sortedByDescending { it.value }
+            .take(MAX_TRACKED_ENDPOINTS)
+            .map { it.key }
+            .toHashSet()
+
+        map.keys.forEach { key ->
+            if (!retainedKeys.contains(key)) {
+                map.remove(key)
+            }
         }
     }
 

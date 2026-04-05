@@ -19,6 +19,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
@@ -66,7 +67,7 @@ class GroupTransactionCoordinatorTest {
         memberDao = database.groupMemberDao()
         groupExpenseDao = database.groupExpenseDao()
         expenseDao = database.expenseDao()
-        coordinator = GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao)
+        coordinator = GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao, Dispatchers.IO)
     }
 
     @After
@@ -144,7 +145,7 @@ class GroupTransactionCoordinatorTest {
         coEvery { mockMemberDao.insertAll(any()) } throws SQLException("Disk full")
 
         val mockCoordinator = GroupTransactionCoordinator(
-            database, mockGroupDao, mockMemberDao, mockGroupExpenseDao
+            database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, Dispatchers.IO
         )
 
         // Act - Should throw exception

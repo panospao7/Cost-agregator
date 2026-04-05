@@ -25,25 +25,56 @@ class OcrPreprocessingPipeline @Inject constructor() {
     /**
      * Process receipt image for optimal OCR results.
      * Returns enhanced bitmap ready for OCR.
+     *
+     * Ownership contract:
+     * - Caller owns [originalBitmap] and remains responsible for recycling it.
+     * - Pipeline owns/recycles any intermediate bitmaps it creates, except the
+     *   final bitmap returned to the caller.
      */
     fun preprocessForOcr(originalBitmap: Bitmap): Bitmap {
+        var processedBitmap = originalBitmap
+        val ownedIntermediates = linkedSetOf<Bitmap>()
+
         try {
-            var processedBitmap = originalBitmap
-            
             // Step 1: Ensure minimum resolution
-            processedBitmap = ensureMinimumResolution(processedBitmap)
+            processedBitmap = replaceIntermediate(
+                current = processedBitmap,
+                next = ensureMinimumResolution(processedBitmap),
+                originalBitmap = originalBitmap,
+                ownedIntermediates = ownedIntermediates
+            )
             
             // Step 2: Convert to grayscale
-            processedBitmap = convertToGrayscale(processedBitmap)
+            processedBitmap = replaceIntermediate(
+                current = processedBitmap,
+                next = convertToGrayscale(processedBitmap),
+                originalBitmap = originalBitmap,
+                ownedIntermediates = ownedIntermediates
+            )
             
             // Step 3: Apply adaptive contrast enhancement
-            processedBitmap = enhanceContrast(processedBitmap)
+            processedBitmap = replaceIntermediate(
+                current = processedBitmap,
+                next = enhanceContrast(processedBitmap),
+                originalBitmap = originalBitmap,
+                ownedIntermediates = ownedIntermediates
+            )
             
             // Step 4: Denoise
-            processedBitmap = denoise(processedBitmap)
+            processedBitmap = replaceIntermediate(
+                current = processedBitmap,
+                next = denoise(processedBitmap),
+                originalBitmap = originalBitmap,
+                ownedIntermediates = ownedIntermediates
+            )
             
             // Step 5: Binarize (black and white)
-            processedBitmap = binarize(processedBitmap)
+            processedBitmap = replaceIntermediate(
+                current = processedBitmap,
+                next = binarize(processedBitmap),
+                originalBitmap = originalBitmap,
+                ownedIntermediates = ownedIntermediates
+            )
             
             Timber.d("OCR preprocessing complete. Original: ${originalBitmap.width}x${originalBitmap.height}, " +
                     "Processed: ${processedBitmap.width}x${processedBitmap.height}")
@@ -51,8 +82,41 @@ class OcrPreprocessingPipeline @Inject constructor() {
             return processedBitmap
         } catch (e: Exception) {
             Timber.e(e, "OCR preprocessing failed, returning original")
+
+            // Exception safety: recycle any pipeline-owned bitmaps created so far.
+            if (processedBitmap !== originalBitmap && !processedBitmap.isRecycled) {
+                processedBitmap.recycle()
+            }
+            ownedIntermediates.forEach { bitmap ->
+                if (bitmap !== processedBitmap && !bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
+            }
+
             return originalBitmap
         }
+    }
+
+    private fun replaceIntermediate(
+        current: Bitmap,
+        next: Bitmap,
+        originalBitmap: Bitmap,
+        ownedIntermediates: MutableSet<Bitmap>
+    ): Bitmap {
+        if (next === current) {
+            return current
+        }
+
+        if (next !== originalBitmap) {
+            ownedIntermediates.add(next)
+        }
+
+        if (current !== originalBitmap && !current.isRecycled) {
+            current.recycle()
+            ownedIntermediates.remove(current)
+        }
+
+        return next
     }
 
     /**

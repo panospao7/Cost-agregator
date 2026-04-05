@@ -478,10 +478,17 @@ private fun OsmMapView(
                 }
             }
 
-            // F6: Build a render key; skip overlay rebuild if data hasn't changed.
-            //     This prevents interrupting in-progress touch events on markers.
-            val newKey = markers.joinToString("|") { "${it.latitude},${it.longitude}" } +
-                    "|" + heatmapPoints.joinToString("|") { "${it.latitude},${it.longitude},${it.weight}" }
+            // F6/L5: Build a compact, stable hash-based render key; skip overlay
+            // rebuild if data hasn't changed. Marker signature includes identity
+            // + metadata (expenseId, merchant, amount, date, source, placeId,
+            // and coordinates) so metadata-only changes still trigger refresh.
+            val markerSignature = markers.fold(1) { acc, marker ->
+                31 * acc + markerRenderSignature(marker)
+            }
+            val heatmapSignature = heatmapPoints.fold(1) { acc, point ->
+                31 * acc + heatmapRenderSignature(point)
+            }
+            val newKey = "m:${markers.size}:$markerSignature|h:${heatmapPoints.size}:$heatmapSignature"
             if (newKey == lastRenderKey.value) return@AndroidView
             lastRenderKey.value = newKey
 
@@ -727,6 +734,27 @@ private fun UnlocatedExpensesPanel(
             }
         }
     }
+}
+
+private fun markerRenderSignature(marker: MapExpenseMarker): Int {
+    var result = marker.expenseId.hashCode()
+    result = 31 * result + marker.latitude.hashCode()
+    result = 31 * result + marker.longitude.hashCode()
+    result = 31 * result + marker.merchant.hashCode()
+    result = 31 * result + marker.amount.hashCode()
+    result = 31 * result + marker.date.hashCode()
+    result = 31 * result + (marker.locationSource?.hashCode() ?: 0)
+    result = 31 * result + (marker.placeId?.hashCode() ?: 0)
+    return result
+}
+
+private fun heatmapRenderSignature(point: com.yourname.expensetracker.domain.location.HeatmapPoint): Int {
+    var result = point.latitude.hashCode()
+    result = 31 * result + point.longitude.hashCode()
+    result = 31 * result + point.weight.hashCode()
+    result = 31 * result + point.totalSpend.hashCode()
+    result = 31 * result + point.count
+    return result
 }
 
 // ── Pin expense sheet (Feature E) ────────────────────────────────────────────

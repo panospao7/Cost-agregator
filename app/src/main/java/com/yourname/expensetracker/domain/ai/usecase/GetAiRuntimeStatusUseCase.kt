@@ -91,6 +91,7 @@ private fun AiCapability.runtimeLabel(): String = when (this) {
     AiCapability.REVIEW_EXPLANATION -> "review explanations"
     AiCapability.QUERY_INTERPRETATION -> "AI"
     AiCapability.RECEIPT_EXTRACTION -> "receipt assist"
+    AiCapability.WARRANTY_EXTRACTION -> "warranty extraction"
     AiCapability.CATEGORIZATION_FALLBACK -> "categorization"
     AiCapability.DEDUPE_JUDGE -> "duplicate detection"
     AiCapability.LOCATION_SUMMARY -> "location summaries"

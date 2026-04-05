@@ -102,6 +102,7 @@ interface GroupTransactionCoordinator {
      * @param description Expense description
      * @param amount Total expense amount
      * @param paidById ID of member who paid
+     * @param currency Currency code for this group expense. If null, implementation derives group default.
      * @param splitType How to split the expense
      * @param date Expense date in milliseconds
      * @return GroupExpenseCreationResult with IDs or error
@@ -111,6 +112,7 @@ interface GroupTransactionCoordinator {
         description: String,
         amount: Double,
         paidById: Long,
+        currency: String? = null,
         splitType: SplitType = SplitType.EQUAL,
         date: Long = System.currentTimeMillis()
     ): GroupExpenseCreationResult
@@ -124,6 +126,7 @@ interface GroupTransactionCoordinator {
      * @param description Expense description
      * @param amount Total expense amount
      * @param paidById ID of member who paid
+     * @param currency Currency code for this group expense. If null, implementation derives group default.
      * @param splitType How to split the expense
      * @param date Expense date in milliseconds
      * @return GroupExpenseCreationResult with IDs or error
@@ -134,6 +137,7 @@ interface GroupTransactionCoordinator {
         description: String,
         amount: Double,
         paidById: Long,
+        currency: String? = null,
         splitType: SplitType = SplitType.EQUAL,
         customSplitsJson: String? = null,
         date: Long = System.currentTimeMillis()

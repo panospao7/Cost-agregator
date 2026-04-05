@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -240,7 +239,7 @@ class GenericTransactionParserTest {
     fun `enriches transfer metadata when detector returns direction and account`() {
         io.mockk.every {
             directionDetector.detectDirection(any(), any(), any(), any())
-        } returns com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING
+        } returns ParsedTransferDirection.INCOMING
         io.mockk.every {
             directionDetector.extractAccountName(any(), any(), any())
         } returns "Payroll Account"
@@ -253,8 +252,8 @@ class GenericTransactionParserTest {
         )
 
         assertNotNull(result)
-        assertEquals(TransactionType.DEPOSIT, result!!.type)
-        assertEquals(com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING, result.transferDirection)
+        assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
+        assertEquals(ParsedTransferDirection.INCOMING, result.transferDirection)
         assertEquals("From: Payroll Account", result.transferAccountName)
     }
 }

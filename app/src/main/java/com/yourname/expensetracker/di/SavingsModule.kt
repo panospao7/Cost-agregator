@@ -16,6 +16,7 @@ object SavingsModule {
     @Singleton
     fun provideSmartSavingsEngine(
         expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
+        categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
         budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
         budgetCalculator: com.yourname.expensetracker.domain.budget.BudgetCalculator,
         monteCarloSimulator: com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator,
@@ -23,6 +24,7 @@ object SavingsModule {
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
     ): SmartSavingsEngine = SmartSavingsEngine(
         expenseRepository,
+        categoryRepository,
         budgetRepository,
         budgetCalculator,
         monteCarloSimulator,

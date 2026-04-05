@@ -16,6 +16,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
@@ -46,6 +47,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -119,6 +121,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
     private lateinit var dashboardEngine: AdvancedAnalyticsDashboard
 
     private lateinit var budgetRepository: BudgetRepository
+    private lateinit var smartSavingsCategoryRepository: CategoryRepository
     private lateinit var budgetForecastingEngine: BudgetForecastingEngine
     private val database = mockk<AppDatabase>(relaxed = true)
 
@@ -151,6 +154,9 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         budgetRepository = mockk(relaxed = true)
         coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
 
+        smartSavingsCategoryRepository = mockk(relaxed = true)
+        coEvery { smartSavingsCategoryRepository.getAll() } returns contractCategories
+
         spendingPaceCalculator = SpendingPaceCalculator(timeProvider)
         insightsEngine = InsightsEngine(
             expenseRepository = repository,
@@ -168,12 +174,15 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             expenseRepository = repository,
             categoryRepository = categoryRepository,
             budgetRepository = budgetRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            defaultDispatcher = Dispatchers.Unconfined,
+            ioDispatcher = Dispatchers.Unconfined
         )
 
         totalsEngine = TotalsAggregationEngine(
             expenseRepository = repository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            ioDispatcher = Dispatchers.Unconfined
         )
 
         dashboardEngine = AdvancedAnalyticsDashboard(
@@ -194,6 +203,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         monteCarloSimulator = mockk(relaxed = true)
         smartSavingsEngine = SmartSavingsEngine(
             expenseRepository = repository,
+            categoryRepository = smartSavingsCategoryRepository,
             budgetRepository = budgetRepository,
             budgetCalculator = mockk<BudgetCalculator>(relaxed = true),
             monteCarloSimulator = monteCarloSimulator,

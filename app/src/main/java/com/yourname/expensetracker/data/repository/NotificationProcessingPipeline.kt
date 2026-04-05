@@ -11,6 +11,8 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.data.database.entity.SourceStats
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
@@ -138,6 +140,7 @@ class NotificationProcessingPipeline @Inject constructor(
             classifier.initialize()
         }
 
+        // Phase 1: Pre-DB work (no transaction held)
         val parsed = parserRegistry.parseWithAiFallback(
             title = notification.title,
             text = notification.text,
@@ -152,9 +155,15 @@ class NotificationProcessingPipeline @Inject constructor(
                 text = notification.text,
                 bigText = notification.bigText
             )
+
+            // Phase 2: DB transaction (DB-only mutations)
             database.withTransaction {
                 val rawId = dao.insertOrIgnore(notification)
                 if (rawId == -1L) return@withTransaction
+
+                // Ensure source_stats row exists before any increment updates.
+                sourceStatsDao.insertIfNotExists(SourceStats(packageName = notification.packageName))
+
                 if (oversizedCandidate != null) {
                     val review = PendingReview(
                         rawNotificationId = rawId,
@@ -179,57 +188,46 @@ class NotificationProcessingPipeline @Inject constructor(
                     dao.markRelevance(rawId, false)
                 }
             }
-            confidenceRouter.invalidateSourceStatsCache(notification.packageName)
+
+            // Phase 3: Post-commit best-effort actions
+            runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
+                confidenceRouter.invalidateSourceStatsCache(notification.packageName)
+            }
             return
         }
 
-        val fullNotificationText = listOfNotNull(
-            notification.title, notification.text, notification.bigText
-        ).joinToString(" ")
+        val preDbContext = buildPreDbContext(notification, parsed)
 
-        var routingResult = confidenceRouter.route(
-            parsed = parsed,
-            packageName = notification.packageName,
-            notificationText = fullNotificationText
-        )
-
-        if (parsed.amount > 1_000_000.0 && routingResult.decision == RoutingDecision.AUTO_ACCEPT) {
-            Timber.w("Auto-accept suppressed: amount exceeds validation limit")
-            routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
-        }
-
-        val correctedMerchant = merchantNormalizer.normalize(parsed.merchant).canonical.normalizedName
-
-        var anomalyCandidate: com.yourname.expensetracker.data.database.model.ExpenseWithCategory? = null
-
-        database.withTransaction {
+        // Phase 2: DB transaction (DB-only mutations)
+        val dbOutcome = database.withTransaction {
             val rawId = dao.insertOrIgnore(notification)
-            if (rawId == -1L) return@withTransaction
+            if (rawId == -1L) return@withTransaction ParsedDbOutcome.RawDuplicate
 
-            confidenceRouter.ensureSourceStats(notification.packageName)
+            // Keep source stats row creation transactional while avoiding non-DB work.
+            sourceStatsDao.insertIfNotExists(SourceStats(packageName = notification.packageName))
 
-            when (routingResult.decision) {
-                RoutingDecision.AUTO_ACCEPT -> handleAutoAccept(
-                    notification, rawId, parsed, correctedMerchant, fullNotificationText, routingResult
-                ).also { expenseWithCategory ->
-                    anomalyCandidate = expenseWithCategory
-                }
-                RoutingDecision.NEEDS_REVIEW -> handleNeedsReview(
-                    notification, rawId, parsed, correctedMerchant, fullNotificationText, routingResult
-                )
+            when (preDbContext.routingResult.decision) {
+                RoutingDecision.AUTO_ACCEPT -> handleAutoAcceptInTransaction(notification, rawId, preDbContext)
+                RoutingDecision.NEEDS_REVIEW -> handleNeedsReviewInTransaction(notification, rawId, preDbContext)
                 RoutingDecision.AUTO_REJECT -> {
                     dao.markRelevance(rawId, false)
                     sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
+                    ParsedDbOutcome.AutoRejected
                 }
             }
+        }
 
+        if (dbOutcome == ParsedDbOutcome.RawDuplicate) return
+
+        // Phase 3: Post-commit best-effort actions
+        runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
             confidenceRouter.invalidateSourceStatsCache(notification.packageName)
-            confidenceRouter.invalidateMerchantCache(correctedMerchant)
+        }
+        runPostCommitSafely("invalidate merchant cache for ${preDbContext.correctedMerchant}") {
+            confidenceRouter.invalidateMerchantCache(preDbContext.correctedMerchant)
         }
 
-        anomalyCandidate?.let { expenseWithCategory ->
-            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
-        }
+        runParsedPostCommitActions(notification, preDbContext, dbOutcome)
     }
 
     internal data class OversizedAmountCandidate(
@@ -313,246 +311,367 @@ class NotificationProcessingPipeline @Inject constructor(
 
     }
 
-    private suspend fun handleAutoAccept(
-        notification: RawNotification,
-        rawId: Long,
-        parsed: com.yourname.expensetracker.domain.parser.ParsedTransaction,
-        correctedMerchant: String,
-        fullText: String,
-        routingResult: com.yourname.expensetracker.domain.intelligence.RoutingResult
-    ): com.yourname.expensetracker.data.database.model.ExpenseWithCategory? {
-        val expenseDate = parsed.date ?: notification.timestamp
-        val merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
-        val dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, expenseDate)
+    private sealed class ParsedDbOutcome {
+        object RawDuplicate : ParsedDbOutcome()
+        object AutoRejected : ParsedDbOutcome()
+        object Duplicate : ParsedDbOutcome()
+        object NeedsReviewCreated : ParsedDbOutcome()
+        data class AutoAccepted(
+            val expenseId: Long,
+            val insertedExpense: Expense
+        ) : ParsedDbOutcome()
+    }
 
-        val isDuplicate = expenseDao.isDuplicate(
-            amount = parsed.amount,
-            merchant = correctedMerchant,
-            date = expenseDate,
-            windowMs = 300_000,
-            merchantKey = merchantKey,
-            dedupeKey = dedupeKey
+    private data class PreDbContext(
+        val parsed: com.yourname.expensetracker.domain.parser.ParsedTransaction,
+        val transactionType: TransactionType,
+        val fullNotificationText: String,
+        val routingResult: com.yourname.expensetracker.domain.intelligence.RoutingResult,
+        val correctedMerchant: String,
+        val eventDate: Long,
+        val merchantKey: String,
+        val dedupeKey: String,
+        val categoryId: Long?,
+        val direction: TransferDirection?,
+        val accountName: String?,
+        val deviceGps: Pair<Double, Double>?
+    )
+
+    private suspend fun buildPreDbContext(
+        notification: RawNotification,
+        parsed: com.yourname.expensetracker.domain.parser.ParsedTransaction
+    ): PreDbContext {
+        val fullNotificationText = listOfNotNull(
+            notification.title,
+            notification.text,
+            notification.bigText
+        ).joinToString(" ")
+
+        var routingResult = confidenceRouter.route(
+            parsed = parsed,
+            packageName = notification.packageName,
+            notificationText = fullNotificationText
         )
-        if (isDuplicate) {
-            dao.markRelevance(rawId, false)
-            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
-            classifier.train(fullText, isTransaction = true)
-            return null
+
+        if (parsed.amount > 1_000_000.0 && routingResult.decision == RoutingDecision.AUTO_ACCEPT) {
+            Timber.w("Auto-accept suppressed: amount exceeds validation limit")
+            routingResult = routingResult.copy(decision = RoutingDecision.NEEDS_REVIEW)
         }
 
-        val classification = hybridClassifier.classify(
-            merchantName = correctedMerchant,
-            amount = parsed.amount,
-            notificationTitle = notification.title,
-            notificationText = notification.text,
-            packageName = notification.packageName
-        )
-        val categoryId = classification.categoryId.takeIf { it > 0 }
+        val correctedMerchant = merchantNormalizer.normalize(parsed.merchant).canonical.normalizedName
 
-        val direction = parsed.transferDirection
-            ?: directionDetector.detectDirection(
-                notification.title, notification.text, notification.bigText, parsed.type
-            )
-        val accountName = parsed.transferAccountName
-            ?: directionDetector.extractAccountName(
-                notification.title, notification.text, notification.bigText
-            )
+        val shouldPrepareAcceptedOrReviewData = routingResult.decision != RoutingDecision.AUTO_REJECT
 
-        // Capture device GPS at notification time so the expense gets an immediate
-        // location instead of waiting for the 6-hour background backfill worker.
-        // We use "best-effort" — if GPS is unavailable the expense is created without
-        // coordinates and the backfill worker will try later via geocoding.
-        val deviceGps = try {
-            locationProvider.getLastKnownLocation()
-        } catch (e: Exception) {
-            Timber.w(e, "GPS unavailable at notification time for merchant: $correctedMerchant")
+        val categoryId = if (shouldPrepareAcceptedOrReviewData) {
+            val classification = hybridClassifier.classify(
+                merchantName = correctedMerchant,
+                amount = parsed.amount,
+                notificationTitle = notification.title,
+                notificationText = notification.text,
+                packageName = notification.packageName
+            )
+            classification.categoryId.takeIf { it > 0 }
+        } else {
             null
         }
 
-        val expense = Expense(
-            amount = parsed.amount,
-            currency = parsed.currency,
-            merchant = correctedMerchant,
-            merchantKey = merchantKey,
-            transactionType = parsed.type,
-            date = expenseDate,
-            rawNotificationId = rawId,
-            categoryId = categoryId,
-            paymentMethod = PaymentMethod.CARD,
-            isManualEntry = false,
-            dedupeKey = dedupeKey,
-            transferDirection = direction,
-            transferAccountName = accountName,
-            latitude = deviceGps?.first,
-            longitude = deviceGps?.second,
-            locationSource = if (deviceGps != null) "DEVICE_GPS" else null
-        )
-
-        val expenseId = expenseDao.insertAtomic(expense)
-        if (expenseId > 0) {
-            dao.markRelevance(rawId, true)
-            sourceStatsDao.incrementTotalAndAccepted(notification.packageName, timeProvider.now())
-            if (expense.transactionType == TransactionType.TRANSFER || expense.transactionType == TransactionType.DEPOSIT) {
-                if (direction != null) {
-                    analytics.recordAutoDetection(
-                        direction = direction,
-                        accountName = accountName,
-                        wasCorrect = true,
-                        transferId = expenseId
-                    )
-                }
-                else analytics.recordUnknownDirection()
-            }
-            budgetMonitor.checkBudgets()
-
-            // Prepare anomaly payload; caller runs alerting post-transaction
-            val enrichedExpense = expense.copy(id = expenseId)
-            val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-                expense = enrichedExpense,
-                category = categoryId?.let { database.categoryDao().getById(it) }
-            )
-
-            classifier.train(fullText, isTransaction = true)
-
-            // Non-blocking recommendation generation (fire-and-forget)
-            asyncScope.launch {
-                recommendationSemaphore.withPermit {
-                    try {
-                        withTimeoutOrNull(RECOMMENDATION_JOB_TIMEOUT_MS) {
-                            val aiSettings = aiSettingsRepository.settings().first()
-                            if (aiSettings.aiEnabled) {
-                                val enrichedExpense = expense.copy(id = expenseId)
-                                val aiArtifact = generateTransactionInsightUseCase(enrichedExpense)
-
-                                val recommendations = dashboardFollowThroughEngine.generateRecommendations(
-                                    transaction = enrichedExpense,
-                                    aiArtifact = aiArtifact,
-                                    userId = DEFAULT_RECOMMENDATION_USER_ID
-                                )
-                                recommendationRepository.saveAll(recommendations)
-                            }
-                        } ?: Timber.w("Recommendation generation timed out after ${RECOMMENDATION_JOB_TIMEOUT_MS}ms")
-                    } catch (_: Exception) {
-                        // Best-effort only.
-                    }
-                }
-            }
-
-            // Non-blocking subscription detection (fire-and-forget)
-            asyncScope.launch {
-                try {
-                    withTimeoutOrNull(SUBSCRIPTION_DETECTION_TIMEOUT_MS) {
-                        detectAndSaveSubscriptionCandidate(correctedMerchant, categoryId)
-                    } ?: Timber.w("Subscription detection timed out after ${SUBSCRIPTION_DETECTION_TIMEOUT_MS}ms")
-                } catch (e: Exception) {
-                    Timber.w(e, "Subscription detection failed for merchant: $correctedMerchant")
-                }
-            }
-
-            return expenseWithCategory
+        val direction = if (shouldPrepareAcceptedOrReviewData) {
+            (parsed.transferDirection
+                ?: directionDetector.detectDirection(
+                    notification.title,
+                    notification.text,
+                    notification.bigText,
+                    parsed.type
+                ))?.toDbTransferDirection()
         } else {
-            dao.markRelevance(rawId, false)
-            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
-            classifier.train(fullText, isTransaction = true)
-            return null
+            null
         }
+
+        val accountName = if (shouldPrepareAcceptedOrReviewData) {
+            parsed.transferAccountName
+                ?: directionDetector.extractAccountName(
+                    notification.title,
+                    notification.text,
+                    notification.bigText
+                )
+        } else {
+            null
+        }
+
+        // Best-effort location capture outside DB transaction.
+        val deviceGps = if (shouldPrepareAcceptedOrReviewData) {
+            try {
+                locationProvider.getLastKnownLocation()
+            } catch (e: Exception) {
+                Timber.w(e, "GPS unavailable at notification time for merchant: $correctedMerchant")
+                null
+            }
+        } else {
+            null
+        }
+
+        val eventDate = parsed.date ?: notification.timestamp
+        val merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
+        val dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, eventDate)
+
+        return PreDbContext(
+            parsed = parsed,
+            transactionType = parsed.type.toDbTransactionType(),
+            fullNotificationText = fullNotificationText,
+            routingResult = routingResult,
+            correctedMerchant = correctedMerchant,
+            eventDate = eventDate,
+            merchantKey = merchantKey,
+            dedupeKey = dedupeKey,
+            categoryId = categoryId,
+            direction = direction,
+            accountName = accountName,
+            deviceGps = deviceGps
+        )
     }
 
-    private suspend fun handleNeedsReview(
+    private suspend fun handleAutoAcceptInTransaction(
         notification: RawNotification,
         rawId: Long,
-        parsed: com.yourname.expensetracker.domain.parser.ParsedTransaction,
-        correctedMerchant: String,
-        fullText: String,
-        routingResult: com.yourname.expensetracker.domain.intelligence.RoutingResult
-    ) {
-        val reviewDate = parsed.date ?: notification.timestamp
-        val merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
-        val dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, reviewDate)
-
+        preDb: PreDbContext
+    ): ParsedDbOutcome {
         val isDuplicate = expenseDao.isDuplicate(
-            amount = parsed.amount,
-            merchant = correctedMerchant,
-            date = reviewDate,
+            amount = preDb.parsed.amount,
+            merchant = preDb.correctedMerchant,
+            date = preDb.eventDate,
             windowMs = 300_000,
-            merchantKey = merchantKey,
-            dedupeKey = dedupeKey
+            merchantKey = preDb.merchantKey,
+            dedupeKey = preDb.dedupeKey
         )
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
-            classifier.train(fullText, isTransaction = true)
-            return
+            return ParsedDbOutcome.Duplicate
+        }
+
+        val expense = Expense(
+            amount = preDb.parsed.amount,
+            currency = preDb.parsed.currency,
+            merchant = preDb.correctedMerchant,
+            merchantKey = preDb.merchantKey,
+            transactionType = preDb.transactionType,
+            date = preDb.eventDate,
+            rawNotificationId = rawId,
+            categoryId = preDb.categoryId,
+            paymentMethod = PaymentMethod.CARD,
+            isManualEntry = false,
+            dedupeKey = preDb.dedupeKey,
+            transferDirection = preDb.direction,
+            transferAccountName = preDb.accountName,
+            latitude = preDb.deviceGps?.first,
+            longitude = preDb.deviceGps?.second,
+            locationSource = if (preDb.deviceGps != null) "DEVICE_GPS" else null
+        )
+
+        val expenseId = expenseDao.insertAtomic(expense)
+        return if (expenseId > 0) {
+            dao.markRelevance(rawId, true)
+            sourceStatsDao.incrementTotalAndAccepted(notification.packageName, timeProvider.now())
+            ParsedDbOutcome.AutoAccepted(
+                expenseId = expenseId,
+                insertedExpense = expense
+            )
+        } else {
+            dao.markRelevance(rawId, false)
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            ParsedDbOutcome.Duplicate
+        }
+    }
+
+    private suspend fun handleNeedsReviewInTransaction(
+        notification: RawNotification,
+        rawId: Long,
+        preDb: PreDbContext
+    ): ParsedDbOutcome {
+        val isDuplicate = expenseDao.isDuplicate(
+            amount = preDb.parsed.amount,
+            merchant = preDb.correctedMerchant,
+            date = preDb.eventDate,
+            windowMs = 300_000,
+            merchantKey = preDb.merchantKey,
+            dedupeKey = preDb.dedupeKey
+        )
+        if (isDuplicate) {
+            dao.markRelevance(rawId, false)
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            return ParsedDbOutcome.Duplicate
         }
 
         val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRange(
-            merchantKey = merchantKey,
-            merchantName = correctedMerchant,
-            startDate = reviewDate - 300_000,
-            endDate = reviewDate + 300_000,
-            minAmount = parsed.amount - 0.01,
-            maxAmount = parsed.amount + 0.01,
-            currency = parsed.currency
+            merchantKey = preDb.merchantKey,
+            merchantName = preDb.correctedMerchant,
+            startDate = preDb.eventDate - 300_000,
+            endDate = preDb.eventDate + 300_000,
+            minAmount = preDb.parsed.amount - 0.01,
+            maxAmount = preDb.parsed.amount + 0.01,
+            currency = preDb.parsed.currency
         )
         if (hasPendingDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
-            classifier.train(fullText, isTransaction = true)
-            return
-        }
-
-        val classification = hybridClassifier.classify(
-            merchantName = correctedMerchant,
-            amount = parsed.amount,
-            notificationTitle = notification.title,
-            notificationText = notification.text,
-            packageName = notification.packageName
-        )
-        val suggestedCategoryId = classification.categoryId.takeIf { it > 0 }
-
-        val direction = parsed.transferDirection
-            ?: directionDetector.detectDirection(
-                notification.title, notification.text, notification.bigText, parsed.type
-            )
-        val accountName = parsed.transferAccountName
-            ?: directionDetector.extractAccountName(
-                notification.title, notification.text, notification.bigText
-            )
-
-        // Capture device GPS at review time so the reviewer sees a suggested location
-        // pre-populated in the ReviewScreen. Best-effort — null is fine, the user can
-        // set it manually or the backfill worker will geocode after approval.
-        val deviceGpsForReview = try {
-            locationProvider.getLastKnownLocation()
-        } catch (e: Exception) {
-            Timber.w(e, "GPS unavailable at review time for merchant: $correctedMerchant")
-            null
+            return ParsedDbOutcome.Duplicate
         }
 
         val review = PendingReview(
             rawNotificationId = rawId,
-            suggestedAmount = parsed.amount,
-            suggestedCurrency = parsed.currency,
-            suggestedMerchant = correctedMerchant,
-            suggestedMerchantKey = merchantKey,
-            suggestedType = parsed.type.name,
-            suggestedCategoryId = suggestedCategoryId,
-            confidence = routingResult.adjustedConfidence,
+            suggestedAmount = preDb.parsed.amount,
+            suggestedCurrency = preDb.parsed.currency,
+            suggestedMerchant = preDb.correctedMerchant,
+            suggestedMerchantKey = preDb.merchantKey,
+            suggestedType = preDb.transactionType.name,
+            suggestedCategoryId = preDb.categoryId,
+            confidence = preDb.routingResult.adjustedConfidence,
             packageName = notification.packageName,
             notificationTitle = notification.title,
             notificationText = notification.text ?: notification.bigText,
-            suggestedDate = reviewDate,
-            suggestedDirection = direction?.name,
-            suggestedAccountName = accountName,
-            suggestedLatitude = deviceGpsForReview?.first,
-            suggestedLongitude = deviceGpsForReview?.second
+            suggestedDate = preDb.eventDate,
+            suggestedDirection = preDb.direction?.name,
+            suggestedAccountName = preDb.accountName,
+            suggestedLatitude = preDb.deviceGps?.first,
+            suggestedLongitude = preDb.deviceGps?.second
         )
         pendingReviewDao.insert(review)
         sourceStatsDao.incrementTotalAndPending(notification.packageName, timeProvider.now())
+        return ParsedDbOutcome.NeedsReviewCreated
+    }
 
-        if (parsed.type == TransactionType.TRANSFER || parsed.type == TransactionType.DEPOSIT) {
-            if (direction != null) analytics.recordAutoDetection(direction, accountName, wasCorrect = true)
-            else analytics.recordUnknownDirection()
+    private suspend fun runParsedPostCommitActions(
+        notification: RawNotification,
+        preDb: PreDbContext,
+        dbOutcome: ParsedDbOutcome
+    ) {
+        when (dbOutcome) {
+            ParsedDbOutcome.RawDuplicate,
+            ParsedDbOutcome.AutoRejected -> Unit
+
+            ParsedDbOutcome.Duplicate -> {
+                runPostCommitSafely("classifier training after duplicate (${notification.packageName})") {
+                    classifier.train(preDb.fullNotificationText, isTransaction = true)
+                }
+            }
+
+            ParsedDbOutcome.NeedsReviewCreated -> {
+                runTransferAnalyticsPostCommit(
+                    transactionType = preDb.transactionType,
+                    direction = preDb.direction,
+                    accountName = preDb.accountName,
+                    transferId = null
+                )
+            }
+
+            is ParsedDbOutcome.AutoAccepted -> {
+                runTransferAnalyticsPostCommit(
+                    transactionType = preDb.transactionType,
+                    direction = preDb.direction,
+                    accountName = preDb.accountName,
+                    transferId = dbOutcome.expenseId
+                )
+
+                runPostCommitSafely("budget check after notification auto-accept (expenseId=${dbOutcome.expenseId})") {
+                    budgetMonitor.checkBudgets()
+                }
+
+                val enrichedExpense = dbOutcome.insertedExpense.copy(id = dbOutcome.expenseId)
+
+                runPostCommitSafely("anomaly alert check after notification auto-accept (expenseId=${dbOutcome.expenseId})") {
+                    val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+                        expense = enrichedExpense,
+                        category = preDb.categoryId?.let { database.categoryDao().getById(it) }
+                    )
+                    anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+                }
+
+                runPostCommitSafely("classifier training after notification auto-accept (${notification.packageName})") {
+                    classifier.train(preDb.fullNotificationText, isTransaction = true)
+                }
+
+                runPostCommitSafely("launch recommendation enrichment (expenseId=${dbOutcome.expenseId})") {
+                    launchRecommendationEnrichment(enrichedExpense)
+                }
+
+                runPostCommitSafely("launch subscription detection (${preDb.correctedMerchant})") {
+                    launchSubscriptionDetection(preDb.correctedMerchant, preDb.categoryId)
+                }
+            }
+        }
+    }
+
+    private suspend fun runTransferAnalyticsPostCommit(
+        transactionType: TransactionType,
+        direction: TransferDirection?,
+        accountName: String?,
+        transferId: Long?
+    ) {
+        if (transactionType != TransactionType.TRANSFER && transactionType != TransactionType.DEPOSIT) return
+
+        runPostCommitSafely("transfer analytics update") {
+            if (direction != null) {
+                analytics.recordAutoDetection(
+                    direction = direction,
+                    accountName = accountName,
+                    wasCorrect = true,
+                    transferId = transferId
+                )
+            } else {
+                analytics.recordUnknownDirection()
+            }
+        }
+    }
+
+    private fun launchRecommendationEnrichment(expense: Expense) {
+        // Non-blocking recommendation generation (fire-and-forget)
+        asyncScope.launch {
+            recommendationSemaphore.withPermit {
+                try {
+                    withTimeoutOrNull(RECOMMENDATION_JOB_TIMEOUT_MS) {
+                        val aiSettings = aiSettingsRepository.settings().first()
+                        if (aiSettings.aiEnabled) {
+                            val aiArtifact = generateTransactionInsightUseCase(expense)
+
+                            val recommendations = dashboardFollowThroughEngine.generateRecommendations(
+                                transaction = expense,
+                                aiArtifact = aiArtifact,
+                                userId = DEFAULT_RECOMMENDATION_USER_ID
+                            )
+                            recommendationRepository.saveAll(recommendations)
+                        }
+                    } ?: Timber.w("Recommendation generation timed out after ${RECOMMENDATION_JOB_TIMEOUT_MS}ms")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "Recommendation generation failed for expenseId=${expense.id}")
+                }
+            }
+        }
+    }
+
+    private fun launchSubscriptionDetection(merchant: String, categoryId: Long?) {
+        // Non-blocking subscription detection (fire-and-forget)
+        asyncScope.launch {
+            try {
+                withTimeoutOrNull(SUBSCRIPTION_DETECTION_TIMEOUT_MS) {
+                    detectAndSaveSubscriptionCandidate(merchant, categoryId)
+                } ?: Timber.w("Subscription detection timed out after ${SUBSCRIPTION_DETECTION_TIMEOUT_MS}ms")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Subscription detection failed for merchant: $merchant")
+            }
+        }
+    }
+
+    private suspend fun runPostCommitSafely(action: String, block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.e(e, "Post-commit action failed: $action")
         }
     }
 

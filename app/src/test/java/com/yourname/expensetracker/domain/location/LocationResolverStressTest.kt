@@ -1,10 +1,6 @@
 package com.yourname.expensetracker.domain.location
 
 import android.util.Log
-import com.yourname.expensetracker.data.database.entity.MerchantLocation
-import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
-import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.categorization.CanonicalResult
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
@@ -25,8 +21,8 @@ class LocationResolverStressTest {
     private lateinit var geocodingService: GeocodingService
     private lateinit var nearbyPoiService: NearbyPoiService
     private lateinit var locationProvider: ForegroundLocationProvider
-    private lateinit var locationRepository: MerchantLocationRepository
-    private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var locationCachePort: LocationCachePort
+    private lateinit var merchantClusterPort: MerchantClusterPort
     private lateinit var merchantCleaner: MerchantCleaner
     private lateinit var canonicalizer: MerchantCanonicalizer
     private lateinit var greeklishNormalizer: GreeklishNormalizer
@@ -42,8 +38,8 @@ class LocationResolverStressTest {
         geocodingService = mockk(relaxed = true)
         nearbyPoiService = mockk(relaxed = true)
         locationProvider = mockk(relaxed = true)
-        locationRepository = mockk(relaxed = true)
-        expenseRepository = mockk(relaxed = true)
+        locationCachePort = mockk(relaxed = true)
+        merchantClusterPort = mockk(relaxed = true)
         merchantCleaner = mockk(relaxed = true)
         canonicalizer = mockk(relaxed = true)
         greeklishNormalizer = mockk(relaxed = true)
@@ -53,10 +49,10 @@ class LocationResolverStressTest {
         every { greeklishNormalizer.normalize(any()) } answers { firstArg() }
 
         coEvery { locationProvider.getLastKnownLocation() } returns null
-        coEvery { locationRepository.getCorrection(any(), any(), any()) } returns null
-        coEvery { locationRepository.getCachedLocation(any()) } returns null
-        coEvery { locationRepository.getCachedLocationForArea(any(), any()) } returns null
-        coEvery { expenseRepository.getMerchantLocationClusters(any()) } returns emptyList()
+        coEvery { locationCachePort.getCorrection(any(), any(), any()) } returns null
+        coEvery { locationCachePort.getCachedLocation(any()) } returns null
+        coEvery { locationCachePort.getCachedLocationForArea(any(), any()) } returns null
+        coEvery { merchantClusterPort.getMerchantLocationClusters(any()) } returns emptyList()
         coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
             GeocodingLookupResult.Success(null)
         coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns
@@ -66,8 +62,8 @@ class LocationResolverStressTest {
             geocodingService = geocodingService,
             nearbyPoiService = nearbyPoiService,
             locationProvider = locationProvider,
-            locationRepository = locationRepository,
-            expenseRepository = expenseRepository,
+            locationCachePort = locationCachePort,
+            merchantClusterPort = merchantClusterPort,
             merchantCleaner = merchantCleaner,
             canonicalizer = canonicalizer,
             greeklishNormalizer = greeklishNormalizer
@@ -76,7 +72,7 @@ class LocationResolverStressTest {
 
     @Test
     fun `correction has highest priority`() = runBlocking {
-        coEvery { locationRepository.getCorrection(any(), any(), any()) } returns correction(40.7, -74.0)
+        coEvery { locationCachePort.getCorrection(any(), any(), any()) } returns correction(40.7, -74.0)
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis())
         assertTrue(result is LocationResolutionResult.Resolved)
@@ -87,7 +83,7 @@ class LocationResolverStressTest {
 
     @Test
     fun `cache hit skips geocoding`() = runBlocking {
-        coEvery { locationRepository.getCachedLocation(any()) } returns cached(40.7, -74.0, "cache")
+        coEvery { locationCachePort.getCachedLocation(any()) } returns cached(40.7, -74.0, "cache")
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis())
         assertTrue(result is LocationResolutionResult.Resolved)
@@ -96,7 +92,7 @@ class LocationResolverStressTest {
 
     @Test
     fun `force refresh bypasses cache`() = runBlocking {
-        coEvery { locationRepository.getCachedLocation(any()) } returns cached(40.7, -74.0, "cache")
+        coEvery { locationCachePort.getCachedLocation(any()) } returns cached(40.7, -74.0, "cache")
         coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
             GeocodingLookupResult.Success(geocoded(41.0, -73.0))
 
@@ -152,11 +148,11 @@ class LocationResolverStressTest {
 
     @Test
     fun `provided merchant key is used for cache lookup`() = runBlocking {
-        coEvery { locationRepository.getCachedLocation("key123") } returns cached(40.70, -74.00, "cache")
+        coEvery { locationCachePort.getCachedLocation("key123") } returns cached(40.70, -74.00, "cache")
 
         val result = locationResolver.resolve("Raw Name", System.currentTimeMillis(), merchantKey = "key123")
         assertTrue(result is LocationResolutionResult.Resolved)
-        coVerify(exactly = 1) { locationRepository.getCachedLocation("key123") }
+        coVerify(exactly = 1) { locationCachePort.getCachedLocation("key123") }
     }
 
     private fun geocoded(lat: Double, lon: Double) = GeocodingResult(
@@ -169,33 +165,20 @@ class LocationResolverStressTest {
         source = "nominatim"
     )
 
-    private fun cached(lat: Double, lon: Double, source: String) = MerchantLocation(
-        id = 1,
-        normalizedMerchantName = "shop",
-        areaKey = "global",
-        displayName = "Shop",
+    private fun cached(lat: Double, lon: Double, source: String) = CachedMerchantLocation(
         latitude = lat,
         longitude = lon,
         source = source,
         osmId = "N1",
         displayAddress = "Cached",
-        confidence = 0.8f,
-        lastResolvedAt = System.currentTimeMillis(),
-        hitCount = 1
+        confidence = 0.8f
     )
 
-    private fun correction(lat: Double, lon: Double) = MerchantLocationCorrection(
-        id = 1,
-        normalizedMerchantName = "shop",
+    private fun correction(lat: Double, lon: Double) = LocationCorrection(
         correctedLatitude = lat,
         correctedLongitude = lon,
-        areaLatitude = null,
-        areaLongitude = null,
-        areaKey = "shop|global",
-        areaRadiusKm = 5.0f,
         osmId = "C1",
-        displayAddress = "Corrected",
-        createdAt = System.currentTimeMillis()
+        displayAddress = "Corrected"
     )
 
     private fun poi(id: String, lat: Double, lon: Double, name: String) = NearbyPoi(

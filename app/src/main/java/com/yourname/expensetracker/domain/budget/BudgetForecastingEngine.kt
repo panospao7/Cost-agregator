@@ -143,15 +143,35 @@ class BudgetForecastingEngine @Inject constructor(
         } else 0.0
         
         // Detect trend
-        val trend = if (values.size >= 2) {
-            val recent = values.takeLast(2).average()
-            val older = values.dropLast(2).average()
-            when {
-                recent > older * 1.1 -> SpendingTrend.INCREASING
-                recent < older * 0.9 -> SpendingTrend.DECREASING
-                else -> SpendingTrend.STABLE
+        val trend = when {
+            values.size < 2 -> SpendingTrend.STABLE
+            values.size == 2 -> {
+                val older = values.first()
+                val recent = values.last()
+                if (older <= 0.0) {
+                    SpendingTrend.STABLE
+                } else {
+                    when {
+                        recent > older * 1.1 -> SpendingTrend.INCREASING
+                        recent < older * 0.9 -> SpendingTrend.DECREASING
+                        else -> SpendingTrend.STABLE
+                    }
+                }
             }
-        } else SpendingTrend.STABLE
+            else -> {
+                val recent = values.takeLast(2).average()
+                val older = values.dropLast(2).average()
+                if (older <= 0.0) {
+                    SpendingTrend.STABLE
+                } else {
+                    when {
+                        recent > older * 1.1 -> SpendingTrend.INCREASING
+                        recent < older * 0.9 -> SpendingTrend.DECREASING
+                        else -> SpendingTrend.STABLE
+                    }
+                }
+            }
+        }
         
         return HistoricalData(
             monthlySpending = monthlyTotals,

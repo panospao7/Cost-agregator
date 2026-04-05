@@ -1,8 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
-import android.content.Context
 import androidx.room.withTransaction
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
@@ -17,17 +15,16 @@ import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
-import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 
 @Singleton
 class ReviewQueueRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val database: AppDatabase,
     private val pendingReviewDao: PendingReviewDao,
     private val rawNotificationDao: RawNotificationDao,
@@ -45,6 +42,12 @@ class ReviewQueueRepository @Inject constructor(
     private val timeProvider: TimeProvider,
     private val confidenceRouter: ConfidenceRouter
 ) {
+    private companion object {
+        private const val ERROR_REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
+        private const val ERROR_AMOUNT_EXCEEDS_LIMIT = "AMOUNT_EXCEEDS_LIMIT"
+        private const val ERROR_REVIEW_ALREADY_PROCESSED = "REVIEW_ALREADY_PROCESSED"
+    }
+
 
     fun getPendingReviews(limit: Int = 100): Flow<List<PendingReviewWithReceipt>> =
         pendingReviewDao.getPendingFlow(limit)
@@ -69,14 +72,15 @@ class ReviewQueueRepository @Inject constructor(
         finalLongitude: Double? = null,
         finalAddress: String? = null
     ): Result<Long> {
-        val review = pendingReviewDao.getById(reviewId) ?: return Result.Error(message = context.getString(R.string.debug_error_review_not_found))
+        val review = pendingReviewDao.getById(reviewId)
+            ?: return Result.Error(message = ERROR_REVIEW_NOT_FOUND)
 
         val amount: Double = finalAmount ?: review.suggestedAmount
         val merchant: String = finalMerchant ?: review.suggestedMerchant
         val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
 
         if (amount > 1000000.0) {
-            return Result.Error(message = context.getString(R.string.debug_error_amount_exceeds_limit))
+            return Result.Error(message = ERROR_AMOUNT_EXCEEDS_LIMIT)
         }
 
         val type: TransactionType = finalType ?: try {
@@ -164,7 +168,7 @@ class ReviewQueueRepository @Inject constructor(
         }
 
         if (txnResult == txAlreadyProcessed) {
-            return Result.Error(message = context.getString(R.string.debug_error_review_already_processed))
+            return Result.Error(message = ERROR_REVIEW_ALREADY_PROCESSED)
         }
 
         if (txnResult == txDuplicate) {
@@ -172,36 +176,66 @@ class ReviewQueueRepository @Inject constructor(
                 review.notificationTitle,
                 review.notificationText
             ).joinToString(" ")
-            classifier.train(fullText, isTransaction = true)
+            runPostCommitSafely(
+                action = "classifier training after duplicate review approval (reviewId=$reviewId, package=${review.packageName})"
+            ) {
+                classifier.train(fullText, isTransaction = true)
+            }
 
-            confidenceRouter.invalidateSourceStatsCache(review.packageName)
+            runPostCommitSafely(
+                action = "source stats cache invalidation after duplicate review approval (reviewId=$reviewId, package=${review.packageName})"
+            ) {
+                confidenceRouter.invalidateSourceStatsCache(review.packageName)
+            }
             return Result.Duplicate
         }
 
-        // External operations outside DB transaction
-        budgetMonitor.checkBudgets()
+        // External operations outside DB transaction (best-effort)
+        runPostCommitSafely(
+            action = "budget check after review approval (reviewId=$reviewId, expenseId=$txnResult)"
+        ) {
+            budgetMonitor.checkBudgets()
+        }
 
-        // Check for anomalies and alert
-        val enrichedExpense = expense.copy(id = txnResult)
-        val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-            expense = enrichedExpense,
-            category = categoryId?.let { database.categoryDao().getById(it) }
-        )
-        anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+        // Check for anomalies and alert (best-effort)
+        runPostCommitSafely(
+            action = "anomaly alert check after review approval (reviewId=$reviewId, expenseId=$txnResult)"
+        ) {
+            val enrichedExpense = expense.copy(id = txnResult)
+            val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+                expense = enrichedExpense,
+                category = categoryId?.let { database.categoryDao().getById(it) }
+            )
+            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
+        }
 
-        try { classifier.retrainFromCorrections() } catch (e: Exception) {
-            Timber.e(e, "Failed to retrain classifier")
+        runPostCommitSafely(
+            action = "classifier retraining after review approval (reviewId=$reviewId)"
+        ) {
+            classifier.retrainFromCorrections()
         }
 
         if (categoryId != null) {
-            merchantCategoryRepository.learnPattern(merchant, categoryId)
+            runPostCommitSafely(
+                action = "merchant-category pattern learning after review approval (reviewId=$reviewId, merchant=$merchant, categoryId=$categoryId)"
+            ) {
+                merchantCategoryRepository.learnPattern(merchant, categoryId)
+            }
         }
 
         if (finalMerchant != null && finalMerchant != review.suggestedMerchant) {
-            merchantNormalizer.learnMerchantAlias(review.suggestedMerchant, finalMerchant)
+            runPostCommitSafely(
+                action = "merchant alias learning after review approval (reviewId=$reviewId, from=${review.suggestedMerchant}, to=$finalMerchant)"
+            ) {
+                merchantNormalizer.learnMerchantAlias(review.suggestedMerchant, finalMerchant)
+            }
         }
 
-        confidenceRouter.invalidateSourceStatsCache(review.packageName)
+        runPostCommitSafely(
+            action = "source stats cache invalidation after review approval (reviewId=$reviewId, package=${review.packageName})"
+        ) {
+            confidenceRouter.invalidateSourceStatsCache(review.packageName)
+        }
         return Result.Success(txnResult)
     }
 
@@ -243,11 +277,17 @@ class ReviewQueueRepository @Inject constructor(
 
         if (!rejected) return
 
-        try { classifier.retrainFromCorrections() } catch (e: Exception) {
-            Timber.e(e, "Failed to retrain classifier")
+        runPostCommitSafely(
+            action = "classifier retraining after review rejection (reviewId=$reviewId)"
+        ) {
+            classifier.retrainFromCorrections()
         }
 
-        confidenceRouter.invalidateSourceStatsCache(review.packageName)
+        runPostCommitSafely(
+            action = "source stats cache invalidation after review rejection (reviewId=$reviewId, package=${review.packageName})"
+        ) {
+            confidenceRouter.invalidateSourceStatsCache(review.packageName)
+        }
     }
 
     suspend fun approveAllReview() {
@@ -311,7 +351,7 @@ class ReviewQueueRepository @Inject constructor(
                 currency = it.currency,
                 merchant = correctedMerchant,
                 merchantKey = MerchantKeyGenerator.generate(correctedMerchant),
-                transactionType = it.type,
+                transactionType = it.type.toDbTransactionType(),
                 date = notification.timestamp,
                 rawNotificationId = id,
                 categoryId = categoryId,
@@ -407,17 +447,43 @@ class ReviewQueueRepository @Inject constructor(
         }
 
         if (outcome.shouldCheckBudgets) {
-            budgetMonitor.checkBudgets()
+            runPostCommitSafely(
+                action = "budget check after markAsRelevant (notificationId=$id, package=${notification.packageName})"
+            ) {
+                budgetMonitor.checkBudgets()
+            }
         }
 
         if (outcome.shouldTrainAsTransaction) {
-            classifier.train(fullNotificationText, isTransaction = true)
+            runPostCommitSafely(
+                action = "classifier training after markAsRelevant (notificationId=$id, package=${notification.packageName})"
+            ) {
+                classifier.train(fullNotificationText, isTransaction = true)
+            }
         }
 
-        confidenceRouter.invalidateSourceStatsCache(notification.packageName)
+        runPostCommitSafely(
+            action = "source stats cache invalidation after markAsRelevant (notificationId=$id, package=${notification.packageName})"
+        ) {
+            confidenceRouter.invalidateSourceStatsCache(notification.packageName)
+        }
 
-        try { classifier.retrainFromCorrections() } catch (e: Exception) {
-            Timber.e(e, "Failed to retrain classifier")
+        runPostCommitSafely(
+            action = "classifier retraining after markAsRelevant (notificationId=$id)"
+        ) {
+            classifier.retrainFromCorrections()
+        }
+    }
+
+    private suspend fun runPostCommitSafely(
+        action: String,
+        block: suspend () -> Unit
+    ) {
+        runCatching {
+            block()
+        }.onFailure { error ->
+            if (error is CancellationException) throw error
+            Timber.e(error, "Post-commit action failed: %s", action)
         }
     }
 

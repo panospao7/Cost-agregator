@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.data.repository
 
-import android.content.Context
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
@@ -41,8 +40,6 @@ class ReviewQueueRepositoryTest {
     private val parserRegistry = mockk<AppParserRegistry>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
-    private val context = mockk<Context>(relaxed = true)
-
     private lateinit var repository: ReviewQueueRepository
 
     @Before
@@ -56,7 +53,6 @@ class ReviewQueueRepositoryTest {
         every { timeProvider.now() } returns 1700000000000L
         
         repository = ReviewQueueRepository(
-            context = context,
             database = database,
             pendingReviewDao = pendingReviewDao,
             rawNotificationDao = rawNotificationDao,
@@ -179,7 +175,7 @@ class ReviewQueueRepositoryTest {
 
         // Assert
         assertTrue(result is Result.Error)
-        assertEquals("Amount exceeds limit", (result as Result.Error).message)
+        assertEquals("AMOUNT_EXCEEDS_LIMIT", (result as Result.Error).message)
         coVerify(exactly = 0) { pendingReviewDao.transitionStatus(any(), any(), any()) }
     }
 

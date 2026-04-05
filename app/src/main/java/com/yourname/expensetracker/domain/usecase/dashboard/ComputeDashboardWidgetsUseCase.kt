@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionTy
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.DomainDayBudgetStatus
 import com.yourname.expensetracker.domain.model.dashboard.DomainExpenseSummary
+import com.yourname.expensetracker.domain.model.dashboard.toEntityExpense
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DashboardTextKeys
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -394,40 +395,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             )
         }
 
-        // ── Spending Pace widget ─────────────────────────────────────────────
-        val baseline = overallBudget?.budgetAmount
-            ?: if (previousMonthTotal > 0) previousMonthTotal else null
-
-        val dayOfMonthCoerced = dayOfMonth.coerceAtLeast(1)
-        val projectedTotal = if (dayOfMonth == 1) {
-            if (baseline != null) (baseline * 0.7) + (monthSpent * 0.3 * daysInMonth)
-            else monthSpent * daysInMonth
-        } else {
-            monthSpent * daysInMonth.toDouble() / dayOfMonth
-        }
-
-        val pacePercentage = if (baseline != null && baseline > 0) {
-            val expected = baseline * dayOfMonthCoerced / daysInMonth
-            val calculated = (monthSpent / expected * 100).toFloat()
-            if (calculated.isFinite()) calculated else 0f
-        } else 0f
-
-        val pace = SpendingPace(
-            currentMonthSpent = monthSpent,
-            daysElapsed = dayOfMonth,
-            daysInMonth = daysInMonth,
-            projectedTotal = projectedTotal,
-            previousMonthTotal = if (previousMonthTotal > 0) previousMonthTotal else null,
-            averageMonthlyTotal = null,
-            pacePercentage = pacePercentage,
-            paceStatus = when {
-                baseline == null || baseline <= 0 -> PaceStatus.NO_BASELINE
-                pacePercentage < 90f             -> PaceStatus.UNDER_PACE
-                pacePercentage > 110f            -> PaceStatus.OVER_PACE
-                else                             -> PaceStatus.ON_PACE
-            }
-        )
-
         // ── Multi-month cumulative spending series ───────────────────────────
         val trendSeriesCal = java.util.Calendar.getInstance()
         val trendSeries = mutableListOf<SpendingTrendSeries>()
@@ -587,7 +554,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             if (totalRemaining > 0 || totalBudgetAmount > 0) add(financialRunway)
             if (monteCarloWidget != null) add(monteCarloWidget)
             if (blockPartyDays.isNotEmpty()) add(DashboardWidget.BudgetBlockParty(blockPartyDays))
-            if (pace.paceStatus != PaceStatus.NO_BASELINE) add(DashboardWidget.SpendingPaceWidget(pace))
+            if (currentPace.paceStatus != PaceStatus.NO_BASELINE) {
+                add(DashboardWidget.SpendingPaceWidget(currentPace))
+            }
             add(trend)
             if (pendingCount > 0) add(DashboardWidget.PendingReviewAlert(pendingCount))
             if (insightText != null) add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
@@ -735,24 +704,4 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         return streak
     }
 
-    private fun DashboardExpense.toEntityExpense(): com.yourname.expensetracker.data.database.entity.Expense {
-        val txType = when (transactionType) {
-            DashboardTransactionType.PURCHASE -> com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
-            DashboardTransactionType.WITHDRAWAL -> com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL
-            DashboardTransactionType.TRANSFER -> com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER
-            DashboardTransactionType.DEPOSIT -> com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT
-            DashboardTransactionType.UNKNOWN -> com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN
-        }
-        return com.yourname.expensetracker.data.database.entity.Expense(
-            id = id,
-            amount = amount,
-            merchant = merchant,
-            transactionType = txType,
-            date = date,
-            categoryId = categoryId,
-            isNotMine = isNotMine,
-            isManualEntry = isManualEntry,
-            merchantKey = com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate(merchant)
-        )
-    }
 }

@@ -24,13 +24,15 @@ class SpendingPaceCalculator @Inject constructor(
         allExpenses: List<Expense>
     ): SpendingPace {
         val now = timeProvider.now()
-        val monthStart = TimePeriodUtils.getStartOfMonth(now)
-        val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
-        val currentDay = (TimePeriodUtils.daysBetween(monthStart, now) + 1).coerceAtLeast(1)
+        val currentMonthEnd = TimePeriodUtils.getEndOfMonth(currentMonthStart)
+        val currentWindowEnd = minOf(now, currentMonthEnd)
+        val daysInMonth = TimePeriodUtils.getDaysInMonth(currentMonthStart)
+        val currentDay = (TimePeriodUtils.daysBetween(currentMonthStart, currentWindowEnd) + 1).coerceAtLeast(1)
         
         val monthSpent = allExpenses
             .filter { 
-                it.date >= monthStart && 
+                it.date >= currentMonthStart &&
+                it.date < currentWindowEnd &&
                 it.transactionType == TransactionType.PURCHASE && 
                 !it.isNotMine 
             }
@@ -93,12 +95,11 @@ class SpendingPaceCalculator @Inject constructor(
     }
     
     private fun calculateProjectedTotal(monthSpent: Double, dayOfMonth: Int, daysInMonth: Int): Double {
-        return if (dayOfMonth >= 4) {
-            monthSpent * daysInMonth.toDouble() / dayOfMonth
-        } else if (dayOfMonth > 0) {
-            monthSpent * (daysInMonth.toDouble() / 10.0).coerceAtLeast(1.0)
-        } else {
-            monthSpent
-        }
+        if (dayOfMonth <= 0) return monthSpent
+
+        val weight = (dayOfMonth.toDouble() / 7.0).coerceIn(0.0, 1.0)
+        val linearProjection = monthSpent * daysInMonth.toDouble() / dayOfMonth
+        val conservativeEstimate = monthSpent * 3.0
+        return (weight * linearProjection) + ((1.0 - weight) * conservativeEstimate)
     }
 }

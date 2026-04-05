@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
@@ -21,7 +19,7 @@ class GreekBankParserStressTest {
     fun `parses purchase notification`() {
         val result = parse("Αγορά €50.00 στο Starbucks με κάρτα *****1234")
         assertNotNull(result)
-        assertEquals(TransactionType.PURCHASE, result!!.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
         assertEquals(50.0, result.amount, 0.001)
     }
 
@@ -29,18 +27,18 @@ class GreekBankParserStressTest {
     fun `parses greek deposit notification`() {
         val result = parse("Κατάθεση €500.00 στον λογαριασμό σας")
         assertNotNull(result)
-        assertEquals(TransactionType.DEPOSIT, result!!.type)
+        assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
     }
 
     @Test
     fun `parses transfer notification and sets direction`() {
         val result = parse("Μεταφορά 100,00 EUR σε Μαρία")
         assertNotNull(result)
-        assertEquals(TransactionType.TRANSFER, result!!.type)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
         assertEquals(100.0, result.amount, 0.001)
         assertTrue(
             "Transfer direction should be detected when possible",
-            result.transferDirection == null || result.transferDirection == TransferDirection.OUTGOING
+            result.transferDirection == null || result.transferDirection == ParsedTransferDirection.OUTGOING
         )
     }
 

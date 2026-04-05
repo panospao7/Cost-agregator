@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.parser
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import org.junit.Assert.*
 import org.junit.Before
@@ -33,7 +32,7 @@ class GreekBankParserTest {
         assertNotNull(result)
         assertEquals(12.50, result!!.amount, 0.01)
         assertEquals("EUR", result.currency)
-        assertEquals(TransactionType.PURCHASE, result.type)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
     }
 
     @Test
@@ -121,5 +120,20 @@ class GreekBankParserTest {
         )
         assertNotNull(result)
         assertTrue(result!!.confidence >= 0.90f)
+    }
+
+    @Test
+    fun `credited amount format is parsed as incoming deposit`() {
+        val result = parser.parse(
+            title = "Credit Alert",
+            text = "Amount credited 250.00 EUR to your account",
+            bigText = null,
+            subText = null,
+            packageName = "gr.nbg.mobilebanking"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.DEPOSIT, result!!.type)
+        assertEquals(ParsedTransferDirection.INCOMING, result.transferDirection)
     }
 }

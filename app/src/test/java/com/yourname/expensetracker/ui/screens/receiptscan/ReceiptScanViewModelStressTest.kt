@@ -15,13 +15,14 @@ import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistGenerationResult
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCase
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
-import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
+import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
@@ -54,6 +55,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
 
     private lateinit var receiptRepository: ReceiptRepository
     private lateinit var categoryRepository: CategoryRepository
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var savedStateHandle: SavedStateHandle
     private lateinit var timeProvider: TimeProvider
@@ -61,7 +63,6 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
     private lateinit var suggestCategoryFallbackUseCase: SuggestCategoryFallbackUseCase
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
-    private lateinit var receiptOcrService: ReceiptOcrService
     private lateinit var settingsFlow: kotlinx.coroutines.flow.MutableStateFlow<AiSettings>
 
     private lateinit var viewModel: ReceiptScanViewModel
@@ -71,6 +72,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         super.setup()
         receiptRepository = mockk(relaxed = true)
         categoryRepository = mockk(relaxed = true)
+        currencySettingsRepository = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
         savedStateHandle = SavedStateHandle()
         timeProvider = mockk(relaxed = true)
@@ -78,7 +80,6 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         suggestCategoryFallbackUseCase = mockk(relaxed = true)
         aiArtifactRepository = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
-        receiptOcrService = mockk(relaxed = true)
         settingsFlow = kotlinx.coroutines.flow.MutableStateFlow(AiSettings(aiEnabled = true))
         
         val categorizeReceiptItemsUseCase = mockk<CategorizeReceiptItemsUseCase>(relaxed = true)
@@ -86,12 +87,14 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
 
         every { timeProvider.now() } returns System.currentTimeMillis()
         every { categoryRepository.allCategories } returns flowOf(emptyList())
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         every { aiSettingsRepository.settings() } returns settingsFlow
         every { receiptRepository.createTempPhotoUri() } returns Uri.parse("content://test/photo.jpg")
 
         viewModel = ReceiptScanViewModel(
             receiptRepository,
             categoryRepository,
+            currencySettingsRepository,
             aiSettingsRepository,
             savedStateHandle,
             timeProvider,
@@ -100,8 +103,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             categorizeReceiptItemsUseCase,
             itemCategorizationRepository,
             aiArtifactRepository,
-            aiRuntimeDiagnostics,
-            receiptOcrService
+            aiRuntimeDiagnostics
         )
     }
 
@@ -132,6 +134,103 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         advanceUntilIdle()
         assertTrue(viewModel.state.value.step != ScanStep.CAPTURE)
         assertEquals(uri, viewModel.state.value.imageUri)
+    }
+
+    @Test
+    fun `stress - OCR fallback resets editable and transient state`() = runTest {
+        val uri = Uri.parse("content://test/fallback.jpg")
+        val now = 1_234_567L
+        every { timeProvider.now() } returns now
+
+        coEvery { receiptRepository.processReceipt(uri, autoCreateReview = false) } throws RuntimeException("OCR boom")
+        coEvery { receiptRepository.saveManualReceiptRecord(uri) } returns (
+            ScannedReceipt(
+                id = 42L,
+                imagePath = "/manual/path.jpg",
+                rawOcrText = "[OCR Failed or Skipped]",
+                parsedTotal = null,
+                parsedMerchant = null,
+                parsedDate = now,
+                parsedItems = null,
+                parsedTaxAmount = null,
+                currency = "EUR",
+                confidence = 0f
+            ) to ReceiptParser.ParsedReceipt(
+                merchantName = null,
+                total = null,
+                subtotal = null,
+                tax = null,
+                date = now,
+                currency = "EUR",
+                lineItems = emptyList(),
+                confidence = 0f
+            )
+        )
+
+        val field = ReceiptScanViewModel::class.java.getDeclaredField("_state")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val stateFlow = field.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<ReceiptScanState>
+        stateFlow.value = ReceiptScanState(
+            step = ScanStep.REVIEW,
+            imageUri = Uri.parse("content://test/previous.jpg"),
+            receiptId = 7L,
+            rawOcrText = "OLD OCR",
+            editMerchant = "Old Merchant",
+            editAmount = "9.99",
+            editDate = 111L,
+            selectedCategoryId = 5L,
+            errorMessage = "Old error",
+            isSaving = true,
+            saveResult = SaveReceiptResult.Success,
+            receiptAssistState = AiLoadState.Ready(ReceiptAssistSuggestion(merchant = SuggestedValue("AI Merchant"))),
+            receiptAssistMessage = "old receipt assist",
+            receiptAssistDiagnostics = "old receipt diagnostics",
+            categoryAssistState = AiLoadState.Ready(CategoryAssistSuggestion(3L, "Groceries")),
+            categoryAssistMessage = "old category assist",
+            categoryAssistDiagnostics = "old category diagnostics",
+            quickSavePreview = ReceiptQuickSavePreview(
+                merchant = "Preview Merchant",
+                amount = 12.0,
+                amountText = "12.00",
+                date = 999L,
+                categoryId = 3L,
+                categoryName = "Groceries",
+                autoAppliedFields = listOf("merchant"),
+                usedCapabilities = setOf(AiCapability.RECEIPT_EXTRACTION),
+                fieldSummaries = emptyList(),
+                diagnostics = emptyList()
+            ),
+            isAnalyzingItems = true,
+            showItemBreakdown = true,
+            itemAnalysisError = "old item analysis error"
+        )
+
+        viewModel.processGalleryImage(uri)
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(ScanStep.REVIEW, state.step)
+        assertEquals(42L, state.receiptId)
+        assertEquals("[OCR Failed or Skipped]", state.rawOcrText)
+        assertEquals("", state.editMerchant)
+        assertEquals("", state.editAmount)
+        assertEquals(now, state.editDate)
+        assertEquals(null, state.selectedCategoryId)
+        assertEquals(0f, state.ocrConfidence, 0.001f)
+        assertEquals(false, state.isSaving)
+        assertEquals(null, state.saveResult)
+        assertTrue(state.errorMessage?.contains("OCR Failed") == true)
+        assertEquals(AiLoadState.Idle, state.receiptAssistState)
+        assertEquals(null, state.receiptAssistMessage)
+        assertEquals(null, state.receiptAssistDiagnostics)
+        assertEquals(AiLoadState.Idle, state.categoryAssistState)
+        assertEquals(null, state.categoryAssistMessage)
+        assertEquals(null, state.categoryAssistDiagnostics)
+        assertEquals(null, state.quickSavePreview)
+        assertEquals(false, state.isAnalyzingItems)
+        assertEquals(false, state.showItemBreakdown)
+        assertEquals(null, state.itemAnalysisError)
     }
 
     @Test

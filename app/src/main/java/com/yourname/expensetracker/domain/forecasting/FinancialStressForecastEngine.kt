@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -109,12 +110,18 @@ class FinancialStressForecastEngine @Inject constructor(
             
         } catch (e: Exception) {
             Timber.e(e, "$TAG: Failed to compute stress forecast")
-            // Return safe default with LOW risk
+            // Return degraded fallback with non-LOW risk
             StressForecastResult(
-                horizons = createDefaultHorizons(),
-                overallRiskLevel = StressRiskLevel.LOW,
+                horizons = createDefaultHorizons(
+                    fallbackRiskLevel = StressRiskLevel.MODERATE,
+                    fallbackCrunchProbability = 0.20
+                ),
+                overallRiskLevel = StressRiskLevel.MODERATE,
                 earliestCrunchDate = null,
-                recommendations = listOf("Unable to calculate stress forecast. Please check your data.")
+                recommendations = listOf(
+                    "Stress forecast is temporarily unavailable due to a calculation issue.",
+                    "Showing a degraded estimate. Please retry shortly and verify your recent transactions."
+                )
             )
         }
     }
@@ -138,7 +145,7 @@ class FinancialStressForecastEngine @Inject constructor(
         val expectedIncome = estimateIncome(daysAhead, totalBudget)
         
         // 3. Run Monte Carlo for discretionary spending
-        val mcResult = runMonteCarloSimulation(daysAhead)
+        val mcResult = runMonteCarloSimulation(daysAhead, patterns)
         
         // 4. Calculate projected balance
         val projectedBalance = currentBalance + expectedIncome - recurringOutflows - mcResult.percentile50
@@ -235,7 +242,10 @@ class FinancialStressForecastEngine @Inject constructor(
     /**
      * Run Monte Carlo simulation for discretionary spending.
      */
-    private suspend fun runMonteCarloSimulation(daysAhead: Int): MonteCarloHorizonResult {
+    private suspend fun runMonteCarloSimulation(
+        daysAhead: Int,
+        patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>
+    ): MonteCarloHorizonResult {
         // Get historical spending for the last 60 days
         val now = timeProvider.now()
         val sixtyDaysAgo = now - (60 * TimePeriodUtils.DAY_IN_MILLIS)
@@ -244,13 +254,41 @@ class FinancialStressForecastEngine @Inject constructor(
         val purchases = expenses.filter { 
             it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine 
         }
+
+        val recurringMerchantKeys = patterns
+            .filter { it.confidence >= 0.50f }
+            .map { MerchantKeyGenerator.generate(it.merchantName) }
+            .filter { it.isNotBlank() }
+            .toSet()
+
+        val discretionaryPurchases = if (recurringMerchantKeys.isEmpty()) {
+            purchases
+        } else {
+            purchases.filterNot { purchase ->
+                val purchaseMerchantKey = purchase.merchantKey ?: MerchantKeyGenerator.generate(purchase.merchant)
+                purchaseMerchantKey in recurringMerchantKeys
+            }
+        }
         
         // Build empirical distribution of daily discretionary totals
-        val dailyTotals = purchases
+        val dailyTotals = discretionaryPurchases
             .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
             .mapValues { (_, txns) -> txns.sumOf { it.effectiveAmount } }
             .values
             .filter { it > 0.0 }
+
+        // Recurring-only purchase history implies no discretionary empirical signal.
+        if (dailyTotals.isEmpty() && purchases.isNotEmpty()) {
+            val zeroTotals = DoubleArray(NUM_SIMULATIONS) { 0.0 }
+            return MonteCarloHorizonResult(
+                percentile10 = 0.0,
+                percentile25 = 0.0,
+                percentile50 = 0.0,
+                percentile75 = 0.0,
+                percentile90 = 0.0,
+                simulatedTotals = zeroTotals.toList()
+            )
+        }
         
         // If insufficient data, return conservative estimates
         if (dailyTotals.isEmpty()) {
@@ -424,14 +462,17 @@ class FinancialStressForecastEngine @Inject constructor(
     /**
      * Create default horizons for error case.
      */
-    private fun createDefaultHorizons(): List<StressHorizon> {
+    private fun createDefaultHorizons(
+        fallbackRiskLevel: StressRiskLevel = StressRiskLevel.LOW,
+        fallbackCrunchProbability: Double = 0.0
+    ): List<StressHorizon> {
         return listOf(DAYS_30, DAYS_60, DAYS_90).map { days ->
             StressHorizon(
                 daysAhead = days,
                 projectedBalance = 0.0,
                 minProjectedBalance = 0.0,
-                probabilityOfCrunch = 0.0,
-                riskLevel = StressRiskLevel.LOW,
+                probabilityOfCrunch = fallbackCrunchProbability,
+                riskLevel = fallbackRiskLevel,
                 recurringObligations = 0.0,
                 expectedIncome = 0.0,
                 discretionaryBuffer = 0.0

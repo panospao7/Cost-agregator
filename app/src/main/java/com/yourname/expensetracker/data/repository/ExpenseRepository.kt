@@ -189,6 +189,8 @@ class ExpenseRepository @Inject constructor(
                    e.backfillAttempts, e.resolvedAddress, e.merchantKey
             FROM expenses e
             $whereClause
+            -- Safety invariant: sortOrder.sql comes from the closed SortOrder enum above.
+            -- Do not populate it from user input or remote config.
             ORDER BY e.${sortOrder.sql}
             LIMIT ? OFFSET ?
         """.trimIndent()
@@ -204,30 +206,35 @@ class ExpenseRepository @Inject constructor(
     suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int =
         expenseDao.getCountForPeriod(startMs, endMs)
 
+    suspend fun getExpenseById(id: Long): Expense? =
+        expenseDao.getById(id)
+
     suspend fun deleteExpense(expense: Expense) = expenseDao.delete(expense)
 
     suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long) {
         categoryUpdateMutex.withLock {
-            expenseDao.updateCategory(expense.id, newCategoryId)
-            merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
+            database.withTransaction {
+                expenseDao.updateCategory(expense.id, newCategoryId)
+                merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
 
-            // Also record as a correction for learning
-            val correction = UserCorrection(
-                packageName = "manual_edit",
-                originalMerchant = expense.merchant,
-                correctedMerchant = null,
-                originalAmount = expense.amount,
-                correctedAmount = null,
-                originalCategoryId = expense.categoryId,
-                correctedCategoryId = newCategoryId,
-                originalType = expense.transactionType.name,
-                correctedType = null,
-                wasRejected = false,
-                wasApproved = true,
-                notificationTitle = null,
-                notificationText = null
-            )
-            userCorrectionDao.insert(correction)
+                // Also record as a correction for learning
+                val correction = UserCorrection(
+                    packageName = "manual_edit",
+                    originalMerchant = expense.merchant,
+                    correctedMerchant = null,
+                    originalAmount = expense.amount,
+                    correctedAmount = null,
+                    originalCategoryId = expense.categoryId,
+                    correctedCategoryId = newCategoryId,
+                    originalType = expense.transactionType.name,
+                    correctedType = null,
+                    wasRejected = false,
+                    wasApproved = true,
+                    notificationTitle = null,
+                    notificationText = null
+                )
+                userCorrectionDao.insert(correction)
+            }
         }
     }
 
@@ -315,8 +322,10 @@ class ExpenseRepository @Inject constructor(
         transferDirection: TransferDirection?,
         transferAccountName: String?
     ) {
-        expenseDao.updateTransferDirection(expense.id, transferDirection?.name)
-        expenseDao.updateTransferAccountName(expense.id, transferAccountName)
+        database.withTransaction {
+            expenseDao.updateTransferDirection(expense.id, transferDirection?.name)
+            expenseDao.updateTransferAccountName(expense.id, transferAccountName)
+        }
 
         if (transferDirection != null) {
             transferDirectionAnalytics.recordUserCorrection(
@@ -332,8 +341,10 @@ class ExpenseRepository @Inject constructor(
         isNotMine: Boolean,
         ownerName: String?
     ) {
-        expenseDao.updateIsNotMine(expense.id, isNotMine)
-        expenseDao.updateOwnerName(expense.id, ownerName)
+        database.withTransaction {
+            expenseDao.updateIsNotMine(expense.id, isNotMine)
+            expenseDao.updateOwnerName(expense.id, ownerName)
+        }
     }
 
     suspend fun updateSharedExpenseDetails(
@@ -343,10 +354,12 @@ class ExpenseRepository @Inject constructor(
         mySharePercentage: Int?,
         myShareAmount: Double?
     ) {
-        expenseDao.updateIsSharedExpense(expense.id, isSharedExpense)
-        expenseDao.updateSharedWithName(expense.id, sharedWithName)
-        expenseDao.updateMySharePercentage(expense.id, mySharePercentage)
-        expenseDao.updateMyShareAmount(expense.id, myShareAmount)
+        database.withTransaction {
+            expenseDao.updateIsSharedExpense(expense.id, isSharedExpense)
+            expenseDao.updateSharedWithName(expense.id, sharedWithName)
+            expenseDao.updateMySharePercentage(expense.id, mySharePercentage)
+            expenseDao.updateMyShareAmount(expense.id, myShareAmount)
+        }
     }
 
     suspend fun searchMerchants(query: String): List<MerchantSuggestion> {
@@ -383,6 +396,23 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense> =
         expenseDao.getExpensesBetween(startDate, endDate)
+
+    suspend fun getExpensesBetweenPaged(
+        startDate: Long,
+        endDate: Long,
+        limit: Int,
+        offset: Int
+    ): List<Expense> = expenseDao.getExpensesBetween(startDate, endDate, limit, offset)
+
+    suspend fun getExpensesBetweenPagedForDeterministicExport(
+        startDate: Long,
+        endDate: Long,
+        limit: Int,
+        offset: Int
+    ): List<Expense> = expenseDao.getExpensesBetweenForExport(startDate, endDate, limit, offset)
+
+    suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int =
+        expenseDao.countExpensesBetween(startDate, endDate)
 
     suspend fun getExpensesSince(since: Long): List<Expense> =
         expenseDao.getExpensesSince(since)

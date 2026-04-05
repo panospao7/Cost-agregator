@@ -5,8 +5,12 @@ import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiRoute
+import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.*
@@ -26,6 +30,7 @@ class WarrantyTrackerRepositoryTest {
     private val cloudExtractionService: CloudWarrantyExtractionService = mockk()
     private val aiSettingsRepository: AiSettingsRepository = mockk()
     private val aiPolicy: AiPolicy = mockk()
+    private val aiCapabilityRouter: AiCapabilityRouter = mockk()
     private val timeProvider = FakeTimeProvider(1_700_000_000_000L)
     private val settingsFlow = MutableStateFlow(AiSettings())
 
@@ -38,12 +43,15 @@ class WarrantyTrackerRepositoryTest {
             cloudExtractionService,
             aiSettingsRepository,
             aiPolicy,
+            aiCapabilityRouter,
             timeProvider
         )
 
         every { aiSettingsRepository.settings() } returns settingsFlow
-        every { aiPolicy.canUseCloudFor(any(), AiCapability.RECEIPT_EXTRACTION) } returns true
-        every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_EXTRACTION) } returns false
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.WARRANTY_EXTRACTION, any(), any())
+        } returns AiRouteDecision(AiRoute.CLOUD, "test")
+        every { aiPolicy.shouldRedact(any(), AiCapability.WARRANTY_EXTRACTION) } returns false
     }
 
     @Test
@@ -75,22 +83,60 @@ class WarrantyTrackerRepositoryTest {
             parsedTaxAmount = null,
             confidence = 0.95f
         )
-        val expectedWarranty = Warranty(
-            id = 1,
-            receiptId = 1,
+        val extractionResult = WarrantyExtractionResult(
             productName = "MacBook Pro",
-            merchantName = "Apple",
-            purchaseDate = 1000,
-            warrantyDurationMonths = 12,
-            warrantyEndDate = 2000
+            warrantyMonths = 12,
+            warrantyType = "MANUFACTURER",
+            supportPhone = null,
+            supportEmail = null,
+            returnDays = null,
+            returnConditions = "Original packaging required",
+            confidence = 0.95f
         )
-        
-        coEvery { cloudExtractionService.extractWarranty(receipt, false) } returns expectedWarranty
+
+        coEvery {
+            cloudExtractionService.extractWarranty(
+                match {
+                    it.receiptText == receipt.rawOcrText &&
+                        it.merchant == receipt.parsedMerchant &&
+                        it.totalAmount == receipt.parsedTotal &&
+                        it.purchaseDate == receipt.parsedDate &&
+                        it.currency == receipt.currency
+                },
+                false
+            )
+        } returns extractionResult
 
         val result = repository.extractWarrantyFromReceipt(receipt)
         
         assertNotNull(result)
         assertEquals("MacBook Pro", result?.productName)
+        assertEquals(12, result?.warrantyDurationMonths)
+        assertEquals("Original packaging required", result?.notes)
+    }
+
+    @Test
+    fun `extractWarrantyFromReceipt skips cloud extraction when route is not cloud`() = runTest {
+        val receipt = ScannedReceipt(
+            id = 2,
+            imagePath = "/path/to/image.jpg",
+            rawOcrText = "Receipt text",
+            parsedTotal = 50.0,
+            parsedMerchant = "Test Store",
+            parsedDate = 2000,
+            parsedItems = null,
+            parsedTaxAmount = null,
+            confidence = 0.95f
+        )
+
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.WARRANTY_EXTRACTION, any(), any())
+        } returns AiRouteDecision(AiRoute.ON_DEVICE, "on-device selected")
+
+        val result = repository.extractWarrantyFromReceipt(receipt)
+
+        assertNull(result)
+        coVerify(exactly = 0) { cloudExtractionService.extractWarranty(any(), any()) }
     }
 
     @Test

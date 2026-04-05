@@ -12,9 +12,6 @@ import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.GroupExpense
-import com.yourname.expensetracker.data.database.entity.GroupMember
-import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.AnalyticsRepository
 import com.yourname.expensetracker.data.repository.BudgetRepository
@@ -44,8 +41,11 @@ import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
-import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
+import com.yourname.expensetracker.domain.groups.GroupSplitType
+import com.yourname.expensetracker.domain.groups.SharedExpenseDataPort
+import com.yourname.expensetracker.domain.groups.SharedExpenseMember
 import com.yourname.expensetracker.domain.groups.SharedExpenseManager
+import com.yourname.expensetracker.domain.groups.SharedGroupExpense
 import com.yourname.expensetracker.domain.health.FinancialHealthCalculator
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
@@ -67,6 +67,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -124,12 +125,14 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             dayOfWeekAnalyzer = DayOfWeekAnalyzer()
         )
 
-        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider)
+        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, Dispatchers.Unconfined)
         advancedEngine = AdvancedAnalyticsEngine(
             expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
             budgetRepository = budgetRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            defaultDispatcher = Dispatchers.Unconfined,
+            ioDispatcher = Dispatchers.Unconfined
         )
     }
 
@@ -343,22 +346,16 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `shared expenses counted correctly in monthly totals`() = runTest {
-        val groupExpenseDao = mockk<com.yourname.expensetracker.data.database.dao.GroupExpenseDao>(relaxed = true)
-        val memberDao = mockk<com.yourname.expensetracker.data.database.dao.GroupMemberDao>(relaxed = true)
-        val manager = SharedExpenseManager(
-            groupDao = mockk(relaxed = true),
-            memberDao = memberDao,
-            groupExpenseDao = groupExpenseDao,
-            transactionCoordinator = mockk<GroupTransactionCoordinator>(relaxed = true)
-        )
+        val sharedExpenseDataPort = mockk<SharedExpenseDataPort>(relaxed = true)
+        val manager = SharedExpenseManager(sharedExpenseDataPort, Dispatchers.Unconfined)
 
-        coEvery { memberDao.getMembersForGroupOnce(1L) } returns listOf(
-            GroupMember(id = 1L, groupId = 1L, name = "Me"),
-            GroupMember(id = 2L, groupId = 1L, name = "Bob"),
-            GroupMember(id = 3L, groupId = 1L, name = "Carol")
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns listOf(
+            SharedExpenseMember(id = 1L, groupId = 1L, name = "Me"),
+            SharedExpenseMember(id = 2L, groupId = 1L, name = "Bob"),
+            SharedExpenseMember(id = 3L, groupId = 1L, name = "Carol")
         )
-        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
-            GroupExpense(
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
+            SharedGroupExpense(
                 id = 1L,
                 groupId = 1L,
                 expenseId = 101L,
@@ -366,7 +363,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 date = ms(2026, 3, 5),
                 description = "Rent",
                 totalAmount = 120.0,
-                splitType = SplitType.EQUAL
+                splitType = GroupSplitType.EQUAL
             )
         )
 
@@ -479,14 +476,11 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         val lifestyle = LifestyleInflationDetector(expenseDao).analyzeLifestyleInflation(6)
 
         val sharedManager = SharedExpenseManager(
-            groupDao = mockk(relaxed = true),
-            memberDao = mockk {
-                coEvery { getMembersForGroupOnce(any()) } returns emptyList()
+            sharedExpenseDataPort = mockk {
+                coEvery { getGroupMembersOnce(any()) } returns emptyList()
+                coEvery { getGroupExpensesOnce(any()) } returns emptyList()
             },
-            groupExpenseDao = mockk {
-                coEvery { getExpensesForGroupOnce(any()) } returns emptyList()
-            },
-            transactionCoordinator = mockk(relaxed = true)
+            ioDispatcher = Dispatchers.Unconfined
         )
         val balances = sharedManager.calculateBalances(1L)
 

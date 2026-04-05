@@ -1,43 +1,44 @@
 package com.yourname.expensetracker.verification
 
 import com.yourname.expensetracker.assertApproxEquals
-import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
-import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
-import com.yourname.expensetracker.data.database.dao.GroupMemberDao
-import com.yourname.expensetracker.data.database.entity.GroupExpense
-import com.yourname.expensetracker.data.database.entity.GroupMember
-import com.yourname.expensetracker.data.database.entity.SplitType
-import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
+import com.yourname.expensetracker.domain.groups.GroupSplitType
+import com.yourname.expensetracker.domain.groups.MemberBalance
+import com.yourname.expensetracker.domain.groups.RemoveSharedExpenseMemberResult
 import com.yourname.expensetracker.domain.groups.SettlementCalculator
+import com.yourname.expensetracker.domain.groups.SharedExpenseDataPort
+import com.yourname.expensetracker.domain.groups.SharedExpenseGroup
+import com.yourname.expensetracker.domain.groups.SharedExpenseMember
 import com.yourname.expensetracker.domain.groups.SharedExpenseManager
+import com.yourname.expensetracker.domain.groups.SharedGroupExpense
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 
 class SharedExpenseTest {
 
-    private val groupDao = mockk<ExpenseGroupDao>(relaxed = true)
-    private val memberDao = mockk<GroupMemberDao>(relaxed = true)
-    private val groupExpenseDao = mockk<GroupExpenseDao>(relaxed = true)
-    private val txCoordinator = mockk<GroupTransactionCoordinator>(relaxed = true)
+    private val sharedExpenseDataPort = mockk<SharedExpenseDataPort>(relaxed = true)
 
     private lateinit var manager: SharedExpenseManager
     private lateinit var settlementCalculator: SettlementCalculator
 
     @Before
     fun setUp() {
-        manager = SharedExpenseManager(groupDao, memberDao, groupExpenseDao, txCoordinator)
+        coEvery { sharedExpenseDataPort.getGroupOnce(any()) } returns null
+        manager = SharedExpenseManager(sharedExpenseDataPort, Dispatchers.Unconfined)
         settlementCalculator = SettlementCalculator()
     }
 
     @Test
     fun `equal split divides evenly`() = kotlinx.coroutines.test.runTest {
-        coEvery { memberDao.getMembersForGroupOnce(1L) } returns members3
-        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
-            expense(total = 90.0, paidBy = 1L, splitType = SplitType.EQUAL)
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
+            expense(total = 90.0, paidBy = 1L, splitType = GroupSplitType.EQUAL)
         )
 
         val balances = manager.calculateBalances(1L)
@@ -49,12 +50,12 @@ class SharedExpenseTest {
 
     @Test
     fun `percentage split respects ratios`() = kotlinx.coroutines.test.runTest {
-        coEvery { memberDao.getMembersForGroupOnce(1L) } returns members3
-        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
             expense(
                 total = 100.0,
                 paidBy = 1L,
-                splitType = SplitType.CUSTOM_PERCENT,
+                splitType = GroupSplitType.CUSTOM_PERCENT,
                 customSplits = "1:50,2:30,3:20"
             )
         )
@@ -68,12 +69,12 @@ class SharedExpenseTest {
 
     @Test
     fun `custom split uses exact amounts`() = kotlinx.coroutines.test.runTest {
-        coEvery { memberDao.getMembersForGroupOnce(1L) } returns members3
-        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
             expense(
                 total = 120.0,
                 paidBy = 2L,
-                splitType = SplitType.CUSTOM_AMOUNT,
+                splitType = GroupSplitType.CUSTOM_AMOUNT,
                 customSplits = "1:20,2:50,3:50"
             )
         )
@@ -87,10 +88,10 @@ class SharedExpenseTest {
 
     @Test
     fun `settlement optimization minimizes transactions`() = kotlinx.coroutines.test.runTest {
-        coEvery { memberDao.getMembersForGroupOnce(1L) } returns members3
-        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
             // member 1 paid all 90, equal split => two debtors each owe 30
-            expense(total = 90.0, paidBy = 1L, splitType = SplitType.EQUAL)
+            expense(total = 90.0, paidBy = 1L, splitType = GroupSplitType.EQUAL)
         )
 
         val balances = manager.calculateBalances(1L)
@@ -102,11 +103,27 @@ class SharedExpenseTest {
     }
 
     @Test
+    fun `settlement solver finds exact global minimum transfers`() {
+        val balances = mapOf(
+            1L to MemberBalance(1L, "A", paid = 0.0, shouldPay = 0.0, netBalance = -6.0),
+            2L to MemberBalance(2L, "B", paid = 0.0, shouldPay = 0.0, netBalance = -5.0),
+            3L to MemberBalance(3L, "C", paid = 0.0, shouldPay = 0.0, netBalance = 1.0),
+            4L to MemberBalance(4L, "D", paid = 0.0, shouldPay = 0.0, netBalance = 5.0),
+            5L to MemberBalance(5L, "E", paid = 0.0, shouldPay = 0.0, netBalance = 5.0)
+        )
+
+        val settlements = settlementCalculator.calculateSettlements(balances)
+
+        assertEquals(3, settlements.size)
+        assertApproxEquals(11.0, settlements.sumOf { it.amount }, 0.0001)
+    }
+
+    @Test
     fun `group balance tracks paid vs owed`() = kotlinx.coroutines.test.runTest {
-        coEvery { memberDao.getMembersForGroupOnce(1L) } returns members3
-        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
-            expense(total = 90.0, paidBy = 1L, splitType = SplitType.EQUAL),
-            expense(total = 30.0, paidBy = 2L, splitType = SplitType.EQUAL)
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
+            expense(total = 90.0, paidBy = 1L, splitType = GroupSplitType.EQUAL),
+            expense(total = 30.0, paidBy = 2L, splitType = GroupSplitType.EQUAL)
         )
 
         val balances = manager.calculateBalances(1L)
@@ -119,8 +136,8 @@ class SharedExpenseTest {
 
     @Test
     fun `empty group returns zero balances`() = kotlinx.coroutines.test.runTest {
-        coEvery { memberDao.getMembersForGroupOnce(1L) } returns emptyList()
-        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns emptyList()
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns emptyList()
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns emptyList()
 
         val balances = manager.calculateBalances(1L)
 
@@ -129,10 +146,10 @@ class SharedExpenseTest {
 
     @Test
     fun `shared_expense_single_member_equal_split_no_debt`() = kotlinx.coroutines.test.runTest {
-        val soloMember = listOf(GroupMember(id = 1L, groupId = 1L, name = "Solo"))
-        coEvery { memberDao.getMembersForGroupOnce(1L) } returns soloMember
-        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
-            expense(total = 100.0, paidBy = 1L, splitType = SplitType.EQUAL)
+        val soloMember = listOf(SharedExpenseMember(id = 1L, groupId = 1L, name = "Solo"))
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns soloMember
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
+            expense(total = 100.0, paidBy = 1L, splitType = GroupSplitType.EQUAL)
         )
 
         val balances = manager.calculateBalances(1L)
@@ -146,11 +163,11 @@ class SharedExpenseTest {
 
     @Test
     fun `shared_expense_large_group_settlement_min_txn_invariant`() = kotlinx.coroutines.test.runTest {
-        val members10 = (1L..10L).map { id -> GroupMember(id = id, groupId = 1L, name = "M$id") }
+        val members10 = (1L..10L).map { id -> SharedExpenseMember(id = id, groupId = 1L, name = "M$id") }
 
-        coEvery { memberDao.getMembersForGroupOnce(1L) } returns members10
-        coEvery { groupExpenseDao.getExpensesForGroupOnce(1L) } returns listOf(
-            expense(total = 1000.0, paidBy = 1L, splitType = SplitType.EQUAL)
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members10
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
+            expense(total = 1000.0, paidBy = 1L, splitType = GroupSplitType.EQUAL)
         )
 
         val balances = manager.calculateBalances(1L)
@@ -172,12 +189,109 @@ class SharedExpenseTest {
         assertApproxEquals(totalOwedByDebtors, settlements.sumOf { it.amount }, 0.0001)
     }
 
+    @Test
+    fun `addExpense uses group currency from data port when available`() = kotlinx.coroutines.test.runTest {
+        coEvery { sharedExpenseDataPort.getGroupOnce(1L) } returns SharedExpenseGroup(
+            id = 1L,
+            name = "Trip",
+            defaultCurrency = "USD"
+        )
+        coEvery { sharedExpenseDataPort.addExpense(any()) } answers { firstArg<SharedGroupExpense>().id }
+
+        manager.addExpense(
+            groupId = 1L,
+            expenseId = 101L,
+            paidById = 1L,
+            description = "Dinner",
+            totalAmount = 42.0,
+            currency = "EUR",
+            splitType = GroupSplitType.EQUAL,
+            customSplits = null
+        )
+
+        coVerify(exactly = 1) {
+            sharedExpenseDataPort.addExpense(match { it.currency == "USD" })
+        }
+    }
+
+    @Test
+    fun `removeMember blocks deletion when member paid existing expenses`() = kotlinx.coroutines.test.runTest {
+        val memberToDelete = members3[1]
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
+            expense(total = 30.0, paidBy = memberToDelete.id, splitType = GroupSplitType.EQUAL)
+        )
+
+        val result = manager.removeMember(memberToDelete)
+
+        assertTrue(result is RemoveSharedExpenseMemberResult.CannotDeleteMemberWithExpenses)
+        result as RemoveSharedExpenseMemberResult.CannotDeleteMemberWithExpenses
+        assertEquals(1, result.expenseCount)
+        coVerify(exactly = 0) { sharedExpenseDataPort.removeMember(any()) }
+    }
+
+    @Test
+    fun `removeMember blocks deletion when custom split references member`() = kotlinx.coroutines.test.runTest {
+        val memberToDelete = members3[1]
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
+            expense(
+                total = 30.0,
+                paidBy = members3[0].id,
+                splitType = GroupSplitType.CUSTOM_AMOUNT,
+                customSplits = "1:15,2:10,3:5"
+            )
+        )
+
+        val result = manager.removeMember(memberToDelete)
+
+        assertTrue(result is RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits)
+        result as RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits
+        assertEquals(1, result.expenseCount)
+        coVerify(exactly = 0) { sharedExpenseDataPort.removeMember(any()) }
+    }
+
+    @Test
+    fun `removeMember allows deletion when member has no payer or split references`() = kotlinx.coroutines.test.runTest {
+        val memberToDelete = members3[1]
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
+            expense(total = 30.0, paidBy = members3[0].id, splitType = GroupSplitType.EQUAL)
+        )
+
+        val result = manager.removeMember(memberToDelete)
+
+        assertTrue(result is RemoveSharedExpenseMemberResult.Success)
+        coVerify(exactly = 1) { sharedExpenseDataPort.removeMember(memberToDelete) }
+    }
+
+    @Test
+    fun `addExpense rejects non-finite custom split values before persistence`() = kotlinx.coroutines.test.runTest {
+        try {
+            manager.addExpense(
+                groupId = 1L,
+                expenseId = 101L,
+                paidById = 1L,
+                description = "Dinner",
+                totalAmount = 42.0,
+                currency = "EUR",
+                splitType = GroupSplitType.CUSTOM_AMOUNT,
+                customSplits = mapOf(1L to Double.NaN, 2L to 42.0)
+            )
+            fail("Expected IllegalArgumentException for non-finite custom split values")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message?.contains("must be finite") == true)
+        }
+
+        coVerify(exactly = 0) { sharedExpenseDataPort.addExpense(any()) }
+    }
+
     private fun expense(
         total: Double,
         paidBy: Long,
-        splitType: SplitType,
+        splitType: GroupSplitType,
         customSplits: String? = null
-    ) = GroupExpense(
+    ) = SharedGroupExpense(
         id = 1L,
         groupId = 1L,
         expenseId = null,
@@ -186,12 +300,12 @@ class SharedExpenseTest {
         description = "test",
         totalAmount = total,
         splitType = splitType,
-        customSplitsJson = customSplits
+        customSplitsSerialized = customSplits
     )
 
     private val members3 = listOf(
-        GroupMember(id = 1L, groupId = 1L, name = "Alice"),
-        GroupMember(id = 2L, groupId = 1L, name = "Bob"),
-        GroupMember(id = 3L, groupId = 1L, name = "Carol")
+        SharedExpenseMember(id = 1L, groupId = 1L, name = "Alice"),
+        SharedExpenseMember(id = 2L, groupId = 1L, name = "Bob"),
+        SharedExpenseMember(id = 3L, groupId = 1L, name = "Carol")
     )
 }

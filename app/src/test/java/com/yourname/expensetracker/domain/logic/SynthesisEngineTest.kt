@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.logic
 
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
@@ -209,17 +211,208 @@ class SynthesisEngineTest {
         assertTrue(day10.status != BlockPartyStatus.NO_DATA)
     }
 
-    private fun createRecurringPattern(amount: Double, confidence: Float, date: Long) = RecurringPattern(
-        merchantName = "Test",
+    @Test
+    fun `synthesize on last day projects zero discretionary days`() {
+        every { timeProvider.now() } returns millis(2024, Calendar.JANUARY, 31)
+        val engine = SynthesisEngine(timeProvider)
+
+        val pace = SpendingPace(
+            currentMonthSpent = 1000.0,
+            daysElapsed = 31,
+            daysInMonth = 31,
+            projectedTotal = 1100.0,
+            previousMonthTotal = null,
+            averageMonthlyTotal = 310.0,
+            pacePercentage = 100.0f,
+            paceStatus = PaceStatus.ON_PACE
+        )
+
+        val forecast = engine.synthesize(
+            pastSumDaily = listOf(100.0, 200.0),
+            recurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = emptyList(),
+            spendingPace = pace
+        )
+
+        assertEquals(0.0, forecast.components.predictedDiscretionary, 0.0001)
+    }
+
+    @Test
+    fun `calculateBlockPartyData BIWEEKLY rejects weekly plus seven and matches plus fourteen`() {
+        every { timeProvider.now() } returns millis(2024, Calendar.JANUARY, 1)
+        val engine = SynthesisEngine(timeProvider)
+
+        val biweekly = createRecurringPattern(
+            amount = 100.0,
+            confidence = 0.95f,
+            date = millis(2024, Calendar.JANUARY, 3),
+            frequency = RecurrenceFrequency.BIWEEKLY
+        )
+
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(biweekly),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = listOf(createBudgetStatus(limit = 2000.0)),
+            spendingPace = SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = 1,
+                daysInMonth = 31,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0.0f,
+                paceStatus = PaceStatus.ON_PACE
+            )
+        )
+
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(31) { 0f },
+            budgetLimit = 2000.0
+        )
+
+        val day10 = blockParty.first { it.dayOfMonth == 10 } // +7 from Jan 3
+        val day17 = blockParty.first { it.dayOfMonth == 17 } // +14 from Jan 3
+
+        assertEquals(0.0, day10.recurringImpact, 0.0001)
+        assertEquals(100.0, day17.recurringImpact, 0.0001)
+    }
+
+    @Test
+    fun `calculateBlockPartyData BIWEEKLY matches across month boundary`() {
+        every { timeProvider.now() } returns millis(2024, Calendar.FEBRUARY, 1)
+        val engine = SynthesisEngine(timeProvider)
+
+        val biweekly = createRecurringPattern(
+            amount = 75.0,
+            confidence = 0.95f,
+            date = millis(2024, Calendar.JANUARY, 25),
+            frequency = RecurrenceFrequency.BIWEEKLY
+        )
+
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = listOf(biweekly),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = listOf(createBudgetStatus(limit = 1800.0)),
+            spendingPace = SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = 1,
+                daysInMonth = 29,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0.0f,
+                paceStatus = PaceStatus.ON_PACE
+            )
+        )
+
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(29) { 0f },
+            budgetLimit = 1800.0
+        )
+
+        val day8 = blockParty.first { it.dayOfMonth == 8 } // 14 days after Jan 25
+        assertEquals(75.0, day8.recurringImpact, 0.0001)
+    }
+
+    @Test
+    fun `calculateBlockPartyData fallback actual spend filters to PURCHASE mine-only`() {
+        val pace = SpendingPace(
+            currentMonthSpent = 100.0,
+            daysElapsed = 15,
+            daysInMonth = 31,
+            projectedTotal = 200.0,
+            previousMonthTotal = null,
+            averageMonthlyTotal = null,
+            pacePercentage = 100.0f,
+            paceStatus = PaceStatus.ON_PACE
+        )
+
+        val forecast = engine.synthesize(
+            pastSumDaily = emptyList(),
+            recurringPatterns = emptyList(),
+            plannedExpenses = emptyList(),
+            savingsGoals = emptyList(),
+            budgetStatuses = listOf(createBudgetStatus(limit = 1000.0)),
+            spendingPace = pace
+        )
+
+        val day10Ts = millis(2024, Calendar.JANUARY, 10)
+        val mixedTransactions = listOf(
+            expense(amount = 40.0, type = TransactionType.PURCHASE, date = day10Ts, merchant = "Valid Purchase", isNotMine = false),
+            expense(amount = 999.0, type = TransactionType.DEPOSIT, date = day10Ts, merchant = "Salary"),
+            expense(amount = 250.0, type = TransactionType.TRANSFER, date = day10Ts, merchant = "Internal Transfer"),
+            expense(amount = 80.0, type = TransactionType.PURCHASE, date = day10Ts, merchant = "Shared", isNotMine = true)
+        )
+
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = mixedTransactions,
+            dailySpending = emptyList(),
+            budgetLimit = 1000.0
+        )
+
+        val day10 = blockParty.first { it.dayOfMonth == 10 }
+        assertEquals(40.0, day10.actualSpent, 0.01)
+        assertEquals(1, day10.topTransactions.size)
+        assertEquals(TransactionType.PURCHASE, day10.topTransactions.first().transactionType)
+        assertTrue(day10.status != BlockPartyStatus.NO_DATA)
+    }
+
+    private fun createRecurringPattern(
+        amount: Double,
+        confidence: Float,
+        date: Long,
+        frequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY,
+        merchantName: String = "Test"
+    ) = RecurringPattern(
+        merchantName = merchantName,
         averageAmount = amount,
         currency = "EUR",
-        frequency = RecurrenceFrequency.MONTHLY,
+        frequency = frequency,
         periodVarianceDays = 0,
         amountVariancePercent = 0.0,
         nextExpectedDate = date,
         confidence = confidence,
         previousDates = emptyList()
     )
+
+    private fun expense(
+        amount: Double,
+        type: TransactionType,
+        date: Long,
+        merchant: String,
+        isNotMine: Boolean = false
+    ) = Expense(
+        id = 0,
+        amount = amount,
+        merchant = merchant,
+        transactionType = type,
+        date = date,
+        categoryId = null,
+        isNotMine = isNotMine
+    )
+
+    private fun millis(year: Int, month: Int, day: Int): Long {
+        return Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, day)
+            set(Calendar.HOUR_OF_DAY, 12)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
 
     private fun createPlannedExpense(amount: Double, priority: PlannedExpensePriority, date: Long) = PlannedExpense(
         id = 0,
