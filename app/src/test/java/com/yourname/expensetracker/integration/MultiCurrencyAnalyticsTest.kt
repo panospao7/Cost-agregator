@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.integration
 
+import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -8,23 +9,19 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
 import com.yourname.expensetracker.domain.model.Result
-import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.Assert.assertTrue
 import java.time.LocalDate
 import java.time.ZoneId
 
-class MultiCurrencyAnalyticsTest {
+class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `multi_currency_analytics_contract`() = runTest {
-        val expenseDao = mockk<ExpenseDao>(relaxed = true)
         val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
-        val timeProvider = mockk<TimeProvider>(relaxed = true)
         every { timeProvider.now() } returns ms(2026, 4, 15)
 
         val converter = CurrencyConverter(exchangeRateStore)

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.health
 
+import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -14,27 +15,24 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
-import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
 
-class FinancialHealthScoreV2Test {
+class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
 
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var savingsGoalRepository: SavingsGoalRepository
     private lateinit var recurringExpenseEngine: RecurringExpenseEngine
     private lateinit var healthScoreHistoryDao: HealthScoreHistoryDao
-    private lateinit var timeProvider: TimeProvider
 
     private lateinit var calculator: FinancialHealthScoreV2
 
@@ -42,13 +40,13 @@ class FinancialHealthScoreV2Test {
     private val dayMs = 24L * 60L * 60L * 1000L
 
     @Before
-    fun setup() {
+    override fun setUp() {
+        super.setUp()
         budgetRepository = mockk()
         expenseRepository = mockk()
         savingsGoalRepository = mockk()
         recurringExpenseEngine = mockk()
         healthScoreHistoryDao = mockk(relaxed = true)
-        timeProvider = mockk()
 
         every { timeProvider.now() } returns now
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())

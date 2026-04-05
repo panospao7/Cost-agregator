@@ -2,7 +2,8 @@
 
 > **Purpose:** This document is the single source of truth for AI agents generating tests for the ExpenseTracker codebase.  
 > **Usage:** Before writing any test, read this entire document. Follow the conventions, patterns, and infrastructure described here exactly.  
-> **Companion files:** `CRASH-TEST-SCENARIOS.md` (golden values), `COMPONENT-TEST-MATRIX.md` (full file inventory)
+> **Start here:** `TESTING-WORKFLOW.md` — master orchestration with phased batches  
+> **Companion files:** `CRASH-TEST-SCENARIOS.md` (golden values), `COMPONENT-TEST-MATRIX.md` (full file inventory), `TEST-CLEANUP-PLAN.md` (Phase 0 cleanup)
 
 ---
 

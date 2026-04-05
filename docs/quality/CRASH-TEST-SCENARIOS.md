@@ -4,6 +4,7 @@
 > **Purpose:** Break every calculation engine, expose edge cases, verify cross-component consistency  
 > **Approach:** Predetermined inputs → expected outputs. No test passes unless the exact value matches.  
 > **For AI agents:** This file contains the golden dataset and all expected values. When creating tests, import `createExpense` and `assertApproxEquals` from `TestUtils.kt` and reference exact values from the tables below. Read `TESTING-AGENT-PLAYBOOK.md` first for conventions, base classes, and templates.  
+> **Start here:** `TESTING-WORKFLOW.md` — master orchestration with phased batches  
 > **Companion files:** `TESTING-AGENT-PLAYBOOK.md` (conventions & templates), `COMPONENT-TEST-MATRIX.md` (file inventory)
 
 ---

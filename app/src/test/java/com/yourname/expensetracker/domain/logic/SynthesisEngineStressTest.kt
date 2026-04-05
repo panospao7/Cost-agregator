@@ -1,13 +1,12 @@
 package com.yourname.expensetracker.domain.logic
 
+import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
-import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
-import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -32,9 +31,8 @@ import kotlin.random.Random
  * 
  * @author Hostile QA Engineer
  */
-class SynthesisEngineStressTest {
+class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
 
-    private val timeProvider = mockk<TimeProvider>()
     private lateinit var engine: SynthesisEngine
 
     // ============================================================================
@@ -131,7 +129,8 @@ class SynthesisEngineStressTest {
     // ============================================================================
 
     @Before
-    fun setup() {
+    override fun setUp() {
+        super.setUp()
         // Default to middle of month
         createTimeProvider(getTimestampForDayOfMonth(2024, 1, 15))
         engine = SynthesisEngine(timeProvider)

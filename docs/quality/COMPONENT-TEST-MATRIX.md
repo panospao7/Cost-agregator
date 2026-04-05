@@ -5,6 +5,7 @@
 > **Legend:** ✅ = has tests | ❌ = no tests | ⚠️ = tests exist but insufficient  
 > **Test types:** U = Unit | I = Integration | S = Stress | E = E2E | A = AndroidTest (instrumented) | C = Compose UI | V = Validation (golden values)  
 > **For AI agents:** This file lists every production file and what tests it needs. For each component marked ❌ or ⚠️, generate tests following the conventions in `TESTING-AGENT-PLAYBOOK.md`. Use golden values from `CRASH-TEST-SCENARIOS.md` for any `V`-type tests.  
+> **Start here:** `TESTING-WORKFLOW.md` — master orchestration with phased batches  
 > **Companion files:** `TESTING-AGENT-PLAYBOOK.md` (conventions & templates), `CRASH-TEST-SCENARIOS.md` (golden values & edge cases)
 
 ---

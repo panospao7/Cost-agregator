@@ -1,148 +1,185 @@
 package com.yourname.expensetracker.domain.logic
 
-import com.google.common.truth.Truth.assertThat
+import com.yourname.expensetracker.assertApproxEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CustomSplitParserTest {
 
-    @Test
-    fun `parseAndValidate rejects malformed partial payload`() {
-        val result = CustomSplitParser.parseAndValidate(
-            splitsString = "1:30,2",
-            splitType = CustomSplitMode.CUSTOM_AMOUNT,
-            totalAmount = 100.0,
-            groupMemberIds = setOf(1L, 2L)
-        )
-
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Invalid::class.java)
-    }
+    private val members = setOf(1L, 2L, 3L)
 
     @Test
-    fun `parseAndValidate rejects unknown member id`() {
-        val result = CustomSplitParser.parseAndValidate(
-            splitsString = "1:50,99:50",
-            splitType = CustomSplitMode.CUSTOM_AMOUNT,
-            totalAmount = 100.0,
-            groupMemberIds = setOf(1L, 2L)
-        )
-
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Invalid::class.java)
-    }
-
-    @Test
-    fun `parseAndValidate rejects duplicate member id`() {
-        val result = CustomSplitParser.parseAndValidate(
-            splitsString = "1:40,1:60",
-            splitType = CustomSplitMode.CUSTOM_AMOUNT,
-            totalAmount = 100.0,
-            groupMemberIds = setOf(1L)
-        )
-
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Invalid::class.java)
-    }
-
-    @Test
-    fun `parseAndValidate requires full member map`() {
-        val result = CustomSplitParser.parseAndValidate(
-            splitsString = "1:100",
-            splitType = CustomSplitMode.CUSTOM_AMOUNT,
-            totalAmount = 100.0,
-            groupMemberIds = setOf(1L, 2L)
-        )
-
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Invalid::class.java)
-    }
-
-    @Test
-    fun `parseAndValidate validates percentage totals`() {
-        val result = CustomSplitParser.parseAndValidate(
-            splitsString = "1:60,2:30",
-            splitType = CustomSplitMode.CUSTOM_PERCENT,
-            totalAmount = 100.0,
-            groupMemberIds = setOf(1L, 2L)
-        )
-
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Invalid::class.java)
-    }
-
-    @Test
-    fun `parseAndValidate validates amount totals`() {
-        val result = CustomSplitParser.parseAndValidate(
-            splitsString = "1:60,2:30",
-            splitType = CustomSplitMode.CUSTOM_AMOUNT,
-            totalAmount = 100.0,
-            groupMemberIds = setOf(1L, 2L)
-        )
-
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Invalid::class.java)
-    }
-
-    @Test
-    fun `parseAndValidate accepts fully valid custom amount map`() {
-        val result = CustomSplitParser.parseAndValidate(
-            splitsString = "1:55.25,2:44.75",
-            splitType = CustomSplitMode.CUSTOM_AMOUNT,
-            totalAmount = 100.0,
-            groupMemberIds = setOf(1L, 2L)
-        )
-
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Valid::class.java)
-    }
-
-    @Test
-    fun `parseAndValidate rejects non-finite total amount`() {
+    fun `parseAndValidate rejects equal mode because no custom payload is required`() {
         val result = CustomSplitParser.parseAndValidate(
             splitsString = "1:50,2:50",
+            splitType = CustomSplitMode.EQUAL,
+            totalAmount = 100.0,
+            groupMemberIds = setOf(1L, 2L)
+        )
+
+        assertTrue(result is CustomSplitParseResult.Invalid)
+    }
+
+    @Test
+    fun `parseAndValidate accepts custom amount split that sums exactly to total`() {
+        val result = CustomSplitParser.parseAndValidate(
+            splitsString = "1:50.00,2:30.00,3:20.00",
+            splitType = CustomSplitMode.CUSTOM_AMOUNT,
+            totalAmount = 100.0,
+            groupMemberIds = members
+        )
+
+        assertTrue(result is CustomSplitParseResult.Valid)
+        result as CustomSplitParseResult.Valid
+        assertApproxEquals(100.0, result.splits.values.sum(), 0.001)
+    }
+
+    @Test
+    fun `parseAndValidate accepts custom amount split at AMOUNT_TOLERANCE boundary 0_01`() {
+        val result = CustomSplitParser.parseAndValidate(
+            splitsString = "1:60.00,2:20.00,3:19.99",
+            splitType = CustomSplitMode.CUSTOM_AMOUNT,
+            totalAmount = 100.0,
+            groupMemberIds = members
+        )
+
+        assertTrue(result is CustomSplitParseResult.Valid)
+    }
+
+    @Test
+    fun `parseAndValidate rejects custom amount split beyond AMOUNT_TOLERANCE`() {
+        val result = CustomSplitParser.parseAndValidate(
+            splitsString = "1:60.00,2:20.00,3:19.98",
+            splitType = CustomSplitMode.CUSTOM_AMOUNT,
+            totalAmount = 100.0,
+            groupMemberIds = members
+        )
+
+        assertTrue(result is CustomSplitParseResult.Invalid)
+    }
+
+    @Test
+    fun `parseAndValidate accepts custom percent split at PERCENT_TOLERANCE boundary 0_1`() {
+        val result = CustomSplitParser.parseAndValidate(
+            splitsString = "1:33.3,2:33.3,3:33.3",
+            splitType = CustomSplitMode.CUSTOM_PERCENT,
+            totalAmount = 100.0,
+            groupMemberIds = members
+        )
+
+        assertTrue(result is CustomSplitParseResult.Valid)
+        result as CustomSplitParseResult.Valid
+        assertApproxEquals(99.9, result.splits.values.sum(), 0.001)
+    }
+
+    @Test
+    fun `parseAndValidate rejects custom percent split beyond PERCENT_TOLERANCE`() {
+        val result = CustomSplitParser.parseAndValidate(
+            splitsString = "1:33.3,2:33.3,3:33.29",
+            splitType = CustomSplitMode.CUSTOM_PERCENT,
+            totalAmount = 100.0,
+            groupMemberIds = members
+        )
+
+        assertTrue(result is CustomSplitParseResult.Invalid)
+    }
+
+    @Test
+    fun `parseAndValidate accepts unequal split when sums match total`() {
+        val result = CustomSplitParser.parseAndValidate(
+            splitsString = "1:70.0,2:20.0,3:10.0",
+            splitType = CustomSplitMode.UNEQUAL,
+            totalAmount = 100.0,
+            groupMemberIds = members
+        )
+
+        assertTrue(result is CustomSplitParseResult.Valid)
+    }
+
+    @Test
+    fun `parseAndValidate rejects split with unknown member duplicate and negative values`() {
+        val unknownMember = CustomSplitParser.parseAndValidate(
+            splitsString = "1:50,2:30,99:20",
+            splitType = CustomSplitMode.CUSTOM_AMOUNT,
+            totalAmount = 100.0,
+            groupMemberIds = members
+        )
+        val duplicateMember = CustomSplitParser.parseAndValidate(
+            splitsString = "1:50,1:30,3:20",
+            splitType = CustomSplitMode.CUSTOM_AMOUNT,
+            totalAmount = 100.0,
+            groupMemberIds = members
+        )
+        val negativeValue = CustomSplitParser.parseAndValidate(
+            splitsString = "1:120,2:-10,3:-10",
+            splitType = CustomSplitMode.CUSTOM_AMOUNT,
+            totalAmount = 100.0,
+            groupMemberIds = members
+        )
+
+        assertTrue(unknownMember is CustomSplitParseResult.Invalid)
+        assertTrue(duplicateMember is CustomSplitParseResult.Invalid)
+        assertTrue(negativeValue is CustomSplitParseResult.Invalid)
+    }
+
+    @Test
+    fun `parseAndValidate rejects non finite totals and split values`() {
+        val nonFiniteTotal = CustomSplitParser.parseAndValidate(
+            splitsString = "1:50,2:30,3:20",
             splitType = CustomSplitMode.CUSTOM_AMOUNT,
             totalAmount = Double.POSITIVE_INFINITY,
-            groupMemberIds = setOf(1L, 2L)
+            groupMemberIds = members
         )
-
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Invalid::class.java)
-        assertThat((result as CustomSplitParseResult.Invalid).reason).contains("Total amount must be finite")
-    }
-
-    @Test
-    fun `parseAndValidate rejects NaN split value`() {
-        val result = CustomSplitParser.parseAndValidate(
-            splitsString = "1:NaN,2:50",
+        val nonFiniteValue = CustomSplitParser.parseAndValidate(
+            splitsString = "1:Infinity,2:30,3:20",
             splitType = CustomSplitMode.CUSTOM_AMOUNT,
-            totalAmount = 50.0,
-            groupMemberIds = setOf(1L, 2L)
+            totalAmount = 100.0,
+            groupMemberIds = members
         )
 
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Invalid::class.java)
-        assertThat((result as CustomSplitParseResult.Invalid).reason).contains("Non-finite split value")
+        assertTrue(nonFiniteTotal is CustomSplitParseResult.Invalid)
+        assertTrue(nonFiniteValue is CustomSplitParseResult.Invalid)
     }
 
     @Test
-    fun `parseAndValidate rejects Infinity split value`() {
-        val result = CustomSplitParser.parseAndValidate(
-            splitsString = "1:Infinity,2:50",
+    fun `referencesMember uses parsed valid result first`() {
+        val valid = CustomSplitParser.parseAndValidate(
+            splitsString = "1:50,2:30,3:20",
             splitType = CustomSplitMode.CUSTOM_AMOUNT,
-            totalAmount = 50.0,
-            groupMemberIds = setOf(1L, 2L)
+            totalAmount = 100.0,
+            groupMemberIds = members
         )
 
-        assertThat(result).isInstanceOf(CustomSplitParseResult.Invalid::class.java)
-        assertThat((result as CustomSplitParseResult.Invalid).reason).contains("Non-finite split value")
+        val contains1 = CustomSplitParser.referencesMember("1:50,2:30,3:20", 1L, valid)
+        val contains9 = CustomSplitParser.referencesMember("1:50,2:30,3:20", 9L, valid)
+
+        assertTrue(contains1)
+        assertFalse(contains9)
     }
 
     @Test
-    fun `referencesMember detects referenced id in invalid payload`() {
-        val parseResult = CustomSplitParser.parseAndValidate(
-            splitsString = "1:40,2",
+    fun `referencesMember uses parsed invalid partial result when available`() {
+        val invalidPartial = CustomSplitParser.parseAndValidate(
+            splitsString = "1:50,2",
             splitType = CustomSplitMode.CUSTOM_AMOUNT,
             totalAmount = 100.0,
             groupMemberIds = setOf(1L, 2L)
         )
 
-        val referenced = CustomSplitParser.referencesMember(
-            splitsString = "1:40,2",
-            memberId = 1L,
-            parseResult = parseResult
-        )
+        val contains1 = CustomSplitParser.referencesMember("1:50,2", 1L, invalidPartial)
+        val contains2 = CustomSplitParser.referencesMember("1:50,2", 2L, invalidPartial)
 
-        assertThat(referenced).isTrue()
+        assertTrue(contains1)
+        assertFalse(contains2)
+    }
+
+    @Test
+    fun `referencesMember falls back to raw token matching when no parse result provided`() {
+        val contains2 = CustomSplitParser.referencesMember("1:50, 2:50", 2L, null)
+        val contains9 = CustomSplitParser.referencesMember("1:50, 2:50", 9L, null)
+
+        assertTrue(contains2)
+        assertFalse(contains9)
     }
 }

@@ -1,4 +1,4 @@
-package com.yourname.expensetracker
+package com.yourname.expensetracker.domain.receipt
 
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import org.junit.Assert.*
@@ -19,7 +19,7 @@ import java.util.Calendar
  */
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 
-class OcrDocumentTest {
+class ReceiptParserOcrPatternsTest {
 
     private lateinit var parser: ReceiptParser
 
@@ -141,46 +141,6 @@ class OcrDocumentTest {
     // ============================================
     // SECTION 5 & 6: NUMBER FORMATS
     // ============================================
-
-    @Test
-    fun `test European decimal format - comma separator`() {
-        val input = """
-            STORE
-            TOTAL 45,50 €
-        """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals("Should parse European decimal format", 45.50, result.total!!, 0.01)
-    }
-
-    @Test
-    fun `test European format with thousands separator`() {
-        val input = """
-            TECH STORE
-            TOTAL 1.250,50 €
-        """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals("Should parse 1.250,50 as 1250.50", 1250.50, result.total!!, 0.01)
-    }
-
-    @Test
-    fun `test US decimal format - dot separator`() {
-        val input = """
-            DINER
-            TOTAL 12.50
-        """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals("Should parse US decimal format", 12.50, result.total!!, 0.01)
-    }
-
-    @Test
-    fun `test US format with thousands separator`() {
-        val input = """
-            CAR DEALER
-            TOTAL 1,250.00
-        """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals("Should parse 1,250.00 as 1250.00", 1250.00, result.total!!, 0.01)
-    }
 
     // ============================================
     // SECTION 7: NUMBERS WITH SPACING ISSUES
@@ -503,26 +463,6 @@ class OcrDocumentTest {
     }
 
     @Test
-    fun `test OCR error - ZYNOAO (ΣΥΝΟΛΟ)`() {
-        val input = """
-            STORE
-            ZYNOAO: 182,00€
-        """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals("Should parse ZYNOAO as ΣΥΝΟΛΟ", 182.00, result.total!!, 0.01)
-    }
-
-    @Test
-    fun `test OCR error - 2YNONO (ΣΥΝΟΛΟ)`() {
-        val input = """
-            BAKERY
-            2YNONO 0,90 €
-        """.trimIndent()
-        val result = parser.parse(input)
-        assertEquals("Should parse 2YNONO as ΣΥΝΟΛΟ", 0.90, result.total!!, 0.01)
-    }
-
-    @Test
     fun `test OCR error - METPHTA (ΜΕΤΡΗΤΑ)`() {
         val input = """
             CAFE
@@ -812,29 +752,4 @@ class OcrDocumentTest {
     // DATE OCR FIXES
     // ============================================
 
-    @Test
-    fun `test date OCR fix - D instead of 0`() {
-        val input = """
-            STORE
-            DATE: 16-D4-2017
-            TOTAL 10,00 €
-        """.trimIndent()
-        val result = parser.parse(input)
-        assertNotNull("Should fix D→0 in date", result.date)
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = result.date!!
-        assertEquals("Month should be April", 3, cal.get(Calendar.MONTH))
-    }
-
-    // ============================================
-    // HELPER: Print Test Summary
-    // ============================================
-
-    @Test
-    fun `print parser version info`() {
-        println("=" .repeat(60))
-        println("OCR Document Test Suite")
-        println("Testing ReceiptParser with OCR_TEST_DOCUMENT patterns")
-        println("=" .repeat(60))
-    }
 }

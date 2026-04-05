@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.logic
 
+import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -7,22 +8,20 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
-import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
-import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
 
-class SynthesisEngineTest {
+class SynthesisEngineTest : AnalyticsEngineTestBase() {
 
-    private val timeProvider = mockk<TimeProvider>()
     private lateinit var engine: SynthesisEngine
 
     @Before
-    fun setup() {
+    override fun setUp() {
+        super.setUp()
         // Fix time to Jan 15, 2024 (Leap year, 31 days)
         every { timeProvider.now() } returns 1705320000000L
         engine = SynthesisEngine(timeProvider)

@@ -4,17 +4,17 @@ import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.dateToMillis
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.TimeProvider
-import io.mockk.*
-import kotlinx.coroutines.Dispatchers
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Before
 import org.junit.Test
 
@@ -24,94 +24,164 @@ class BudgetMonitorTest {
     private val budgetRepository = mockk<BudgetRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val notificationService = mockk<NotificationService>(relaxed = true)
-    
-    private lateinit var monitor: BudgetMonitor
     private val testDispatcher = StandardTestDispatcher()
 
+    private lateinit var monitor: BudgetMonitor
+
     @Before
-    fun setup() {
-        Dispatchers.setMain(testDispatcher)
-        
-        every { timeProvider.now() } returns System.currentTimeMillis()
-        
-        monitor = BudgetMonitor(budgetRepository, timeProvider, notificationService, testDispatcher)
-    }
-
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
+    fun setUp() {
+        monitor = BudgetMonitor(
+            budgetRepository = budgetRepository,
+            timeProvider = timeProvider,
+            notificationService = notificationService,
+            ioDispatcher = testDispatcher
+        )
     }
 
     @Test
-    fun `checkBudgets triggers warning notification when threshold exceeded`() = runTest(testDispatcher) {
-        val budget = Budget(
-            id = 1,
-            amount = 100.0,
-            categoryId = 1,
-            period = BudgetPeriod.MONTHLY,
-            startDate = System.currentTimeMillis(),
-            notifyAtWarning = 0.5f, // 50%
-            notifyAtCritical = 0.9f,
-            lastWarningNotifiedAt = null
-        )
-        
-        val status = BudgetStatus(
-            budget = budget,
-            category = Category(id=1, name="Groceries", icon="", color="#FFFFFF"),
-            spentAmount = 60.0, // 60%
-            remainingAmount = 40.0,
-            percentUsed = 0.6f,
-            healthStatus = BudgetHealthStatus.WARNING,
-            periodStart = 0L,
-            periodEnd = 1706697600000L // Ensure valid period
+    fun `check budgets sends warning notification and updates warning timestamp`() = runTest(testDispatcher) {
+        val now = atDateTime(2026, 4, 5, 12, 0)
+        every { timeProvider.now() } returns now
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(
+                    budget = budget(id = 11L, period = BudgetPeriod.MONTHLY),
+                    spentAmount = 80.0,
+                    percentUsed = 0.80f,
+                    periodStart = dateToMillis("2026-04-01")
+                )
+            )
         )
 
-        // Mock repository returning the calculated status
-        coEvery { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
-        
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
-        
-        // Verify notification fired (DAO update called)
-        coVerify { 
-            budgetRepository.updateWarningNotification(1, any()) 
+
+        coVerify(exactly = 1) { budgetRepository.updateWarningNotification(11L, now) }
+        verify(exactly = 1) {
+            notificationService.sendBudgetAlert(
+                11,
+                "Budget Warning",
+                "You've spent €80.00 (80%) of your Groceries budget."
+            )
         }
     }
 
     @Test
-    fun `checkBudgets does NOT notify if cooldown is active`() = runTest(testDispatcher) {
-        val now = System.currentTimeMillis()
-        val recentReset = now - (1 * 60 * 60 * 1000) // 1 hour ago
-        
-        val budget = Budget(
-            id = 1,
-            amount = 100.0,
-            categoryId = 1,
-            period = BudgetPeriod.MONTHLY,
-            startDate = now,
-            notifyAtWarning = 0.5f,
-            lastWarningNotifiedAt = recentReset // Cooldown active!
-        )
-        
-        val status = BudgetStatus(
-            budget = budget,
-            category = Category(id=1, name="Groceries", icon="", color="#FFFFFF"),
-            spentAmount = 60.0, // 60%
-            remainingAmount = 40.0,
-            percentUsed = 0.6f,
-            healthStatus = BudgetHealthStatus.WARNING,
-            periodStart = now - 86400000L, // Started yesterday
-            periodEnd = now + 86400000L
+    fun `check budgets sends critical notification and updates critical timestamp`() = runTest(testDispatcher) {
+        val now = atDateTime(2026, 4, 6, 9, 0)
+        every { timeProvider.now() } returns now
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(
+                    budget = budget(id = 22L, period = BudgetPeriod.MONTHLY),
+                    spentAmount = 95.0,
+                    percentUsed = 0.95f,
+                    periodStart = dateToMillis("2026-04-01")
+                )
+            )
         )
 
-        coEvery { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(status))
-        
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
-        
-        // Should NOT update notification time
-        coVerify(exactly = 0) { 
-            budgetRepository.updateWarningNotification(any(), any()) 
+
+        coVerify(exactly = 1) { budgetRepository.updateCriticalNotification(22L, now) }
+        verify(exactly = 1) {
+            notificationService.sendBudgetAlert(
+                22,
+                "Critical Budget Warning",
+                "You've spent €95.00 (95%) of your Groceries budget."
+            )
         }
+    }
+
+    @Test
+    fun `check budgets sends exceeded notification and updates exceeded timestamp`() = runTest(testDispatcher) {
+        val now = atDateTime(2026, 4, 7, 8, 0)
+        every { timeProvider.now() } returns now
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(
+                    budget = budget(id = 33L, period = BudgetPeriod.WEEKLY),
+                    spentAmount = 130.0,
+                    percentUsed = 1.30f,
+                    periodStart = dateToMillis("2026-04-07")
+                )
+            )
+        )
+
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify(exactly = 1) { budgetRepository.updateExceededNotification(33L, now) }
+        verify(exactly = 1) {
+            notificationService.sendBudgetAlert(
+                33,
+                "Budget Exceeded!",
+                "You've spent €130.00 (130%) of your Groceries budget."
+            )
+        }
+    }
+
+    @Test
+    fun `cleanup cancels monitor scope and subsequent checks perform no repository reads`() = runTest(testDispatcher) {
+        val now = atDateTime(2026, 4, 8, 10, 0)
+        every { timeProvider.now() } returns now
+
+        monitor.cleanup()
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        verify(exactly = 0) { budgetRepository.getBudgetStatuses() }
+        coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
+        coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
+    }
+
+    private fun budget(id: Long, period: BudgetPeriod): Budget {
+        return Budget(
+            id = id,
+            categoryId = 2L,
+            amount = 100.0,
+            period = period,
+            periodMode = "ROLLING",
+            startDate = dateToMillis("2026-04-01"),
+            notifyAtWarning = 0.75f,
+            notifyAtCritical = 0.90f,
+            lastWarningNotifiedAt = null,
+            lastCriticalNotifiedAt = null,
+            lastExceededNotifiedAt = null
+        )
+    }
+
+    private fun budgetStatus(
+        budget: Budget,
+        spentAmount: Double,
+        percentUsed: Float,
+        periodStart: Long
+    ): BudgetStatus {
+        val remainingAmount = (budget.amount - spentAmount).coerceAtLeast(0.0)
+        return BudgetStatus(
+            budget = budget,
+            category = Category(id = 2L, name = "Groceries", icon = "🛒", color = "#33FF57"),
+            spentAmount = spentAmount,
+            remainingAmount = remainingAmount,
+            percentUsed = percentUsed,
+            healthStatus = BudgetHealthStatus.WARNING,
+            periodStart = periodStart,
+            periodEnd = periodStart + (7L * 24L * 60L * 60L * 1000L)
+        )
+    }
+
+    private fun atDateTime(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long {
+        val calendar = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.YEAR, year)
+            set(java.util.Calendar.MONTH, month - 1)
+            set(java.util.Calendar.DAY_OF_MONTH, day)
+            set(java.util.Calendar.HOUR_OF_DAY, hour)
+            set(java.util.Calendar.MINUTE, minute)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return calendar.timeInMillis
     }
 }

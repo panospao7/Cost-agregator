@@ -1,10 +1,8 @@
-package com.yourname.expensetracker
+package com.yourname.expensetracker.domain.analytics
 
 import org.junit.Test
 import org.junit.Assert.*
-import kotlin.math.roundToInt
-
-class InsightsLogicTest {
+class RecurringIntervalLogicTest {
     @Test
     fun testRecurringIntervalLogic() {
         // Test Case 1: Weekly (7 days) with variance

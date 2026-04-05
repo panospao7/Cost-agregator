@@ -10,7 +10,7 @@ import com.yourname.expensetracker.domain.categorization.MatchType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import io.mockk.*
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -52,19 +52,19 @@ class CategorizationEngineTest {
     }
 
     @Test
-    fun `normalize uppercases`() = runBlocking {
+    fun `normalize uppercases`() = runTest {
         assertEquals("STARBUCKS", engine.normalize("starbucks"))
         assertEquals("UBER-EATS", engine.normalize("uber-eats"))
     }
 
     @Test
-    fun `normalize handles Greek characters`() = runBlocking {
+    fun `normalize handles Greek characters`() = runTest {
         val result = engine.normalize("ΣΚΛΑΒΕΝΙΤΗΣ")
         assertTrue(result.contains("ΣΚΛΑΒΕΝΙΤΗΣ"))
     }
 
     @Test
-    fun `exact match returns category`() = runBlocking {
+    fun `exact match returns category`() = runTest {
         coEvery { merchantCategoryRepository.getAll() } returns listOf(
             MerchantCategory("starbucks", 5L)
         )
@@ -75,7 +75,7 @@ class CategorizationEngineTest {
     }
 
     @Test
-    fun `substring match finds pattern within merchant name`() = runBlocking {
+    fun `substring match finds pattern within merchant name`() = runTest {
         coEvery { merchantCategoryRepository.getCategoryForMerchant("UBER EATS DELIVERY 1234") } returns null
         coEvery { merchantCategoryRepository.getAll() } returns listOf(
             MerchantCategory("uber eats", 3L),
@@ -88,7 +88,7 @@ class CategorizationEngineTest {
     }
 
     @Test
-    fun `returns unknown when no match found`() = runBlocking {
+    fun `returns unknown when no match found`() = runTest {
         coEvery { merchantCategoryRepository.getCategoryForMerchant(any()) } returns null
         coEvery { merchantCategoryRepository.getAll() } returns emptyList()
 
@@ -98,9 +98,4 @@ class CategorizationEngineTest {
         assertEquals(0.0, result.confidence, 0.01)
     }
 
-    @Test
-    fun `cache invalidation resets cache`() = runBlocking {
-        engine.invalidateCache()
-        // No assertion needed — just ensure no crash
-    }
 }
