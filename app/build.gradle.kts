@@ -159,6 +159,8 @@ dependencies {
     testImplementation("app.cash.turbine:turbine:1.2.0")
     // Truth - readable assertions
     testImplementation("com.google.truth:truth:1.4.4")
+    // WorkManager testing for unit worker tests
+    testImplementation("androidx.work:work-testing:2.9.1")
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.ui.test.junit4)
 
