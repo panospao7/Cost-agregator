@@ -35,6 +35,8 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get total expenses between dates, converted to home currency.
+     * Converts [Expense.effectiveAmount] (ownership-adjusted) rather than the raw posted amount
+     * so that shared and "not-mine" rows are not overstated.
      */
     suspend fun getTotalExpensesInHomeCurrency(
         startDate: Long,
@@ -43,7 +45,8 @@ class MultiCurrencyRepository @Inject constructor(
     ): Result<Double> = withContext(Dispatchers.IO) {
         runCatching {
             val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-            val amounts = expenses.map { Pair(it.amount, it.currency) }
+            // Use effectiveAmount (ownership-adjusted) — not raw amount — for conversion input.
+            val amounts = expenses.map { Pair(it.effectiveAmount, it.currency) }
             val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
             if (aggregate.hasFailures) {
                 throw MissingExchangeRateException(
@@ -63,6 +66,8 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get expenses grouped by currency.
+     * Accumulates [Expense.effectiveAmount] (ownership-adjusted) per currency bucket so that
+     * shared and "not-mine" rows are not overstated in the per-currency breakdown.
      */
     suspend fun getExpensesByCurrency(
         startDate: Long,
@@ -74,7 +79,8 @@ class MultiCurrencyRepository @Inject constructor(
 
             for (expense in expenses) {
                 val current = result[expense.currency] ?: 0.0
-                result[expense.currency] = current + expense.amount
+                // Use effectiveAmount (ownership-adjusted) — not raw amount.
+                result[expense.currency] = current + expense.effectiveAmount
             }
 
             result
@@ -89,6 +95,9 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get expenses with converted amounts to home currency.
+     * Converts [Expense.effectiveAmount] (ownership-adjusted) so that shared/not-mine rows
+     * produce the correct converted value. The embedded [Expense] object is left unchanged
+     * (raw fields untouched); only [ConvertedExpense.homeCurrencyAmount] reflects the effective share.
      */
     suspend fun getExpensesWithConversion(
         startDate: Long,
@@ -100,8 +109,9 @@ class MultiCurrencyRepository @Inject constructor(
             val result = mutableListOf<ConvertedExpense>()
 
             for (expense in expenses) {
+                // Convert effectiveAmount (ownership-adjusted) — the embedded Expense stays raw.
                 val conversion = currencyConverter.convert(
-                    expense.amount,
+                    expense.effectiveAmount,
                     expense.currency,
                     homeCurrency
                 )
@@ -133,6 +143,8 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get spending totals by category in home currency.
+     * Converts [Expense.effectiveAmount] (ownership-adjusted) per expense so that shared and
+     * "not-mine" rows are not overstated in the category breakdown.
      */
     suspend fun getCategoryTotalsInHomeCurrency(
         startDate: Long,
@@ -145,15 +157,16 @@ class MultiCurrencyRepository @Inject constructor(
             val failedConversions = mutableListOf<FailedConversion>()
 
             for (expense in expenses) {
+                // Convert effectiveAmount (ownership-adjusted) — not raw amount.
                 val conversion = currencyConverter.convert(
-                    expense.amount,
+                    expense.effectiveAmount,
                     expense.currency,
                     homeCurrency
                 )
 
                 if (conversion == null) {
                     failedConversions += FailedConversion(
-                        originalAmount = expense.amount,
+                        originalAmount = expense.effectiveAmount,
                         originalCurrency = expense.currency,
                         targetCurrency = homeCurrency,
                         reason = "Missing exchange rate from ${expense.currency.uppercase()} to ${homeCurrency.uppercase()}"
@@ -185,6 +198,8 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get merchant totals in home currency.
+     * Converts [Expense.effectiveAmount] (ownership-adjusted) per expense so that shared and
+     * "not-mine" rows are not overstated in the merchant ranking.
      */
     suspend fun getMerchantTotalsInHomeCurrency(
         startDate: Long,
@@ -197,15 +212,16 @@ class MultiCurrencyRepository @Inject constructor(
             val failedConversions = mutableListOf<FailedConversion>()
 
             for (expense in expenses) {
+                // Convert effectiveAmount (ownership-adjusted) — not raw amount.
                 val conversion = currencyConverter.convert(
-                    expense.amount,
+                    expense.effectiveAmount,
                     expense.currency,
                     homeCurrency
                 )
 
                 if (conversion == null) {
                     failedConversions += FailedConversion(
-                        originalAmount = expense.amount,
+                        originalAmount = expense.effectiveAmount,
                         originalCurrency = expense.currency,
                         targetCurrency = homeCurrency,
                         reason = "Missing exchange rate from ${expense.currency.uppercase()} to ${homeCurrency.uppercase()}"
@@ -238,6 +254,8 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get monthly totals in home currency.
+     * Accumulates [Expense.effectiveAmount] (ownership-adjusted) per month bucket before
+     * converting, so that shared and "not-mine" rows are not overstated in monthly totals.
      */
     suspend fun getMonthlyTotalsInHomeCurrency(
         startDate: Long,
@@ -251,7 +269,8 @@ class MultiCurrencyRepository @Inject constructor(
             for (expense in expenses) {
                 val monthKey = getMonthKey(expense.date)
                 val list = monthlyMap.getOrPut(monthKey) { mutableListOf() }
-                list.add(Pair(expense.amount, expense.currency))
+                // Use effectiveAmount (ownership-adjusted) — not raw amount — for conversion.
+                list.add(Pair(expense.effectiveAmount, expense.currency))
             }
 
             val result = mutableListOf<MonthTotal>()

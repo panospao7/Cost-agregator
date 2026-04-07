@@ -9,6 +9,10 @@ import java.util.*
 
 /**
  * Extension properties for ExpenseWithCategory to provide formatted display values.
+ *
+ * Note on [formattedAmount]: this extension uses [Expense.effectiveAmount] (ownership-adjusted)
+ * to match the behaviour of the [ExpenseWithCategory.formattedAmount] member property. Both
+ * surfaces must agree so callers cannot accidentally render raw posted amounts for shared rows.
  */
 
 val ExpenseWithCategory.formattedDate: String
@@ -29,5 +33,5 @@ val ExpenseWithCategory.formattedAmount: String
             TransactionType.DEPOSIT -> "+"
             else -> ""
         }
-        return "$prefix${expense.currency}${String.format(Locale.getDefault(), "%.2f", expense.amount)}"
+        return "$prefix${expense.currency}${String.format(Locale.getDefault(), "%.2f", expense.effectiveAmount)}"
     }

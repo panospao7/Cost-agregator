@@ -204,8 +204,8 @@ class TransactionsViewModel @Inject constructor(
             when (order) {
                 SortOrder.DATE_DESC -> expenseList.sortedByDescending { it.expense.date }
                 SortOrder.DATE_ASC -> expenseList.sortedBy { it.expense.date }
-                SortOrder.AMOUNT_DESC -> expenseList.sortedByDescending { it.expense.amount }
-                SortOrder.AMOUNT_ASC -> expenseList.sortedBy { it.expense.amount }
+                SortOrder.AMOUNT_DESC -> expenseList.sortedByDescending { it.expense.effectiveAmount }
+                SortOrder.AMOUNT_ASC -> expenseList.sortedBy { it.expense.effectiveAmount }
             }
         }
 
@@ -578,7 +578,7 @@ class TransactionsViewModel @Inject constructor(
             try {
                 recurringExpenseRepository.addRecurringExpense(
                     merchant = expense.merchant,
-                    amount = expense.amount,
+                    amount = expense.effectiveAmount,
                     frequency = frequency,
                     lastDate = timeProvider.now(),
                     currency = "EUR"

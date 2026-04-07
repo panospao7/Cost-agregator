@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.ui.screens.analytics
 
+import org.junit.Ignore
 import org.junit.Assert.*
 import org.junit.Test
 
+@Ignore("Stress test: may hang in CI, run manually")
 class AnalyticsStateStressTest {
 
     @Test

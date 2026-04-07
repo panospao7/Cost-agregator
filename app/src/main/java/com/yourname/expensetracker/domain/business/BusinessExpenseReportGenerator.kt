@@ -56,7 +56,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
         // Calculate totals
         var totalExpenses = 0.0
         for (expense in expenses) {
-            totalExpenses += expense.amount
+            totalExpenses += expense.effectiveAmount
         }
         
         // Group by category
@@ -77,7 +77,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
         val missingReceipts = businessExpenseRepository.getExpensesMissingReceipts(startDate, endDate)
         
         // Get top expenses (top 10)
-        val sortedExpenses = expenses.sortedByDescending { it.amount }
+        val sortedExpenses = expenses.sortedByDescending { it.effectiveAmount }
         val topExpenses = if (sortedExpenses.size > 10) {
             sortedExpenses.subList(0, 10)
         } else sortedExpenses
@@ -145,7 +145,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                     val date = dateFormat.format(Date(expense.date))
                     val merchant = expense.merchant.take(25)
                     val purpose = expense.businessPurpose?.let { " - $it" } ?: ""
-                    append("${index + 1}. ${date} - €${String.format("%.2f", expense.amount)} - ${merchant}${purpose}\n")
+                    append("${index + 1}. ${date} - €${String.format("%.2f", expense.effectiveAmount)} - ${merchant}${purpose}\n")
                 }
                 append("\n")
             }
@@ -155,7 +155,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                 append("----------------------------------------\n")
                 for (expense in missingReceipts) {
                     val date = dateFormat.format(Date(expense.date))
-                    append("${date} - €${String.format("%.2f", expense.amount)} - ${expense.merchant}\n")
+                    append("${date} - €${String.format("%.2f", expense.effectiveAmount)} - ${expense.merchant}\n")
                 }
                 append("\n")
             }
@@ -230,7 +230,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
             val requiresReceipt = if (expense.requiresReceipt) "Yes" else "No"
             val notes = escapeCSV(expense.notes ?: "")
             
-            csv.append("${date},${merchant},${expense.amount},${expense.currency},${category},${purpose},${project},${requiresReceipt},${notes}\n")
+            csv.append("${date},${merchant},${expense.effectiveAmount},${expense.currency},${category},${purpose},${project},${requiresReceipt},${notes}\n")
         }
         
         // Mileage if requested

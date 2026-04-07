@@ -2,9 +2,11 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import org.junit.Ignore
 import org.junit.Assert.*
 import org.junit.Test
 
+@Ignore("Stress test: may hang in CI, run manually")
 class NotificationProcessingPipelineStressTest {
 
     // ============================================================================

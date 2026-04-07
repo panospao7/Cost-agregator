@@ -10,8 +10,11 @@ import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -42,34 +45,39 @@ class RecommendationDismissalHandlerTest {
         )
     }
 
+    @After
+    fun teardown() {
+        Dispatchers.resetMain()
+    }
+
     // ========== dismiss() Tests ==========
 
     @Test
-    fun `dismiss removes recommendation from state manager`() = runTest {
+    fun `dismiss removes recommendation from state manager`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1")
 
         coEvery { repository.dismiss("rec1") } returns Unit
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
     }
 
     @Test
-    fun `dismiss archives recommendation in repository`() = runTest {
+    fun `dismiss archives recommendation in repository`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1")
 
         coEvery { repository.dismiss("rec1") } returns Unit
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.dismiss("rec1") }
     }
 
     @Test
-    fun `dismiss updates state before repository call`() = runTest {
+    fun `dismiss updates state before repository call`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1")
         val callOrder = mutableListOf<String>()
 
@@ -81,7 +89,7 @@ class RecommendationDismissalHandlerTest {
         }
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         assertEquals(2, callOrder.size)
         assertEquals("state", callOrder[0])
@@ -89,75 +97,75 @@ class RecommendationDismissalHandlerTest {
     }
 
     @Test
-    fun `dismiss handles repository errors gracefully`() = runTest {
+    fun `dismiss handles repository errors gracefully`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1")
 
         coEvery { repository.dismiss("rec1") } throws RuntimeException("Database error")
 
         // Should not throw exception
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         // State should still be updated
         coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
     }
 
     @Test
-    fun `dismiss handles state manager errors gracefully`() = runTest {
+    fun `dismiss handles state manager errors gracefully`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1")
 
         coEvery { stateManager.removeFromState("rec1") } throws RuntimeException("State error")
 
         // Should not throw exception
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         // Repository should still be called
         coVerify(exactly = 1) { repository.dismiss("rec1") }
     }
 
     @Test
-    fun `dismiss handles network timeout errors`() = runTest {
+    fun `dismiss handles network timeout errors`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1")
 
         coEvery { repository.dismiss("rec1") } throws java.net.SocketTimeoutException()
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
     }
 
     @Test
-    fun `dismiss works with high priority recommendation`() = runTest {
+    fun `dismiss works with high priority recommendation`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(
             id = "rec_high",
             priority = RecommendationPriority.HIGH
         )
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec_high") }
         coVerify(exactly = 1) { repository.dismiss("rec_high") }
     }
 
     @Test
-    fun `dismiss works with low priority recommendation`() = runTest {
+    fun `dismiss works with low priority recommendation`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(
             id = "rec_low",
             priority = RecommendationPriority.LOW
         )
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec_low") }
         coVerify(exactly = 1) { repository.dismiss("rec_low") }
     }
 
     @Test
-    fun `dismiss handles expired recommendation`() = runTest {
+    fun `dismiss handles expired recommendation`() = runTest(testDispatcher) {
         val nowMillis = System.currentTimeMillis()
         val expiredTime = nowMillis - (8L * 24 * 60 * 60 * 1000) // 8 days ago
         
@@ -168,31 +176,31 @@ class RecommendationDismissalHandlerTest {
         )
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec_expired") }
         coVerify(exactly = 1) { repository.dismiss("rec_expired") }
     }
 
     @Test
-    fun `dismiss handles already dismissed recommendation`() = runTest {
+    fun `dismiss handles already dismissed recommendation`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(
             id = "rec_dismissed",
             status = RecommendationStatus.ARCHIVED
         )
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.dismiss("rec_dismissed") }
     }
 
     @Test
-    fun `dismiss handles recommendation with special characters in id`() = runTest {
+    fun `dismiss handles recommendation with special characters in id`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec-123_test@domain")
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec-123_test@domain") }
         coVerify(exactly = 1) { repository.dismiss("rec-123_test@domain") }
@@ -201,71 +209,71 @@ class RecommendationDismissalHandlerTest {
     // ========== dismissAndRefresh() Tests ==========
 
     @Test
-    fun `dismissAndRefresh calls stateManager refreshForUser`() = runTest {
-        coEvery { stateManager.refreshForUser("user123") } returns Unit
+    fun `dismissAndRefresh calls stateManager refreshForUser`() = runTest(testDispatcher) {
+        coEvery { stateManager.refreshForUser("user123", forceRefresh = true) } returns Unit
 
         handler.dismissAndRefresh("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
+        coVerify(exactly = 1) { stateManager.refreshForUser("user123", forceRefresh = true) }
     }
 
     @Test
-    fun `dismissAndRefresh works with different user IDs`() = runTest {
+    fun `dismissAndRefresh works with different user IDs`() = runTest(testDispatcher) {
         handler.dismissAndRefresh("user456")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.refreshForUser("user456") }
+        coVerify(exactly = 1) { stateManager.refreshForUser("user456", forceRefresh = true) }
     }
 
     @Test
-    fun `dismissAndRefresh handles errors gracefully`() = runTest {
-        coEvery { stateManager.refreshForUser("user123") } throws RuntimeException("Refresh error")
+    fun `dismissAndRefresh handles errors gracefully`() = runTest(testDispatcher) {
+        coEvery { stateManager.refreshForUser("user123", forceRefresh = true) } throws RuntimeException("Refresh error")
 
         // Should not throw
         handler.dismissAndRefresh("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
+        coVerify(exactly = 1) { stateManager.refreshForUser("user123", forceRefresh = true) }
     }
 
     @Test
-    fun `dismissAndRefresh works with empty user ID`() = runTest {
+    fun `dismissAndRefresh works with empty user ID`() = runTest(testDispatcher) {
         handler.dismissAndRefresh("")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.refreshForUser("") }
+        coVerify(exactly = 1) { stateManager.refreshForUser("", forceRefresh = true) }
     }
 
     @Test
-    fun `dismissAndRefresh can be called multiple times`() = runTest {
+    fun `dismissAndRefresh can be called multiple times`() = runTest(testDispatcher) {
         handler.dismissAndRefresh("user123")
         handler.dismissAndRefresh("user123")
         handler.dismissAndRefresh("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
-        coVerify(exactly = 3) { stateManager.refreshForUser("user123") }
+        coVerify(exactly = 3) { stateManager.refreshForUser("user123", forceRefresh = true) }
     }
 
     // ========== Integration Tests ==========
 
     @Test
-    fun `dismiss followed by dismissAndRefresh works correctly`() = runTest {
+    fun `dismiss followed by dismissAndRefresh works correctly`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1", userId = "user123")
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         handler.dismissAndRefresh("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
         coVerify(exactly = 1) { repository.dismiss("rec1") }
-        coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
+        coVerify(exactly = 1) { stateManager.refreshForUser("user123", forceRefresh = true) }
     }
 
     @Test
-    fun `multiple dismissals work independently`() = runTest {
+    fun `multiple dismissals work independently`() = runTest(testDispatcher) {
         val rec1 = createRecommendation(id = "rec1")
         val rec2 = createRecommendation(id = "rec2")
         val rec3 = createRecommendation(id = "rec3")
@@ -273,7 +281,7 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(rec1)
         handler.dismiss(rec2)
         handler.dismiss(rec3)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
         coVerify(exactly = 1) { stateManager.removeFromState("rec2") }
@@ -284,14 +292,14 @@ class RecommendationDismissalHandlerTest {
     }
 
     @Test
-    fun `dismiss handles concurrent calls correctly`() = runTest {
+    fun `dismiss handles concurrent calls correctly`() = runTest(testDispatcher) {
         val rec1 = createRecommendation(id = "rec1")
         val rec2 = createRecommendation(id = "rec2")
 
         // Launch concurrent dismissals
         handler.dismiss(rec1)
         handler.dismiss(rec2)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
         coVerify(exactly = 1) { stateManager.removeFromState("rec2") }
@@ -300,39 +308,39 @@ class RecommendationDismissalHandlerTest {
     // ========== Error Recovery Tests ==========
 
     @Test
-    fun `dismiss continues after IOException`() = runTest {
+    fun `dismiss continues after IOException`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1")
 
         coEvery { repository.dismiss("rec1") } throws java.io.IOException("Network error")
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         // State should still be updated
         coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
     }
 
     @Test
-    fun `dismiss continues after IllegalStateException`() = runTest {
+    fun `dismiss continues after IllegalStateException`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1")
 
         coEvery { repository.dismiss("rec1") } throws IllegalStateException("Invalid state")
 
         handler.dismiss(recommendation)
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
     }
 
     @Test
-    fun `dismissAndRefresh continues after repository error`() = runTest {
-        coEvery { stateManager.refreshForUser("user123") } throws RuntimeException()
+    fun `dismissAndRefresh continues after repository error`() = runTest(testDispatcher) {
+        coEvery { stateManager.refreshForUser("user123", forceRefresh = true) } throws RuntimeException()
 
         // Should complete without throwing
         handler.dismissAndRefresh("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
+        coVerify(exactly = 1) { stateManager.refreshForUser("user123", forceRefresh = true) }
     }
 
     // ========== Helper Functions ==========

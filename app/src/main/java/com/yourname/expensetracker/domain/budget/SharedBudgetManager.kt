@@ -42,7 +42,7 @@ class SharedBudgetManager @Inject constructor(
         
         var totalSpent = 0.0
         for (expense in expenses) {
-            totalSpent += expense.amount
+            totalSpent += expense.effectiveAmount
         }
         
         val remaining = budget.amount - totalSpent

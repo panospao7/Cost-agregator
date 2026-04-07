@@ -199,20 +199,75 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private val stressForecastEngine: com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
 ) {
 
+    /**
+     * Intermediate holder for pre-computed time/expense context shared across sub-methods.
+     * Keeps the top-level `compute()` method small enough to avoid DEX register overflow.
+     */
+    private class ComputeContext(
+        val data: ProcessedDashboardData,
+        val now: Long,
+        val todayStart: Long,
+        val weekStart: Long,
+        val monthStart: Long,
+        val calendar: java.util.Calendar,
+        val daysInMonth: Int,
+        val dayOfMonth: Int,
+        val daysRemaining: Int,
+        val purchases: List<DashboardExpense>,
+        val deposits: List<DashboardExpense>,
+        val expenseEntities: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        val totalSpent: Double,
+        val monthSpent: Double,
+        val txCount: Int,
+        val previousMonthTotal: Double,
+        val todaySpent: Double,
+        val todayTxCount: Int,
+        val weekSpent: Double,
+        val overallBudget: BudgetStatusSnapshot?,
+        val totalBudgetAmount: Double,
+        val safeToSpend: Double
+    )
+
     /** Pure computation: maps raw dashboard data → a list of ordered [DashboardWidget]s. */
     suspend fun compute(processedData: ProcessedDashboardData): CompiledDashboardData {
+        val ctx = buildContext(processedData)
+
+        val runwayResult = computeRunwayAndForecast(ctx)
+        val blockPartyDays = computeBlockParty(ctx, runwayResult)
+        val monteCarloWidget = computeMonteCarlo(ctx, runwayResult)
+        val categoryTotals = computeCategoryTotals(ctx)
+        val trend = computeSpendingTrend(ctx)
+        val insightText = buildNaturalLanguageInsight(
+            ctx.monthSpent, ctx.previousMonthTotal, ctx.todaySpent, ctx.todayTxCount
+        )
+        val budgetSummary = computeBudgetSummary(ctx)
+        val streakData = calculateStreakData(ctx.calendar, ctx.data.data.expenses, ctx.monthStart)
+        val healthScore = computeHealthScore(ctx, streakData.first)
+        val healthScoreV2Result = computeHealthScoreV2(ctx)
+        val lifestyleWidget = computeLifestyleWidget()
+        val moneyRadarData = computeMoneyRadarUseCase.compute()
+        val stressForecastResult = computeStressForecast()
+
+        val widgets = assembleWidgets(
+            ctx, runwayResult, blockPartyDays, monteCarloWidget,
+            categoryTotals, trend, insightText, budgetSummary,
+            streakData, healthScore, healthScoreV2Result,
+            lifestyleWidget, moneyRadarData, stressForecastResult
+        )
+
+        return CompiledDashboardData(
+            allWidgets = widgets,
+            totalSpent = ctx.totalSpent,
+            txCount = ctx.txCount
+        )
+    }
+
+    // ── Sub-methods to keep each function under the DEX 256-register limit ───
+
+    private fun buildContext(processedData: ProcessedDashboardData): ComputeContext {
         val data = processedData.data
         val summary = processedData.summary
-        val categoryBreakdown = processedData.categoryBreakdown
-
         val expenses = data.expenses
-        val budgetStatuses = data.budgetStatuses
-        val pendingCount = data.pendingCount
-        val weather = data.weather
-        val recurringPatterns = data.recurringPatterns
-        val plannedExpenses = data.plannedExpenses
-        val goals = data.goals
-
         val now = timeProvider.now()
         val todayStart = TimePeriodUtils.getStartOfDay(now)
         val weekStart = TimePeriodUtils.getStartOfWeek(now)
@@ -223,38 +278,61 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
         val deposits = expenses.filter { it.transactionType == DashboardTransactionType.DEPOSIT }
 
-        val weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.effectiveAmount }
         val todayPurchases = purchases.filter { it.date >= todayStart }
-        val todaySpent = todayPurchases.sumOf { it.effectiveAmount }
-        val todayTxCount = todayPurchases.size
-
-        val totalSpent = summary.totalSpent
-        val monthSpent = totalSpent
-        val txCount = summary.transactionCount
-        val previousMonthTotal = summary.previousTotalSpent ?: 0.0
-
         val calendar = java.util.Calendar.getInstance().apply { timeInMillis = now }
         val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
-        val daysRemaining = daysInMonth - dayOfMonth
 
+        val budgetStatuses = data.budgetStatuses
         val overallBudget = budgetStatuses.find { it.budgetCategoryId == null }
-        val safeToSpend = weather.discretionaryBudget
-        val totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0
 
-        val expenseEntitiesForEngines = expenses.map { it.toEntityExpense() }
+        return ComputeContext(
+            data = processedData,
+            now = now,
+            todayStart = todayStart,
+            weekStart = weekStart,
+            monthStart = monthStart,
+            calendar = calendar,
+            daysInMonth = daysInMonth,
+            dayOfMonth = dayOfMonth,
+            daysRemaining = daysInMonth - dayOfMonth,
+            purchases = purchases,
+            deposits = deposits,
+            expenseEntities = expenses.map { it.toEntityExpense() },
+            totalSpent = summary.totalSpent,
+            monthSpent = summary.totalSpent,
+            txCount = summary.transactionCount,
+            previousMonthTotal = summary.previousTotalSpent ?: 0.0,
+            todaySpent = todayPurchases.sumOf { it.effectiveAmount },
+            todayTxCount = todayPurchases.size,
+            weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.effectiveAmount },
+            overallBudget = overallBudget,
+            totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0,
+            safeToSpend = data.weather.discretionaryBudget
+        )
+    }
 
-        // ── Financial Runway ─────────────────────────────────────────────────
-        val currentDayIdx = TimePeriodUtils.daysBetween(monthStart, now).coerceAtLeast(0)
+    private data class RunwayResult(
+        val currentPace: SpendingPace,
+        val forecast: com.yourname.expensetracker.domain.model.FinancialForecast,
+        val financialRunway: DashboardWidget.FinancialRunway,
+        val totalRemaining: Double,
+        val totalCommitted: Double,
+        val totalLikely: Double,
+        val purchasesThisMonth: List<DashboardExpense>
+    )
+
+    private suspend fun computeRunwayAndForecast(ctx: ComputeContext): RunwayResult {
+        val currentDayIdx = TimePeriodUtils.daysBetween(ctx.monthStart, ctx.now).coerceAtLeast(0)
 
         val currentPace = try {
-            insightsEngine.getSpendingPaceSuspend(expenseEntitiesForEngines)
+            insightsEngine.getSpendingPaceSuspend(ctx.expenseEntities)
         } catch (e: Exception) {
             Timber.e(e, "Failed to calculate spending pace")
             SpendingPace(
                 currentMonthSpent = 0.0,
                 daysElapsed = currentDayIdx,
-                daysInMonth = daysInMonth,
+                daysInMonth = ctx.daysInMonth,
                 projectedTotal = 0.0,
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
@@ -263,37 +341,32 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             )
         }
 
-        val purchasesThisMonth = purchases.filter { it.date >= monthStart }
+        val purchasesThisMonth = ctx.purchases.filter { it.date >= ctx.monthStart }
         val amountByDay = DoubleArray(currentDayIdx + 1)
         purchasesThisMonth.forEach { exp ->
-            val dayIndex = TimePeriodUtils.daysBetween(monthStart, exp.date)
+            val dayIndex = TimePeriodUtils.daysBetween(ctx.monthStart, exp.date)
             if (dayIndex in amountByDay.indices) amountByDay[dayIndex] += exp.effectiveAmount
         }
         var runningTotal = 0.0
         val pastSumDaily = amountByDay.map { runningTotal += it; runningTotal }
 
+        val data = ctx.data.data
         val forecast = synthesisEngine.synthesize(
             pastSumDaily = pastSumDaily,
-            recurringPatterns = recurringPatterns,
-            plannedExpenses = plannedExpenses,
-            savingsGoals = goals,
-            budgetStatuses = budgetStatuses,
+            recurringPatterns = data.recurringPatterns,
+            plannedExpenses = data.plannedExpenses,
+            savingsGoals = data.goals,
+            budgetStatuses = data.budgetStatuses,
             spendingPace = currentPace
         )
 
         val totalCommitted = forecast.components?.totalCommitted ?: 0.0
         val totalLikely = forecast.components?.totalLikely ?: 0.0
-
-        val projectedSpendingPoints = forecast.components?.projectedSpendingPoints ?: emptyList()
-        val projectedMonthlyTotal = projectedSpendingPoints.lastOrNull() ?: monthSpent
-
-        val averageDailyBurn = if (dayOfMonth > 0) monthSpent / dayOfMonth else 0.0
-
-        val monthlyIncome = deposits
-            .filter { it.date >= monthStart }
+        val averageDailyBurn = if (ctx.dayOfMonth > 0) ctx.monthSpent / ctx.dayOfMonth else 0.0
+        val monthlyIncome = ctx.deposits
+            .filter { it.date >= ctx.monthStart }
             .sumOf { it.effectiveAmount }
-
-        val totalRemaining = weather.discretionaryBudget.coerceAtLeast(0.0)
+        val totalRemaining = ctx.data.data.weather.discretionaryBudget.coerceAtLeast(0.0)
 
         val runwayDays = if (averageDailyBurn > 0 && totalRemaining > 0) {
             (totalRemaining / averageDailyBurn).toInt().coerceAtLeast(0)
@@ -308,47 +381,38 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             else                 -> DashboardWidget.RunwayStatus.CRITICAL
         }
 
-        val financialRunway = DashboardWidget.FinancialRunway(
-            daysRemaining = runwayDays,
-            totalBudget = totalBudgetAmount,
-            discretionaryRemaining = totalRemaining,
-            averageDailyDiscretionarySpend = averageDailyBurn,
-            monthlyIncome = monthlyIncome,
-            committedExpenses = totalCommitted,
-            likelyExpenses = totalLikely,
-            status = runwayStatus
-        )
-
-        // ── Block Party ──────────────────────────────────────────────────────
-        val domainBlocks = synthesisEngine.calculateBlockPartyData(
+        return RunwayResult(
+            currentPace = currentPace,
             forecast = forecast,
-            expenses = expenseEntitiesForEngines,
-            dailySpending = summary.dailyHistory,
-            budgetLimit = totalBudgetAmount
+            financialRunway = DashboardWidget.FinancialRunway(
+                daysRemaining = runwayDays,
+                totalBudget = ctx.totalBudgetAmount,
+                discretionaryRemaining = totalRemaining,
+                averageDailyDiscretionarySpend = averageDailyBurn,
+                monthlyIncome = monthlyIncome,
+                committedExpenses = totalCommitted,
+                likelyExpenses = totalLikely,
+                status = runwayStatus
+            ),
+            totalRemaining = totalRemaining,
+            totalCommitted = totalCommitted,
+            totalLikely = totalLikely,
+            purchasesThisMonth = purchasesThisMonth
+        )
+    }
+
+    private fun computeBlockParty(
+        ctx: ComputeContext,
+        runwayResult: RunwayResult
+    ): List<DomainDayBudgetStatus> {
+        val domainBlocks = synthesisEngine.calculateBlockPartyData(
+            forecast = runwayResult.forecast,
+            expenses = ctx.expenseEntities,
+            dailySpending = ctx.data.summary.dailyHistory,
+            budgetLimit = ctx.totalBudgetAmount
         )
 
-        // ── Monte Carlo Forecast ─────────────────────────────────────────────
-        val monteCarloWidget: DashboardWidget.MonteCarloForecast? = try {
-            // spentToDate = purchases this month (same filter as everywhere else)
-            val spentToDate = purchasesThisMonth.sumOf { it.effectiveAmount }
-            // knownUpcoming = committed + likely from SynthesisEngine
-            val knownUpcoming = totalCommitted + totalLikely
-            // budget = overall monthly budget (null if none set)
-            val budgetForMC = if (totalBudgetAmount > 0) totalBudgetAmount else null
-
-            val mcResult = monteCarloSimulator.simulate(
-                spentToDate = spentToDate,
-                knownUpcoming = knownUpcoming,
-                budgetAmount = budgetForMC
-            )
-
-            mcResult?.let { DashboardWidget.MonteCarloForecast(it) }
-        } catch (e: Exception) {
-            Timber.e(e, "Monte Carlo simulation failed")
-            null
-        }
-
-        val blockPartyDays = domainBlocks.map { domain ->
+        return domainBlocks.map { domain ->
             DomainDayBudgetStatus(
                 dayOfMonth = domain.dayOfMonth,
                 date = domain.date,
@@ -379,9 +443,32 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 }
             )
         }
+    }
 
-        // ── Category totals ──────────────────────────────────────────────────
-        val categoryTotals = categoryBreakdown.map {
+    private suspend fun computeMonteCarlo(
+        ctx: ComputeContext,
+        runwayResult: RunwayResult
+    ): DashboardWidget.MonteCarloForecast? {
+        return try {
+            val spentToDate = runwayResult.purchasesThisMonth.sumOf { it.effectiveAmount }
+            val knownUpcoming = runwayResult.totalCommitted + runwayResult.totalLikely
+            val budgetForMC = if (ctx.totalBudgetAmount > 0) ctx.totalBudgetAmount else null
+
+            val mcResult = monteCarloSimulator.simulate(
+                spentToDate = spentToDate,
+                knownUpcoming = knownUpcoming,
+                budgetAmount = budgetForMC
+            )
+
+            mcResult?.let { DashboardWidget.MonteCarloForecast(it) }
+        } catch (e: Exception) {
+            Timber.e(e, "Monte Carlo simulation failed")
+            null
+        }
+    }
+
+    private fun computeCategoryTotals(ctx: ComputeContext): List<CategorySpending> {
+        return ctx.data.categoryBreakdown.map {
             CategorySpending(
                 category = CategoryInfo(
                     id = it.categoryId,
@@ -394,20 +481,20 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 percentage = it.percentage.toFloat()
             )
         }
+    }
 
-        // ── Multi-month cumulative spending series ───────────────────────────
+    private fun computeSpendingTrend(ctx: ComputeContext): DashboardWidget.SpendingTrend {
         val trendSeriesCal = java.util.Calendar.getInstance()
         val trendSeries = mutableListOf<SpendingTrendSeries>()
-        val purchasesByMonth = expenses
+        val purchasesByMonth = ctx.data.data.expenses
             .filter { it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine }
             .groupBy { expense ->
                 trendSeriesCal.timeInMillis = expense.date
                 Pair(trendSeriesCal.get(java.util.Calendar.YEAR), trendSeriesCal.get(java.util.Calendar.MONTH))
             }
 
-        // Collect current month + up to 5 prior month keys, oldest first
         val monthKeys = mutableListOf<Pair<Int, Int>>()
-        val baseCal = java.util.Calendar.getInstance().apply { timeInMillis = now }
+        val baseCal = java.util.Calendar.getInstance().apply { timeInMillis = ctx.now }
         repeat(6) {
             monthKeys.add(0, Pair(baseCal.get(java.util.Calendar.YEAR), baseCal.get(java.util.Calendar.MONTH)))
             baseCal.add(java.util.Calendar.MONTH, -1)
@@ -432,8 +519,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             var running = 0.0
             val cumulative = daily.map { d -> running += d; running.toFloat() }
 
-            val isCurrentMonth = (yr == calendar.get(java.util.Calendar.YEAR) &&
-                    mo == calendar.get(java.util.Calendar.MONTH))
+            val isCurrentMonth = (yr == ctx.calendar.get(java.util.Calendar.YEAR) &&
+                    mo == ctx.calendar.get(java.util.Calendar.MONTH))
 
             trendSeries.add(SpendingTrendSeries(
                 label = monthLabels[mo],
@@ -442,54 +529,55 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             ))
         }
 
-        val trend = DashboardWidget.SpendingTrend(series = trendSeries)
+        return DashboardWidget.SpendingTrend(series = trendSeries)
+    }
 
-        val insightText = buildNaturalLanguageInsight(
-            monthSpent, previousMonthTotal, todaySpent, todayTxCount
-        )
-
+    private fun computeBudgetSummary(ctx: ComputeContext): UiText? {
+        val budgetStatuses = ctx.data.data.budgetStatuses
+        if (budgetStatuses.isEmpty()) return null
         val exceeded = budgetStatuses.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
-        val budgetSummary = if (budgetStatuses.isNotEmpty()) {
-            if (exceeded > 0) UiText.fromKey(DashboardTextKeys.WIDGET_BUDGET_EXCEEDED_FORMAT, exceeded)
-            else UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK)
-        } else null
+        return if (exceeded > 0) UiText.fromKey(DashboardTextKeys.WIDGET_BUDGET_EXCEEDED_FORMAT, exceeded)
+        else UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK)
+    }
 
-        // ── Calculate No-Spend Streak Data ────────────────────────────────────
-        val (currentStreak, personalBest, daysWithoutSpendingThisMonth) = calculateStreakData(
-            calendar, expenses, monthStart
-        )
-
-        // ── Calculate Financial Health Score ───────────────────────────────────
-        val healthScore = healthCalculator.calculateHealthScores(
-            expenses = expenseEntitiesForEngines,
-            budgetStatuses = budgetStatuses,
-            pendingReviews = pendingCount,
-            todayStreak = calculateStreakForPeriod(expenseEntitiesForEngines, todayStart, now),
-            weekStreak = calculateStreakForPeriod(expenseEntitiesForEngines, weekStart, now),
-            monthStreak = calculateStreakForPeriod(expenseEntitiesForEngines, monthStart, now),
+    private fun computeHealthScore(
+        ctx: ComputeContext,
+        currentStreak: Int
+    ): com.yourname.expensetracker.domain.health.HealthScoreResult {
+        return healthCalculator.calculateHealthScores(
+            expenses = ctx.expenseEntities,
+            budgetStatuses = ctx.data.data.budgetStatuses,
+            pendingReviews = ctx.data.data.pendingCount,
+            todayStreak = calculateStreakForPeriod(ctx.expenseEntities, ctx.todayStart, ctx.now),
+            weekStreak = calculateStreakForPeriod(ctx.expenseEntities, ctx.weekStart, ctx.now),
+            monthStreak = calculateStreakForPeriod(ctx.expenseEntities, ctx.monthStart, ctx.now),
             noSpendStreak = currentStreak
         )
+    }
 
-        // ── Calculate Financial Health Score V2 (F5) ─────────────────────────
-        val healthScoreV2Result = try {
+    private suspend fun computeHealthScoreV2(
+        ctx: ComputeContext
+    ): com.yourname.expensetracker.domain.health.FinancialHealthResult? {
+        return try {
             healthScoreV2.calculateHealthScore(
-                periodStart = monthStart,
-                periodEnd = TimePeriodUtils.getEndOfMonth(now)
+                periodStart = ctx.monthStart,
+                periodEnd = TimePeriodUtils.getEndOfMonth(ctx.now)
             )
         } catch (e: Exception) {
             Timber.e(e, "Failed to calculate financial health score v2")
             null
         }
+    }
 
-        // ── Check for Lifestyle Savings Opportunity ─────────────────────────
-        val lifestyleRecommendation = runCatching {
+    private suspend fun computeLifestyleWidget(): DashboardWidget.LifestyleSavingsPrompt? {
+        val recommendation = runCatching {
             withTimeout(3000L) {
                 lifestyleSavingsPromptUseCase.evaluateAndPrompt()
             }
         }
             .onFailure { Timber.e(it, "Failed to evaluate lifestyle savings prompt") }
             .getOrNull()
-        val lifestyleWidget: DashboardWidget.LifestyleSavingsPrompt? = lifestyleRecommendation?.let {
+        return recommendation?.let {
             DashboardWidget.LifestyleSavingsPrompt(
                 inflationRate = it.inflationRate,
                 suggestedUplift = it.suggestedMonthlyUplift,
@@ -497,80 +585,92 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 hasExistingGoals = it.goals.isNotEmpty()
             )
         }
-        
-        // ── Compute Money Radar (F4) ───────────────────────────────────────
-        val moneyRadarData = computeMoneyRadarUseCase.compute()
+    }
 
-        // ── Compute Financial Stress Forecast (F8) ─────────────────────────
-        val stressForecastResult = try {
+    private suspend fun computeStressForecast(): com.yourname.expensetracker.domain.forecasting.StressForecastResult? {
+        return try {
             stressForecastEngine.computeStressForecast()
         } catch (e: Exception) {
             Timber.e(e, "Failed to compute financial stress forecast")
             null
         }
+    }
 
-        // ── Assemble widget list ─────────────────────────────────────────────
-        val widgets = buildList {
+    private fun assembleWidgets(
+        ctx: ComputeContext,
+        runwayResult: RunwayResult,
+        blockPartyDays: List<DomainDayBudgetStatus>,
+        monteCarloWidget: DashboardWidget.MonteCarloForecast?,
+        categoryTotals: List<CategorySpending>,
+        trend: DashboardWidget.SpendingTrend,
+        insightText: Pair<UiText, String>?,
+        budgetSummary: UiText?,
+        streakData: Triple<Int, Int, Int>,
+        healthScore: com.yourname.expensetracker.domain.health.HealthScoreResult,
+        healthScoreV2Result: com.yourname.expensetracker.domain.health.FinancialHealthResult?,
+        lifestyleWidget: DashboardWidget.LifestyleSavingsPrompt?,
+        moneyRadarData: MoneyRadarData,
+        stressForecastResult: com.yourname.expensetracker.domain.forecasting.StressForecastResult?
+    ): List<DashboardWidget> {
+        val weather = ctx.data.data.weather
+        val budgetStatuses = ctx.data.data.budgetStatuses
+        val pendingCount = ctx.data.data.pendingCount
+        val (currentStreak, personalBest, daysWithoutSpendingThisMonth) = streakData
+
+        return buildList {
             add(DashboardWidget.FinancialWeatherWidget(weather))
-            
-            // NEW: Money Radar Widget (F4) - Today's unified alerts
+
+            // Money Radar Widget (F4) - Today's unified alerts
             add(DashboardWidget.MoneyRadar(moneyRadarData))
-            
-            // NEW: Financial Stress Forecast Widget (F8) - 30/60/90 day cash crunch prediction
+
+            // Financial Stress Forecast Widget (F8) - 30/60/90 day cash crunch prediction
             if (stressForecastResult != null) {
                 add(DashboardWidget.FinancialStressForecast(stressForecastResult))
             }
-            
-            // NEW: Lifestyle Savings Prompt (if applicable)
+
+            // Lifestyle Savings Prompt (if applicable)
             if (lifestyleWidget != null) {
                 add(lifestyleWidget)
             }
-            
-            // NEW: Financial Health Score V2 Widget (F5)
+
+            // Financial Health Score V2 Widget (F5)
             if (healthScoreV2Result != null) {
                 add(DashboardWidget.FinancialHealthScoreV2Widget(healthScoreV2Result))
             }
-            
+
             // Legacy Financial Health Score Widget (keep for comparison)
             add(DashboardWidget.FinancialHealthScoreWidget(healthScore))
-            
+
             add(DashboardWidget.TotalsDashboard)
-            
-            // NEW: No-Spend Streak Widget (gamification)
-            // Always show to encourage streak building, even at 0
+
+            // No-Spend Streak Widget (gamification) - always shown
             add(DashboardWidget.NoSpendStreak(
                 currentStreak = currentStreak,
                 personalBest = personalBest,
                 daysWithoutSpendingThisMonth = daysWithoutSpendingThisMonth
             ))
-            
+
             add(
                 DashboardWidget.SafeToSpend(
-                    amount = if (overallBudget != null) safeToSpend else monthSpent,
-                    totalBudget = overallBudget?.budgetAmount,
-                    daysRemaining = daysRemaining
+                    amount = if (ctx.overallBudget != null) ctx.safeToSpend else ctx.monthSpent,
+                    totalBudget = ctx.overallBudget?.budgetAmount,
+                    daysRemaining = ctx.daysRemaining
                 )
             )
-            if (totalRemaining > 0 || totalBudgetAmount > 0) add(financialRunway)
+            if (runwayResult.totalRemaining > 0 || ctx.totalBudgetAmount > 0) add(runwayResult.financialRunway)
             if (monteCarloWidget != null) add(monteCarloWidget)
             if (blockPartyDays.isNotEmpty()) add(DashboardWidget.BudgetBlockParty(blockPartyDays))
-            if (currentPace.paceStatus != PaceStatus.NO_BASELINE) {
-                add(DashboardWidget.SpendingPaceWidget(currentPace))
+            if (runwayResult.currentPace.paceStatus != PaceStatus.NO_BASELINE) {
+                add(DashboardWidget.SpendingPaceWidget(runwayResult.currentPace))
             }
             add(trend)
             if (pendingCount > 0) add(DashboardWidget.PendingReviewAlert(pendingCount))
             if (insightText != null) add(DashboardWidget.NaturalLanguageInsight(insightText.first, insightText.second))
-            add(DashboardWidget.PeriodSummary(todaySpent, weekSpent, monthSpent))
+            add(DashboardWidget.PeriodSummary(ctx.todaySpent, ctx.weekSpent, ctx.monthSpent))
             if (budgetStatuses.isNotEmpty()) add(DashboardWidget.BudgetHealthWidget(budgetStatuses, budgetSummary))
             if (categoryTotals.isNotEmpty()) add(DashboardWidget.TopCategories(categoryTotals.take(5)))
-            if (purchases.isNotEmpty()) add(DashboardWidget.RecentTransactions(purchases.take(5)))
+            if (ctx.purchases.isNotEmpty()) add(DashboardWidget.RecentTransactions(ctx.purchases.take(5)))
         }
-
-        return CompiledDashboardData(
-            allWidgets = widgets,
-            totalSpent = totalSpent,
-            txCount = txCount
-        )
     }
 
     private fun buildNaturalLanguageInsight(

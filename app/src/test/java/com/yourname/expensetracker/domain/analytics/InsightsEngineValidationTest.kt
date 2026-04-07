@@ -471,7 +471,7 @@ class InsightsEngineValidationTest {
         val categories = listOf(
             Category(id = 1, name = "Food", icon = "food", color = "#FF0000"),
             Category(id = 2, name = "Transport", icon = "transport", color = "#00FF00"),
-            Category(id = 3, name = "Entertainment", icon = "entertainment", color = "#0000FF")
+            Category(id = 3, name = "Entertainment", icon = "ent", color = "#0000FF")
         )
         
         val snapshot = engine.generateInsights(categories, emptyList())

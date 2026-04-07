@@ -132,7 +132,8 @@ class RecommendationDeduplicatorTest {
         val recommendations = listOf(rec1, rec2)
         val deduplicated = deduplicator.deduplicate(recommendations)
 
-        assertEquals("Should keep 2 since null filters are different", 2, deduplicated.size)
+        // Both null filters become the same fallback, so they deduplicate to 1
+        assertEquals("Should deduplicate identical fallback filters", 1, deduplicated.size)
     }
 
     private fun createRecommendation(id: String, navTarget: String, filterJson: String, category: String): DashboardFollowThroughRecommendation {

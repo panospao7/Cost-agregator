@@ -23,7 +23,7 @@ class MerchantInsightEngineTest {
                 createExpense("2026-03-10", 38.70, merchant = "Lidl", category = "groceries", id = 5L),
                 createExpense("2026-03-18", 52.10, merchant = "Lidl", category = "groceries", id = 9L),
                 createExpense("2026-03-30", 500.00, type = TransactionType.DEPOSIT, merchant = "Bonus", id = 14L),
-                createExpense("2026-03-31", 999.0, merchant = "Other Person", isNotMine = true, id = 15L)
+                createExpense("2026-03-31", 999.0, effectiveAmount = 0.0, merchant = "Other Person", isNotMine = true, id = 15L)
             )
         )
 

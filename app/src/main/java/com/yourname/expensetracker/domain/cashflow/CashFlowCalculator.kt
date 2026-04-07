@@ -111,12 +111,12 @@ class CashFlowCalculator @Inject constructor(
             // Calculate ending balance
             var dayIncome = 0.0
             for (inc in incomeList) {
-                dayIncome += Math.abs(inc.amount)
+                dayIncome += Math.abs(inc.effectiveAmount)
             }
             
             var dayExpensesTotal = 0.0
             for (exp in expenseList) {
-                dayExpensesTotal += exp.amount
+                dayExpensesTotal += exp.effectiveAmount
             }
             for (recurring in predictedRecurringList) {
                 dayExpensesTotal += recurring.averageAmount

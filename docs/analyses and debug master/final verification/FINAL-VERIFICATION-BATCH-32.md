@@ -1,5 +1,7 @@
 # Final Verification — Batch 32: Repositories — Core & AI
 
+> **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+
 ## Scope
 ### Scoped repository files
 - `com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt`

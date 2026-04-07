@@ -233,12 +233,183 @@ class FinancialWeatherRepositoryTest {
         assertEquals(0, result.totalRecurringCount)
     }
 
+    // =========================================================================
+    // A.1 effectiveAmount regression — no raw-amount re-entry
+    // =========================================================================
+
+    @Test
+    fun `daily cumulative spend uses effectiveAmount for shared fixed-share expense`() = runTest {
+        val now = 1705320000000L // Jan 15, 2024
+        val monthStart = 1704060000000L // Jan 1, 2024 00:00:00
+
+        val expenses = listOf(
+            // Regular purchase day 0: effectiveAmount = 10
+            createExpense(amount = 10.0, date = monthStart, type = TransactionType.PURCHASE),
+            // Shared fixed-share purchase day 1: raw = 100, effective = 40
+            createSharedFixedExpense(rawAmount = 100.0, myShare = 40.0, date = monthStart + 86400000L),
+            // Regular purchase today (day 14): effectiveAmount = 5
+            createExpense(amount = 5.0, date = now, type = TransactionType.PURCHASE)
+        )
+
+        every { expenseRepository.getAllExpenses() } returns flowOf(expenses)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+
+        val spendingPace = SpendingPace(
+            currentMonthSpent = 55.0, daysElapsed = 15, daysInMonth = 31,
+            projectedTotal = 110.0, previousMonthTotal = null, averageMonthlyTotal = null,
+            pacePercentage = 50.0f, paceStatus = PaceStatus.ON_PACE
+        )
+        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns spendingPace
+
+        val capturedPastSum = slot<List<Double>>()
+        every { synthesisEngine.synthesize(
+            pastSumDaily = capture(capturedPastSum),
+            recurringPatterns = any(), plannedExpenses = any(),
+            savingsGoals = any(), budgetStatuses = any(), spendingPace = any()
+        ) } returns createMockForecast()
+        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+
+        repository.getFinancialWeather().first()
+
+        val pastSum = capturedPastSum.captured
+        assertEquals(15, pastSum.size)
+        assertEquals(10.0, pastSum[0], 0.01)  // Day 0: 10
+        assertEquals(50.0, pastSum[1], 0.01)  // Day 1: 10 + 40 (NOT 10 + 100)
+        assertEquals(50.0, pastSum[2], 0.01)  // Day 2: cumulative unchanged
+        assertEquals(55.0, pastSum[14], 0.01) // Day 14: 50 + 5 = 55
+    }
+
+    @Test
+    fun `daily cumulative spend uses effectiveAmount for percentage-based shared expense`() = runTest {
+        val now = 1705320000000L // Jan 15, 2024
+        val monthStart = 1704060000000L // Jan 1, 2024 00:00:00
+
+        val expenses = listOf(
+            // Percentage shared day 0: raw=100, 50% → effective=50
+            createSharedPercentExpense(rawAmount = 100.0, sharePercent = 50, date = monthStart),
+            // Regular purchase day 1: effective = 20
+            createExpense(amount = 20.0, date = monthStart + 86400000L, type = TransactionType.PURCHASE)
+        )
+
+        every { expenseRepository.getAllExpenses() } returns flowOf(expenses)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+
+        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
+            currentMonthSpent = 70.0, daysElapsed = 15, daysInMonth = 31,
+            projectedTotal = 140.0, previousMonthTotal = null, averageMonthlyTotal = null,
+            pacePercentage = 50.0f, paceStatus = PaceStatus.ON_PACE
+        )
+
+        val capturedPastSum = slot<List<Double>>()
+        every { synthesisEngine.synthesize(
+            pastSumDaily = capture(capturedPastSum),
+            recurringPatterns = any(), plannedExpenses = any(),
+            savingsGoals = any(), budgetStatuses = any(), spendingPace = any()
+        ) } returns createMockForecast()
+        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+
+        repository.getFinancialWeather().first()
+
+        val pastSum = capturedPastSum.captured
+        assertEquals(50.0, pastSum[0], 0.01)  // Day 0: 50 (NOT 100)
+        assertEquals(70.0, pastSum[1], 0.01)  // Day 1: 50 + 20 = 70
+    }
+
+    @Test
+    fun `isNotMine expenses are excluded from daily cumulative spend and pace input`() = runTest {
+        val now = 1705320000000L // Jan 15, 2024
+        val monthStart = 1704060000000L // Jan 1, 2024 00:00:00
+
+        val regularExpense = createExpense(amount = 25.0, date = monthStart, type = TransactionType.PURCHASE)
+        val notMineExpense = createIsNotMineExpense(rawAmount = 500.0, date = monthStart + 86400000L)
+
+        val expenses = listOf(regularExpense, notMineExpense)
+
+        every { expenseRepository.getAllExpenses() } returns flowOf(expenses)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+
+        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
+            currentMonthSpent = 25.0, daysElapsed = 15, daysInMonth = 31,
+            projectedTotal = 50.0, previousMonthTotal = null, averageMonthlyTotal = null,
+            pacePercentage = 50.0f, paceStatus = PaceStatus.ON_PACE
+        )
+
+        val capturedPastSum = slot<List<Double>>()
+        val capturedPaceExpenses = slot<List<Expense>>()
+        every { synthesisEngine.synthesize(
+            pastSumDaily = capture(capturedPastSum),
+            recurringPatterns = any(), plannedExpenses = any(),
+            savingsGoals = any(), budgetStatuses = any(), spendingPace = any()
+        ) } returns createMockForecast()
+        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+        coEvery { insightsEngine.getSpendingPaceSuspend(capture(capturedPaceExpenses)) } returns SpendingPace(
+            currentMonthSpent = 25.0, daysElapsed = 15, daysInMonth = 31,
+            projectedTotal = 50.0, previousMonthTotal = null, averageMonthlyTotal = null,
+            pacePercentage = 50.0f, paceStatus = PaceStatus.ON_PACE
+        )
+
+        repository.getFinancialWeather().first()
+
+        // isNotMine purchase is filtered out from daily cumulative (line 144: !it.isNotMine)
+        val pastSum = capturedPastSum.captured
+        assertEquals(25.0, pastSum[0], 0.01) // Day 0: only the regular purchase
+        assertEquals(25.0, pastSum[1], 0.01) // Day 1: isNotMine filtered out, stays at 25
+
+        // isNotMine expense is also filtered out of pace input (line 165: !it.isNotMine)
+        val paceExpenses = capturedPaceExpenses.captured
+        assertTrue(
+            "isNotMine expenses should be filtered from pace input",
+            paceExpenses.none { it.isNotMine }
+        )
+    }
+
     private fun createExpense(amount: Double, date: Long, type: TransactionType): Expense {
         return Expense(
             amount = amount,
             merchant = "Test",
             date = date,
             transactionType = type
+        )
+    }
+
+    private fun createSharedFixedExpense(rawAmount: Double, myShare: Double, date: Long): Expense {
+        return Expense(
+            amount = rawAmount,
+            merchant = "SharedFixed",
+            date = date,
+            transactionType = TransactionType.PURCHASE,
+            isSharedExpense = true,
+            myShareAmount = myShare
+        )
+    }
+
+    private fun createSharedPercentExpense(rawAmount: Double, sharePercent: Int, date: Long): Expense {
+        return Expense(
+            amount = rawAmount,
+            merchant = "SharedPercent",
+            date = date,
+            transactionType = TransactionType.PURCHASE,
+            isSharedExpense = true,
+            mySharePercentage = sharePercent
+        )
+    }
+
+    private fun createIsNotMineExpense(rawAmount: Double, date: Long): Expense {
+        return Expense(
+            amount = rawAmount,
+            merchant = "NotMine",
+            date = date,
+            transactionType = TransactionType.PURCHASE,
+            isNotMine = true
         )
     }
 

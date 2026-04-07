@@ -56,7 +56,7 @@ class RecurringIncomeTracker @Inject constructor(
                     if (variance < (7 * 24 * 60 * 60 * 1000L).let { it * it }) {
                         // Regular pattern detected
                         val frequency = detectFrequency(avgInterval)
-                        val averageAmount = transactions.map { it.amount }.average()
+                        val averageAmount = transactions.map { it.effectiveAmount }.average()
                         
                         recurring.add(
                             RecurringIncome(
@@ -111,8 +111,8 @@ class RecurringIncomeTracker @Inject constructor(
         
         for (expense in expenses) {
             when (expense.transactionType) {
-                TransactionType.DEPOSIT -> income += expense.amount
-                TransactionType.PURCHASE, TransactionType.WITHDRAWAL -> spending += expense.amount
+                TransactionType.DEPOSIT -> income += expense.effectiveAmount
+                TransactionType.PURCHASE, TransactionType.WITHDRAWAL -> spending += expense.effectiveAmount
                 else -> {}
             }
         }

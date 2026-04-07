@@ -1,235 +1,258 @@
 package com.yourname.expensetracker.ui.screens.cashflow
 
+import app.cash.turbine.ReceiveTurbine
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
+import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import io.mockk.*
-import kotlinx.coroutines.Dispatchers
+import com.yourname.expensetracker.util.ViewModelTestUtils
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.*
-import org.junit.After
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
-import java.util.*
+import java.util.Calendar
+import java.util.Date
 
-/**
- * PHASE 4 TEST: CashFlowCalendarViewModel
- * 
- * Tests ViewModel state management, calendar navigation, and cash flow calculations.
- */
 @OptIn(ExperimentalCoroutinesApi::class)
-class CashFlowCalendarViewModelTest {
+class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
 
     private val cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+
     private lateinit var viewModel: CashFlowCalendarViewModel
-    private val testDispatcher = StandardTestDispatcher()
+
+    private val fixedNow = Date(1_710_000_000_000L)
 
     @Before
-    fun setup() {
-        Dispatchers.setMain(testDispatcher)
-        
-        // Mock default behavior
-        every { timeProvider.now() } returns System.currentTimeMillis()
-        
-        coEvery { 
-            cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) 
-        } returns createMockCashFlows()
-        
+    override fun setup() {
+        super.setup()
+
+        every { timeProvider.now() } returns fixedNow.time
+        coEvery { cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) } returns createMockCashFlows()
+        coEvery { cashFlowCalculator.getUpcomingBills(30) } returns emptyList()
+
         viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider)
     }
 
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
-    }
-
     @Test
-    fun `initial state has empty cash flows and default values`() = runTest {
+    fun `initial state loads month cashflow and upcoming bills`() = runTest(testDispatcher) {
+        val monthRange = TimePeriodUtils.getMonthRange(fixedNow.time)
+
         viewModel.state.test {
-            val initialState = awaitItem()
-            
-            assertThat(initialState.dailyCashFlows).isEmpty()
-            assertThat(initialState.isLoading).isFalse()
-            assertThat(initialState.viewMode).isEqualTo(CalendarViewMode.MONTH)
-            assertThat(initialState.startingBalance).isEqualTo(0.0)
-            assertThat(initialState.upcomingBillsCount).isEqualTo(0)
+            val initial = awaitItem()
+            assertThat(initial.viewMode).isEqualTo(CalendarViewMode.MONTH)
+            assertThat(initial.startingBalance).isEqualTo(0.0)
+            assertThat(initial.currentMonth.time).isEqualTo(fixedNow.time)
+
+            advanceUntilIdle()
+
+            val loaded = awaitState { !it.isLoading && it.dailyCashFlows.isNotEmpty() }
+            assertThat(loaded.isLoading).isFalse()
+            assertThat(loaded.dailyCashFlows).hasSize(3)
+            assertThat(loaded.currentMonth.time).isEqualTo(monthRange.first)
+            assertThat(loaded.upcomingBillsCount).isEqualTo(0)
+            cancelAndIgnoreRemainingEvents()
         }
+
+        coVerify {
+            cashFlowCalculator.calculateDailyCashFlow(
+                startDate = Date(monthRange.first),
+                endDate = Date(monthRange.second),
+                startingBalance = 0.0
+            )
+        }
+        coVerify(exactly = 1) { cashFlowCalculator.getUpcomingBills(30) }
     }
 
     @Test
-    fun `loadCurrentMonth triggers cash flow calculation`() = runTest {
-        viewModel.loadCurrentMonth()
-        advanceUntilIdle()
-        
+    fun `loadCashFlow emits loading then loaded state`() = runTest(testDispatcher) {
+        val startDate = Date(TimePeriodUtils.getStartOfMonth(fixedNow.time))
+        val endDate = Date(TimePeriodUtils.getEndOfMonth(fixedNow.time))
+
+        coEvery { cashFlowCalculator.calculateDailyCashFlow(startDate, endDate, 0.0) } coAnswers {
+            delay(50)
+            createMockCashFlows()
+        }
+
         viewModel.state.test {
-            val state = awaitItem()
-            
-            // Should have called calculator
-            coVerify { 
-                cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) 
-            }
+            awaitItem() // initial
+            advanceUntilIdle() // init load
+            awaitState { !it.isLoading && it.dailyCashFlows.isNotEmpty() }
+
+            viewModel.loadCashFlow(startDate, endDate)
+
+            val loading = awaitState { it.isLoading }
+            assertThat(loading.isLoading).isTrue()
+
+            advanceUntilIdle()
+
+            val loaded = awaitState { !it.isLoading && it.currentMonth == startDate }
+            assertThat(loaded.isLoading).isFalse()
+            assertThat(loaded.dailyCashFlows).hasSize(3)
+            assertThat(loaded.currentMonth).isEqualTo(startDate)
+            cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test
-    fun `loadCashFlow updates state with calculator results`() = runTest {
-        val mockFlows = createMockCashFlows()
-        coEvery { 
-            cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) 
-        } returns mockFlows
-        
-        val startDate = Date()
-        val endDate = Date()
-        
-        viewModel.loadCashFlow(startDate, endDate)
-        advanceUntilIdle()
-        
+    fun `setStartingBalance reloads using provided balance`() = runTest(testDispatcher) {
         viewModel.state.test {
-            val state = awaitItem()
-            assertThat(state.dailyCashFlows).hasSize(3)
-            assertThat(state.isLoading).isFalse()
+            awaitItem() // initial
+            advanceUntilIdle() // init load
+            awaitState { !it.isLoading && it.dailyCashFlows.isNotEmpty() }
+
+            viewModel.setStartingBalance(1_000.0)
+
+            val balanceUpdated = awaitState { it.startingBalance == 1_000.0 }
+            assertThat(balanceUpdated.startingBalance).isEqualTo(1_000.0)
+
+            val loading = awaitState { it.isLoading }
+            assertThat(loading.isLoading).isTrue()
+
+            advanceUntilIdle()
+
+            val loaded = awaitState { !it.isLoading }
+            assertThat(loaded.isLoading).isFalse()
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        coVerify(atLeast = 1) {
+            cashFlowCalculator.calculateDailyCashFlow(any(), any(), 1_000.0)
         }
     }
 
     @Test
-    fun `selectDate updates selected date in state`() = runTest {
-        val selectedDate = Calendar.getInstance().apply {
-            set(2026, Calendar.MARCH, 15)
-        }.time
-        
-        viewModel.selectDate(selectedDate)
-        
+    fun `selectDate and changeViewMode update state`() = runTest(testDispatcher) {
+        val selectedDate = Calendar.getInstance().apply { set(2026, Calendar.MARCH, 15) }.time
+
         viewModel.state.test {
-            val state = awaitItem()
-            assertThat(state.selectedDate).isEqualTo(selectedDate)
+            awaitItem()
+            advanceUntilIdle()
+            awaitState { !it.isLoading && it.dailyCashFlows.isNotEmpty() }
+
+            viewModel.selectDate(selectedDate)
+            val afterDateSelect = awaitState { it.selectedDate == selectedDate }
+            assertThat(afterDateSelect.selectedDate).isEqualTo(selectedDate)
+
+            viewModel.changeViewMode(CalendarViewMode.WEEK)
+            val afterModeChange = awaitState { it.viewMode == CalendarViewMode.WEEK }
+            assertThat(afterModeChange.viewMode).isEqualTo(CalendarViewMode.WEEK)
+            cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test
-    fun `changeViewMode updates view mode in state`() = runTest {
-        viewModel.changeViewMode(CalendarViewMode.WEEK)
-        
-        viewModel.state.test {
-            val state = awaitItem()
-            assertThat(state.viewMode).isEqualTo(CalendarViewMode.WEEK)
-        }
-    }
+    fun `navigate month actions trigger calculator calls`() = runTest(testDispatcher) {
+        advanceUntilIdle() // init work
 
-    @Test
-    fun `setStartingBalance updates balance and reloads data`() = runTest {
-        val newBalance = 1000.0
-        
-        viewModel.setStartingBalance(newBalance)
-        advanceUntilIdle()
-        
-        viewModel.state.test {
-            val state = awaitItem()
-            assertThat(state.startingBalance).isEqualTo(newBalance)
-        }
-        
-        // Should trigger reload
-        coVerify { 
-            cashFlowCalculator.calculateDailyCashFlow(any(), any(), eq(newBalance)) 
-        }
-    }
-
-    @Test
-    fun `navigateToPreviousMonth loads previous month data`() = runTest {
         viewModel.navigateToPreviousMonth()
-        advanceUntilIdle()
-        
-        // Should call calculator with previous month dates
-        coVerify { 
-            cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) 
-        }
-    }
-
-    @Test
-    fun `navigateToNextMonth loads next month data`() = runTest {
         viewModel.navigateToNextMonth()
         advanceUntilIdle()
-        
-        // Should call calculator with next month dates
-        coVerify { 
-            cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) 
+
+        coVerify(atLeast = 3) {
+            cashFlowCalculator.calculateDailyCashFlow(any(), any(), any())
         }
     }
 
     @Test
-    fun `loadCashFlow sets loading state during calculation`() = runTest {
-        val mockFlows = createMockCashFlows()
-        coEvery { 
-            cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) 
-        } coAnswers {
-            delay(100) // Simulate delay
-            mockFlows
-        }
-        
-        viewModel.loadCashFlow(Date(), Date())
-        
+    fun `upcoming bills count reflects repository result`() = runTest(testDispatcher) {
+        coEvery { cashFlowCalculator.getUpcomingBills(30) } returns listOf(
+            recurringPattern("rent", fixedNow.time + TimePeriodUtils.DAY_IN_MILLIS),
+            recurringPattern("utilities", fixedNow.time + 2 * TimePeriodUtils.DAY_IN_MILLIS)
+        )
+
+        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider)
+
         viewModel.state.test {
-            // First emission should have loading=true
-            val loadingState = awaitItem()
-            assertThat(loadingState.isLoading).isTrue()
-            
-            // After delay, should complete
-            advanceTimeBy(100)
-            val completeState = awaitItem()
-            assertThat(completeState.isLoading).isFalse()
+            awaitItem() // initial
+            advanceUntilIdle()
+            val loaded = awaitState { !it.isLoading && it.dailyCashFlows.isNotEmpty() }
+            assertThat(loaded.upcomingBillsCount).isEqualTo(2)
+            cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test
-    fun `state contains correct upcoming bills count after init`() = runTest {
+    fun `calculator failure surfaces as coroutine exception after loading state`() = runTest(testDispatcher) {
+        val startDate = Date(TimePeriodUtils.getStartOfMonth(fixedNow.time))
+        val endDate = Date(TimePeriodUtils.getEndOfMonth(fixedNow.time))
+
+        coEvery { cashFlowCalculator.calculateDailyCashFlow(startDate, endDate, 0.0) } throws IllegalStateException("boom")
+
         viewModel.state.test {
-            val state = awaitItem()
-            // Should be loaded during init
-            assertThat(state.upcomingBillsCount).isAtLeast(0)
+            awaitItem() // initial
+            advanceUntilIdle() // init load
+            awaitState { !it.isLoading && it.dailyCashFlows.isNotEmpty() }
+
+            viewModel.loadCashFlow(startDate, endDate)
+
+            val loading = awaitState { it.isLoading }
+            assertThat(loading.isLoading).isTrue()
+
+            assertThrows(IllegalStateException::class.java) {
+                advanceUntilIdle()
+            }
+            cancelAndIgnoreRemainingEvents()
         }
     }
 
-    @Test
-    fun `cash flow risk levels are properly categorized`() {
-        val noneRisk = CashFlowRiskLevel.NONE
-        val lowRisk = CashFlowRiskLevel.LOW
-        val mediumRisk = CashFlowRiskLevel.MEDIUM
-        val highRisk = CashFlowRiskLevel.HIGH
-        
-        // Verify all risk levels exist
-        assertThat(noneRisk).isNotNull()
-        assertThat(lowRisk).isNotNull()
-        assertThat(mediumRisk).isNotNull()
-        assertThat(highRisk).isNotNull()
+    private suspend fun ReceiveTurbine<CashFlowCalendarState>.awaitState(
+        predicate: (CashFlowCalendarState) -> Boolean
+    ): CashFlowCalendarState {
+        var state = awaitItem()
+        var attempts = 0
+        while (!predicate(state) && attempts < 20) {
+            state = awaitItem()
+            attempts++
+        }
+        if (!predicate(state)) {
+            throw AssertionError("Expected matching state was not emitted within 21 items. Last state=$state")
+        }
+        return state
     }
 
-    @Test
-    fun `calendar view modes are distinct`() {
-        val month = CalendarViewMode.MONTH
-        val week = CalendarViewMode.WEEK
-        val day = CalendarViewMode.DAY
-        
-        assertThat(month).isNotEqualTo(week)
-        assertThat(week).isNotEqualTo(day)
-        assertThat(month).isNotEqualTo(day)
-    }
-
-    // Helper methods
-    
     private fun createMockCashFlows(): List<DailyCashFlow> {
-        val calendar = Calendar.getInstance()
+        val base = Calendar.getInstance().apply {
+            time = fixedNow
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+
         return listOf(
-            createDailyCashFlow(calendar.apply { add(Calendar.DAY_OF_MONTH, 0) }.time, 100.0, 50.0),
-            createDailyCashFlow(calendar.apply { add(Calendar.DAY_OF_MONTH, 1) }.time, 100.0, 75.0),
-            createDailyCashFlow(calendar.apply { add(Calendar.DAY_OF_MONTH, 1) }.time, 100.0, 25.0)
+            createDailyCashFlow(base.time, 100.0, 75.0),
+            createDailyCashFlow((base.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, 1) }.time, 75.0, 125.0),
+            createDailyCashFlow((base.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, 2) }.time, 125.0, 110.0)
         )
     }
-    
+
+    private fun recurringPattern(name: String, nextExpectedDate: Long): RecurringPattern {
+        return RecurringPattern(
+            merchantName = name,
+            averageAmount = 42.0,
+            currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            periodVarianceDays = 2,
+            amountVariancePercent = 0.05,
+            nextExpectedDate = nextExpectedDate,
+            confidence = 0.8f,
+            previousDates = emptyList()
+        )
+    }
+
     private fun createDailyCashFlow(
         date: Date,
         startingBalance: Double,
@@ -242,10 +265,7 @@ class CashFlowCalendarViewModelTest {
             expenses = emptyList(),
             predictedRecurring = emptyList(),
             endingBalance = endingBalance,
-            riskLevel = if (endingBalance < startingBalance * 0.5) 
-                CashFlowRiskLevel.HIGH 
-            else 
-                CashFlowRiskLevel.LOW
+            riskLevel = if (endingBalance < startingBalance) CashFlowRiskLevel.MEDIUM else CashFlowRiskLevel.LOW
         )
     }
 }

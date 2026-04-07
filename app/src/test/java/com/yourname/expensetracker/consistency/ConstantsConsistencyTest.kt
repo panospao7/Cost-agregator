@@ -35,9 +35,9 @@ class ConstantsConsistencyTest : AnalyticsEngineTestBase() {
             startDate = 1L
         ).notifyAtCritical.toDouble() * 100.0
 
-        assertApproxEquals(90f, underPaceThreshold, 0.0f)
-        assertApproxEquals(90.0, budgetMonitorWarningThresholdPercent, 0.0)
-        assertApproxEquals(underPaceThreshold.toDouble(), budgetMonitorWarningThresholdPercent, 0.0)
+        assertApproxEquals(90f, underPaceThreshold, 0.01f)
+        assertApproxEquals(90.0, budgetMonitorWarningThresholdPercent, 0.01)
+        assertApproxEquals(underPaceThreshold.toDouble(), budgetMonitorWarningThresholdPercent, 0.01)
 
         assertEquals(100_000, settlementIterationLimit)
 

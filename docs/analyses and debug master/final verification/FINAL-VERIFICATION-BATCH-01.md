@@ -1,5 +1,7 @@
 # Final Verification — Batch 01: Analytics Engines
 
+> **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+
 ## Scope
 - Primary batch files:
   - `com/yourname/expensetracker/domain/analytics/AdvancedAnalyticsEngine.kt`

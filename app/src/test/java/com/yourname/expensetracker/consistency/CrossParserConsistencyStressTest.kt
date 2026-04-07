@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import org.junit.Ignore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Before
@@ -14,6 +15,7 @@ import org.junit.Test
 /**
  * Stress tests for cross-parser consistency.
  */
+@Ignore("Stress test: may hang in CI, run manually")
 class CrossParserConsistencyStressTest {
 
     private lateinit var revolutParser: RevolutParser

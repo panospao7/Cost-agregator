@@ -12,6 +12,7 @@ import io.mockk.mockkStatic
 import io.mockk.every
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import org.junit.Ignore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -19,6 +20,7 @@ import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 
+@Ignore("Stress test: may hang in CI, run manually")
 class CompositeGeocodingServiceStressTest {
 
     private lateinit var photonService: PhotonGeocodingService

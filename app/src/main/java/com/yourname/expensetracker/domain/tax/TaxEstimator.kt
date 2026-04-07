@@ -36,7 +36,7 @@ class TaxEstimator @Inject constructor(
         val businessExpenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
         var totalDeductible = 0.0
         for (expense in businessExpenses) {
-            totalDeductible += expense.amount
+            totalDeductible += expense.effectiveAmount
         }
         
         // HIGH FIX: Calculate income tax bracket from configuration
@@ -51,7 +51,7 @@ class TaxEstimator @Inject constructor(
         for (expense in expenses) {
             // Assume most purchases include VAT
             if (expense.transactionType.name == "PURCHASE") {
-                val vatAmount = expense.amount * (vatRate / (1 + vatRate))
+                val vatAmount = expense.effectiveAmount * (vatRate / (1 + vatRate))
                 vatPaid += vatAmount
             }
         }
@@ -114,7 +114,7 @@ class TaxEstimator @Inject constructor(
         for (expense in businessExpenses) {
             val category = expense.businessCategory ?: "Uncategorized"
             val current = categorizedDeductions[category] ?: 0.0
-            categorizedDeductions[category] = current + expense.amount
+            categorizedDeductions[category] = current + expense.effectiveAmount
         }
         
         TaxYearSummary(

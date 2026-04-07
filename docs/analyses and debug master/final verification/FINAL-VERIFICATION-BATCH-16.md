@@ -1,5 +1,7 @@
 # Final Verification — Batch 16: UI Components
 
+> **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+
 ## Scope
 - `com/yourname/expensetracker/ui/components/health/FinancialHealthScoreV2Widget.kt`
 - `com/yourname/expensetracker/ui/components/dashboard/MoneyRadarWidget.kt`

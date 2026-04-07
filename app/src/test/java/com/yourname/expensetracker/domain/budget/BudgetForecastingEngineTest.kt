@@ -180,6 +180,92 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         assertApproxEquals(102.5, forecast.predictedSpending, 0.01)
     }
 
+    // =========================================================================
+    // A.1 effectiveAmount regression — shared-expense history fixture
+    // =========================================================================
+
+    @Test
+    fun `historical data uses effectiveAmount for shared expenses not raw amount`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        val expenses = listOf(
+            // Regular expense: effectiveAmount = 100
+            exp("2026-01-10", 100.0),
+            // Shared expense with fixed share: raw = 200, effectiveAmount = 80
+            sharedFixedExp("2026-02-10", rawAmount = 200.0, myShare = 80.0),
+            // Regular expense: effectiveAmount = 120
+            exp("2026-03-10", 120.0)
+        )
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns expenses
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // Monthly totals: Jan=100, Feb=80 (NOT 200), Mar=120 → avg=100
+        // Trend: recent 2-month avg = (80+120)/2 = 100, older avg = 100, ratio = 1.0 → STABLE
+        assertApproxEquals(100.0, forecast.predictedSpending, 0.01)
+    }
+
+    @Test
+    fun `historical data uses effectiveAmount for percentage shared expenses`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        val expenses = listOf(
+            exp("2026-01-10", 100.0),
+            // Percentage shared: raw = 100, 50% → effectiveAmount = 50
+            sharedPercentExp("2026-02-10", rawAmount = 100.0, sharePercent = 50),
+            exp("2026-03-10", 100.0)
+        )
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns expenses
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // Monthly totals: Jan=100, Feb=50 (NOT 100), Mar=100 → avg ≈ 83.33
+        // Trend: recent = (50+100)/2=75, older=100 → 75 < 100*0.9=90 → DECREASING → *0.9
+        assertApproxEquals(75.0, forecast.predictedSpending, 0.01)
+    }
+
+    @Test
+    fun `historical data excludes isNotMine expenses from totals`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 500.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        val expenses = listOf(
+            exp("2026-01-10", 60.0),
+            // isNotMine: effectiveAmount = 0 → Feb total = 0
+            isNotMineExp("2026-02-15", rawAmount = 300.0),
+            exp("2026-03-10", 60.0)
+        )
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns expenses
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // Monthly totals: Jan=60, Feb=0, Mar=60 → avg=40
+        // Trend: recent=(0+60)/2=30, older=60 → 30 < 60*0.9=54 → DECREASING → *0.9
+        assertApproxEquals(36.0, forecast.predictedSpending, 0.01)
+    }
+
+    @Test
+    fun `mixed shared and isNotMine with regular expenses forecast correctly`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        val expenses = listOf(
+            // Jan: regular 100
+            exp("2026-01-05", 100.0),
+            // Jan: isNotMine 500 → effective 0
+            isNotMineExp("2026-01-20", rawAmount = 500.0),
+            // Feb: shared fixed, raw=200, share=40
+            sharedFixedExp("2026-02-10", rawAmount = 200.0, myShare = 40.0),
+            // Mar: regular 100
+            exp("2026-03-10", 100.0)
+        )
+        coEvery { expenseDao.getExpensesByCategory(1L, any(), any()) } returns expenses
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
+
+        // Monthly totals: Jan=100+0=100, Feb=40, Mar=100 → avg=80
+        // Trend: recent=(40+100)/2=70, older=100 → 70 < 90 → DECREASING → *0.9
+        assertApproxEquals(72.0, forecast.predictedSpending, 0.01)
+    }
+
+    // =========================================================================
+    // Test expense factory helpers
+    // =========================================================================
+
     private fun exp(date: String, amount: Double) =
         com.yourname.expensetracker.data.database.entity.Expense(
             amount = amount,
@@ -187,5 +273,37 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             transactionType = TransactionType.PURCHASE,
             categoryId = 1L,
             date = LocalDate.parse(date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        )
+
+    private fun sharedFixedExp(date: String, rawAmount: Double, myShare: Double) =
+        com.yourname.expensetracker.data.database.entity.Expense(
+            amount = rawAmount,
+            merchant = "SharedMerchant",
+            transactionType = TransactionType.PURCHASE,
+            categoryId = 1L,
+            date = LocalDate.parse(date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            isSharedExpense = true,
+            myShareAmount = myShare
+        )
+
+    private fun sharedPercentExp(date: String, rawAmount: Double, sharePercent: Int) =
+        com.yourname.expensetracker.data.database.entity.Expense(
+            amount = rawAmount,
+            merchant = "SharedMerchant",
+            transactionType = TransactionType.PURCHASE,
+            categoryId = 1L,
+            date = LocalDate.parse(date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            isSharedExpense = true,
+            mySharePercentage = sharePercent
+        )
+
+    private fun isNotMineExp(date: String, rawAmount: Double) =
+        com.yourname.expensetracker.data.database.entity.Expense(
+            amount = rawAmount,
+            merchant = "NotMineMerchant",
+            transactionType = TransactionType.PURCHASE,
+            categoryId = 1L,
+            date = LocalDate.parse(date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            isNotMine = true
         )
 }

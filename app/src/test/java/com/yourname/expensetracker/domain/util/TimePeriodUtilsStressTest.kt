@@ -191,15 +191,18 @@ class TimePeriodUtilsStressTest {
         val daysInMonth = TimePeriodUtils.getDaysInMonth(cal.timeInMillis)
         assertEquals(28, daysInMonth)
         
+        // Production uses exclusive end: returns start of next month (March 1)
         val endOfMonth = TimePeriodUtils.getEndOfMonth(cal.timeInMillis)
         val endCal = Calendar.getInstance().apply { timeInMillis = endOfMonth }
         
-        assertEquals(28, endCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(1, endCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.MARCH, endCal.get(Calendar.MONTH))
     }
 
     @Test
     fun `stress - end of month for all months`() {
         // Test that getEndOfMonth works for all months
+        // Production uses exclusive end: returns start of NEXT month
         val year = 2024 // Leap year
         
         for (month in 0..11) {
@@ -211,9 +214,12 @@ class TimePeriodUtilsStressTest {
             val endOfMonth = TimePeriodUtils.getEndOfMonth(cal.timeInMillis)
             val endCal = Calendar.getInstance().apply { timeInMillis = endOfMonth }
             
-            assertEquals(month, endCal.get(Calendar.MONTH))
-            assertEquals(23, endCal.get(Calendar.HOUR_OF_DAY))
-            assertEquals(59, endCal.get(Calendar.MINUTE))
+            // Exclusive end = start of next month
+            val expectedNextMonth = (month + 1) % 12
+            assertEquals(expectedNextMonth, endCal.get(Calendar.MONTH))
+            assertEquals(1, endCal.get(Calendar.DAY_OF_MONTH))
+            assertEquals(0, endCal.get(Calendar.HOUR_OF_DAY))
+            assertEquals(0, endCal.get(Calendar.MINUTE))
         }
     }
 
@@ -365,6 +371,7 @@ class TimePeriodUtilsStressTest {
 
     @Test
     fun `stress - getEndOfYear for different years`() {
+        // Production uses exclusive end: returns start of NEXT year
         listOf(2020, 2021, 2022, 2023, 2024).forEach { year ->
             val cal = Calendar.getInstance().apply {
                 set(year, Calendar.JUNE, 15, 12, 0, 0)
@@ -373,9 +380,9 @@ class TimePeriodUtilsStressTest {
             val endOfYear = TimePeriodUtils.getEndOfYear(cal.timeInMillis)
             val endCal = Calendar.getInstance().apply { timeInMillis = endOfYear }
             
-            assertEquals(year, endCal.get(Calendar.YEAR))
-            assertEquals(Calendar.DECEMBER, endCal.get(Calendar.MONTH))
-            assertEquals(31, endCal.get(Calendar.DAY_OF_MONTH))
+            assertEquals(year + 1, endCal.get(Calendar.YEAR))
+            assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
+            assertEquals(1, endCal.get(Calendar.DAY_OF_MONTH))
         }
     }
 
@@ -471,15 +478,20 @@ class TimePeriodUtilsStressTest {
 
     @Test
     fun `stress - end of day timestamp`() {
-        // Exactly end of day
+        // Production uses exclusive end: getEndOfDay returns start of NEXT day
         val cal = Calendar.getInstance().apply {
             set(2024, Calendar.JUNE, 15, 23, 59, 59)
             set(Calendar.MILLISECOND, 999)
         }
         
         val endOfDay = TimePeriodUtils.getEndOfDay(cal.timeInMillis)
+        val endCal = Calendar.getInstance().apply { timeInMillis = endOfDay }
         
-        assertEquals(cal.timeInMillis, endOfDay)
+        assertEquals(16, endCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(0, endCal.get(Calendar.HOUR_OF_DAY))
+        assertEquals(0, endCal.get(Calendar.MINUTE))
+        assertEquals(0, endCal.get(Calendar.SECOND))
+        assertEquals(0, endCal.get(Calendar.MILLISECOND))
     }
 
     // ============================================================================
@@ -510,14 +522,16 @@ class TimePeriodUtilsStressTest {
 
     @Test
     fun `stress - getEndOfQuarter for each quarter`() {
-        val expectedEndMonths = listOf(
-            Calendar.MARCH to 31,
-            Calendar.JUNE to 30,
-            Calendar.SEPTEMBER to 30,
-            Calendar.DECEMBER to 31
+        // Production uses exclusive end: returns start of NEXT quarter
+        // Q1 (Mar) → Apr 1, Q2 (Jun) → Jul 1, Q3 (Sep) → Oct 1, Q4 (Dec) → Jan 1 next year
+        val expectedNextQuarterMonths = listOf(
+            Calendar.MARCH to Calendar.APRIL,
+            Calendar.JUNE to Calendar.JULY,
+            Calendar.SEPTEMBER to Calendar.OCTOBER,
+            Calendar.DECEMBER to Calendar.JANUARY
         )
         
-        expectedEndMonths.forEach { (month, expectedDay) ->
+        expectedNextQuarterMonths.forEach { (month, expectedNextMonth) ->
             val cal = Calendar.getInstance().apply {
                 set(2024, month, 15, 12, 0, 0)
             }
@@ -525,8 +539,9 @@ class TimePeriodUtilsStressTest {
             val endOfQuarter = TimePeriodUtils.getEndOfQuarter(cal.timeInMillis)
             val qCal = Calendar.getInstance().apply { timeInMillis = endOfQuarter }
             
-            assertEquals(month, qCal.get(Calendar.MONTH))
-            assertEquals(expectedDay, qCal.get(Calendar.DAY_OF_MONTH))
+            assertEquals(expectedNextMonth, qCal.get(Calendar.MONTH))
+            assertEquals(1, qCal.get(Calendar.DAY_OF_MONTH))
+            assertEquals(0, qCal.get(Calendar.HOUR_OF_DAY))
         }
     }
 

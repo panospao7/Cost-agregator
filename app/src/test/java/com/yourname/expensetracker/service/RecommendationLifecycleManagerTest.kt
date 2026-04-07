@@ -2,20 +2,22 @@ package com.yourname.expensetracker.service
 
 import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
-import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
-import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
-import com.yourname.expensetracker.domain.model.recommendation.RecommendationStatus
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 
@@ -34,6 +36,7 @@ class RecommendationLifecycleManagerTest {
     private lateinit var thresholdCalculator: SpendingThresholdCalculator
     private lateinit var lifecycleManager: RecommendationLifecycleManager
     private val testDispatcher = StandardTestDispatcher()
+    private lateinit var applicationScope: TestScope
 
     @Before
     fun setup() {
@@ -42,46 +45,65 @@ class RecommendationLifecycleManagerTest {
         stateManager = mockk(relaxed = true)
         cacheService = mockk(relaxed = true)
         thresholdCalculator = mockk(relaxed = true)
+        applicationScope = TestScope(testDispatcher)
+
+        // Fix NPE in expireOld's Kotlin $default synthetic method:
+        // The compiler evaluates timeProvider.now() for the default param
+        // before MockK can intercept the call. Setting the private field
+        // on the mock prevents the NPE.
+        val timeProviderMock = mockk<TimeProvider>(relaxed = true)
+        every { timeProviderMock.now() } returns System.currentTimeMillis()
+        RecommendationRepository::class.java.getDeclaredField("timeProvider").apply {
+            isAccessible = true
+            set(repository, timeProviderMock)
+        }
+
         lifecycleManager = RecommendationLifecycleManager(
             repository = repository,
             stateManager = stateManager,
             cacheService = cacheService,
             thresholdCalculator = thresholdCalculator,
             ioDispatcher = testDispatcher,
-            applicationScope = kotlinx.coroutines.test.TestScope(testDispatcher)
+            applicationScope = applicationScope
         )
+    }
+
+    @After
+    fun teardown() {
+        applicationScope.cancel()
+        Dispatchers.resetMain()
     }
 
     // ========== checkAndExpire() Tests ==========
 
     @Test
-    fun `checkAndExpire calls repository expireOld`() = runTest {
+    fun `checkAndExpire calls repository expireOld`() = runTest(testDispatcher) {
         coEvery { repository.expireOld("user123", any()) } returns Unit
 
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.expireOld("user123", any()) }
     }
 
     @Test
-    fun `checkAndExpire evicts expired items from cache`() = runTest {
+    fun `checkAndExpire evicts expired items from cache`() = runTest(testDispatcher) {
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { cacheService.evictExpired() }
     }
 
     @Test
-    fun `checkAndExpire refreshes state manager`() = runTest {
+    fun `checkAndExpire refreshes state manager`() = runTest(testDispatcher) {
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
     }
 
     @Test
-    fun `checkAndExpire executes operations in correct order`() = runTest {
+    fun `checkAndExpire executes operations in correct order`() = runTest(testDispatcher) {
         val callOrder = mutableListOf<String>()
 
         coEvery { repository.expireOld("user123", any()) } coAnswers {
@@ -95,7 +117,7 @@ class RecommendationLifecycleManagerTest {
         }
 
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         assert(callOrder.size == 3)
         assert(callOrder[0] == "expireOld")
@@ -104,60 +126,60 @@ class RecommendationLifecycleManagerTest {
     }
 
     @Test
-    fun `checkAndExpire handles repository errors gracefully`() = runTest {
+    fun `checkAndExpire handles repository errors gracefully`() = runTest(testDispatcher) {
         coEvery { repository.expireOld("user123", any()) } throws RuntimeException("Database error")
 
         // Should not throw
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.expireOld("user123", any()) }
     }
 
     @Test
-    fun `checkAndExpire handles cache eviction errors gracefully`() = runTest {
+    fun `checkAndExpire handles cache eviction errors gracefully`() = runTest(testDispatcher) {
         coEvery { cacheService.evictExpired() } throws RuntimeException("Cache error")
 
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { cacheService.evictExpired() }
     }
 
     @Test
-    fun `checkAndExpire handles state refresh errors gracefully`() = runTest {
+    fun `checkAndExpire handles state refresh errors gracefully`() = runTest(testDispatcher) {
         coEvery { stateManager.refreshForUser("user123") } throws RuntimeException("State error")
 
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
     }
 
     @Test
-    fun `checkAndExpire works with different user IDs`() = runTest {
+    fun `checkAndExpire works with different user IDs`() = runTest(testDispatcher) {
         lifecycleManager.checkAndExpire("user456")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.expireOld("user456", any()) }
         coVerify(exactly = 1) { stateManager.refreshForUser("user456") }
     }
 
     @Test
-    fun `checkAndExpire works with empty user ID`() = runTest {
+    fun `checkAndExpire works with empty user ID`() = runTest(testDispatcher) {
         lifecycleManager.checkAndExpire("")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.expireOld("", any()) }
     }
 
     @Test
-    fun `checkAndExpire can be called multiple times`() = runTest {
+    fun `checkAndExpire can be called multiple times`() = runTest(testDispatcher) {
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 2) { repository.expireOld("user123", any()) }
         coVerify(exactly = 2) { cacheService.evictExpired() }
@@ -167,76 +189,76 @@ class RecommendationLifecycleManagerTest {
     // ========== cleanupExpired() Tests ==========
 
     @Test
-    fun `cleanupExpired calls repository cleanupExpired`() = runTest {
+    fun `cleanupExpired calls repository cleanupExpired`() = runTest(testDispatcher) {
         coEvery { repository.cleanupExpired() } returns 1
 
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.cleanupExpired() }
     }
 
     @Test
-    fun `cleanupExpired evicts expired cache entries`() = runTest {
+    fun `cleanupExpired evicts expired cache entries`() = runTest(testDispatcher) {
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { cacheService.evictExpired() }
     }
 
     @Test
-    fun `cleanupExpired refreshes state when user ID available`() = runTest {
+    fun `cleanupExpired refreshes state when user ID available`() = runTest(testDispatcher) {
         coEvery { stateManager.getCurrentUserId() } returns "user123"
 
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { stateManager.refreshForUser("user123") }
     }
 
     @Test
-    fun `cleanupExpired does not refresh state when user ID is null`() = runTest {
+    fun `cleanupExpired does not refresh state when user ID is null`() = runTest(testDispatcher) {
         coEvery { stateManager.getCurrentUserId() } returns null
 
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 0) { stateManager.refreshForUser(any()) }
     }
 
     @Test
-    fun `cleanupExpired handles repository errors gracefully`() = runTest {
+    fun `cleanupExpired handles repository errors gracefully`() = runTest(testDispatcher) {
         coEvery { repository.cleanupExpired() } throws RuntimeException("Cleanup error")
 
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.cleanupExpired() }
     }
 
     @Test
-    fun `cleanupExpired handles cache errors gracefully`() = runTest {
+    fun `cleanupExpired handles cache errors gracefully`() = runTest(testDispatcher) {
         coEvery { cacheService.evictExpired() } throws RuntimeException("Cache error")
 
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { cacheService.evictExpired() }
     }
 
     @Test
-    fun `cleanupExpired handles getCurrentUserId errors gracefully`() = runTest {
+    fun `cleanupExpired handles getCurrentUserId errors gracefully`() = runTest(testDispatcher) {
         coEvery { stateManager.getCurrentUserId() } throws RuntimeException("State error")
 
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.cleanupExpired() }
         coVerify(exactly = 1) { cacheService.evictExpired() }
     }
 
     @Test
-    fun `cleanupExpired executes in correct order`() = runTest {
+    fun `cleanupExpired executes in correct order`() = runTest(testDispatcher) {
         val callOrder = mutableListOf<String>()
 
         coEvery { repository.cleanupExpired() } coAnswers {
@@ -252,7 +274,7 @@ class RecommendationLifecycleManagerTest {
         }
 
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         assert(callOrder.size == 3)
         assert(callOrder[0] == "cleanup")
@@ -263,51 +285,55 @@ class RecommendationLifecycleManagerTest {
     // ========== startPeriodicExpirationCheck() Tests ==========
 
     @Test
-    fun `startPeriodicExpirationCheck starts background coroutine`() = runTest {
+    fun `startPeriodicExpirationCheck starts background coroutine`() = runTest(testDispatcher) {
         lifecycleManager.startPeriodicExpirationCheck()
         
-        // Advance time but not enough for first interval
-        testDispatcher.scheduler.advanceTimeBy(1000)
+        // Advance a small amount — first cleanup runs immediately before first delay
+        advanceTimeBy(1000)
         
-        // Should not have run cleanup yet
-        coVerify(exactly = 0) { repository.cleanupExpired() }
+        // First cleanup runs immediately (before the 6h delay), so exactly 1
+        coVerify(exactly = 1) { repository.cleanupExpired() }
+        applicationScope.cancel()
     }
 
     @Test
-    fun `startPeriodicExpirationCheck runs cleanup after 6 hours`() = runTest {
+    fun `startPeriodicExpirationCheck runs cleanup after 6 hours`() = runTest(testDispatcher) {
         lifecycleManager.startPeriodicExpirationCheck()
         
         // Advance 6 hours + a bit
-        testDispatcher.scheduler.advanceTimeBy(6L * 60 * 60 * 1000 + 100)
+        advanceTimeBy(6L * 60 * 60 * 1000 + 100)
         
         coVerify(atLeast = 1) { repository.cleanupExpired() }
+        applicationScope.cancel()
     }
 
     @Test
-    fun `startPeriodicExpirationCheck runs cleanup multiple times`() = runTest {
+    fun `startPeriodicExpirationCheck runs cleanup multiple times`() = runTest(testDispatcher) {
         lifecycleManager.startPeriodicExpirationCheck()
         
         // Advance 18 hours (should trigger 3 times at 6h intervals)
-        testDispatcher.scheduler.advanceTimeBy(18L * 60 * 60 * 1000 + 100)
+        advanceTimeBy(18L * 60 * 60 * 1000 + 100)
         
         coVerify(atLeast = 2) { repository.cleanupExpired() }
+        applicationScope.cancel()
     }
 
     @Test
-    fun `startPeriodicExpirationCheck can only be started once`() = runTest {
+    fun `startPeriodicExpirationCheck can only be started once`() = runTest(testDispatcher) {
         lifecycleManager.startPeriodicExpirationCheck()
         lifecycleManager.startPeriodicExpirationCheck()
         lifecycleManager.startPeriodicExpirationCheck()
         
-        // Advance 6 hours
-        testDispatcher.scheduler.advanceTimeBy(6L * 60 * 60 * 1000 + 100)
+        // Advance past the first immediate cleanup only (not enough for second interval)
+        advanceTimeBy(1000)
         
-        // Should only run once, not three times
-        coVerify(atMost = 1) { repository.cleanupExpired() }
+        // Only one periodic loop should be running — one immediate cleanup
+        coVerify(exactly = 1) { repository.cleanupExpired() }
+        applicationScope.cancel()
     }
 
     @Test
-    fun `startPeriodicExpirationCheck continues after errors`() = runTest {
+    fun `startPeriodicExpirationCheck continues after errors`() = runTest(testDispatcher) {
         var callCount = 0
         coEvery { repository.cleanupExpired() } coAnswers {
             callCount++
@@ -319,42 +345,43 @@ class RecommendationLifecycleManagerTest {
 
         lifecycleManager.startPeriodicExpirationCheck()
         
-        // First interval - should fail
-        testDispatcher.scheduler.advanceTimeBy(6L * 60 * 60 * 1000 + 100)
+        // First cleanup runs immediately — should fail
+        advanceTimeBy(1000)
         
-        // Second interval - should succeed
-        testDispatcher.scheduler.advanceTimeBy(6L * 60 * 60 * 1000)
+        // Second cleanup after 6h — should succeed
+        advanceTimeBy(6L * 60 * 60 * 1000)
         
-        // Should have been called at least twice
+        // Should have been called at least twice (immediate + after 6h)
         coVerify(atLeast = 2) { repository.cleanupExpired() }
+        applicationScope.cancel()
     }
 
     // ========== Concurrent Operations Tests ==========
 
     @Test
-    fun `checkAndExpire handles concurrent calls for same user`() = runTest {
+    fun `checkAndExpire handles concurrent calls for same user`() = runTest(testDispatcher) {
         lifecycleManager.checkAndExpire("user123")
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 2) { repository.expireOld("user123", any()) }
     }
 
     @Test
-    fun `checkAndExpire handles concurrent calls for different users`() = runTest {
+    fun `checkAndExpire handles concurrent calls for different users`() = runTest(testDispatcher) {
         lifecycleManager.checkAndExpire("user123")
         lifecycleManager.checkAndExpire("user456")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.expireOld("user123", any()) }
         coVerify(exactly = 1) { repository.expireOld("user456", any()) }
     }
 
     @Test
-    fun `cleanupExpired can run concurrently with checkAndExpire`() = runTest {
+    fun `cleanupExpired can run concurrently with checkAndExpire`() = runTest(testDispatcher) {
         lifecycleManager.checkAndExpire("user123")
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.expireOld("user123", any()) }
         coVerify(exactly = 1) { repository.cleanupExpired() }
@@ -364,33 +391,33 @@ class RecommendationLifecycleManagerTest {
     // ========== Edge Cases ==========
 
     @Test
-    fun `checkAndExpire handles IOException from repository`() = runTest {
+    fun `checkAndExpire handles IOException from repository`() = runTest(testDispatcher) {
         coEvery { repository.expireOld("user123", any()) } throws java.io.IOException("Network error")
 
         lifecycleManager.checkAndExpire("user123")
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.expireOld("user123", any()) }
     }
 
     @Test
-    fun `cleanupExpired handles database constraint violation`() = runTest {
+    fun `cleanupExpired handles database constraint violation`() = runTest(testDispatcher) {
         coEvery { repository.cleanupExpired() } throws android.database.sqlite.SQLiteConstraintException()
 
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 1) { repository.cleanupExpired() }
     }
 
     @Test
-    fun `checkAndExpire handles OutOfMemoryError gracefully`() = runTest {
+    fun `checkAndExpire handles OutOfMemoryError gracefully`() = runTest(testDispatcher) {
         coEvery { cacheService.evictExpired() } throws OutOfMemoryError()
 
         // Should catch all Throwables, not just Exceptions
         try {
             lifecycleManager.checkAndExpire("user123")
-            testDispatcher.scheduler.advanceUntilIdle()
+            advanceUntilIdle()
         } catch (e: OutOfMemoryError) {
             // Expected to be caught internally
         }
@@ -399,27 +426,28 @@ class RecommendationLifecycleManagerTest {
     }
 
     @Test
-    fun `periodic check uses 6 hour interval constant`() = runTest {
+    fun `periodic check uses 6 hour interval constant`() = runTest(testDispatcher) {
         lifecycleManager.startPeriodicExpirationCheck()
         
         // Test that cleanup runs at 6 hour intervals
         // First run at 6h
-        testDispatcher.scheduler.advanceTimeBy(6L * 60 * 60 * 1000 + 100)
+        advanceTimeBy(6L * 60 * 60 * 1000 + 100)
         coVerify(atLeast = 1) { repository.cleanupExpired() }
         
         // Second run at 12h total
-        testDispatcher.scheduler.advanceTimeBy(6L * 60 * 60 * 1000)
+        advanceTimeBy(6L * 60 * 60 * 1000)
         coVerify(atLeast = 2) { repository.cleanupExpired() }
+        applicationScope.cancel()
     }
 
     @Test
-    fun `multiple checkAndExpire calls do not interfere`() = runTest {
+    fun `multiple checkAndExpire calls do not interfere`() = runTest(testDispatcher) {
         val users = listOf("user1", "user2", "user3", "user4", "user5")
         
         users.forEach { userId ->
             lifecycleManager.checkAndExpire(userId)
         }
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         users.forEach { userId ->
             coVerify(exactly = 1) { repository.expireOld(userId, any()) }
@@ -428,16 +456,16 @@ class RecommendationLifecycleManagerTest {
     }
 
     @Test
-    fun `cleanupExpired handles null and non-null user IDs in sequence`() = runTest {
+    fun `cleanupExpired handles null and non-null user IDs in sequence`() = runTest(testDispatcher) {
         // First call with null user ID
         coEvery { stateManager.getCurrentUserId() } returns null
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         // Second call with valid user ID
         coEvery { stateManager.getCurrentUserId() } returns "user123"
         lifecycleManager.cleanupExpired()
-        testDispatcher.scheduler.advanceUntilIdle()
+        advanceUntilIdle()
 
         coVerify(exactly = 2) { repository.cleanupExpired() }
         coVerify(exactly = 1) { stateManager.refreshForUser("user123") }

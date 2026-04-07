@@ -15,6 +15,38 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ExpenseDao {
+    companion object {
+        /**
+         * Single source-of-truth SQL fragment for the user's effective (ownership-adjusted) amount.
+         *
+         * Mirrors the Kotlin [com.yourname.expensetracker.data.database.entity.Expense.effectiveAmount]
+         * getter exactly:
+         *  - isNotMine = 1  → 0.0   (excluded entirely)
+         *  - isSharedExpense with explicit myShareAmount → myShareAmount
+         *  - isSharedExpense with mySharePercentage    → amount * mySharePercentage / 100.0
+         *  - otherwise                                 → amount (full ownership)
+         *
+         * Use [EFFECTIVE_AMOUNT_SQL] when the expenses table is referenced without an alias.
+         * Use [EFFECTIVE_AMOUNT_E_SQL] when the expenses table is aliased as `e` in the query.
+         *
+         * These constants are inlined at compile-time (Kotlin const val) and therefore safe
+         * to reference from [androidx.room.RawQuery] dynamic SQL builders.  Room-annotated
+         * [@Query] strings must still be literal — see individual query doc comments for the
+         * canonical source reference.
+         */
+        const val EFFECTIVE_AMOUNT_SQL: String =
+            "CASE WHEN isNotMine = 1 THEN 0.0 " +
+            "WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount " +
+            "WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0 " +
+            "ELSE amount END"
+
+        /** Same formula with `e.` table alias prefix, for queries that alias expenses as `e`. */
+        const val EFFECTIVE_AMOUNT_E_SQL: String =
+            "CASE WHEN e.isNotMine = 1 THEN 0.0 " +
+            "WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount " +
+            "WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0 " +
+            "ELSE e.amount END"
+    }
     @Query("SELECT * FROM expenses WHERE id = :id")
     suspend fun getById(id: Long): Expense?
 
@@ -105,7 +137,7 @@ interface ExpenseDao {
     """)
     suspend fun getRecentExpensesWithCategoryForMerchant(merchant: String, since: Long): List<ExpenseWithCategory>
     
-    @Query("SELECT SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0 ELSE amount END) FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0")
+    @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0")
     fun getTotalSpentFlow(): Flow<Double?>
 
     @Query("DELETE FROM expenses")
@@ -303,9 +335,7 @@ interface ExpenseDao {
         )
     }
     @Query("""
-        SELECT COALESCE(SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                              WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                              ELSE amount END), 0.0) FROM expenses 
+        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND categoryId = :categoryId 
         AND date >= :startMs AND date < :endMs
@@ -314,9 +344,7 @@ interface ExpenseDao {
     suspend fun getCategorySpentInPeriod(categoryId: Long, startMs: Long, endMs: Long): Double
 
     @Query("""
-        SELECT COALESCE(SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                              WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                              ELSE amount END), 0.0) FROM expenses 
+        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND categoryId = :categoryId 
         AND date >= :startMs AND date < :endMs
@@ -325,6 +353,8 @@ interface ExpenseDao {
     fun getCategorySpentInPeriodFlow(categoryId: Long, startMs: Long, endMs: Long): Flow<Double>
 
     // === Merchant Search for Manual Entry ===
+    // avgAmount uses the effective (ownership-adjusted) amount via [EFFECTIVE_AMOUNT_SQL] so that
+    // the pre-fill suggestion reflects what the user actually paid (not the gross posted amount on shared rows).
     @Query("""
         WITH filtered AS (
             SELECT *
@@ -334,7 +364,7 @@ interface ExpenseDao {
         ),
         stats AS (
             SELECT merchantKey,
-                   AVG(amount) AS avgAmount,
+                   AVG(${EFFECTIVE_AMOUNT_SQL}) AS avgAmount,
                    COUNT(*) AS txCount,
                    MAX(date) AS latestDate
             FROM filtered
@@ -382,17 +412,21 @@ interface ExpenseDao {
     // === Analytics Queries ===
 
     /**
-     * Fetch raw expense amounts for percentile calculation.
+     * Fetch effective (ownership-adjusted) expense amounts for percentile calculation.
      * Used by [SpendingThresholdCalculator] for adaptive high-amount detection.
      * Only includes purchases owned by the user (not "not mine" or deposits).
+     * Shared-expense rows contribute myShareAmount / proportional share, not the full posted amount.
      * Sorted ascending for efficient percentile computation.
+     *
+     * Uses [EFFECTIVE_AMOUNT_SQL] — the canonical ownership rule.
      */
     @Query("""
-        SELECT amount FROM expenses 
+        SELECT ${EFFECTIVE_AMOUNT_SQL}
+        FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
-        ORDER BY amount ASC
+        ORDER BY 1 ASC
     """)
     suspend fun getAmountsForPercentileCalc(startMs: Long, endMs: Long): List<Double>
 
@@ -428,9 +462,7 @@ interface ExpenseDao {
     fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String, limit: Int = 2000): Flow<List<Expense>>
 
     @Query("""
-        SELECT SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                        ELSE amount END) FROM expenses 
+        SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startDate AND date < :endDate
         AND isNotMine = 0
@@ -439,9 +471,7 @@ interface ExpenseDao {
 
     @Query("""
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                         ELSE amount END) as total, COUNT(*) as cnt 
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt 
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startDate AND date < :endDate
@@ -453,9 +483,7 @@ interface ExpenseDao {
     suspend fun getMerchantTotalsBetween(startDate: Long, endDate: Long): List<MerchantTotal>
 
     @Query("""
-        SELECT categoryId, SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                                    WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                                    ELSE amount END) as total, COUNT(*) as txCount
+        SELECT categoryId, SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startDate AND date < :endDate
@@ -476,9 +504,7 @@ interface ExpenseDao {
 
     // Monthly total for a specific month range
     @Query("""
-        SELECT COALESCE(SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                               WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                               ELSE amount END), 0.0) FROM expenses 
+        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
@@ -496,9 +522,7 @@ interface ExpenseDao {
 
     // Category totals for a period
     @Query("""
-        SELECT categoryId, SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                                    WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                                    ELSE amount END) as total, COUNT(*) as txCount
+        SELECT categoryId, SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
@@ -510,16 +534,16 @@ interface ExpenseDao {
     suspend fun getCategoryTotalsForPeriod(startMs: Long, endMs: Long): List<CategoryTotal>
 
     // Merchant averages (merchants with 2+ transactions)
+    // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value
+    // via [EFFECTIVE_AMOUNT_SQL].
     @Query("""
         SELECT merchantKey as merchantName, 
                MIN(merchant) as displayName,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                        ELSE amount END) as totalAmount,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as totalAmount,
                COUNT(*) as transactionCount,
-               AVG(amount) as averageAmount,
-               MIN(amount) as minAmount,
-               MAX(amount) as maxAmount,
+               AVG(${EFFECTIVE_AMOUNT_SQL}) as averageAmount,
+               MIN(${EFFECTIVE_AMOUNT_SQL}) as minAmount,
+               MAX(${EFFECTIVE_AMOUNT_SQL}) as maxAmount,
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
@@ -533,16 +557,16 @@ interface ExpenseDao {
     suspend fun getMerchantStats(): List<MerchantStats>
 
     // All merchant stats (including single-transaction merchants)
+    // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value
+    // via [EFFECTIVE_AMOUNT_SQL].
     @Query("""
         SELECT merchantKey as merchantName, 
                MIN(merchant) as displayName,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                        ELSE amount END) as totalAmount,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as totalAmount,
                COUNT(*) as transactionCount,
-               AVG(amount) as averageAmount,
-               MIN(amount) as minAmount,
-               MAX(amount) as maxAmount,
+               AVG(${EFFECTIVE_AMOUNT_SQL}) as averageAmount,
+               MIN(${EFFECTIVE_AMOUNT_SQL}) as minAmount,
+               MAX(${EFFECTIVE_AMOUNT_SQL}) as maxAmount,
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
@@ -555,16 +579,16 @@ interface ExpenseDao {
     suspend fun getAllMerchantStats(): List<MerchantStats>
 
     // Top merchants by total spending for a period
+    // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value
+    // via [EFFECTIVE_AMOUNT_SQL].
     @Query("""
         SELECT merchantKey as merchantName, 
                MIN(merchant) as displayName,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                        ELSE amount END) as totalAmount,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as totalAmount,
                COUNT(*) as transactionCount,
-               AVG(amount) as averageAmount,
-               MIN(amount) as minAmount,
-               MAX(amount) as maxAmount,
+               AVG(${EFFECTIVE_AMOUNT_SQL}) as averageAmount,
+               MIN(${EFFECTIVE_AMOUNT_SQL}) as minAmount,
+               MAX(${EFFECTIVE_AMOUNT_SQL}) as maxAmount,
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
@@ -578,25 +602,27 @@ interface ExpenseDao {
     """)
     suspend fun getTopMerchantsForPeriod(startMs: Long, endMs: Long, limit: Int = 10): List<MerchantStats>
 
-    // Largest single transaction in a period
+    // Largest single transaction in a period — ordered by effective (ownership-adjusted) amount
+    // via [EFFECTIVE_AMOUNT_SQL].
     @Query("""
         SELECT * FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
-        ORDER BY amount DESC
+        ORDER BY ${EFFECTIVE_AMOUNT_SQL} DESC
         LIMIT 1
     """)
     suspend fun getLargestExpenseForPeriod(startMs: Long, endMs: Long): Expense?
 
-    // Largest single transaction for a specific merchant in a period
+    // Largest single transaction for a specific merchant in a period — ordered by effective amount
+    // via [EFFECTIVE_AMOUNT_SQL].
     @Query("""
         SELECT * FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
         AND merchantKey = :merchantKey
         AND isNotMine = 0
-        ORDER BY amount DESC
+        ORDER BY ${EFFECTIVE_AMOUNT_SQL} DESC
         LIMIT 1
     """)
     suspend fun getLargestExpenseForMerchant(merchantKey: String, startMs: Long, endMs: Long): Expense?
@@ -619,9 +645,7 @@ interface ExpenseDao {
     @Query("""
         SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
                MIN(date) as startDate, MAX(date) as endDate,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                                                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                                                        ELSE amount END) as total, COUNT(*) as txCount
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
         FROM expenses 
         WHERE transactionType = 'PURCHASE' 
         AND date >= :startMs AND date < :endMs
@@ -632,16 +656,17 @@ interface ExpenseDao {
     suspend fun getDailyTotalsForPeriod(startMs: Long, endMs: Long): List<DailyTotal>
 
     // Recurring candidates: merchants that appear in multiple distinct months
+    // averageAmount, minAmount, maxAmount all use the effective (ownership-adjusted) value via
+    // [EFFECTIVE_AMOUNT_SQL] so that the variance check (maxAmount - minAmount < averageAmount * 0.15)
+    // reflects user-owned share.
     @Query("""
         SELECT merchantKey as merchantName,
                MIN(merchant) as displayName,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                        ELSE amount END) as totalAmount,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as totalAmount,
                COUNT(*) as transactionCount,
-               AVG(amount) as averageAmount,
-               MIN(amount) as minAmount,
-               MAX(amount) as maxAmount,
+               AVG(${EFFECTIVE_AMOUNT_SQL}) as averageAmount,
+               MIN(${EFFECTIVE_AMOUNT_SQL}) as minAmount,
+               MAX(${EFFECTIVE_AMOUNT_SQL}) as maxAmount,
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
@@ -656,14 +681,13 @@ interface ExpenseDao {
     suspend fun getRecurringCandidates(): List<MerchantStats>
 
     // Day-of-week spending pattern
+    // avgAmount uses the effective (ownership-adjusted) amount via [EFFECTIVE_AMOUNT_SQL].
     @Query("""
         SELECT 
             ((CAST(strftime('%w', date/1000, 'unixepoch', 'localtime') AS INTEGER) + 6) % 7) as dayOfWeek,
-            SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                     WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                     ELSE amount END) as total,
+            SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
             COUNT(*) as txCount,
-            AVG(amount) as avgAmount
+            AVG(${EFFECTIVE_AMOUNT_SQL}) as avgAmount
         FROM expenses
         WHERE transactionType = 'PURCHASE'
         AND date >= :startMs AND date < :endMs
@@ -681,14 +705,12 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
     fun getDepositsBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
 
-    @Query("SELECT COALESCE(SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0 ELSE amount END), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs AND isNotMine = 0")
+    @Query("SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs AND isNotMine = 0")
     suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double
 
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') as month, 
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                        ELSE amount END) as total, COUNT(*) as count
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as count
         FROM expenses 
         WHERE transactionType = 'DEPOSIT'
         AND isNotMine = 0
@@ -698,7 +720,7 @@ interface ExpenseDao {
     """)
     suspend fun getMonthlyDeposits(): List<MonthlyDepositTotal>
 
-    @Query("SELECT COALESCE(SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0 ELSE amount END), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND isNotMine = 0")
+    @Query("SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND isNotMine = 0")
     suspend fun getTotalDeposits(): Double
 
     // ── Location queries (v28) ────────────────────────────────────────────────
@@ -788,9 +810,7 @@ interface ExpenseDao {
      */
     @Query("""
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                         ELSE amount END) as total, COUNT(*) as cnt
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt
         FROM expenses
         WHERE latitude IS NOT NULL
           AND transactionType = 'PURCHASE'
@@ -872,9 +892,7 @@ interface ExpenseDao {
         SELECT strftime('%Y-%W', date/1000, 'unixepoch', 'localtime') as weekKey,
                MIN(date) as startDate,
                MAX(date) as endDate,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                        ELSE amount END) as total,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
                COUNT(*) as txCount
         FROM expenses
         WHERE transactionType = 'PURCHASE'
@@ -889,9 +907,7 @@ interface ExpenseDao {
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') as monthKey,
                MIN(date) as startDate,
                MAX(date) as endDate,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                        WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                        ELSE amount END) as total,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
                COUNT(*) as txCount
         FROM expenses
         WHERE transactionType = 'PURCHASE'
@@ -906,9 +922,7 @@ interface ExpenseDao {
         SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
                MIN(date) as startDate,
                MAX(date) as endDate,
-               SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                         WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                         ELSE amount END) as total,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
                COUNT(*) as txCount
         FROM expenses
         WHERE transactionType = 'PURCHASE'
@@ -921,9 +935,7 @@ interface ExpenseDao {
 
     @Query("""
         SELECT AVG(daily_total) FROM (
-            SELECT SUM(CASE WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
-                            WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
-                            ELSE amount END) as daily_total
+            SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) as daily_total
             FROM expenses
             WHERE transactionType = 'PURCHASE'
             AND date >= :startMs AND date < :endMs
@@ -935,9 +947,7 @@ interface ExpenseDao {
 
     @Query("""
         SELECT c.id, c.name, c.icon, c.color,
-               SUM(CASE WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount
-                         WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0
-                         ELSE e.amount END) as total,
+               SUM(${EFFECTIVE_AMOUNT_E_SQL}) as total,
                COUNT(*) as txCount
         FROM expenses e
         LEFT JOIN categories c ON e.categoryId = c.id
@@ -955,6 +965,7 @@ interface ExpenseDao {
     @Query("""
         SELECT * FROM expenses 
         WHERE isBusinessExpense = 1 
+        AND transactionType = 'PURCHASE'
         AND date >= :startDate AND date < :endDate 
         ORDER BY date DESC
     """)
@@ -963,13 +974,14 @@ interface ExpenseDao {
     @Query("""
         SELECT * FROM expenses 
         WHERE isBusinessExpense = 1 
+        AND transactionType = 'PURCHASE'
         AND date >= :startDate AND date < :endDate 
         ORDER BY date DESC
     """)
     fun getBusinessExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
     
     @Query("""
-        SELECT SUM(amount) FROM expenses 
+        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE isBusinessExpense = 1 
         AND transactionType = 'PURCHASE'
         AND date >= :startDate AND date < :endDate
@@ -977,7 +989,9 @@ interface ExpenseDao {
     suspend fun getTotalBusinessExpensesBetween(startDate: Long, endDate: Long): Double?
     
     @Query("""
-        SELECT businessCategory, SUM(amount) as total, COUNT(*) as count 
+        SELECT businessCategory,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+               COUNT(*) as count 
         FROM expenses 
         WHERE isBusinessExpense = 1 
         AND transactionType = 'PURCHASE'
@@ -989,7 +1003,9 @@ interface ExpenseDao {
     suspend fun getBusinessExpensesByCategory(startDate: Long, endDate: Long): List<BusinessCategoryTotal>
     
     @Query("""
-        SELECT businessProject, SUM(amount) as total, COUNT(*) as count 
+        SELECT businessProject,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+               COUNT(*) as count 
         FROM expenses 
         WHERE isBusinessExpense = 1 
         AND transactionType = 'PURCHASE'
@@ -1003,6 +1019,7 @@ interface ExpenseDao {
     @Query("""
         SELECT * FROM expenses 
         WHERE isBusinessExpense = 1 
+        AND transactionType = 'PURCHASE'
         AND requiresReceipt = 1 
         AND rawNotificationId IS NULL
         AND date >= :startDate AND date < :endDate

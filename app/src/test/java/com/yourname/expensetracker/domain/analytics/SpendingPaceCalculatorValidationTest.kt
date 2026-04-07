@@ -73,21 +73,25 @@ class SpendingPaceCalculatorValidationTest {
             createExpense(id = 1, amount = 750.0, date = createDate(2024, 4, 1))
         )
         
-        // Previous month: spent 1500 in 30 days (50 per day)
+        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
         val previousMonthStart = createDate(2024, 3, 1)
         val previousMonthEnd = createDate(2024, 4, 1)
         
         // When: Calculate spending pace
+        val previousExpenses = listOf(
+            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
+        )
+        
         val result = calculator.calculate(
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses + previousExpenses
         )
         
         // Then: Daily rates should be equal (50 per day)
         val currentDailyRate = result.currentMonthSpent / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 30 // Previous month had 30 days
+        val previousDailyRate = result.previousMonthTotal!! / 31 // March has 31 days
         
         assertEquals(50.0, currentDailyRate, 0.01)
         assertEquals(50.0, previousDailyRate, 0.01)
@@ -108,21 +112,25 @@ class SpendingPaceCalculatorValidationTest {
             createExpense(id = 1, amount = 1500.0, date = createDate(2024, 4, 1))
         )
         
-        // Previous month: spent 1500 in 30 days (50 per day)
+        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
         val previousMonthStart = createDate(2024, 3, 1)
         val previousMonthEnd = createDate(2024, 4, 1)
         
         // When: Calculate spending pace
+        val previousExpenses = listOf(
+            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
+        )
+        
         val result = calculator.calculate(
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses + previousExpenses
         )
         
         // Then: Current daily rate is double (100 vs 50)
         val currentDailyRate = result.currentMonthSpent / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 30
+        val previousDailyRate = result.previousMonthTotal!! / 31
         
         assertEquals(100.0, currentDailyRate, 0.01)
         assertEquals(50.0, previousDailyRate, 0.01)
@@ -143,21 +151,25 @@ class SpendingPaceCalculatorValidationTest {
             createExpense(id = 1, amount = 375.0, date = createDate(2024, 4, 1))
         )
         
-        // Previous month: spent 1500 in 30 days (50 per day)
+        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
         val previousMonthStart = createDate(2024, 3, 1)
         val previousMonthEnd = createDate(2024, 4, 1)
         
         // When: Calculate spending pace
+        val previousExpenses = listOf(
+            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
+        )
+        
         val result = calculator.calculate(
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses + previousExpenses
         )
         
         // Then: Current daily rate is half (25 vs 50)
         val currentDailyRate = result.currentMonthSpent / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 30
+        val previousDailyRate = result.previousMonthTotal!! / 31
         
         assertEquals(25.0, currentDailyRate, 0.01)
         assertEquals(50.0, previousDailyRate, 0.01)
@@ -273,21 +285,25 @@ class SpendingPaceCalculatorValidationTest {
             createExpense(id = 1, amount = 900.0, date = createDate(2024, 4, 1))
         )
         
-        // Previous month: spent 1500 in 30 days (50 per day)
+        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
         val previousMonthStart = createDate(2024, 3, 1)
         val previousMonthEnd = createDate(2024, 4, 1)
         
         // When: Calculate spending pace
+        val previousExpenses = listOf(
+            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
+        )
+        
         val result = calculator.calculate(
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses + previousExpenses
         )
         
         // Then: Pace percentage should be (60/50) * 100 = 120%
         val currentDailyRate = result.currentMonthSpent / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 30
+        val previousDailyRate = result.previousMonthTotal!! / 31
         
         assertEquals(60.0, currentDailyRate, 0.01)
         assertEquals(50.0, previousDailyRate, 0.01)
@@ -317,8 +333,8 @@ class SpendingPaceCalculatorValidationTest {
             allExpenses = currentExpenses
         )
         
-        // Then: Should use 100% as default when no previous data
-        assertEquals(100.0f, result.pacePercentage, 0.01f)
+        // Then: With no previous data, no baseline exists
+        assertEquals(0.0f, result.pacePercentage, 0.01f)
     }
 
     // ========== SCENARIO 4: Edge Cases ==========
@@ -421,16 +437,20 @@ class SpendingPaceCalculatorValidationTest {
             createExpense(id = 1, amount = 1500.0, date = createDate(2024, 4, 1))
         )
         
-        // Previous month: spent 1500 in 30 days
+        // Previous month: spent 1550 in 31 days (50 per day, March has 31 days)
         val previousMonthStart = createDate(2024, 3, 1)
         val previousMonthEnd = createDate(2024, 4, 1)
         
         // When: Calculate spending pace
+        val previousExpenses = listOf(
+            createExpense(id = 2, amount = 1550.0, date = createDate(2024, 3, 15))
+        )
+        
         val result = calculator.calculate(
             currentMonthStart = createDate(2024, 4, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses + previousExpenses
         )
         
         // Then: Projected total should equal actual spending
@@ -440,7 +460,7 @@ class SpendingPaceCalculatorValidationTest {
         
         // Daily rates should be equal
         val currentDailyRate = result.currentMonthSpent / result.daysElapsed
-        val previousDailyRate = result.previousMonthTotal!! / 30
+        val previousDailyRate = result.previousMonthTotal!! / 31
         
         assertEquals(50.0, currentDailyRate, 0.01)
         assertEquals(50.0, previousDailyRate, 0.01)
@@ -465,11 +485,15 @@ class SpendingPaceCalculatorValidationTest {
         val previousMonthEnd = createDate(2023, 2, 1)
         
         // When: Calculate spending pace
+        val previousExpenses = listOf(
+            createExpense(id = 2, amount = 1550.0, date = createDate(2023, 1, 15))
+        )
+        
         val result = calculator.calculate(
             currentMonthStart = createDate(2023, 2, 1),
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = currentExpenses
+            allExpenses = currentExpenses + previousExpenses
         )
         
         // Then: February has 28 days

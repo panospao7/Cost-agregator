@@ -14,9 +14,11 @@ import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -34,7 +36,16 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
     private val groupsRepository = mockk<GroupsRepository>(relaxed = true)
     private val addGroupExpenseUseCase = mockk<AddGroupExpenseUseCase>(relaxed = true)
     private val deleteGroupUseCase = mockk<DeleteGroupUseCase>(relaxed = true)
-    private val manualExpenseRepository = mockk<ManualExpenseRepository>(relaxed = true)
+    private val manualExpenseRepository = mockk<ManualExpenseRepository>(relaxed = true).also { mock ->
+        // Inject a TimeProvider into the mock so that Kotlin's $default method
+        // for addManualExpense(date = timeProvider.now()) does not NPE.
+        val timeProviderMock = mockk<TimeProvider> { every { now() } returns 1_700_000_000_000L }
+        try {
+            val field = ManualExpenseRepository::class.java.getDeclaredField("timeProvider")
+            field.isAccessible = true
+            field.set(mock, timeProviderMock)
+        } catch (_: Exception) { /* field layout may differ */ }
+    }
     private val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
 
     private lateinit var viewModel: SharedExpenseGroupsViewModel
@@ -99,9 +110,22 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
                 merchant = any(),
                 amount = any(),
                 currency = any(),
-                categoryId = null,
-                transactionType = TransactionType.PURCHASE,
-                notes = any<String>()
+                categoryId = any(),
+                transactionType = any(),
+                paymentMethod = any(),
+                date = any(),
+                notes = any(),
+                transferDirection = any(),
+                transferAccountName = any(),
+                isNotMine = any(),
+                ownerName = any(),
+                isSharedExpense = any(),
+                sharedWithName = any(),
+                mySharePercentage = any(),
+                myShareAmount = any(),
+                latitude = any(),
+                longitude = any(),
+                locationSource = any()
             )
         } returns Result.Success(900L)
         coEvery {

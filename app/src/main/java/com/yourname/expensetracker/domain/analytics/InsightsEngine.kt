@@ -209,12 +209,12 @@ class InsightsEngine @Inject constructor(
 
         // 5. Largest Transaction
         val largest = snapshot.largestTransaction
-        if (largest != null && largest.amount > 50) {
+        if (largest != null && largest.effectiveAmount > 50) {
              insights.add(
                 SpendingInsight(
                     InsightType.UNUSUAL_TRANSACTION, "⚡",
                     "Largest: ${largest.merchant}",
-                    "€${fmt(largest.amount)} on ${formatDate(largest.date)}",
+                    "€${fmt(largest.effectiveAmount)} on ${formatDate(largest.date)}",
                     0.25f
                 )
             )

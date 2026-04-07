@@ -38,8 +38,13 @@ data class ExpenseWithCategory(
         }
     }
 
+    /**
+     * Human-readable amount string representing the user's effective (ownership-adjusted) spend.
+     * Uses [Expense.effectiveAmount] so that shared and "not-mine" rows are reflected correctly.
+     * Raw posted amount is available via [expense.amount] when explicitly needed for reference.
+     */
     val formattedAmount: String by lazy {
-        String.format(java.util.Locale.US, "%.2f %s", expense.amount, expense.currency)
+        String.format(java.util.Locale.US, "%.2f %s", expense.effectiveAmount, expense.currency)
     }
 
     val categoryColor: Long by lazy {

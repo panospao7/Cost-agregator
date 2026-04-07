@@ -1,5 +1,7 @@
 # Final Verification — Batch 12: Database - Core Entities
 
+> **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+
 ## Scope
 - `com/yourname/expensetracker/data/database/entity/Expense.kt`
 - `com/yourname/expensetracker/data/database/entity/Category.kt`

@@ -95,12 +95,12 @@ class CloudQueryInterpretationServiceTest {
     }
 
     @Test
-    fun `interpret restores merchant pseudonyms using alias maps`() {
+    fun `interpret parses structured response with merchant names`() {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
         every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-key"
 
         val cloudModelText =
-            """{"kind":"structured","intent":{"metric":"TOTAL","grouping":"MERCHANT","comparison":"NONE","answerMode":"BOTH","ownership":"ALL","merchantNames":["merchant_abc123","category_def456"]}}"""
+            """{"kind":"structured","intent":{"metric":"TOTAL","grouping":"MERCHANT","comparison":"NONE","answerMode":"BOTH","ownership":"ALL","merchantNames":["Lidl","Groceries"]}}"""
         val cloudResponseBody = JSONObject().apply {
             put(
                 "candidates",
@@ -136,9 +136,7 @@ class CloudQueryInterpretationServiceTest {
                 FinancialQueryInterpretationInput(
                     rawQuery = "top merchants this month",
                     currentTimeMs = 1_000L,
-                    localeTag = "en-US",
-                    merchantAliasMap = mapOf("merchant_abc123" to "Lidl"),
-                    categoryAliasMap = mapOf("category_def456" to "Groceries")
+                    localeTag = "en-US"
                 )
             )
         }

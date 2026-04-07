@@ -117,9 +117,10 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
             ExchangeRate(fromCurrency = "EUR", toCurrency = "GBP", rate = 0.88, lastUpdated = 1_700_000_500_000L)
         )
 
+        // Extra entry for the setup viewModel's pending init coroutine
         every {
             currencyDataRepository.getAllRatesForBase("EUR")
-        } returnsMany listOf(flowOf(beforeRates), flowOf(afterRates))
+        } returnsMany listOf(flowOf(emptyList()), flowOf(beforeRates), flowOf(afterRates))
         coEvery { currencyRatesRepository.refresh("EUR") } returns 2
 
         viewModel = createViewModel()

@@ -1,9 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -16,6 +14,7 @@ import kotlin.math.abs
 
 class SpendingThresholdCalculatorTest {
 
+    private val testDispatcher = kotlinx.coroutines.test.StandardTestDispatcher()
     private lateinit var expenseDao: ExpenseDao
     private lateinit var timeProvider: TimeProvider
     private lateinit var calculator: SpendingThresholdCalculator
@@ -25,8 +24,6 @@ class SpendingThresholdCalculatorTest {
         expenseDao = mock(ExpenseDao::class.java)
         timeProvider = mock(TimeProvider::class.java)
         
-        val testDispatcher: CoroutineDispatcher = kotlinx.coroutines.test.StandardTestDispatcher()
-        
         calculator = SpendingThresholdCalculator(
             expenseDao = expenseDao,
             timeProvider = timeProvider,
@@ -35,7 +32,7 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `calculateHighAmountThreshold returns minimum threshold when insufficient data`() = runTest {
+    fun `calculateHighAmountThreshold returns minimum threshold when insufficient data`() = runTest(testDispatcher) {
         whenever(timeProvider.now()).thenReturn(System.currentTimeMillis())
         whenever(expenseDao.getAmountsForPercentileCalc(anyLong(), anyLong()))
             .thenReturn(emptyList())
@@ -46,7 +43,7 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `calculateHighAmountThreshold returns P90 for typical spending`() = runTest {
+    fun `calculateHighAmountThreshold returns P90 for typical spending`() = runTest(testDispatcher) {
         val now = System.currentTimeMillis()
         whenever(timeProvider.now()).thenReturn(now)
         
@@ -60,7 +57,7 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `calculateHighAmountThreshold enforces minimum threshold`() = runTest {
+    fun `calculateHighAmountThreshold enforces minimum threshold`() = runTest(testDispatcher) {
         val now = System.currentTimeMillis()
         whenever(timeProvider.now()).thenReturn(now)
         
@@ -74,7 +71,7 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `calculateHighAmountThreshold uses correct user ID for caching`() = runTest {
+    fun `calculateHighAmountThreshold uses correct user ID for caching`() = runTest(testDispatcher) {
         val now = System.currentTimeMillis()
         whenever(timeProvider.now()).thenReturn(now)
         
@@ -92,7 +89,7 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `getThreshold convenience method works for single-user`() = runTest {
+    fun `getThreshold convenience method works for single-user`() = runTest(testDispatcher) {
         val now = System.currentTimeMillis()
         whenever(timeProvider.now()).thenReturn(now)
         whenever(expenseDao.getAmountsForPercentileCalc(anyLong(), anyLong()))
@@ -104,7 +101,7 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `refreshThreshold clears cache for default user`() = runTest {
+    fun `refreshThreshold clears cache for default user`() = runTest(testDispatcher) {
         val now = System.currentTimeMillis()
         whenever(timeProvider.now()).thenReturn(now)
         
@@ -120,7 +117,7 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `calculatePercentiles computes correct P50 P75 P90`() = runTest {
+    fun `calculatePercentiles computes correct P50 P75 P90`() = runTest(testDispatcher) {
         val now = System.currentTimeMillis()
         whenever(timeProvider.now()).thenReturn(now)
         
@@ -136,7 +133,7 @@ class SpendingThresholdCalculatorTest {
     }
 
     @Test
-    fun `calculatePercentiles handles single transaction`() = runTest {
+    fun `calculatePercentiles handles single transaction`() = runTest(testDispatcher) {
         val now = System.currentTimeMillis()
         whenever(timeProvider.now()).thenReturn(now)
         

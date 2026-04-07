@@ -14,6 +14,8 @@
 **Affected files:** `ExpenseDao.kt`, `ExpenseRepository.kt`, `AdvancedAnalyticsDashboard.kt`, `AdvancedAnalyticsEngine.kt`, `BudgetRepository.kt`, `SharedBudgetManager.kt`, `MultiCurrencyRepository.kt`, `BusinessExpenseReportGenerator.kt`, `RecurringIncomeTracker.kt`, `SpendingThresholdCalculator.kt`, `TaxEstimator.kt`, `ReceiptTransactionMatcher.kt`, `SpendingChallengeManager.kt`, `InsightsEngine.kt`, `ExpenseWithCategory.kt`, `TransactionsScreen.kt`, `FinancialWeatherRepository.kt`, `BudgetForecastingEngine.kt`, `CashFlowCalculator.kt`, `AccountingExportRepository.kt`, `TotalsAggregationEngine.kt`, `SynthesisEngine.kt`
 **Suggested fix:** Centralize the SQL effective-amount `CASE` expression in one shared DAO helper. Audit every aggregate query, dashboard computation, budget check, and report to use this helper. Add regression tests that verify shared-expense rows produce correct user-owned totals.
 
+**[RESOLVED BY A.1]**
+
 ### A.2: Domain/Data Layer Boundary Violations
 **Batches affected:** 24, 34, 46, 47
 **Severity:** HIGH

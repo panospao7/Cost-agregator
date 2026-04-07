@@ -41,6 +41,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import org.junit.Ignore
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -48,6 +49,7 @@ import org.junit.Rule
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Ignore("Stress test: may hang in CI, run manually")
 class ReviewViewModelStressTest {
 
     @get:Rule

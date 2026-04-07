@@ -145,7 +145,7 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
             listOf(receiptA, receiptB),
             emptyList()
         )
-        coEvery { receiptRepository.getReceiptsWithSuggestions() } returnsMany listOf(emptyList(), emptyList())
+        coEvery { receiptRepository.getReceiptsWithSuggestions() } returns emptyList()
         coEvery { matcher.findBestMatch(receiptA) } returns MatchResult.AutoMatch(txA, 0.98)
         coEvery { matcher.findBestMatch(receiptB) } returns MatchResult.Suggested(txB, 0.86)
 
@@ -165,6 +165,11 @@ class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
             val intermediate = awaitItem()
             assertFalse(intermediate.isLoading)
             assertEquals(1, intermediate.autoMatchedCount)
+
+            // loadReceipts() inside runAutoMatching launches a new coroutine
+            // that first sets isLoading=true, then fetches and sets final state
+            val reloading = awaitItem()
+            assertTrue(reloading.isLoading)
 
             val refreshed = awaitItem()
             assertTrue(refreshed.unmatchedReceipts.isEmpty())

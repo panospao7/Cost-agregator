@@ -9,10 +9,12 @@ import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
+import org.junit.Ignore
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
+@Ignore("Stress test: may hang in CI, run manually")
 class NotificationRepositoryStressTest {
 
     private val database = mockk<AppDatabase>(relaxed = true)

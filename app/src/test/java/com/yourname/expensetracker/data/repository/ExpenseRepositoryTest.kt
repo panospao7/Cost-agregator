@@ -10,10 +10,12 @@ import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
+import androidx.room.withTransaction
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertEquals
@@ -38,6 +40,13 @@ class ExpenseRepositoryTest {
         // Mock internal flow to avoid lateinit issues
         every { expenseDao.getAllFlow(any()) } returns flowOf(emptyList())
 
+        // Mock Room withTransaction to run the block on the test coroutine (avoids Dispatchers.IO leak)
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        val transactionBlock = slot<suspend () -> Any?>()
+        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
+            transactionBlock.captured.invoke()
+        }
+
         repository = ExpenseRepository(
             database,
             expenseDao,
@@ -47,6 +56,11 @@ class ExpenseRepositoryTest {
             merchantNormalizer,
             transferDirectionAnalytics
         )
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     @Test

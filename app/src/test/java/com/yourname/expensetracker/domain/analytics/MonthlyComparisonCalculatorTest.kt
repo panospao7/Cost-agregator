@@ -97,11 +97,11 @@ class MonthlyComparisonCalculatorTest {
                 createExpense("2026-03-02", 40.0, merchant = "M2", id = 2L),
                 createExpense("2026-03-03", 50.0, merchant = "M3", id = 3L),
                 createExpense("2026-03-03", 500.0, type = TransactionType.DEPOSIT, merchant = "Salary", id = 4L),
-                createExpense("2026-03-04", 60.0, merchant = "M4", isNotMine = true, id = 5L),
+                createExpense("2026-03-04", 60.0, effectiveAmount = 0.0, merchant = "M4", isNotMine = true, id = 5L),
 
                 createExpense("2026-02-01", 10.0, merchant = "P1", id = 6L),
                 createExpense("2026-02-02", 20.0, merchant = "P2", id = 7L),
-                createExpense("2026-02-02", 30.0, merchant = "P3", isNotMine = true, id = 8L),
+                createExpense("2026-02-02", 30.0, effectiveAmount = 0.0, merchant = "P3", isNotMine = true, id = 8L),
                 createExpense("2026-02-03", 400.0, type = TransactionType.DEPOSIT, merchant = "Bonus", id = 9L)
             )
         )

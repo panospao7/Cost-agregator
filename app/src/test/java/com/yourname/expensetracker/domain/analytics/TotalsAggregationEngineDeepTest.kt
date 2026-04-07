@@ -98,6 +98,7 @@ class TotalsAggregationEngineDeepTest {
             WeeklyTotal("w2", dateMs(2026, 3, 9), dateMs(2026, 3, 16), 140.0, 2)
         )
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 11.5
+        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 200.0
 
         val yearAvg = engine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = false)
         val monthAvg = engine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)

@@ -107,6 +107,155 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         assertEquals("Budget not found", thrown?.message)
     }
 
+    // =========================================================================
+    // A.1 effectiveAmount regression tests — shared / percentage / isNotMine
+    // =========================================================================
+
+    @Test
+    fun `shared budget progress uses effectiveAmount for fixed share expense`() = runTest {
+        val now = atDateTime(2026, 4, 15, 10, 0)
+        every { timeProvider.now() } returns now
+
+        val budget = Budget(
+            id = 10L,
+            categoryId = 2L,
+            amount = 500.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = atDateTime(2026, 4, 1, 0, 0)
+        )
+        coEvery { budgetRepository.getById(10L) } returns budget
+        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
+            // Shared purchase: raw amount = 100, myShareAmount = 40 → effectiveAmount = 40
+            Expense(
+                id = 20L, amount = 100.0, merchant = "Dinner",
+                transactionType = TransactionType.PURCHASE,
+                date = atDateTime(2026, 4, 5, 19, 0),
+                categoryId = 2L,
+                isSharedExpense = true, myShareAmount = 40.0
+            ),
+            // Regular purchase: effectiveAmount = 60
+            expense(id = 21L, amount = 60.0, categoryId = 2L)
+        )
+
+        val progress = manager.getSharedBudgetProgress(10L, listOf("a", "b"))
+
+        // totalSpent must be 40 + 60 = 100, NOT 100 + 60 = 160
+        assertApproxEquals(100.0, progress.totalSpent, 0.01)
+        assertApproxEquals(400.0, progress.remaining, 0.01)
+        assertApproxEquals(20.0, progress.percentUsed, 0.01)
+        assertApproxEquals(50.0, progress.perMemberAverage, 0.01)
+        assertFalse(progress.isOverBudget)
+    }
+
+    @Test
+    fun `shared budget progress uses effectiveAmount for percentage share expense`() = runTest {
+        val now = atDateTime(2026, 4, 15, 10, 0)
+        every { timeProvider.now() } returns now
+
+        val budget = Budget(
+            id = 11L,
+            categoryId = 2L,
+            amount = 200.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = atDateTime(2026, 4, 1, 0, 0)
+        )
+        coEvery { budgetRepository.getById(11L) } returns budget
+        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
+            // Percentage-based shared: raw = 100, 50% → effectiveAmount = 50
+            Expense(
+                id = 30L, amount = 100.0, merchant = "Hotel",
+                transactionType = TransactionType.PURCHASE,
+                date = atDateTime(2026, 4, 8, 12, 0),
+                categoryId = 2L,
+                isSharedExpense = true, mySharePercentage = 50
+            ),
+            expense(id = 31L, amount = 50.0, categoryId = 2L)
+        )
+
+        val progress = manager.getSharedBudgetProgress(11L, listOf("x"))
+
+        // totalSpent = 50 + 50 = 100, NOT 100 + 50 = 150
+        assertApproxEquals(100.0, progress.totalSpent, 0.01)
+        assertApproxEquals(100.0, progress.remaining, 0.01)
+        assertApproxEquals(50.0, progress.percentUsed, 0.01)
+        assertFalse(progress.isOverBudget)
+    }
+
+    @Test
+    fun `shared budget progress treats isNotMine expense as zero`() = runTest {
+        val now = atDateTime(2026, 4, 15, 10, 0)
+        every { timeProvider.now() } returns now
+
+        val budget = Budget(
+            id = 12L,
+            categoryId = 2L,
+            amount = 100.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = atDateTime(2026, 4, 1, 0, 0)
+        )
+        coEvery { budgetRepository.getById(12L) } returns budget
+        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
+            // isNotMine: effectiveAmount = 0.0
+            Expense(
+                id = 40L, amount = 200.0, merchant = "NotMine",
+                transactionType = TransactionType.PURCHASE,
+                date = atDateTime(2026, 4, 3, 14, 0),
+                categoryId = 2L,
+                isNotMine = true
+            ),
+            expense(id = 41L, amount = 30.0, categoryId = 2L)
+        )
+
+        val progress = manager.getSharedBudgetProgress(12L, listOf("u1", "u2"))
+
+        // totalSpent = 0 + 30 = 30, NOT 200 + 30 = 230
+        assertApproxEquals(30.0, progress.totalSpent, 0.01)
+        assertApproxEquals(70.0, progress.remaining, 0.01)
+        assertApproxEquals(30.0, progress.percentUsed, 0.01)
+        assertApproxEquals(15.0, progress.perMemberAverage, 0.01)
+        assertFalse(progress.isOverBudget)
+    }
+
+    @Test
+    fun `shared budget progress mixed shared and isNotMine triggers overbudget correctly`() = runTest {
+        val now = atDateTime(2026, 4, 15, 10, 0)
+        every { timeProvider.now() } returns now
+
+        val budget = Budget(
+            id = 13L,
+            categoryId = 2L,
+            amount = 50.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = atDateTime(2026, 4, 1, 0, 0)
+        )
+        coEvery { budgetRepository.getById(13L) } returns budget
+        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
+            // isNotMine → 0
+            Expense(
+                id = 50L, amount = 500.0, merchant = "NotMine",
+                transactionType = TransactionType.PURCHASE,
+                date = atDateTime(2026, 4, 2, 10, 0),
+                categoryId = 2L, isNotMine = true
+            ),
+            // Shared with fixed share → 40
+            Expense(
+                id = 51L, amount = 100.0, merchant = "SharedFixed",
+                transactionType = TransactionType.PURCHASE,
+                date = atDateTime(2026, 4, 4, 10, 0),
+                categoryId = 2L, isSharedExpense = true, myShareAmount = 40.0
+            ),
+            // Regular → 20
+            expense(id = 52L, amount = 20.0, categoryId = 2L)
+        )
+
+        val progress = manager.getSharedBudgetProgress(13L, listOf("a"))
+
+        // totalSpent = 0 + 40 + 20 = 60, NOT 500 + 100 + 20 = 620
+        assertApproxEquals(60.0, progress.totalSpent, 0.01)
+        assertTrue(progress.isOverBudget) // 60 > 50
+        assertApproxEquals(-10.0, progress.remaining, 0.01)
+    }
+
     @Test
     fun `get member contributions returns zero placeholders for all members`() = runTest {
         val contributions = manager.getMemberContributions(1L, listOf("alice", "bob"))

@@ -55,7 +55,7 @@ class ReceiptTransactionMatcher @Inject constructor(
             ?: (System.currentTimeMillis() + (lookbackDays * 86400000))
         
         val candidates = expenseRepository.getExpensesBetween(startDate, endDate)
-            .filter { it.transactionType.name == "PURCHASE" || it.amount > 0 }
+            .filter { it.transactionType.name == "PURCHASE" || it.effectiveAmount > 0 }
         
         if (candidates.isEmpty()) {
             return@withContext MatchResult.NoMatch
@@ -85,9 +85,9 @@ class ReceiptTransactionMatcher @Inject constructor(
     ): Pair<Double, MatchFactors> {
         // 1. Amount match (35% weight)
         val receiptAmount = receipt.parsedTotal ?: 0.0
-        val amountDiff = abs(receiptAmount - transaction.amount)
-        val amountScore = if (transaction.amount > 0) {
-            1.0 - (amountDiff / transaction.amount).coerceIn(0.0, 1.0)
+        val amountDiff = abs(receiptAmount - transaction.effectiveAmount)
+        val amountScore = if (transaction.effectiveAmount > 0) {
+            1.0 - (amountDiff / transaction.effectiveAmount).coerceIn(0.0, 1.0)
         } else {
             0.0
         }
@@ -104,7 +104,7 @@ class ReceiptTransactionMatcher @Inject constructor(
         val dateScore = (1.0 - (dateDiffHours / 48.0)).coerceIn(0.0, 1.0)
         
         // 4. Transaction type (5% weight)
-        val typeScore = if (transaction.transactionType.name == "PURCHASE" || transaction.amount > 0) {
+        val typeScore = if (transaction.transactionType.name == "PURCHASE" || transaction.effectiveAmount > 0) {
             1.0
         } else {
             0.5

@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.DayOfWeekTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.ExpenseDao.Companion.EFFECTIVE_AMOUNT_E_SQL
 import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -33,10 +34,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 enum class SortOrder(val sql: String, val displayName: String) {
-    DATE_DESC("date DESC", "Newest First"),
-    DATE_ASC("date ASC", "Oldest First"),
-    AMOUNT_DESC("amount DESC", "Amount High to Low"),
-    AMOUNT_ASC("amount ASC", "Amount Low to High")
+    DATE_DESC("e.date DESC", "Newest First"),
+    DATE_ASC("e.date ASC", "Oldest First"),
+    // Amount sorts use the effective (ownership-adjusted) expression so that shared/not-mine
+    // rows are ordered by what the user actually owes, not the gross posted amount.
+    // The expression is inlined at query-build time from ExpenseDao.EFFECTIVE_AMOUNT_E_SQL.
+    AMOUNT_DESC("($EFFECTIVE_AMOUNT_E_SQL) DESC", "Amount High to Low"),
+    AMOUNT_ASC("($EFFECTIVE_AMOUNT_E_SQL) ASC", "Amount Low to High")
 }
 
 enum class OwnershipFilter {
@@ -142,8 +146,9 @@ class ExpenseRepository @Inject constructor(
             args.add(MerchantKeyGenerator.generate(merchantName))
         }
 
-        // Effective amount range filter
-        val effectiveAmountExpr = "CASE WHEN e.isNotMine = 1 THEN 0.0 WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0 ELSE e.amount END"
+        // Effective amount range filter — uses the canonical ownership-adjusted SQL expression
+        // from ExpenseDao.EFFECTIVE_AMOUNT_E_SQL (e. alias prefix) as the single source of truth.
+        val effectiveAmountExpr = EFFECTIVE_AMOUNT_E_SQL
         if (minAmount != null) {
             whereClauses.add("$effectiveAmountExpr >= ?")
             args.add(minAmount)
@@ -191,7 +196,7 @@ class ExpenseRepository @Inject constructor(
             $whereClause
             -- Safety invariant: sortOrder.sql comes from the closed SortOrder enum above.
             -- Do not populate it from user input or remote config.
-            ORDER BY e.${sortOrder.sql}
+            ORDER BY ${sortOrder.sql}
             LIMIT ? OFFSET ?
         """.trimIndent()
 

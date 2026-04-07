@@ -75,7 +75,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getWeeklyTotals(2026, Calendar.JANUARY)
+        val result = engine.getWeeklyTotals(2026, 1)
 
         assertTrue(result.isEmpty())
     }
@@ -98,7 +98,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getWeeklyTotals(2026, Calendar.JANUARY)
+        val result = engine.getWeeklyTotals(2026, 1)
 
         assertEquals(1, result.size)
         val week1 = result[0]
@@ -268,7 +268,7 @@ class TotalsAggregationEngineTest {
     fun `getWeeklyTotals handles repository exception`() = runTest {
         coEvery { expenseRepository.getWeeklyTotalsForPeriod(any(), any()) } throws RuntimeException("DB error")
 
-        val result = engine.getWeeklyTotals(2026, Calendar.JANUARY)
+        val result = engine.getWeeklyTotals(2026, 1)
 
         assertTrue(result.isEmpty())
     }
@@ -306,17 +306,24 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getWeeklyTotals calculates correct week labels`() = runTest {
+        // Use real dates within January 2026 so production filter passes
+        val w1Start = getStartOfWeek(2026, 2) // ISO week 2 = Jan 5-11
+        val w1End = getEndOfWeek(2026, 2)
+        val w2Start = getStartOfWeek(2026, 3) // ISO week 3 = Jan 12-18
+        val w2End = getEndOfWeek(2026, 3)
+        val w3Start = getStartOfWeek(2026, 4) // ISO week 4 = Jan 19-25
+        val w3End = getEndOfWeek(2026, 4)
         val weeklyTotals = listOf(
-            WeeklyTotal("2026-W1", 0L, 0L, 100.0, 2),
-            WeeklyTotal("2026-W2", 0L, 0L, 200.0, 4),
-            WeeklyTotal("2026-W3", 0L, 0L, 150.0, 3)
+            WeeklyTotal("2026-W2", w1Start, w1End, 100.0, 2),
+            WeeklyTotal("2026-W3", w2Start, w2End, 200.0, 4),
+            WeeklyTotal("2026-W4", w3Start, w3End, 150.0, 3)
         )
         coEvery { expenseRepository.getWeeklyTotalsForPeriod(any(), any()) } returns weeklyTotals
         coEvery { expenseRepository.getMonthlyTotalsForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getWeeklyTotals(2026, Calendar.JANUARY)
+        val result = engine.getWeeklyTotals(2026, 1)
 
         assertEquals(3, result.size)
         assertEquals("W1", result[0].periodLabel)

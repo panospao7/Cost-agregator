@@ -856,7 +856,7 @@ class ReceiptRepository @Inject constructor(
             .asSequence()
             .filter { it.transactionType == TransactionType.PURCHASE }
             .sortedBy { expense ->
-                val amountPenalty = receiptAmount?.let { kotlin.math.abs(it - expense.amount) } ?: 0.0
+                val amountPenalty = receiptAmount?.let { kotlin.math.abs(it - expense.effectiveAmount) } ?: 0.0
                 val datePenalty = kotlin.math.abs(anchorDate - expense.date) / dayMs.toDouble()
                 amountPenalty + datePenalty
             }

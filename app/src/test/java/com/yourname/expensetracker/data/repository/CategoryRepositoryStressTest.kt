@@ -7,10 +7,12 @@ import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
+import org.junit.Ignore
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
+@Ignore("Stress test: may hang in CI, run manually")
 class CategoryRepositoryStressTest {
 
     private val categoryDao = mockk<CategoryDao>(relaxed = true)

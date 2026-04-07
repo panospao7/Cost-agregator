@@ -34,7 +34,8 @@ class SpendingPaceGoldenTest : AnalyticsEngineTestBase() {
 
         assertApproxEquals(991.79, result.currentMonthSpent, 0.01)
         assertApproxEquals(15.0, result.daysElapsed.toDouble(), 0.0)
-        assertApproxEquals(2049.03, result.projectedTotal, 0.01)
+        // projectedTotal: weight=1.0 (15/7>1), linearProjection = 991.79 * 31 / 15 = 2049.6993...
+        assertApproxEquals(2049.70, result.projectedTotal, 0.01)
         assertApproxEquals(175.0f, result.pacePercentage, 0.1f)
         assertEquals(PaceStatus.OVER_PACE, result.paceStatus)
     }

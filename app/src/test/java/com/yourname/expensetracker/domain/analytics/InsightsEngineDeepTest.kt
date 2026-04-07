@@ -26,6 +26,7 @@ class InsightsEngineDeepTest {
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var recurringEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
     private lateinit var timeProvider: TimeProvider
+    private lateinit var spendingPaceCalculator: SpendingPaceCalculator
 
     private val categories = listOf(
         Category(id = 1L, name = "Food", icon = "🍽️", color = "#FF0000"),
@@ -37,12 +38,13 @@ class InsightsEngineDeepTest {
         expenseRepository = mockk(relaxed = true)
         recurringEngine = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
+        spendingPaceCalculator = mockk(relaxed = true)
 
         engine = InsightsEngine(
             expenseRepository = expenseRepository,
             recurringExpenseEngine = recurringEngine,
             timeProvider = timeProvider,
-            spendingPaceCalculator = mockk(relaxed = true),
+            spendingPaceCalculator = spendingPaceCalculator,
             anomalyDetector = mockk(relaxed = true),
             monthlyComparisonCalculator = mockk(relaxed = true),
             categoryInsightEngine = mockk(relaxed = true),
@@ -79,6 +81,16 @@ class InsightsEngineDeepTest {
         coEvery { expenseRepository.getCountForPeriod(any(), any()) } returnsMany listOf(16, 31, 31)
         coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
+        every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
+            currentMonthSpent = 1600.0,
+            daysElapsed = 16,
+            daysInMonth = 30,
+            projectedTotal = 3000.0,
+            previousMonthTotal = 930.0,
+            averageMonthlyTotal = null,
+            pacePercentage = 333.33f,
+            paceStatus = PaceStatus.OVER_PACE
+        )
 
         val snapshot = engine.generateInsights(categories, emptyList())
 

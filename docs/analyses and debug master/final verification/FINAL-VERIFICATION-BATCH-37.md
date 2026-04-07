@@ -1,5 +1,7 @@
 # Final Verification — Batch 37: Budget, Business, Carbon & Cashflow
 
+> **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+
 ## Scope
 ### Scoped files
 - `com/yourname/expensetracker/domain/budget/BudgetAutopilotEngine.kt`

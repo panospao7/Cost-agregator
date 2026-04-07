@@ -90,10 +90,10 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         
         for (expense in expenses) {
             when (expense.transactionType.name) {
-                "PURCHASE", "WITHDRAWAL" -> totalSpent += expense.amount
-                "DEPOSIT" -> totalIncome += expense.amount
+                "PURCHASE", "WITHDRAWAL" -> totalSpent += expense.effectiveAmount
+                "DEPOSIT" -> totalIncome += expense.effectiveAmount
                 "TRANSFER" -> if (expense.transferDirection?.name == "INCOMING") {
-                    totalIncome += expense.amount
+                    totalIncome += expense.effectiveAmount
                 }
             }
         }
@@ -118,7 +118,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         for (expense in expenses) {
             if (expense.transactionType.name == "PURCHASE") {
                 val current = categoryMap[expense.categoryId] ?: 0.0
-                categoryMap[expense.categoryId] = current + expense.amount
+                categoryMap[expense.categoryId] = current + expense.effectiveAmount
                 
                 val count = categoryCount[expense.categoryId] ?: 0
                 categoryCount[expense.categoryId] = count + 1
@@ -144,7 +144,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         for (expense in expenses) {
             if (expense.transactionType.name == "PURCHASE") {
                 val (current, count) = merchantMap[expense.merchant] ?: Pair(0.0, 0)
-                merchantMap[expense.merchant] = Pair(current + expense.amount, count + 1)
+                merchantMap[expense.merchant] = Pair(current + expense.effectiveAmount, count + 1)
             }
         }
         
@@ -188,8 +188,8 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             
             for (expense in expenses) {
                 when (expense.transactionType.name) {
-                    "PURCHASE", "WITHDRAWAL" -> spending += expense.amount
-                    "DEPOSIT" -> income += expense.amount
+                    "PURCHASE", "WITHDRAWAL" -> spending += expense.effectiveAmount
+                    "DEPOSIT" -> income += expense.effectiveAmount
                 }
             }
             
@@ -228,7 +228,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 val adjustedDay = if (dayOfWeek == java.util.Calendar.SUNDAY) 7 else dayOfWeek - 1
                 
                 val list = dayMap.getOrPut(adjustedDay) { mutableListOf() }
-                list.add(expense.amount)
+                list.add(expense.effectiveAmount)
             }
         }
         
@@ -267,14 +267,14 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         var weekendSpending = 0.0
         var weekdaySpending = 0.0
         
-        for (expense in expenses) {
+            for (expense in expenses) {
             if (expense.transactionType.name == "PURCHASE") {
                 calendar.timeInMillis = expense.date
                 val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK)
                 if (dayOfWeek == java.util.Calendar.SATURDAY || dayOfWeek == java.util.Calendar.SUNDAY) {
-                    weekendSpending += expense.amount
+                    weekendSpending += expense.effectiveAmount
                 } else {
-                    weekdaySpending += expense.amount
+                    weekdaySpending += expense.effectiveAmount
                 }
             }
         }

@@ -1,5 +1,7 @@
 # Final Verification — Batch 36: AI Use Cases — Remaining & Analytics
 
+> **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+
 ## Scope
 ### Batch scope files
 - `com/yourname/expensetracker/domain/ai/usecase/ReceiptAssistInputBuilder.kt`

@@ -1,5 +1,7 @@
 # Final Verification — Batch 41: Health, Income, Intelligence & Investment
 
+> **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+
 ## Scope
 - `com/yourname/expensetracker/domain/health/FinancialHealthCalculator.kt`
 - `com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt`

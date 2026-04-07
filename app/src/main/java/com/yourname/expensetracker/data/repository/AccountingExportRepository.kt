@@ -113,8 +113,10 @@ class AccountingExportRepository @Inject constructor(
         val dateFormat = SimpleDateFormat("MMM yyyy", Locale.getDefault())
         val period = "${dateFormat.format(Date(startDate))} - ${dateFormat.format(Date(endDate))}"
         
+        // Use effectiveAmount (ownership-adjusted) for all report totals so that shared and
+        // "not-mine" rows do not overstate the user's actual spend.
         var totalExpenses = 0.0
-        expenses.forEach { totalExpenses += it.amount }
+        expenses.forEach { totalExpenses += it.effectiveAmount }
         
         // Group by category manually
         val expensesByCategory = mutableMapOf<Long?, MutableList<Expense>>()
@@ -138,35 +140,42 @@ class AccountingExportRepository @Inject constructor(
             expensesByCategory.toList()
                 .sortedByDescending { (_, expList) -> 
                     var sum = 0.0
-                    expList.forEach { sum += it.amount }
+                    // Use effectiveAmount for category sort order too.
+                    expList.forEach { sum += it.effectiveAmount }
                     sum
                 }
                 .forEach { (categoryId, expList) ->
                     val categoryName = categories[categoryId] ?: "Uncategorized"
                     var categoryTotal = 0.0
-                    expList.forEach { categoryTotal += it.amount }
+                    expList.forEach { categoryTotal += it.effectiveAmount }
                     val percentage = if (totalExpenses > 0) (categoryTotal / totalExpenses * 100) else 0.0
                     append("$categoryName: €${String.format("%.2f", categoryTotal)} (${expList.size} transactions, ${String.format("%.1f", percentage)}%)\n")
                 }
             append("\n")
             
-            // Large transactions
-            val largeExpenses = expenses.filter { it.amount > 500 }
+            // Large transactions — threshold checked against effectiveAmount so that a shared
+            // row for which the user owes only €50 of a €600 bill is not flagged as large.
+            val largeExpenses = expenses.filter { it.effectiveAmount > 500 }
             if (largeExpenses.isNotEmpty()) {
                 append("=== LARGE TRANSACTIONS (REVIEW) ===\n")
                 largeExpenses.forEach { expense ->
-                    append("- ${expense.merchant}: €${String.format("%.2f", expense.amount)} on ${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(expense.date))}\n")
+                    append("- ${expense.merchant}: €${String.format("%.2f", expense.effectiveAmount)} on ${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(expense.date))}\n")
                 }
             }
         }
     }
 }
 
+/**
+ * Maps an [Expense] to an [ExportTransaction] for accounting exporters.
+ * Uses [Expense.effectiveAmount] (ownership-adjusted) so that shared and "not-mine" rows
+ * do not overstate the user's actual spend in the exported payload.
+ */
 private fun Expense.toExportTransaction(): ExportTransaction {
     return ExportTransaction(
         id = id,
         date = date,
-        amount = amount,
+        amount = effectiveAmount,
         merchant = merchant,
         notes = notes,
         categoryId = categoryId

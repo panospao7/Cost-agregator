@@ -44,6 +44,7 @@ class RecommendationRepositoryTest {
         dao = mockk()
         timeProvider = FakeTimeProvider(1_700_000_000_000L)
         val filterSerializer = mockk<TransactionFilterSerializer>()
+        every { filterSerializer.deserialize(any()) } returns null
         deduplicator = RecommendationDeduplicator(filterSerializer)
         repository = RecommendationRepository(dao, deduplicator, timeProvider, testDispatcher)
     }
@@ -124,18 +125,19 @@ class RecommendationRepositoryTest {
     fun `saveAll enforces max 5 limit`() = runTest {
         val userId = "user123"
         
-        // Create 8 recommendations with different priorities
+        // Create 8 recommendations with different priorities and unique categories for distinct signatures
         val recommendations = listOf(
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM),
-            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH),
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM),
-            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH),
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM)
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_1"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_2"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_3"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_4"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_5"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_6"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_7"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_8")
         )
 
+        coEvery { dao.getActiveByUser(userId, any()) } returns emptyList()
         coEvery { dao.insertAll(any()) } returns Unit
 
         repository.saveAll(recommendations)
@@ -152,16 +154,17 @@ class RecommendationRepositoryTest {
     fun `saveAll prioritizes HIGH over MEDIUM over LOW`() = runTest {
         val userId = "user123"
         
-        // Create recommendations with mixed priorities
+        // Create recommendations with mixed priorities and unique categories for distinct signatures
         val recommendations = listOf(
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW),
-            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM),
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW),
-            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM)
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_1"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_2"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_3"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_4"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_5"),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_6")
         )
 
+        coEvery { dao.getActiveByUser(userId, any()) } returns emptyList()
         coEvery { dao.insertAll(any()) } returns Unit
 
         repository.saveAll(recommendations)
@@ -281,7 +284,8 @@ class RecommendationRepositoryTest {
         userId: String = "user123",
         recommendationText: String = "Test recommendation",
         priority: RecommendationPriority = RecommendationPriority.MEDIUM,
-        status: RecommendationStatus = RecommendationStatus.ACTIVE
+        status: RecommendationStatus = RecommendationStatus.ACTIVE,
+        category: String = "GENERAL"
     ): DashboardFollowThroughRecommendation {
         return DashboardFollowThroughRecommendation(
             id = id,
@@ -290,7 +294,7 @@ class RecommendationRepositoryTest {
             navigationTarget = "TRANSACTION_LIST",
             filterCriteria = "{}",
             priority = priority,
-            category = "GENERAL",
+            category = category,
             sourceArtifactId = "",
             status = status
         )

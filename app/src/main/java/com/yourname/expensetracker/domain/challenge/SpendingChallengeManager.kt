@@ -35,7 +35,7 @@ class SpendingChallengeManager @Inject constructor(
         var discretionarySpent = 0.0
         for (expense in todayExpenses) {
             if (expense.transactionType.name == "PURCHASE") {
-                discretionarySpent += expense.amount
+                discretionarySpent += expense.effectiveAmount
             }
         }
         
@@ -54,7 +54,7 @@ class SpendingChallengeManager @Inject constructor(
                 var daySpent = 0.0
                 for (expense in dayExpenses) {
                     if (expense.transactionType.name == "PURCHASE") {
-                        daySpent += expense.amount
+                        daySpent += expense.effectiveAmount
                     }
                 }
                 
@@ -110,7 +110,7 @@ class SpendingChallengeManager @Inject constructor(
         for (expense in expenses) {
             if (challenge.categoryId == null || expense.categoryId == challenge.categoryId) {
                 if (expense.transactionType.name == "PURCHASE") {
-                    spent += expense.amount
+                    spent += expense.effectiveAmount
                 }
             }
         }
@@ -169,7 +169,7 @@ class SpendingChallengeManager @Inject constructor(
         var total = 0.0
         for (expense in expenses) {
             if (expense.transactionType.name == "PURCHASE") {
-                total += expense.amount
+                total += expense.effectiveAmount
             }
         }
         

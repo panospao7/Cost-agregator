@@ -42,7 +42,7 @@ class TimePeriodUtilsTest {
     }
 
     @Test
-    fun `getEndOfMonth returns last millisecond of the month`() {
+    fun `getEndOfMonth returns start of next month (exclusive end convention)`() {
         val calendar = Calendar.getInstance()
         calendar.set(2024, Calendar.FEBRUARY, 10, 10, 0, 0) // Leap year 2024
         val timestamp = calendar.timeInMillis
@@ -50,13 +50,14 @@ class TimePeriodUtilsTest {
         val endOfMonth = TimePeriodUtils.getEndOfMonth(timestamp)
         val resultCal = Calendar.getInstance().apply { timeInMillis = endOfMonth }
 
+        // Production uses exclusive end: start of next month
         assertEquals(2024, resultCal.get(Calendar.YEAR))
-        assertEquals(Calendar.FEBRUARY, resultCal.get(Calendar.MONTH))
-        assertEquals(29, resultCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(23, resultCal.get(Calendar.HOUR_OF_DAY))
-        assertEquals(59, resultCal.get(Calendar.MINUTE))
-        assertEquals(59, resultCal.get(Calendar.SECOND))
-        assertEquals(999, resultCal.get(Calendar.MILLISECOND))
+        assertEquals(Calendar.MARCH, resultCal.get(Calendar.MONTH))
+        assertEquals(1, resultCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(0, resultCal.get(Calendar.HOUR_OF_DAY))
+        assertEquals(0, resultCal.get(Calendar.MINUTE))
+        assertEquals(0, resultCal.get(Calendar.SECOND))
+        assertEquals(0, resultCal.get(Calendar.MILLISECOND))
     }
 
     @Test
@@ -90,7 +91,7 @@ class TimePeriodUtilsTest {
     }
 
     @Test
-    fun `getEndOfYear returns Dec 31st at last millisecond`() {
+    fun `getEndOfYear returns start of next year (exclusive end convention)`() {
         val calendar = Calendar.getInstance()
         calendar.set(2024, Calendar.MARCH, 1, 0, 0, 0)
         val timestamp = calendar.timeInMillis
@@ -98,10 +99,11 @@ class TimePeriodUtilsTest {
         val endOfYear = TimePeriodUtils.getEndOfYear(timestamp)
         val resultCal = Calendar.getInstance().apply { timeInMillis = endOfYear }
 
-        assertEquals(2024, resultCal.get(Calendar.YEAR))
-        assertEquals(Calendar.DECEMBER, resultCal.get(Calendar.MONTH))
-        assertEquals(31, resultCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(23, resultCal.get(Calendar.HOUR_OF_DAY))
-        assertEquals(999, resultCal.get(Calendar.MILLISECOND))
+        // Production uses exclusive end: start of next year
+        assertEquals(2025, resultCal.get(Calendar.YEAR))
+        assertEquals(Calendar.JANUARY, resultCal.get(Calendar.MONTH))
+        assertEquals(1, resultCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(0, resultCal.get(Calendar.HOUR_OF_DAY))
+        assertEquals(0, resultCal.get(Calendar.MILLISECOND))
     }
 }

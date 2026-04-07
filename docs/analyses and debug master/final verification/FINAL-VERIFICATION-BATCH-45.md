@@ -1,5 +1,7 @@
 # Final Verification — Batch 45: Receipt, Savings & Tax
 
+> **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+
 ## Scope
 - `com/yourname/expensetracker/domain/receipt/ReceiptOcrService.kt`
 - `com/yourname/expensetracker/domain/receipt/ReceiptParser.kt`

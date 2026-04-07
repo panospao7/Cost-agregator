@@ -99,19 +99,22 @@ class SavingsGamificationEngineTest : AnalyticsEngineTestBase() {
     fun `calculateLevel level based on total saved brackets`() {
         assertEquals(1, engine.calculateLevel(0.0))
         assertEquals(1, engine.calculateLevel(99.0))
-        assertEquals(2, engine.calculateLevel(100.0))
-        assertEquals(2, engine.calculateLevel(499.0))
-        assertEquals(3, engine.calculateLevel(500.0))
-        assertEquals(3, engine.calculateLevel(999.0))
-        assertEquals(4, engine.calculateLevel(1000.0))
+        assertEquals(1, engine.calculateLevel(100.0))
+        assertEquals(1, engine.calculateLevel(499.0))
+        assertEquals(2, engine.calculateLevel(500.0))
+        assertEquals(2, engine.calculateLevel(999.0))
+        assertEquals(3, engine.calculateLevel(1000.0))
+        assertEquals(4, engine.calculateLevel(1500.0))
     }
 
     @Test
     fun `getLevelTitle returns correct title for each level`() {
-        assertEquals("Beginner", engine.getLevelTitle(1))
-        assertEquals("Saver", engine.getLevelTitle(2))
-        assertEquals("Pro", engine.getLevelTitle(3))
-        assertEquals("Master", engine.getLevelTitle(4))
+        assertEquals("Savings Rookie", engine.getLevelTitle(1))
+        assertEquals("Savings Apprentice", engine.getLevelTitle(2))
+        assertEquals("Savings Journeyman", engine.getLevelTitle(3))
+        assertEquals("Savings Expert", engine.getLevelTitle(4))
+        assertEquals("Savings Master", engine.getLevelTitle(5))
+        assertEquals("Savings Legend", engine.getLevelTitle(6))
     }
 
     private fun achievement(achievements: List<SavingsAchievement>, id: String): SavingsAchievement {

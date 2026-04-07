@@ -156,7 +156,7 @@ class CloudReceiptAssistServiceTest {
                           "content": {
                             "parts": [
                               {
-                                "text": "{\\\"merchant\\\":{\\\"value\\\":\\\"Lidl\\\"},\\\"total\\\":null,\\\"date\\\":null,\\\"taxAmount\\\":null,\\\"notes\\\":[\\\"ok\\\"]}"
+                                "text": "{\"merchant\":{\"value\":\"Lidl\"},\"total\":null,\"date\":null,\"taxAmount\":null,\"notes\":[\"ok\"]}"
                               }
                             ]
                           }

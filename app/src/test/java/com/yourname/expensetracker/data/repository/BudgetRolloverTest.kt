@@ -46,7 +46,7 @@ class BudgetRolloverTest {
         
         // Default budget calculator behavior
         every { 
-            budgetCalculator.calculatePeriodWindow(any(), any()) 
+            budgetCalculator.calculatePeriodRange(any(), any()) 
         } returns createMockPeriodRange()
         
         budgetRepository = BudgetRepository(
@@ -310,7 +310,7 @@ class BudgetRolloverTest {
         )
     }
     
-    private fun createMockPeriodRange(): com.yourname.expensetracker.domain.model.PeriodRange {
+    private fun createMockPeriodRange(): Pair<Long, Long> {
         val now = System.currentTimeMillis()
         val startOfMonth = Calendar.getInstance().apply {
             timeInMillis = now
@@ -321,10 +321,7 @@ class BudgetRolloverTest {
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
         
-        return com.yourname.expensetracker.domain.model.PeriodRange(
-            start = startOfMonth,
-            end = now + 86400000 // +1 day
-        )
+        return Pair(startOfMonth, now + 86400000L)
     }
     
     private fun getDateMonthsAgo(months: Int): Long {

@@ -1,5 +1,7 @@
 # Final Verification — Batch 05: Use Cases - Dashboard, Expense, Forecast
 
+> **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+
 ## Scope
 - `com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt`
 - `com/yourname/expensetracker/domain/usecase/dashboard/ComputeMoneyRadarUseCase.kt`
