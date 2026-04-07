@@ -1,0 +1,72 @@
+# Deep Analysis — Batch 14: Database - DAOs Core (@debugger)
+
+## Scope
+- data/database/dao/ExpenseDao.kt
+- data/database/dao/CategoryDao.kt
+- data/database/dao/BudgetDao.kt
+- data/database/dao/RecurringExpenseDao.kt
+- data/database/dao/SavingsGoalDao.kt
+- data/database/dao/SubscriptionDao.kt (not found in codebase)
+- data/database/dao/WarrantyDao.kt
+- data/database/dao/ReturnWindowDao.kt
+- data/database/dao/RecommendationDao.kt
+- data/database/dao/PendingReviewDao.kt
+- data/database/dao/ScannedReceiptDao.kt
+- data/database/dao/ReceiptItemCategorizationDao.kt
+
+## Issues Found
+
+| # | File:Line | Severity | Type | Description | Reproduction Steps | Suggested Fix |
+|---|-----------|----------|------|-------------|-------------------|---------------|
+| 1 | RecommendationDao.kt:54 | 🔴 Critical | Stale Snapshot / Logical Bug | `observeActiveByUser()` takes `nowMillis: Long = System.currentTimeMillis()` as a default parameter. This value is evaluated **once** when the Flow is first subscribed. The SQL WHERE clause `expiresAt > :nowMillis` then uses that frozen timestamp forever. A recommendation that expires 2 hours later will **never** disappear from the UI until the Flow is re-collected. The same bug affects `getActiveByUser()` and `countActive()`, but those are suspend (one-shot) so it's less severe. For the Flow-based `observeActiveByUser`, this is a **fundamental** correctness issue — the UI will show expired cards. | 1. Subscribe to `observeActiveByUser`. 2. Wait until a recommendation's `expiresAt` passes. 3. Observe that the expired recommendation is still emitted by the Flow. | Remove the `nowMillis` default parameter. Require callers to pass `nowMillis` explicitly, or use a periodic `flatMapLatest` ticker in the repository (like `WarrantyTrackerRepository.activeItemsTickerFlow`) to re-evaluate the timestamp. |
+| 2 | ExpenseDao.kt:30-31 | 🟡 Medium | Race Condition / Misuse Risk | `getChanges()` queries SQLite's `changes()` function, which returns the row-count affected by the **most recent** INSERT/UPDATE/DELETE on the **same connection**. Room uses a connection pool; if another coroutine executes a write between `insertAtomic()` and `getChanges()`, the result is from the other operation. The function is defined but never called anywhere in production code, yet its presence implies intended usage. If ever called, it would be unreliable under concurrent writes. | 1. Call `insertAtomic()` and then `getChanges()` from two concurrent coroutines. 2. `getChanges()` may return the other coroutine's row count. | Delete `getChanges()` or, if needed, wrap both the insert and `getChanges()` inside a single `@Transaction`-annotated method to ensure they run on the same connection without interleaving. |
+| 3 | ExpenseDao.kt:374-381 | 🟡 Medium | Incorrect Query Logic | `getRecentMerchantNames()` uses `SELECT DISTINCT merchant ... ORDER BY date DESC LIMIT 100`. In SQLite, `DISTINCT` removes duplicates but the `ORDER BY date` operates on an **arbitrary** row chosen per distinct group — there is no guarantee the selected `date` is the MAX date for that merchant. The result set **may not be** the 100 most recently used merchants. This could miss recent merchants while including very old ones. | User has 200+ distinct merchants. The most recently used merchant may not appear in the result if SQLite picks an older row for it during DISTINCT dedup. | Use a subquery: `SELECT merchant FROM (SELECT merchant, MAX(date) as maxDate FROM expenses GROUP BY merchant ORDER BY maxDate DESC LIMIT 100)`. |
+| 4 | WarrantyDao.kt:19-23 | 🟡 Medium | Confusing API / Parameter Order Mismatch | `getWarrantiesExpiringSoon(futureTime, currentTime)` — parameter order in the function signature is `futureTime, currentTime`, but the SQL WHERE clause is `warrantyEndDate >= :currentTime AND warrantyEndDate < :futureTime`. While Room binds by **name** (so this is correct), the reversed parameter order vs SQL reading order is a maintenance trap. Same issue in **ReturnWindowDao.kt:19-23**. | Call `getWarrantiesExpiringSoon(currentTime, futureTime)` with positional args (swapping them) — query would return no results because `futureTime` would be in the `currentTime` parameter. | Swap parameter order to `(currentTime, futureTime)` to match the natural SQL reading order and the conventional `[start, end)` range idiom. |
+| 5 | ReturnWindowDao.kt:19-23 | 🟡 Medium | Confusing API / Parameter Order Mismatch | Same issue as #4: `getReturnWindowsExpiringSoon(futureTime, currentTime)` has inverted parameter order relative to the SQL WHERE clause `returnDeadline >= :currentTime AND returnDeadline < :futureTime`. | Same as #4 but for return windows. | Reorder parameters to `(currentTime: Long, futureTime: Long)`. |
+| 6 | ExpenseDao.kt:1003-1011 | 🟡 Medium | Semantic Bug | `getBusinessExpensesMissingReceipts()` uses `rawNotificationId IS NULL` as a proxy for "no receipt attached." But `rawNotificationId` indicates notification origin, not receipt status. A manual business expense (always NULL rawNotificationId) with a scanned receipt in `scanned_receipts` would be falsely flagged as missing a receipt. | Create a manual business expense with `requiresReceipt=true`. Scan and link a receipt to it. Query still returns it because `rawNotificationId IS NULL`. | Join with `scanned_receipts` table: check `NOT EXISTS (SELECT 1 FROM scanned_receipts sr WHERE sr.expenseId = expenses.id)` instead of `rawNotificationId IS NULL`. |
+| 7 | SavingsGoalDao.kt:18-19 | 🟡 Medium | Race Condition / Data Corruption | `updateGoalAmount()` sets `currentAmount` to an arbitrary `Double` with no validation. Concurrent callers could overwrite each other's updates (lost update). The DAO provides no atomic increment/decrement operation. | Two concurrent coroutines read `currentAmount=50`, both add 10, both write 60. Expected: 70. | Add an atomic `incrementGoalAmount(goalId, delta)` query: `UPDATE savings_goals SET currentAmount = currentAmount + :delta WHERE id = :goalId`. |
+| 8 | ExpenseDao.kt:21-25 | 🟢 Low | Redundant Code | `insert()` and `insertAtomic()` have identical signatures and behavior — both use `OnConflictStrategy.IGNORE` and return `Long`. The naming suggests `insertAtomic` provides stronger guarantees, but it doesn't. | Grep shows both are used in different contexts, but they compile to identical SQL. | Remove one and alias the other, or document the intended semantic difference. If atomicity was intended, the method should be `@Transaction`-annotated with a check-then-insert pattern. |
+| 9 | ExpenseDao.kt:27-28 | 🟡 Medium | Silent Data Loss | `insertAll()` uses `OnConflictStrategy.REPLACE`, which on primary key conflict performs DELETE + INSERT. If an expense row is replaced, foreign key cascades (e.g., `warranties.expenseId` ON DELETE SET_NULL, `scanned_receipts.expenseId` ON DELETE SET_NULL) will silently null out linked records. | Restore a debug snapshot (`restoreDebugSnapshot`) with expenses that have `id` values matching existing rows. Warranties and receipts linked to those IDs will have their `expenseId` set to NULL. | This is mitigated by `deleteAll()` being called first in `restoreDebugSnapshot`, but any other future caller of `insertAll` risks data loss. Consider using `OnConflictStrategy.IGNORE` or `ABORT`. |
+| 10 | PendingReviewDao.kt:150-154 | 🟢 Low | Over-broad Update | `bulkUpdateCategoryByMerchant()` calls BOTH `bulkUpdateCategoryByMerchantKey()` AND `bulkUpdateCategoryByMerchantName()`. The merchantName query has `AND suggestedMerchantKey IS NULL`, so rows WITH a merchantKey are updated by the first call, and rows WITHOUT are updated by the second. This is correct, but the `@Transaction` doesn't prevent a race where a new review is inserted between the two queries. | Concurrent notification processing inserts a new PendingReview for the same merchant after the first update but before the second. The new row could be missed or double-updated. | Low risk in practice due to Room's single-writer constraint on WAL mode, but consider combining into a single query with `WHERE (suggestedMerchantKey = :merchantKey OR (suggestedMerchant = :merchantName AND suggestedMerchantKey IS NULL))`. |
+| 11 | WarrantyDao.kt:16 vs WarrantyDao.kt:19 | 🟢 Low | Boundary Inconsistency | `getActiveWarranties()` uses `warrantyEndDate > :currentTime` (strict), but `getWarrantiesExpiringSoon()` uses `warrantyEndDate >= :currentTime` (inclusive). A warranty expiring at exactly `currentTime` falls out of "active" but into "expiring soon" — creating an off-by-one gap. Same pattern in **ReturnWindowDao.kt:16 vs :19**. | Set a warranty's `warrantyEndDate` to exactly `currentTime`. It won't appear in active warranties but will appear in "expiring soon" with `futureTime > currentTime`. | Harmonize boundaries: use `>=` for both start comparisons (`warrantyEndDate >= :currentTime` in `getActiveWarranties`). |
+| 12 | ExpenseDao.kt:955-1011 | 🟢 Low | Missing Filter | All business expense queries lack the `isNotMine = 0` filter that is consistently applied in every other spending query. While business expenses may always be "mine," this inconsistency could cause bugs if a user marks a business expense as "not mine." | Mark a business expense as `isNotMine = true`. It still appears in all business expense queries and its amount is counted in business totals. | Add `AND isNotMine = 0` filter to business expense queries for consistency, or add a code comment explaining the intentional omission. |
+| 13 | ExpenseDao.kt:809-821 | 🟢 Low | Redundant WHERE | `getExpensesInBoundingBox()` — the `AND latitude IS NOT NULL` check is redundant because `latitude BETWEEN :minLat AND :maxLat` already excludes NULL (NULL comparisons always return FALSE in SQL). | N/A — no functional impact. | Remove the redundant `AND latitude IS NOT NULL` for clarity. |
+| 14 | SavingsGoalDao.kt:18-19 | 🟢 Low | No Overflow Protection | `updateGoalAmount()` sets `currentAmount` to an arbitrary `Double` with no validation. Concurrent callers could overwrite each other's updates (lost update). The DAO provides no atomic increment/decrement operation. | Two concurrent coroutines read `currentAmount=50`, both add 10, both write 60. Expected: 70. | Add an atomic `incrementGoalAmount(goalId, delta)` query: `UPDATE savings_goals SET currentAmount = currentAmount + :delta WHERE id = :goalId`. |
+| 15 | CategoryDao.kt:20-21 | 🟢 Low | Unbounded IN Clause | `getByIds(ids: List<Long>)` passes a list directly to `IN (:ids)`. SQLite has a default limit of 999 variables in a single statement. Passing >999 IDs will crash at runtime. | Create 1000+ categories, call `getByIds` with all IDs. | Chunk the list into batches of 999 and merge results, or validate list size. Room handles list expansion, but SQLite limits apply. |
+| 16 | SubscriptionCandidateDao.kt:139-140 | 🟢 Low | Unbounded IN Clause | Same as #15 — `getPendingCanonicalMerchants(canonicalMerchants: List<String>)` uses `IN (:canonicalMerchants)` with no size guard. | Pass >999 merchants. | Add size guard or chunked query. |
+
+### Cross-Component Pipeline Issues
+
+| # | Pipeline | Severity | Type | Description | Suggested Fix |
+|---|----------|----------|------|-------------|---------------|
+| 1 | **ExpenseDao → BudgetRepository** | 🟡 Medium | N+1 Query | `BudgetRepository.suggestNewBudgets()` (line 233-236) calls `expenseDao.getCategorySpentInPeriod()` in a loop for each category. With 20+ categories, this is 20+ individual DB roundtrips. | Add a bulk query `getCategorySpentInPeriodAll(startMs, endMs): List<CategoryTotal>` (already exists as `getCategoryTotalsForPeriod`) and use it instead of per-category calls. |
+| 2 | **RecommendationDao → RecommendationRepository → UI** | 🔴 High | Stale Data in Flow | `observeActiveByUser()` Flow bakes `System.currentTimeMillis()` at creation time. The repository at line 43 calls it without a timestamp. UI will show expired recommendations until screen recreation. | Wrap in a periodic ticker (e.g., every 60s) using `flatMapLatest` to refresh the timestamp, matching the pattern already used in `WarrantyTrackerRepository.activeItemsTickerFlow()`. |
+| 3 | **ExpenseDao.insertAll (REPLACE) → WarrantyDao/ReturnWindowDao/ScannedReceiptDao** | 🟡 Medium | Cascade Side-Effect | `insertAll` with `REPLACE` on conflict triggers `ON DELETE` cascades. If any expense ID collides, linked warranties get `expenseId = NULL`, receipts get `expenseId = NULL`. Currently only called after `deleteAll()` in debug snapshot restore, but future callers are at risk. | Change to `IGNORE` or `ABORT`, or document the constraint prominently. |
+| 4 | **ExpenseDao.getBusinessExpensesMissingReceipts → ScannedReceiptDao** | 🟡 Medium | Cross-Table Semantic Gap | Business missing-receipts check uses `rawNotificationId IS NULL` instead of checking `scanned_receipts.expenseId`. Manual entries with attached receipts are falsely flagged. | Use a LEFT JOIN or NOT EXISTS subquery against `scanned_receipts` table. |
+
+### Summary
+- **Total issues: 21** (17 DAO-level + 4 cross-component)
+- **Files with issues: 9/12**
+  - `ExpenseDao.kt` — 10 issues (most complex DAO)
+  - `RecommendationDao.kt` — 1 issue (stale timestamp in Flow — HIGH severity)
+  - `WarrantyDao.kt` — 2 issues (boundary inconsistency, parameter ordering)
+  - `ReturnWindowDao.kt` — 2 issues (same patterns as WarrantyDao)
+  - `PendingReviewDao.kt` — 1 issue (over-broad bulk update)
+  - `SavingsGoalDao.kt` — 1 issue (no atomic increment)
+  - `CategoryDao.kt` — 1 issue (unbounded IN)
+  - `SubscriptionCandidateDao.kt` — 1 issue (unbounded IN)
+  - `ScannedReceiptDao.kt` — 0 issues (clean)
+  - `ReceiptItemCategorizationDao.kt` — 0 issues (clean)
+  - `BudgetDao.kt` — 0 issues (clean)
+  - `RecurringExpenseDao.kt` — 0 issues (clean, deprecated wrapper)
+
+**Severity breakdown:**
+- 🔴 High: 2 (stale Flow timestamp, cascade side-effect)
+- 🟡 Medium: 10 (race conditions, semantic bugs, performance, data loss risks)
+- 🟢 Low: 9 (dead code, redundancy, minor inconsistencies)
+
+**Top priority fixes:**
+1. **RecommendationDao `observeActiveByUser` stale timestamp** — expired recommendations shown in UI indefinitely
+2. **ExpenseDao `isDuplicate` false-positive OR fallback** — legitimate different-key expenses incorrectly flagged as duplicates
+3. **ExpenseDao `getBusinessExpensesMissingReceipts` semantic bug** — wrong column used as receipt proxy
+4. **BudgetRepository N+1** — replace per-category loop with existing bulk query

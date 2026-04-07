@@ -1,0 +1,53 @@
+# Deep Analysis — Batch 03: Savings & Health
+
+## Scope
+- domain/savings/AutomatedSavingsRuleEngine.kt
+- domain/savings/SmartSavingsEngine.kt
+- domain/savings/SavingsGamificationEngine.kt
+- domain/savings/SavingsModels.kt (not found in codebase)
+- domain/health/FinancialHealthScoreV2.kt
+- domain/health/FinancialHealthModels.kt (not found in codebase)
+- domain/health/HealthScoreModels.kt (not found in codebase)
+- domain/health/FinancialHealthCalculator.kt
+
+## @reviewer Findings
+
+### Per-File Issues
+| # | File:Line | Severity | Type | Description | Suggested Fix |
+|---|-----------|----------|------|-------------|---------------|
+| 1 | app/src/main/java/com/yourname/expensetracker/domain/savings/AutomatedSavingsRuleEngine.kt:94-97 | MAJOR | Validation | `PERCENTAGE_OF_INCOME` accepts negative, `NaN`, or infinite percentages and can emit invalid/negative auto-savings amounts. `ROUND_UP` already guards its inputs, so rule behavior is inconsistent across rule types. | Validate `percentage` as finite and `> 0` (optionally clamp to a sane max) before calculating; return `null` for invalid rules. |
+| 2 | app/src/main/java/com/yourname/expensetracker/domain/savings/AutomatedSavingsRuleEngine.kt:214-245 | MAJOR | Idempotency | `WEEKLY_NO_SPEND` awards the €10 reward every time `evaluateRules()` runs during a qualifying week. There is no once-per-week execution guard, so repeated evaluations can mint duplicate rewards. | Persist executions by `ruleId + weekStart` (or equivalent) and skip already-awarded weeks. |
+| 3 | app/src/main/java/com/yourname/expensetracker/domain/savings/AutomatedSavingsRuleEngine.kt:52-53,250-303 | MAJOR | State | Monthly cap enforcement is stored only in an in-memory `mutableMap`. Caps reset on process death/app restart and are not reliable across lifecycle boundaries. | Move monthly cap totals to durable storage and update them atomically with rule execution persistence. |
+| 4 | app/src/main/java/com/yourname/expensetracker/domain/savings/SmartSavingsEngine.kt:77-85 | MAJOR | Aggregation | `calculateBudgetSurplus()` sums every positive remaining budget. If both an overall budget and category budgets are present, the same available headroom is counted multiple times. | Reuse the same selection policy as `MonthlySavingsSweepUseCase`: prefer the overall budget when present, otherwise sum category budgets only. |
+| 5 | app/src/main/java/com/yourname/expensetracker/domain/savings/SmartSavingsEngine.kt:44-74 | MAJOR | Allocation | The computed recommendation is effectively portfolio-wide, but it is returned per-goal. `goal` only changes the impact message, so multiple goals can each receive the same full “safe to save” amount. | Split the API into “safe amount available” plus a separate goal-allocation step, or cap/allocate by goal remaining amount and priority. |
+| 6 | app/src/main/java/com/yourname/expensetracker/domain/savings/SmartSavingsEngine.kt:186-197 | MAJOR | Model Misuse | WEEK and QUARTER horizons multiply a month-end Monte Carlo forecast by `0.25`/`3.0`. The simulator models the current month only, so non-month horizons are mathematically inconsistent. | Restrict Monte Carlo use to `MONTH` or build horizon-specific forecasts from horizon-specific history/distributions. |
+| 7 | app/src/main/java/com/yourname/expensetracker/domain/savings/SavingsGamificationEngine.kt:45-73 | MAJOR | Logic | Streaks and monthly contribution totals are inferred from goal creation dates and current balances, not actual contribution history. The returned metrics are placeholders, not real user behavior. | Introduce/persist contribution events and compute streaks, counts, and monthly totals from those events. |
+| 8 | app/src/main/java/com/yourname/expensetracker/domain/savings/SavingsGamificationEngine.kt:98,118,128,139 | MAJOR | State | `unlockedAt` is recomputed with `timeProvider.now()` on every read, so the same achievement appears to unlock again on each refresh. | Persist first-unlock timestamps and reuse them when building achievement DTOs. |
+| 9 | app/src/main/java/com/yourname/expensetracker/domain/savings/SavingsGamificationEngine.kt:129-130 | MINOR | Logic | `goal_crusher` progress uses `goals.firstOrNull()` instead of the most advanced incomplete goal, which underreports progress for users with multiple goals. | Compute progress from the max normalized completion ratio across incomplete goals. |
+| 10 | app/src/main/java/com/yourname/expensetracker/domain/savings/SavingsModels.kt:missing | MINOR | Architecture | The batch plan expects a dedicated savings model file, but savings DTOs/enums are spread across the engines instead. This increases compile coupling and makes ownership unclear. | Extract shared savings models into `SavingsModels.kt`, or update the plan/docs to match the actual layout. |
+| 11 | app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt:424-437,499-527 | MAJOR | Trending | Trending uses `getMostRecent()` before upserting the current period. Once the current month has a saved row, recalculations compare the score against the same period’s last snapshot instead of the previous period’s score. | Compute trend against the latest record for a different period (or the last closed period), not the most recent row blindly. |
+| 12 | app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt:339-364 | MAJOR | Aggregation | Budget adherence sums all budget amounts/overspend across the list, so overall budgets and category budgets can be double-counted. This makes the score inconsistent with other budget consumers. | Normalize budget selection once (overall-or-categories) and reuse that policy here. |
+| 13 | app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthModels.kt:missing | MINOR | Architecture | `FinancialHealthResult`, `HealthFactorContribution`, and `HealthTrend` are embedded in `FinancialHealthScoreV2.kt` instead of the planned shared model file. | Extract the reusable models into `FinancialHealthModels.kt`, or correct the architecture docs. |
+| 14 | app/src/main/java/com/yourname/expensetracker/domain/health/HealthScoreModels.kt:missing | MINOR | Architecture | Legacy health-score DTOs are embedded in `FinancialHealthCalculator.kt`, leaving the planned model file absent. | Extract the reusable models into `HealthScoreModels.kt`, or remove the stale plan entry. |
+| 15 | app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthCalculator.kt:91-99,134-147,181-194 | MAJOR | Logic | Today/week/month spending and volatility use all `Expense` rows. Deposits/transfers therefore count as “spending” and can degrade health scores incorrectly. | Filter to spending transaction types (at minimum `PURCHASE`/`WITHDRAWAL`) before totals and volatility calculations. |
+| 16 | app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthCalculator.kt:103-107,150-154,197-201 | MINOR | Logic | `budgetStatuses.all { ... }` on an empty list returns `true`, so users with no budgets still receive the “all budgets on track” bonus. | Require `budgetStatuses.isNotEmpty()` before awarding the bonus. |
+| 17 | app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthCalculator.kt:217-237 | MINOR | Maintainability | `calculateBudgetHealthScore()` accepts `periodExpenses` but never uses it, so the API implies period-aware scoring while returning the same budget-health component for every period. | Remove the unused parameter or make the calculation genuinely period-specific. |
+
+### Cross-Component Issues
+| # | Components | Severity | Type | Description | Suggested Fix |
+|---|-----------|----------|------|-------------|---------------|
+| 1 | SmartSavingsEngine + FinancialHealthScoreV2 + FinancialHealthCalculator + MonthlySavingsSweepUseCase | MAJOR | Consistency | Budget headroom is aggregated with different rules across the codebase. `MonthlySavingsSweepUseCase` avoids overall/category double counting, but the savings and health engines do not. | Centralize budget aggregation policy in a shared utility/service and reuse it everywhere budget headroom is consumed. |
+| 2 | FinancialHealthCalculator + FinancialHealthScoreV2 + ComputeDashboardWidgetsUseCase | MAJOR | Architecture | The dashboard renders both the legacy health score and V2 at the same time, even though they model different concepts and can disagree materially. There is no single source of truth for “financial health.” | Deprecate one calculator, or clearly scope/feature-flag the legacy score so downstream consumers know which KPI is canonical. |
+| 3 | AutomatedSavingsRuleEngine + SmartSavingsEngine | MINOR | Duplication | Essential/discretionary category classification is duplicated as hard-coded string sets in both engines. Any future category taxonomy change can silently desynchronize rule behavior. | Move category essentiality/discretionary classification to a shared policy/service or category metadata layer. |
+| 4 | Savings/Health engine files + missing `*Models.kt` files | MINOR | Structure | The batch plan lists dedicated model files, but the actual models are embedded inside engine implementations. This weakens module boundaries and makes ownership/documentation drift likely. | Extract models into the planned files or update the plan to reflect the real package structure. |
+
+### Overlapping Functionality
+| # | Files | Description | Recommendation |
+|---|-------|-------------|----------------|
+| 1 | `FinancialHealthScoreV2.kt`, `FinancialHealthCalculator.kt` | Two separate “financial health score” systems exist and both are surfaced to the dashboard, despite different formulas, inputs, and semantics. | Keep one canonical KPI, or explicitly mark one as legacy/experimental and prevent both from acting as peer metrics. |
+| 2 | `SmartSavingsEngine.kt`, `AutomatedSavingsRuleEngine.kt` | Both files make savings decisions, but the boundary between “advice” and “automation” is not clearly codified, and both duplicate spend classification logic. | Define clear ownership (portfolio recommendation vs transaction-triggered automation) and share common validation/classification utilities. |
+| 3 | `AutomatedSavingsRuleEngine.kt`, `SmartSavingsEngine.kt`, `SavingsGamificationEngine.kt`, `FinancialHealthScoreV2.kt`, `FinancialHealthCalculator.kt` vs missing `SavingsModels.kt` / `FinancialHealthModels.kt` / `HealthScoreModels.kt` | Model types are colocated with algorithms rather than in shared model files, so structural overlap is hidden inside engine implementations. | Extract DTOs/enums to dedicated model files or align the documented batch/file map to the actual design. |
+
+### Summary
+- Total issues: 17
+- Files with issues: 8/8

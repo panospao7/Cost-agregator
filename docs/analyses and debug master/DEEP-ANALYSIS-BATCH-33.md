@@ -1,0 +1,56 @@
+# Deep Analysis — Batch 33: Repositories — Remaining (@reviewer)
+
+## Scope
+- data/repository/NotificationProcessingPipeline.kt
+- data/repository/NotificationRepository.kt
+- data/repository/PlannedExpenseRepository.kt
+- data/repository/PromptStateRepository.kt
+- data/repository/ReceiptItemCategorizationRepository.kt
+- data/repository/ReceiptRepository.kt
+- data/repository/RecommendationRepository.kt
+- data/repository/RecurringExpenseRepository.kt
+- data/repository/ReviewQueueRepository.kt
+- data/repository/SavingsGoalRepository.kt
+- data/repository/SharedExpenseDataPortAdapter.kt
+- data/repository/SourceStatsRepository.kt
+- data/repository/SubscriptionManagementRepository.kt
+- data/repository/UserCorrectionRepository.kt
+- data/repository/WidgetStyleRepositoryImpl.kt
+- data/repository/AccountingExportRepository.kt
+
+## Issues Found
+| # | File:Line | Severity | Type | Description | Suggested Fix |
+|---|-----------|----------|------|-------------|---------------|
+| 1 | `NotificationProcessingPipeline.kt:153-185` | HIGH | Data integrity / duplicate handling | The oversized-amount fallback creates a `PendingReview` immediately when parsing fails, but it never checks existing expenses or existing pending reviews for the same transaction. Repeated oversized notifications can therefore spam the review queue with duplicates even though the normal parsed `NEEDS_REVIEW` path does duplicate filtering. | Reuse the same duplicate checks used by `handleNeedsReviewInTransaction()` before inserting the fallback review, or add a dedicated DB-level uniqueness strategy for fallback reviews. |
+| 2 | `NotificationProcessingPipeline.kt:413-445`<br>`ReceiptRepository.kt:517-530,557-565,674-695`<br>`ReviewQueueRepository.kt:95-118,133-167` | HIGH | Incorrect query / data integrity | Currency is omitted from the dedupe key and from expense duplicate queries. Two transactions with the same merchant, amount, and timestamp but different currencies can be auto-dropped, skipped during statement import, or rejected during review approval as duplicates. | Include currency in `Expense.generateDedupeKey`, add currency predicates to duplicate queries, and thread currency through all duplicate-check helpers before insert/replace decisions. |
+| 3 | `NotificationProcessingPipeline.kt:653-665,683-733` | HIGH | Race condition | Subscription detection is launched fire-and-forget, then performs a non-atomic “check pending candidate” → “compute” → “insert” flow against `subscription_candidates`, which has no unique constraint on `canonicalMerchant`. Concurrent notification jobs for the same merchant can insert duplicate pending candidates. | Add a unique constraint/upsertable signature for pending candidates, or serialize detection per merchant and keep the existence check plus insert inside one transaction. |
+| 4 | `NotificationRepository.kt:125-132` | MEDIUM | Data integrity / stale state | `deleteAll()` removes notifications, expenses, reviews, and corrections, but it only resets `pendingReview` counters in `source_stats`. Accepted/rejected/duplicate/total counters remain, so source trust scores and source-level analytics become stale after a supposed full reset. | Clear `source_stats` entirely or rebuild it transactionally when performing a full notification reset. |
+| 5 | `PromptStateRepository.kt:39-47` | HIGH | Logic error | `recordAcknowledgment()` inserts a brand-new `PromptState` row instead of updating the prompt that was actually shown. That makes acknowledgments look like fresh prompts in `getLastPrompt()` / anti-nag checks and breaks the prompt lifecycle model already supported by `PromptStateDao.recordAcknowledgment(...)`. | Update the existing prompt row by ID (or at least the latest matching prompt) rather than inserting a separate synthetic prompt event. |
+| 6 | `RecommendationRepository.kt:74-103` | HIGH | Race condition / contract drift | `saveAll()` enforces dedupe and “top 5” only by reading current active recommendations and then inserting new rows. Because there is no unique signature in the table and no transactional cap enforcement, concurrent recommendation jobs can insert duplicates and push the active set above the intended 5-card limit. | Persist a deterministic signature with a unique index, and enforce archive/replace logic transactionally before inserting new active recommendations. |
+| 7 | `RecommendationRepository.kt:42-45` | MEDIUM | Stale data | `observeActiveForUser()` relies on a DAO query whose `nowMillis` default is evaluated once when the flow is created. Recommendations that expire later stay visible until some DB write triggers a re-query. | Drive expiry from `TimeProvider`/ticker-based re-evaluation, or observe broader data and filter by the current clock in the repository layer. |
+| 8 | `ReviewQueueRepository.kt:366-380,429-436` | HIGH | Data integrity | `markAsRelevant(true)` creates a new `PendingReview` whenever re-parsing fails, but it never checks whether that raw notification already has a pending review. Re-marking the same notification as relevant can therefore create multiple pending rows for one `rawNotificationId`. | Look up existing reviews by `rawNotificationId` before inserting, or add a uniqueness constraint / upsert path for pending reviews keyed by the raw notification. |
+| 9 | `SharedExpenseDataPortAdapter.kt:49-50` | HIGH | Architecture / data integrity | `addExpense()` bypasses `GroupTransactionCoordinator` and inserts `GroupExpense` directly. Since `group_expenses` only has separate FKs for `groupId` and `paidById`, this allows cross-group corruption (expense in group A paid by a member from group B) and archived-group inserts unless every caller manually validates invariants first. | Route group-expense creation through the coordinator so membership, active-group checks, and any future multi-table invariants are enforced in one place. |
+| 10 | `WidgetStyleRepositoryImpl.kt:31-35,45-60` | MEDIUM | Error handling / data loss | The DataStore flow is not wrapped with `catch`, so I/O/corruption failures terminate `config()`. Separately, `parseConfig()` is all-or-nothing: one bad widget entry or unknown enum resets the entire style map to defaults with no logging. | Add DataStore `catch { ... }` recovery, log parse failures, and parse widget entries individually so one bad key does not wipe every saved style. |
+| 11 | `AccountingExportRepository.kt:50` | HIGH | Incorrect data export | `exportExpenses()` uses `expenseRepository.getExpensesBetween(startDate, endDate)`, which is backed by a DAO method with a default 2000-row limit. Large accounting exports are silently truncated. | Page through `getExpensesBetweenPagedForDeterministicExport()` (or another uncapped API) until exhaustion before generating the export file. |
+| 12 | `AccountingExportRepository.kt:78-80,113-160` | HIGH | Incorrect reporting | The “accountant report” path sums raw expenses across all rows and hardcodes the `€` symbol in totals and large-transaction lines. Mixed-currency datasets therefore produce mathematically meaningless totals mislabeled as euros. | Either restrict the report to a single currency, convert amounts first, or group/report totals per currency with the correct currency code/symbol. |
+| 13 | `AccountingExportRepository.kt:18-23,64-80` | MEDIUM | API / format mismatch | `ExportFormat.ACCOUNTANT_REPORT_PDF` does not produce a PDF at all; it writes plain text to a `.txt` file. Any caller or UI that promises a PDF is lying about the exported artifact. | Rename the format to a text/report variant or generate a real PDF before exposing it under a PDF enum value. |
+
+## Cross-Component Pipeline Issues
+| # | Pipeline | Severity | Type | Description | Suggested Fix |
+|---|----------|----------|------|-------------|---------------|
+| 1 | Notification ingestion → review approval → statement import duplicate detection | HIGH | Data integrity | Duplicate suppression is inconsistent but systematically currency-blind across notification auto-accept, manual review approval, and statement import. That creates false duplicates whenever the same merchant/amount/time appears in different currencies. | Move duplicate identity to a shared contract that includes currency, and make every repository path use the same helper + DB predicates. |
+| 2 | Notification auto-accept → async subscription detection → subscription candidate queue | HIGH | Race condition | The pipeline launches subscription detection asynchronously per accepted expense, while candidate persistence uses non-atomic existence checks on a non-unique merchant key. The end result is a queue that can accumulate duplicate candidates for the same merchant. | Add a DB-enforced uniqueness key for pending candidates and make detection idempotent under concurrency. |
+| 3 | Recommendation enrichment → recommendation storage → dashboard active cards | HIGH | State drift | Background recommendation generation assumes the repository enforces a stable “max 5 active recommendations” contract, but persistence currently relies on read-before-write logic with no unique signature and no transactional active-cap enforcement. Concurrent jobs can therefore create duplicate/hidden active rows that diverge from UI expectations. | Persist a normalized recommendation signature, upsert transactionally, and archive/expire excess rows inside the same write path. |
+| 4 | Shared-expense domain port → group-expense persistence | HIGH | Invariant violation | The shared-expense adapter uses the coordinator for group creation but bypasses it for expense creation, so the domain port no longer guarantees that payer membership and active-group invariants are enforced uniformly. | Centralize all group-expense writes behind `GroupTransactionCoordinator` or add DB-level composite constraints that enforce payer/group consistency. |
+| 5 | Accounting export → expense repository → generated artifacts | HIGH | Incorrect output | Export generation depends on a capped expense read and then produces an accountant “PDF” report that is actually a text file and may sum mixed currencies as euros. Large or multi-currency exports can therefore be both incomplete and misleading. | Use deterministic paged export reads, represent currencies correctly, and align advertised file formats with the bytes actually produced. |
+
+## Summary
+- Total issues: 13
+- Critical: 0, High: 9, Medium: 4, Low: 0
+- Files with issues: 9/16
+
+## Key Patterns
+- Several repositories rely on read-modify-write or read-then-insert flows without a DB-enforced uniqueness key. Under concurrent background jobs, deduplication becomes advisory rather than reliable.
+- Duplicate detection logic is spread across multiple repositories and is not based on one canonical transaction identity. Currency handling is the biggest gap and affects notification ingestion, review approval, and statement import.
+- A few repository APIs advertise stronger guarantees than they actually provide: “delete all” leaves source stats behind, “PDF export” writes text, and “max 5 recommendations” is not enforced transactionally.
+- Error handling is inconsistent: some paths swallow failures into defaults (widget styles), while others model an update as a brand-new insert (prompt acknowledgments), which silently corrupts higher-level behavior instead of failing loudly.

@@ -1,0 +1,103 @@
+
+# Deep Analysis — Batch 15: Database - DAOs Extended (@debugger)
+
+## Scope
+- data/database/dao/ExpenseGroupDao.kt
+- data/database/dao/GroupMemberDao.kt
+- data/database/dao/GroupExpenseDao.kt
+- data/database/dao/SplitItemAssignmentDao.kt
+- data/database/dao/BankConnectionDao.kt
+- data/database/dao/ExchangeRateDao.kt
+- data/database/dao/MerchantNormalizationDao.kt
+- data/database/dao/MerchantLocationDao.kt
+- data/database/dao/EmailReceiptDao.kt
+- data/database/dao/ManualRecurringExpenseDao.kt
+- data/database/dao/InvestmentDao.kt
+- InvestmentValueDao.kt (not found in codebase)
+
+You are the @debugger agent. Perform a deep debugging analysis of Batch B15: Database - DAOs Extended (11 files).
+Files to Analyze:
+- data/database/dao/ExpenseGroupDao.kt
+- data/database/dao/GroupMemberDao.kt
+- data/database/dao/GroupExpenseDao.kt
+- data/database/dao/SplitItemAssignmentDao.kt
+- data/database/dao/BankConnectionDao.kt
+- data/database/dao/ExchangeRateDao.kt
+- data/database/dao/MerchantNormalizationDao.kt
+- data/database/dao/MerchantLocationDao.kt
+- data/database/dao/EmailReceiptDao.kt
+- data/database/dao/ManualRecurringExpenseDao.kt
+- data/database/dao/InvestmentDao.kt
+What to Check: Runtime bugs, NPE risks, infinite loops, race conditions, incorrect formulas, swallowed exceptions, memory leaks, state corruption, cross-component pipeline issues.
+Output Format:
+
+# Deep Analysis — Batch 15: Database - DAOs Extended (@debugger)
+## Issues Found
+| # | File:Line | Severity | Type | Description | Reproduction Steps | Suggested Fix |
+|---|-----------|----------|------|-------------|-------------------|---------------|
+### Cross-Component Pipeline Issues
+| # | Pipeline | Severity | Type | Description | Suggested Fix |
+|---|----------|----------|------|-------------|---------------|
+### Summary
+- Total issues: X
+- Files with issues: X/11
+Read ALL 11 files. Be thorough. Write findings directly in the chat output.
+## Issues Found
+
+| # | File:Line | Severity | Type | Description | Reproduction Steps | Suggested Fix |
+|---|-----------|----------|------|-------------|-------------------|---------------|
+| 1 | ExpenseGroupDao.kt:74-92 | 🔴 Critical | Anti-pattern / Compile risk | `insertGroupWithMembers()` takes a `GroupMemberDao` as a parameter to a `@Transaction` method on a Room DAO interface. Room DAOs should not receive other DAOs as method arguments — this is a code smell that breaks the single-responsibility principle. More critically, the `memberDao.insertAll()` call is happening inside a `@Transaction` on `ExpenseGroupDao`, but Room only wraps the transaction at the database level for the *owning* DAO's database. If the two DAOs happen to reference the same `RoomDatabase` instance (they do here), it works — but this pattern is fragile and will silently break atomicity if one DAO is mocked or proxied differently in tests. **Also:** this method appears **unused** — the production code (`GroupsRepositoryImpl`) uses `GroupTransactionCoordinator.createGroupWithMembers()` instead. Dead code carrying a non-standard DAO interface contract. | Create a group with members, mock `GroupMemberDao` independently from `ExpenseGroupDao` in a test — the transaction boundary won't protect both. | Remove this dead method, or move the transaction logic to a `GroupTransactionCoordinator`-style class that holds both DAOs and uses `RoomDatabase.withTransaction {}`. |
+| 2 | ExpenseGroupDao.kt:80 | 🟡 Medium | Incorrect assertion | `if (groupId <= 0)` check after `insert()` — Room's `@Insert` with auto-generated primary keys returns the row ID, which is always ≥ 1 on success. On conflict, it returns `-1`. The check `<= 0` is correct for detecting `-1` failure, but a Room `@Insert` (no `OnConflictStrategy`) will **throw an exception** on conflict or duplicate, never returning `<= 0`. This guard is unreachable dead code that gives a false sense of safety. | Insert a group that causes a SQLite exception — the exception will propagate before the `if` is reached. | Either add `OnConflictStrategy.ABORT` (or IGNORE) and handle the `-1` return, or remove the dead guard since the raw `@Insert` will throw on failure. |
+| 3 | ExpenseGroupDao.kt:87 | 🟡 Medium | Incorrect assertion | `memberIds.any { it <= 0 }` — same issue as #2. The `@Insert` on `GroupMemberDao.insertAll()` has no conflict strategy, so any failure throws an exception rather than returning `-1`. This check is unreachable. | Insert a member with a duplicate `(groupId, name)` — the unique index violation throws `SQLiteConstraintException` before any return value. | Remove dead guard or switch to `OnConflictStrategy.IGNORE` and handle `-1` returns. |
+| 4 | MerchantLocationDao.kt:25-43 | 🟡 Medium | Race condition (TOCTOU) | `upsertLocation()` uses a read-then-write pattern (`getByNormalizedNameAndArea` → `updateExistingLocation` or `insertLocation`). While wrapped in `@Transaction`, two coroutines calling `upsertLocation()` concurrently for the same merchant+area could race: both read `existing == null`, both attempt `insertLocation`, and the second insert will crash with a `UNIQUE constraint failed` on the `(normalizedMerchantName, areaKey)` index. Room's `@Transaction` only guarantees that the method body runs in a single DB transaction, but SQLite's default journal mode (WAL) allows concurrent readers, so the "check" can see stale data before the first transaction commits. | Two concurrent geocode resolutions for the same merchant complete simultaneously → both call `upsertLocation()` → `UNIQUE constraint` crash. | Use `INSERT OR REPLACE` via `@Insert(onConflict = OnConflictStrategy.REPLACE)` as a single atomic statement, or add a `try/catch` around the insert path to handle the constraint violation and fall back to update. |
+| 5 | MerchantLocationDao.kt:26-27 | 🟡 Medium | Logic bug — areaKey mismatch | `upsertLocation()` coerces `location.areaKey` to `"global"` via `val effectiveAreaKey = location.areaKey ?: "global"`, then queries `getByNormalizedNameAndArea(key, effectiveAreaKey)`. But if the actual `MerchantLocation` entity has `areaKey = null`, the `insertLocation(location)` call on L42 will insert the row **with `areaKey = null`** (the entity's actual value). The next `upsertLocation()` call with `areaKey = null` will query for `areaKey = "global"` (L26-27), **miss** the null-keyed row, and insert a duplicate. The unique index `(normalizedMerchantName, areaKey)` treats `NULL ≠ "global"` in SQLite, so both rows can coexist, breaking the upsert intent. | Call `upsertLocation(location.copy(areaKey = null))` twice for the same merchant → first inserts with `areaKey=NULL`, second queries for `areaKey='global'`, misses, inserts again → two rows. | Before inserting, normalize the entity: `insertLocation(location.copy(areaKey = effectiveAreaKey))` so the stored value matches what the lookup queries. |
+| 6 | MerchantNormalizationDao.kt:90-97 | 🟢 Low | Non-abstract method in Room DAO interface | `searchAliasesByPrefix()` is a concrete (non-abstract) method with a default body in a Room `@Dao` interface. This is valid Kotlin, but Room does **not** generate proxy code for concrete interface methods — they run as regular Kotlin default methods. This means Room's thread/transaction enforcement doesn't wrap this call. The method delegates to `searchAliasesByPrefixRange()` which *is* Room-managed, so it works correctly now, but if anyone adds DB logic directly in the body, it would bypass Room's threading checks. | N/A — works correctly today. | Add a comment clarifying this is intentionally a non-Room convenience wrapper. No code change needed. |
+| 7 | MerchantNormalizationDao.kt:94 | 🟢 Low | Edge case — Unicode sentinel | `prefixEndExclusive = "$prefix\uFFFF"` uses U+FFFF as the sentinel for range end. SQLite uses binary collation by default; U+FFFF is the BMP max but NOT the Unicode max (supplementary planes go to U+10FFFF). If `normalizedKey` ever contains emoji or supplementary characters, they sort **above** U+FFFF in SQLite's BINARY collation, so the prefix range would exclude them. | Store a merchant alias with normalizedKey containing an emoji or CJK supplementary character, then search by its prefix → no match returned. | Use `\uDBFF\uDFFF` (UTF-16 encoding of U+10FFFF) as the sentinel, or document that normalizedKey must be BMP-only (which it likely is for merchant names). |
+| 8 | GroupExpenseDao.kt:43 | 🟡 Medium | NPE risk — nullable SUM | `getTotalPaidByMember()` returns `Double?`. `SUM()` in SQLite returns `NULL` when there are no matching rows. Callers that use `!!` or don't handle `null` will crash with NPE. | Query `getTotalPaidByMember` for a member who has paid nothing → returns `null`. | Callers must use `?: 0.0`. Consider changing the query to `SELECT COALESCE(SUM(totalAmount), 0.0)` and returning non-nullable `Double`. |
+| 9 | GroupExpenseDao.kt:49 | 🟡 Medium | NPE risk — nullable SUM | `getTotalGroupExpenses()` returns `Double?` — same issue as #8. A group with no expenses returns `null`. | Query for a newly-created group with no expenses. | Use `COALESCE(SUM(totalAmount), 0.0)` and return `Double`. |
+| 10 | SplitItemAssignmentDao.kt:16 | 🟡 Medium | NPE risk — nullable SUM | `getTotalAssignedAmount()` returns `Double?`. If no assignments exist for an expense, `SUM()` returns `NULL`. | Query for an expense with no split assignments. | Use `COALESCE(SUM(assignedAmount), 0.0)` and return `Double`. |
+| 11 | InvestmentDao.kt:36-37 | 🟡 Medium | NPE risk — nullable SUM | `getTotalPortfolioValue()` returns `Double?`. `SUM(currentPrice * quantity)` is `NULL` if no active investments exist. | Call when user has no investments → `null`. | Use `COALESCE(SUM(currentPrice * quantity), 0.0)`. |
+| 12 | InvestmentDao.kt:39-44 | 🟡 Medium | NPE risk — nullable SUM + potential precision issue | `getTotalUnrealizedGainLoss()` returns `Double?` — same `NULL` risk. Additionally, `(currentPrice - purchasePrice) * quantity` is computed per-row in SQLite's floating-point arithmetic, which accumulates rounding errors across many investments. | User with no investments → NPE. User with many investments → accumulated floating-point drift. | Use `COALESCE(...)`. For precision, consider `SUM(currentPrice * quantity) - SUM(purchasePrice * quantity)` which is algebraically equivalent but reduces per-row subtraction errors. |
+| 13 | InvestmentDao.kt:46-51 | 🟡 Medium | NPE risk — nullable SUM | `getTotalInvestedAmount()` — same pattern. `NULL` when no active investments. | No active investments → `null` returned. | Use `COALESCE(SUM(purchasePrice * quantity), 0.0)`. |
+| 14 | BankConnectionDao.kt:42-49 | 🟡 Medium | Security — token update without validation | `updateToken()` directly writes `accessToken` and `refreshToken` to the database. The comment in `BankConnection.kt` says tokens use the format `"enc:v1:<ivBase64>:<ciphertextBase64>"`, but the DAO performs no validation that the token is actually encrypted before persisting. A caller passing a plaintext token would silently store it unencrypted. | Call `updateToken(id, "my-plaintext-token", null, 0, expiry)` → plaintext stored in DB. | Add validation at the repository layer (not DAO) that `accessToken` starts with `"enc:"` before calling `updateToken()`, or enforce encryption via a type-safe wrapper class. |
+| 15 | BankConnectionDao.kt:36-37 | 🟢 Low | State inconsistency | `disconnect()` sets both `isConnected = 0` and `isActive = 0` but does **not** clear `accessToken`/`refreshToken`. Stale credentials remain in the database after disconnection. If the DB is compromised post-disconnect, tokens are still accessible. | Disconnect a bank connection → tokens remain in `bank_connections` table. | Also set `accessToken = NULL, refreshToken = NULL` in the `disconnect()` query to scrub sensitive data. |
+| 16 | GroupExpenseDao.kt:60-77 | 🟢 Low | SQL injection via LIKE patterns | `countPotentialSplitReferences()` receives `memberPrefixPattern` and `memberMiddlePattern` as raw strings used in `LIKE` clauses. Room parameterizes these safely (they're `@Query` parameters, not raw SQL concatenation), so SQL injection isn't possible. However, if the caller forgets to escape `%` and `_` characters in member names/IDs, the pattern matching will produce false positives. | A member ID containing `%` or `_` characters would match more rows than intended. | Ensure the caller escapes LIKE special characters (`%`, `_`) with `ESCAPE` clause, or document that patterns are pre-sanitized. |
+| 17 | ManualRecurringExpenseDao.kt:45 | 🟢 Low | Silent overwrite via REPLACE | `@Insert(onConflict = OnConflictStrategy.REPLACE)` on `insert()` — if a `ManualRecurringExpense` is inserted with an existing `id`, it silently **deletes and re-inserts** the row (Room REPLACE = DELETE + INSERT). This changes the row's `createdAt` timestamp and resets any un-modeled state. | Insert an expense, then re-insert with the same `id` but different data → original `createdAt` is lost. | Use `OnConflictStrategy.ABORT` (default) for `insert()` and provide a separate `upsert()` method if needed, or ensure `id = 0` is always passed for new inserts. |
+| 18 | SplitItemAssignmentDao.kt:31 | 🟢 Low | Default parameter in DAO query | `markAsPaid(assignmentId, timestamp = System.currentTimeMillis())` — the default parameter `System.currentTimeMillis()` is evaluated at **call time** in Kotlin. This is correct behavior, but if this method is ever called from Java code, the default is unavailable and the caller must explicitly pass the timestamp. Not a bug per se, but a minor interop concern. | Call from Java without the timestamp parameter → compile error. | Document that Java callers must pass both parameters. |
+| 19 | MerchantNormalizationDao.kt:104-123 | 🟢 Low | Race condition — concurrent alias linking | `linkAliasToCanonical()` has the same TOCTOU pattern as #4: reads `getAliasByRawName()`, then updates or inserts. Two concurrent normalizations for the same raw merchant name could both see `existing == null`, both call `insertAlias()`, and the second fails with a `UNIQUE constraint` on `rawName`. The `OnConflictStrategy.IGNORE` on `insertAlias()` means the second insert silently returns `-1` without updating the alias (occurrence count stays at 1 instead of 2). | Two concurrent expense ingestions with the same merchant name → one alias update is silently lost. | After `insertAlias()`, check if the return is `-1L`, and if so, re-read and update. Or use `INSERT OR REPLACE` to guarantee the upsert succeeds atomically. |
+| 20 | EmailReceiptDao.kt:28 | 🟢 Info | Missing index on fingerprint column | The `fingerprint` column has a named index (`index_email_receipt_fingerprint`) but it is **not** declared as `unique`. The `getByFingerprint()` query uses `LIMIT 1`, but multiple receipts could share the same fingerprint, and deduplication would only catch the first one. | Two receipts from different providers with the same merchant/amount/date → same fingerprint, both stored, dedup only finds the first. | Make the fingerprint index unique if fingerprints are meant to be globally unique identifiers, or handle the multi-result case in the caller. |
+
+### Cross-Component Pipeline Issues
+
+| # | Pipeline | Severity | Type | Description | Suggested Fix |
+|---|----------|----------|------|-------------|---------------|
+| 1 | `MerchantLocationRepository → MerchantLocationDao.upsertLocation()` | 🟡 Medium | Data inconsistency | `saveCorrection()` (L126-138 in MerchantLocationRepository) calls `upsertLocation()` with the correction's `areaKey`, which may be `null` for global corrections. Combined with issue #5, this creates a pathway where `areaKey = null` rows accumulate in the `merchant_locations` table, bypassing the upsert logic. The `getByNormalizedName()` query (L13) uses `ORDER BY CASE WHEN areaKey = 'global' OR areaKey IS NULL` to prioritize global entries, so both null and 'global' rows are returned, but the cache grows unboundedly for global corrections. | Normalize `areaKey` to `"global"` before passing to `upsertLocation()`. The repository already does this at L78 (`areaKey = areaKey ?: "global"`) for `saveLocation()`, but `saveCorrection()` at L129 passes `correction.areaKey` raw. |
+| 2 | `GroupTransactionCoordinator.deleteGroupAtomic() → ExpenseGroupDao / GroupMemberDao / GroupExpenseDao` | 🟢 Low | Redundant deletion | `deleteGroupAtomic()` manually deletes expenses, members, then the group. However, both `GroupMember` and `GroupExpense` entities have `ForeignKey(onDelete = CASCADE)` referencing `ExpenseGroup`. Deleting the group alone would cascade-delete all children. The manual deletion is redundant but harmless — it does ensure consistent ordering. The only risk is if someone adds a `@Transaction` step between the child deletes and the parent delete that reads the (now-deleted) children, they'll find empty results. | Simplify to just `groupDao.delete(group)` and rely on CASCADE, or keep the explicit deletes but add a comment explaining why. |
+| 3 | `InvestmentDao → Portfolio calculations` | 🟡 Medium | Stale data risk | `getTotalPortfolioValue()`, `getTotalUnrealizedGainLoss()`, and `getTotalInvestedAmount()` all query `WHERE isActive = 1` but don't account for `lastUpdated` staleness. A portfolio showing prices from weeks ago appears accurate but is misleading. There's no "stale price" warning mechanism at the DAO level. `updatePrice()` is the only way to refresh prices, and no periodic worker or trigger ensures prices stay current. | Stop updating prices for a week, then view portfolio → shows stale values with no indication. | Add a `getStaleInvestmentCount(olderThan: Long): Int` query, and have the UI layer warn when stale prices exist. |
+| 4 | `BankConnectionDao.disconnect() → Token lifecycle` | 🟡 Medium | Security — credential persistence | As noted in #15, `disconnect()` doesn't clear tokens. Cross-component risk: any code that later reads `BankConnection.accessToken` for a disconnected connection may find and attempt to use stale (but still decryptable) credentials, leading to unexpected API calls or token refresh attempts against a "disconnected" bank. | Disconnect a bank, then a sync worker reads the connection and finds a non-null `accessToken` → attempts to sync despite `isConnected = false`. | Clear tokens in `disconnect()`: `UPDATE bank_connections SET isConnected = 0, isActive = 0, accessToken = NULL, refreshToken = NULL, tokenExpiry = NULL WHERE id = :id`. |
+| 5 | `ManualRecurringExpenseDao → Recurring expense processing` | 🟢 Low | No atomicity guarantee | `getExpensesDueBefore()` and `updateNextDate()` are separate non-transactional calls. A recurring expense worker that reads due expenses and then updates `nextDate` for each one could double-process if the worker is interrupted and restarted between the read and the update. | Worker reads 5 due expenses, processes 3, crashes → on restart, re-reads and re-processes the same 3. | Wrap the read-process-update cycle in a `RoomDatabase.withTransaction {}` block at the repository/worker level, or add an idempotency check (e.g., `lastProcessedAt` field). |
+
+### Summary
+- **Total issues: 25** (20 file-level + 5 cross-component)
+- **Files with issues: 10/11** (`GroupMemberDao.kt` is clean)
+  - `ExpenseGroupDao.kt` — 3 issues
+  - `MerchantLocationDao.kt` — 2 issues
+  - `MerchantNormalizationDao.kt` — 2 issues
+  - `GroupExpenseDao.kt` — 3 issues
+  - `InvestmentDao.kt` — 3 issues
+  - `BankConnectionDao.kt` — 2 issues
+  - `SplitItemAssignmentDao.kt` — 1 issue
+  - `ManualRecurringExpenseDao.kt` — 1 issue
+  - `EmailReceiptDao.kt` — 1 issue
+  - `ExchangeRateDao.kt` — 0 issues (clean)
+  - `GroupMemberDao.kt` — 0 issues (clean)
+
+**Severity breakdown:**
+- 🔴 Critical: 1 (dead code with fragile DAO-passing anti-pattern)
+- 🟡 Medium: 12 (6 nullable SUM/NPE risks, 2 race conditions, 1 areaKey mismatch, 1 security token concern, 1 stale data risk, 1 credential persistence)
+- 🟢 Low: 9 (redundant guards, dead code, minor edge cases, design observations)
+
+**Key patterns observed:**
+1. **Nullable `SUM()` returns** are the most common bug pattern (issues #8–13). All six `SUM()` aggregate queries return `Double?` without `COALESCE`, creating NPE landmines for every caller.
+2. **TOCTOU race conditions** in `upsertLocation()` and `linkAliasToCanonical()` — both use read-then-write patterns that can fail under concurrency despite `@Transaction`.
+3. **The `areaKey` null-vs-"global" impedance mismatch** (issue #5 + C1) is a subtle data integrity bug that will cause duplicate cache rows to accumulate over time.
