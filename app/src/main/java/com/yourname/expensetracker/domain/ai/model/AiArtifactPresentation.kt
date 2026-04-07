@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.model
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 
 data class AiArtifactDiagnostics(
     val routeLabel: String,
@@ -8,7 +8,7 @@ data class AiArtifactDiagnostics(
     val modelLabel: String?
 )
 
-fun AiArtifactEntity.toDiagnosticsOrNull(): AiArtifactDiagnostics? {
+fun AiArtifactRecord.toDiagnosticsOrNull(): AiArtifactDiagnostics? {
     val routeLabel = when (mode) {
         AiMode.ON_DEVICE -> "On-device"
         AiMode.CLOUD -> "Cloud"

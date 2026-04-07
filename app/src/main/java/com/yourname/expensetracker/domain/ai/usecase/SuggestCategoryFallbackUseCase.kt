@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.repository.CategoryRepository
@@ -154,7 +154,7 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
                 ?.let { return CategoryAssistGenerationResult.Success(it, fromCache = true) }
         }
 
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType = input.targetType,
             targetId = input.targetId,
             targetKey = targetKey,

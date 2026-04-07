@@ -2,7 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -101,7 +101,7 @@ class AnomalyDetector @Inject constructor() {
         val monthExpenses = allExpenses.filter { expense ->
             expense.date >= monthPeriod.startMs &&
             expense.date < monthPeriod.endMs &&
-            expense.transactionType == TransactionType.PURCHASE &&
+            expense.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
             !expense.isNotMine
         }
 
@@ -308,5 +308,15 @@ class AnomalyDetector @Inject constructor() {
         val fraction = index - index.toInt()
         return lower + fraction * (upper - lower)
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 
 }

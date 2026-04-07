@@ -1,10 +1,10 @@
 package com.yourname.expensetracker.domain.engine
 
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.di.DefaultDispatcher
 import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
@@ -59,7 +59,7 @@ class DashboardFollowThroughEngine @Inject constructor(
      */
     suspend fun generateRecommendations(
         transaction: Expense,
-        aiArtifact: AiArtifactEntity?,
+        aiArtifact: AiArtifactRecord?,
         userId: String
     ): List<DashboardFollowThroughRecommendation> {
         return withContext(defaultDispatcher) {
@@ -138,7 +138,7 @@ class DashboardFollowThroughEngine @Inject constructor(
     
     private fun createHighAmountRecommendation(
         transaction: Expense,
-        aiArtifact: AiArtifactEntity?,
+        aiArtifact: AiArtifactRecord?,
         userId: String
     ): DashboardFollowThroughRecommendation {
         val recommendationText = aiArtifact?.summaryText 
@@ -148,7 +148,7 @@ class DashboardFollowThroughEngine @Inject constructor(
         val filter = DomainTransactionFilter(
             categoryId = transaction.categoryId,
             minAmount = transaction.amount,
-            transactionType = transaction.transactionType
+            transactionType = transaction.transactionType.toDomain()
         )
         
         val filterJson = filterSerializer.serialize(filter)
@@ -166,7 +166,7 @@ class DashboardFollowThroughEngine @Inject constructor(
     
     private fun createCategoryRecommendation(
         transaction: Expense,
-        aiArtifact: AiArtifactEntity?,
+        aiArtifact: AiArtifactRecord?,
         userId: String
     ): DashboardFollowThroughRecommendation {
         val recommendationText = aiArtifact?.summaryText
@@ -179,7 +179,7 @@ class DashboardFollowThroughEngine @Inject constructor(
         val filter = DomainTransactionFilter(
             categoryId = transaction.categoryId,
             dateRange = Pair(thirtyDaysAgo, rangeEnd),
-            transactionType = TransactionType.PURCHASE
+            transactionType = DomainTransactionType.PURCHASE
         )
         
         val filterJson = filterSerializer.serialize(filter)
@@ -197,7 +197,7 @@ class DashboardFollowThroughEngine @Inject constructor(
     
     private fun createMerchantRecommendation(
         transaction: Expense,
-        aiArtifact: AiArtifactEntity?,
+        aiArtifact: AiArtifactRecord?,
         userId: String
     ): DashboardFollowThroughRecommendation {
         val merchantName = transaction.merchant ?: "Unknown"
@@ -224,7 +224,7 @@ class DashboardFollowThroughEngine @Inject constructor(
     
     private fun createRecentTransactionsRecommendation(
         transaction: Expense,
-        aiArtifact: AiArtifactEntity?,
+        aiArtifact: AiArtifactRecord?,
         userId: String
     ): DashboardFollowThroughRecommendation {
         val recommendationText = aiArtifact?.summaryText
@@ -236,7 +236,7 @@ class DashboardFollowThroughEngine @Inject constructor(
         
         val filter = DomainTransactionFilter(
             dateRange = Pair(sevenDaysAgo, rangeEnd),
-            transactionType = TransactionType.PURCHASE
+            transactionType = DomainTransactionType.PURCHASE
         )
         
         val filterJson = filterSerializer.serialize(filter)
@@ -257,4 +257,14 @@ class DashboardFollowThroughEngine @Inject constructor(
         RecommendationPriority.MEDIUM -> 2
         RecommendationPriority.LOW -> 1
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

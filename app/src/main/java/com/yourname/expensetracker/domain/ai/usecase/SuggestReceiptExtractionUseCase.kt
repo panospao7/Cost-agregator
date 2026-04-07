@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -86,7 +86,7 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
                 }
         }
 
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = receiptId,
             targetKey = targetKey,

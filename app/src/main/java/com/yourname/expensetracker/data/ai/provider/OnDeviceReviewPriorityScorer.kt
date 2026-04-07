@@ -9,7 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.ReviewPriorityScore
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewPriorityScorer
-import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.dto.ReviewPriorityInput
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -57,33 +57,36 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
     override suspend fun scoreReviews(reviews: List<PendingReview>): List<ReviewPriorityScore> {
         if (reviews.isEmpty()) return emptyList()
         
+        // Map PendingReview entities → ReviewPriorityInput domain DTOs at the boundary
+        val inputs = reviews.map { it.toReviewPriorityInput() }
+
         // Check AI availability
         val settings = settingsRepository.settings().first()
         val decision = router.decide(AiCapability.REVIEW_PRIORITIZATION, settings)
         val useAi = decision.route == AiRoute.ON_DEVICE
         
-        return reviews.map { review ->
-            val baseFactors = ReviewPriorityFactors.fromReview(review)
-            val duplicateRisk = calculateDuplicateRisk(review)
+        return inputs.mapIndexed { index, input ->
+            val baseFactors = ReviewPriorityFactors.fromReview(input, System.currentTimeMillis())
+            val duplicateRisk = calculateDuplicateRisk(input, inputs)
             val baseScore = calculateScoreFromFactors(baseFactors.copy(duplicateRisk = duplicateRisk))
             
             val (finalScore, factors, reasoning) = if (useAi) {
                 // Blend deterministic with AI
-                val aiScore = calculateAiScore(review, baseFactors)
+                val aiScore = calculateAiScore(reviews[index], baseFactors)
                 val blendedScore = (baseScore * DETERMINISTIC_WEIGHT + aiScore * AI_WEIGHT)
                     .coerceIn(0f, 1f)
-                Triple(blendedScore, baseFactors, generateReasoning(blendedScore, review, baseFactors))
+                Triple(blendedScore, baseFactors, generateReasoning(blendedScore, input, baseFactors))
             } else {
                 // Deterministic only
                 val factorsWithDupes = baseFactors.copy(duplicateRisk = duplicateRisk)
-                Triple(baseScore, factorsWithDupes, generateReasoning(baseScore, review, factorsWithDupes))
+                Triple(baseScore, factorsWithDupes, generateReasoning(baseScore, input, factorsWithDupes))
             }
             
             ReviewPriorityScore(
-                reviewId = review.id,
+                reviewId = input.reviewId,
                 priorityScore = finalScore,
                 urgencyReason = reasoning,
-                estimatedApprovalTime = estimateApprovalTime(review, finalScore),
+                estimatedApprovalTime = estimateApprovalTime(finalScore),
                 factors = factors
             )
         }.also {
@@ -102,12 +105,12 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
                 priorityScore = calculateBaseScore(review),
                 urgencyReason = null,
                 estimatedApprovalTime = null,
-                factors = ReviewPriorityFactors.fromReview(review)
+                factors = ReviewPriorityFactors.fromReview(review.toReviewPriorityInput(), System.currentTimeMillis())
             )
     }
 
     override fun calculateBaseScore(review: PendingReview): Float {
-        val factors = ReviewPriorityFactors.fromReview(review)
+        val factors = ReviewPriorityFactors.fromReview(review.toReviewPriorityInput(), System.currentTimeMillis())
         return calculateScoreFromFactors(factors)
     }
     
@@ -135,17 +138,17 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
         ).coerceIn(0f, 1f)
     }
     
-    private suspend fun calculateDuplicateRisk(review: PendingReview): Float {
-        // Check if there are similar transactions nearby
+    private suspend fun calculateDuplicateRisk(input: ReviewPriorityInput, allInputs: List<ReviewPriorityInput>): Float {
+        // Check if there are similar transactions nearby using the already-mapped domain DTOs
         val existingReviews = reviewQueueRepository.getPendingReviews().first()
         
         // Count potential duplicates (same amount, similar time, same merchant)
         var duplicateCount = 0
         for (existing in existingReviews) {
-            if (existing.review.id != review.id &&
-                abs(existing.review.suggestedAmount - review.suggestedAmount) < 0.01 &&
-                existing.review.suggestedMerchant.equals(review.suggestedMerchant, ignoreCase = true) &&
-                abs(existing.review.createdAt - review.createdAt) < 24 * 60 * 60 * 1000 // 24 hours
+            if (existing.review.id != input.reviewId &&
+                abs(existing.review.suggestedAmount - input.suggestedAmount) < 0.01 &&
+                existing.review.suggestedMerchant.equals(input.suggestedMerchant, ignoreCase = true) &&
+                abs(existing.review.createdAt - input.createdAt) < 24 * 60 * 60 * 1000 // 24 hours
             ) {
                 duplicateCount++
             }
@@ -198,7 +201,7 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
         return aiScore.coerceIn(0f, 1f)
     }
     
-    private fun generateReasoning(score: Float, review: PendingReview, factors: ReviewPriorityFactors): String? {
+    private fun generateReasoning(score: Float, input: ReviewPriorityInput, factors: ReviewPriorityFactors): String? {
         return when {
             score >= HIGH_PRIORITY_THRESHOLD -> {
                 val reasons = mutableListOf<String>()
@@ -227,7 +230,7 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
         }
     }
     
-    private fun estimateApprovalTime(review: PendingReview, score: Float): Int? {
+    private fun estimateApprovalTime(score: Float): Int? {
         // Estimate seconds needed to approve
         return when {
             score >= HIGH_PRIORITY_THRESHOLD -> 15 // Needs careful review
@@ -235,4 +238,14 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
             else -> 5 // Fast approval
         }
     }
+
+    /** Maps the Room entity to a domain DTO at the data/domain boundary. */
+    private fun PendingReview.toReviewPriorityInput() = ReviewPriorityInput(
+        reviewId = id,
+        confidence = confidence,
+        suggestedMerchant = suggestedMerchant,
+        suggestedCategoryId = suggestedCategoryId,
+        suggestedAmount = suggestedAmount,
+        createdAt = createdAt
+    )
 }

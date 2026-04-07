@@ -3,7 +3,7 @@ package com.yourname.expensetracker.domain.savings
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
@@ -87,7 +87,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         rule: AutomatedSavingsRule
     ): RuleExecution? {
         // Only process deposits (income)
-        if (expense.transactionType != TransactionType.DEPOSIT || expense.amount <= 0) {
+        if (expense.transactionType.toDomain() != DomainTransactionType.DEPOSIT || expense.amount <= 0) {
             return null
         }
         
@@ -113,7 +113,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         rule: AutomatedSavingsRule
     ): RuleExecution? {
         // Only process purchases
-        if (expense.transactionType != TransactionType.PURCHASE) {
+        if (expense.transactionType.toDomain() != DomainTransactionType.PURCHASE) {
             return null
         }
 
@@ -187,7 +187,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         rule: AutomatedSavingsRule
     ): RuleExecution? {
         // Save small purchases (coffee, snacks, etc.)
-        if (expense.transactionType != TransactionType.PURCHASE) {
+        if (expense.transactionType.toDomain() != DomainTransactionType.PURCHASE) {
             return null
         }
 
@@ -224,7 +224,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         var discretionarySpending = 0.0
         for (expense in weekExpenses) {
             if (
-                expense.transactionType == TransactionType.PURCHASE &&
+                expense.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
                 expense.effectiveAmount > 0 &&
                 !isEssentialCategory(expense.categoryId, categoriesById)
             ) {
@@ -322,4 +322,14 @@ class AutomatedSavingsRuleEngine @Inject constructor(
 
         return categoryName != null && categoryName in essentialCategories
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

@@ -17,4 +17,11 @@ object DomainTextKeys {
     const val SAVINGS_CENTURY_CLUB = "savings.century_club"
     const val SAVINGS_GOAL_CRUSHER = "savings.goal_crusher"
     const val SAVINGS_GRAND_SAVER = "savings.grand_saver"
+
+    // Narrative section titles (NarrativeGenerator)
+    const val NARRATIVE_BUDGET_ALERTS = "narrative.budget_alerts"
+    const val NARRATIVE_BUDGET_HEALTH = "narrative.budget_health"
+    const val NARRATIVE_GOAL_RESERVES = "narrative.goal_reserves"
+    const val NARRATIVE_COMMITTED_PLANS = "narrative.committed_plans"
+    const val NARRATIVE_PREDICTED_ACTIVITY = "narrative.predicted_activity"
 }

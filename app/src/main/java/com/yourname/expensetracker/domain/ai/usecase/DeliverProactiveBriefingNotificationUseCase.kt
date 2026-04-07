@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
 import android.content.Context
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
@@ -14,6 +13,8 @@ import javax.inject.Inject
 import dagger.hilt.android.qualifiers.ApplicationContext
 
 class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
+    // Context is retained for DI compatibility; no Android R resource lookups are performed here.
+    @Suppress("UnusedPrivateMember")
     @ApplicationContext private val context: Context,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
@@ -42,7 +43,7 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
         val summary = artifact.summaryText?.trim()?.takeIf { it.isNotBlank() } ?: return
         notificationService.sendAiBriefingReady(
             notificationId = targetKey.hashCode(),
-            title = context.getString(R.string.notification_briefing_ready_title),
+            title = BRIEFING_NOTIFICATION_TITLE,
             message = summary.take(180),
             targetKey = targetKey
         )
@@ -53,5 +54,10 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
             type = "phase4_delivery",
             message = "dashboard_briefing delivered via notification ($providerLabel/$modelLabel)"
         )
+    }
+
+    companion object {
+        /** Domain-owned notification title — no Android R import needed in domain code. */
+        const val BRIEFING_NOTIFICATION_TITLE = "Your AI briefing is ready"
     }
 }

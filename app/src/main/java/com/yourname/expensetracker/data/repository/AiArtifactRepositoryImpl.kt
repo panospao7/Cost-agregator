@@ -4,7 +4,9 @@ import com.yourname.expensetracker.data.database.dao.AiArtifactDao
 import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -13,14 +15,14 @@ class AiArtifactRepositoryImpl @Inject constructor(
     private val dao: AiArtifactDao
 ) : AiArtifactRepository {
 
-    override fun observeLatest(targetKey: String, capability: AiCapability): Flow<AiArtifactEntity?> =
-        dao.observeLatest(targetKey, capability.name)
+    override fun observeLatest(targetKey: String, capability: AiCapability): Flow<AiArtifactRecord?> =
+        dao.observeLatest(targetKey, capability.name).map { it?.toRecord() }
 
-    override suspend fun getLatest(targetKey: String, capability: AiCapability): AiArtifactEntity? =
-        dao.getLatest(targetKey, capability.name)
+    override suspend fun getLatest(targetKey: String, capability: AiCapability): AiArtifactRecord? =
+        dao.getLatest(targetKey, capability.name)?.toRecord()
 
-    override suspend fun upsert(artifact: AiArtifactEntity): Long =
-        dao.upsert(artifact)
+    override suspend fun upsert(artifact: AiArtifactRecord): Long =
+        dao.upsert(artifact.toEntity())
 
     override suspend fun markDismissed(id: Long) =
         dao.markDismissed(id)
@@ -33,4 +35,50 @@ class AiArtifactRepositoryImpl @Inject constructor(
 
     override suspend fun deleteByTargetKey(targetKey: String) =
         dao.deleteByTargetKey(targetKey)
+
+    // ── Entity ↔ Record mappers (data-layer only) ────────────────────────
+
+    private fun AiArtifactEntity.toRecord(): AiArtifactRecord = AiArtifactRecord(
+        id = id,
+        targetType = targetType,
+        targetId = targetId,
+        targetKey = targetKey,
+        capability = capability,
+        status = status,
+        mode = mode,
+        provider = provider,
+        modelName = modelName,
+        promptVersion = promptVersion,
+        summaryText = summaryText,
+        explanationText = explanationText,
+        payloadJson = payloadJson,
+        confidence = confidence,
+        sourceHash = sourceHash,
+        errorMessage = errorMessage,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        expiresAt = expiresAt
+    )
+
+    private fun AiArtifactRecord.toEntity(): AiArtifactEntity = AiArtifactEntity(
+        id = id,
+        targetType = targetType,
+        targetId = targetId,
+        targetKey = targetKey,
+        capability = capability,
+        status = status,
+        mode = mode,
+        provider = provider,
+        modelName = modelName,
+        promptVersion = promptVersion,
+        summaryText = summaryText,
+        explanationText = explanationText,
+        payloadJson = payloadJson,
+        confidence = confidence,
+        sourceHash = sourceHash,
+        errorMessage = errorMessage,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        expiresAt = expiresAt
+    )
 }

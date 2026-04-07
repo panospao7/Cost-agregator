@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.intelligence
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.ai.model.DuplicateCheckCandidate
 import com.yourname.expensetracker.domain.ai.service.SemanticDuplicateDetector
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.util.GeoUtils
 import timber.log.Timber
 import javax.inject.Inject
@@ -232,7 +233,7 @@ class CrossSourceDeduplication @Inject constructor(
         date2: Long,
         notificationText1: String?,
         notificationText2: String?,
-        transactionType: com.yourname.expensetracker.data.database.entity.TransactionType
+        transactionType: DomainTransactionType
     ): com.yourname.expensetracker.domain.ai.model.SemanticDuplicateResult? {
         val candidate1 = DuplicateCheckCandidate(
             amount = amount,

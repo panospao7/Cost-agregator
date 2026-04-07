@@ -2,7 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransferDirection
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -71,7 +71,7 @@ class SpendingPersonalityClassifier @Inject constructor(
             
             // Filter to purchases only, excluding "not mine" expenses
             val purchases = allExpenses.filter { 
-                it.transactionType == TransactionType.PURCHASE && !it.isNotMine 
+                it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine 
             }
             
             if (purchases.size < MIN_TRANSACTIONS_FOR_ANALYSIS) {
@@ -159,7 +159,7 @@ class SpendingPersonalityClassifier @Inject constructor(
     ): Double {
         // Find income/deposit dates
         val incomeDates = allExpenses
-            .filter { it.transactionType == TransactionType.DEPOSIT || 
+            .filter { it.transactionType.toDomain() == DomainTransactionType.DEPOSIT || 
                       (it.transferDirection == TransferDirection.INCOMING && it.amount > 100) }
             .map { it.date }
             .distinct()
@@ -512,6 +512,16 @@ class SpendingPersonalityClassifier @Inject constructor(
             lastUpdated = timeProvider.now()
         )
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }
 
 /**

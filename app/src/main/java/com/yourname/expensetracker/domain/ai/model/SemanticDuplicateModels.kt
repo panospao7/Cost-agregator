@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.model
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 
 /**
  * Input data for semantic duplicate detection.
@@ -20,7 +20,7 @@ data class DuplicateCheckCandidate(
     val merchant: String,
     val date: Long,
     val notificationText: String?,
-    val transactionType: TransactionType
+    val transactionType: DomainTransactionType
 )
 
 /**

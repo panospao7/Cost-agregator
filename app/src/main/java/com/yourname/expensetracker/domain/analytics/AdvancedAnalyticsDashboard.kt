@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.model.UiText
@@ -255,7 +254,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             insights.add(
                 DashboardInsight(
                     type = DashboardInsightType.BUDGET_WARNING,
-                    title = UiText.from(R.string.domain_analytics_high_spending),
+                    title = UiText.fromKey("domain_analytics_high_spending"),
                     description = "You've spent ${String.format("%.1f", (totalSpent/totalIncome)*100)}% of your income this period",
                     severity = DashboardInsightSeverity.WARNING
                 )
@@ -283,7 +282,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             insights.add(
                 DashboardInsight(
                     type = DashboardInsightType.SPENDING_PATTERN,
-                    title = UiText.from(R.string.domain_analytics_weekend_high),
+                    title = UiText.fromKey("domain_analytics_weekend_high"),
                     description = "Your weekend spending is higher than average weekday spending",
                     severity = DashboardInsightSeverity.INFO
                 )
@@ -297,7 +296,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 insights.add(
                     DashboardInsight(
                         type = DashboardInsightType.SAVINGS_OPPORTUNITY,
-                        title = UiText.from(R.string.domain_analytics_great_savings),
+                        title = UiText.fromKey("domain_analytics_great_savings"),
                         description = "You're saving ${String.format("%.1f", savingsRate)}% of your income!",
                         severity = DashboardInsightSeverity.INFO
                     )

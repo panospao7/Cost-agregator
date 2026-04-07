@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.R
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
@@ -10,6 +8,7 @@ import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
@@ -69,7 +68,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             }
 
         return FinancialQueryResult.Breakdown(
-            title = UiText.from(R.string.domain_ai_top_categories),
+            title = UiText.fromKey("domain_ai_top_categories"),
             rows = rows,
             drilldownIntent = intent
         )
@@ -93,7 +92,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             }
 
         return FinancialQueryResult.Breakdown(
-            title = UiText.from(R.string.domain_ai_top_merchants),
+            title = UiText.fromKey("domain_ai_top_merchants"),
             rows = merchantStats,
             drilldownIntent = intent
         )
@@ -107,13 +106,13 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             ?: return FinancialQueryResult.Unsupported("No matching transactions found")
 
         return FinancialQueryResult.Summary(
-            title = UiText.from(R.string.domain_ai_largest_purchase),
+            title = UiText.fromKey("domain_ai_largest_purchase"),
             primaryText = "${largest.merchant}: %.2f EUR".format(largest.effectiveAmount),
             supportingText = null,
             drilldownIntent = intent.copy(
                 filters = intent.filters.copy(
                     merchants = setOf(largest.merchant),
-                    transactionTypes = setOf(largest.transactionType)
+                    transactionTypes = setOf(largest.transactionType.toDomain())
                 )
             )
         )
@@ -142,7 +141,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         }
 
         return FinancialQueryResult.Summary(
-            title = UiText.from(R.string.domain_ai_total_spending),
+            title = UiText.fromKey("domain_ai_total_spending"),
             primaryText = "%.2f EUR".format(currentTotal),
             supportingText = supporting,
             drilldownIntent = intent
@@ -155,7 +154,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     ): FinancialQueryResult {
         val count = loadFilteredExpenses(intent, period).size
         return FinancialQueryResult.Summary(
-            title = UiText.from(R.string.domain_ai_transaction_count),
+            title = UiText.fromKey("domain_ai_transaction_count"),
             primaryText = count.toString(),
             drilldownIntent = intent
         )
@@ -168,7 +167,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         val expenses = loadFilteredExpenses(intent, period)
         val average = if (expenses.isEmpty()) 0.0 else expenses.sumOf { it.expense.effectiveAmount } / expenses.size
         return FinancialQueryResult.Summary(
-            title = UiText.from(R.string.domain_ai_average_spending),
+            title = UiText.fromKey("domain_ai_average_spending"),
             primaryText = "%.2f EUR".format(average),
             supportingText = if (expenses.isNotEmpty()) "Across ${expenses.size} transactions" else null,
             drilldownIntent = intent
@@ -183,7 +182,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         offset = 0,
         startDate = period.start,
         endDate = period.end,
-        transactionType = intent.filters.transactionTypes.singleOrNull(),
+        transactionType = intent.filters.transactionTypes.singleOrNull()?.toEntity(),
         categoryId = intent.filters.categoryIds.singleOrNull(),
         merchantName = intent.filters.merchants.singleOrNull(),
         ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
@@ -209,6 +208,24 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             QueryOwnershipScope.NOT_MINE -> com.yourname.expensetracker.data.repository.OwnershipFilter.NOT_MINE
             QueryOwnershipScope.SHARED -> com.yourname.expensetracker.data.repository.OwnershipFilter.SHARED
             QueryOwnershipScope.TRANSFER -> com.yourname.expensetracker.data.repository.OwnershipFilter.TRANSFER
+        }
+
+    private fun DomainTransactionType.toEntity(): com.yourname.expensetracker.data.database.entity.TransactionType =
+        when (this) {
+            DomainTransactionType.PURCHASE -> com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
+            DomainTransactionType.WITHDRAWAL -> com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL
+            DomainTransactionType.TRANSFER -> com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER
+            DomainTransactionType.DEPOSIT -> com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT
+            DomainTransactionType.UNKNOWN -> com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN
+        }
+
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
         }
 
     private fun com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters.isSimplePurchaseTotal(): Boolean {

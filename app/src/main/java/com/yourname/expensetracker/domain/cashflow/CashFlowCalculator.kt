@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.cashflow
 
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
@@ -90,7 +90,7 @@ class CashFlowCalculator @Inject constructor(
             val incomeList = mutableListOf<Expense>()
             val expenseList = mutableListOf<Expense>()
             for (expense in dayExpenses) {
-                if (expense.transactionType == TransactionType.DEPOSIT || expense.amount < 0) {
+                if (expense.transactionType.toDomain() == DomainTransactionType.DEPOSIT || expense.amount < 0) {
                     incomeList.add(expense)
                 } else {
                     expenseList.add(expense)
@@ -168,4 +168,14 @@ class CashFlowCalculator @Inject constructor(
         
         return upcomingList
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

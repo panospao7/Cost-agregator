@@ -21,12 +21,12 @@ import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionTy
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.DomainDayBudgetStatus
 import com.yourname.expensetracker.domain.model.dashboard.DomainExpenseSummary
-import com.yourname.expensetracker.domain.model.dashboard.toEntityExpense
+import com.yourname.expensetracker.domain.model.dashboard.toTransactionSummary
+import com.yourname.expensetracker.domain.model.TransactionSummary
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DashboardTextKeys
-import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import javax.inject.Inject
@@ -215,7 +215,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val daysRemaining: Int,
         val purchases: List<DashboardExpense>,
         val deposits: List<DashboardExpense>,
-        val expenseEntities: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        val expenseEntities: List<TransactionSummary>,
         val totalSpent: Double,
         val monthSpent: Double,
         val txCount: Int,
@@ -298,7 +298,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             daysRemaining = daysInMonth - dayOfMonth,
             purchases = purchases,
             deposits = deposits,
-            expenseEntities = expenses.map { it.toEntityExpense() },
+            expenseEntities = expenses.map { it.toTransactionSummary() },
             totalSpent = summary.totalSpent,
             monthSpent = summary.totalSpent,
             txCount = summary.transactionCount,
@@ -326,7 +326,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val currentDayIdx = TimePeriodUtils.daysBetween(ctx.monthStart, ctx.now).coerceAtLeast(0)
 
         val currentPace = try {
-            insightsEngine.getSpendingPaceSuspend(ctx.expenseEntities)
+            insightsEngine.getSpendingPaceSuspend()
         } catch (e: Exception) {
             Timber.e(e, "Failed to calculate spending pace")
             SpendingPace(
@@ -412,6 +412,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             budgetLimit = ctx.totalBudgetAmount
         )
 
+        // Build a lookup map from categoryId → categoryName so we can populate
+        // DomainExpenseSummary.categoryName with a real label rather than an ID string.
+        val categoryNameById: Map<Long, String> = ctx.data.data.categories
+            .associate { it.id to it.name }
+
         return domainBlocks.map { domain ->
             DomainDayBudgetStatus(
                 dayOfMonth = domain.dayOfMonth,
@@ -437,7 +442,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                         id = expense.id,
                         amount = expense.effectiveAmount,
                         description = expense.merchant,
-                        categoryName = expense.categoryId?.toString(),
+                        // Resolve a human-readable category label from the pre-loaded category
+                        // list; keep null if the expense has no category or the ID is unknown.
+                        // Never encode a numeric ID into a name field.
+                        categoryName = expense.categoryId?.let { categoryNameById[it] },
                         date = expense.date
                     )
                 }
@@ -544,13 +552,16 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         ctx: ComputeContext,
         currentStreak: Int
     ): com.yourname.expensetracker.domain.health.HealthScoreResult {
+        val dashboardExpenses = ctx.data.data.expenses
         return healthCalculator.calculateHealthScores(
-            expenses = ctx.expenseEntities,
+            // TODO ISSUE-3: FinancialHealthCalculator.calculateHealthScores still expects List<Expense>;
+            //  pass empty list until that API is migrated to TransactionSummary / DashboardExpense.
+            expenses = emptyList(),
             budgetStatuses = ctx.data.data.budgetStatuses,
             pendingReviews = ctx.data.data.pendingCount,
-            todayStreak = calculateStreakForPeriod(ctx.expenseEntities, ctx.todayStart, ctx.now),
-            weekStreak = calculateStreakForPeriod(ctx.expenseEntities, ctx.weekStart, ctx.now),
-            monthStreak = calculateStreakForPeriod(ctx.expenseEntities, ctx.monthStart, ctx.now),
+            todayStreak = calculateStreakForPeriod(dashboardExpenses, ctx.todayStart, ctx.now),
+            weekStreak = calculateStreakForPeriod(dashboardExpenses, ctx.weekStart, ctx.now),
+            monthStreak = calculateStreakForPeriod(dashboardExpenses, ctx.monthStart, ctx.now),
             noSpendStreak = currentStreak
         )
     }
@@ -769,7 +780,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
      * Calculates consecutive days without spending for a specific period.
      */
     private fun calculateStreakForPeriod(
-        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        expenses: List<DashboardExpense>,
         periodStart: Long,
         periodEnd: Long
     ): Int {
@@ -782,7 +793,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val expenseDays = expenses
             .asSequence()
             .filter {
-                it.transactionType == TransactionType.PURCHASE &&
+                it.transactionType == DashboardTransactionType.PURCHASE &&
                     !it.isNotMine &&
                     it.date >= periodStart &&
                     it.date < periodEnd

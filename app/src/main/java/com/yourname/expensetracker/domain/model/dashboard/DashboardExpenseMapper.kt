@@ -1,27 +1,22 @@
 package com.yourname.expensetracker.domain.model.dashboard
 
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.model.TransactionSummary
 
-fun DashboardExpense.toEntityExpense(): Expense {
-    val txType = when (transactionType) {
-        DashboardTransactionType.PURCHASE -> TransactionType.PURCHASE
-        DashboardTransactionType.WITHDRAWAL -> TransactionType.WITHDRAWAL
-        DashboardTransactionType.TRANSFER -> TransactionType.TRANSFER
-        DashboardTransactionType.DEPOSIT -> TransactionType.DEPOSIT
-        DashboardTransactionType.UNKNOWN -> TransactionType.UNKNOWN
-    }
-
-    return Expense(
+/**
+ * Maps a [DashboardExpense] to a domain-safe [TransactionSummary] DTO.
+ *
+ * The returned [TransactionSummary] carries all fields needed for block-party previews,
+ * spending-pace calculations, and downstream domain analytics without crossing the
+ * data-layer boundary.
+ */
+fun DashboardExpense.toTransactionSummary(): TransactionSummary {
+    return TransactionSummary(
         id = id,
         amount = amount,
+        effectiveAmount = effectiveAmount,
         merchant = merchant,
-        transactionType = txType,
         date = date,
-        categoryId = categoryId,
-        isNotMine = isNotMine,
-        isManualEntry = isManualEntry,
-        merchantKey = MerchantKeyGenerator.generate(merchant)
+        categoryId = categoryId
     )
 }
+

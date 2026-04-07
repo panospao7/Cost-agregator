@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,7 +17,7 @@ class DayOfWeekAnalyzer @Inject constructor() {
             it.date != null &&
             it.date >= startDate && 
             it.date < endDate &&
-            it.transactionType == TransactionType.PURCHASE && 
+            it.transactionType.toDomain() == DomainTransactionType.PURCHASE && 
             !it.isNotMine 
         }
         
@@ -43,4 +43,14 @@ class DayOfWeekAnalyzer @Inject constructor() {
             )
         }.sortedByDescending { it.totalSpent }
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

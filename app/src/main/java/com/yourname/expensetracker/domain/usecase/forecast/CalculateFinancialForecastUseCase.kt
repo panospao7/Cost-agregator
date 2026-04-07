@@ -5,7 +5,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedExpensePriority
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.analytics.PaceStatus
@@ -101,7 +101,7 @@ class CalculateFinancialForecastUseCase @Inject constructor(
         
         val monthSpent = expenses
             .filter { expense ->
-                expense.transactionType == TransactionType.PURCHASE &&
+                expense.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
                     !expense.isNotMine &&
                     expense.date in monthStart..now
             }
@@ -127,4 +127,14 @@ class CalculateFinancialForecastUseCase @Inject constructor(
             spendingPace = spendingPace
         )
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

@@ -1,9 +1,8 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.CategorizationStatus
-import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
-import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
+import com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -11,7 +10,6 @@ import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategorizationResult
-import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationPayload
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
@@ -20,7 +18,6 @@ import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationSe
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
-import com.yourname.expensetracker.domain.receipt.ReceiptParser.LineItem
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
@@ -35,7 +32,7 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
     private val aiCapabilityRouter: AiCapabilityRouter,
     private val aiArtifactRepository: AiArtifactRepository,
     private val receiptRepository: ReceiptRepository,
-    private val itemCategorizationDao: ReceiptItemCategorizationDao,
+    private val receiptItemCategorizationRepository: ReceiptItemCategorizationRepository,
     private val inputBuilder: ReceiptItemCategorizationInputBuilder,
     private val onDeviceService: ReceiptItemCategorizationService,
     private val cloudService: ReceiptItemCategorizationService,
@@ -52,14 +49,14 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
 
         // 2. Check if already analyzed (unless forced)
         if (!force) {
-            val existing = itemCategorizationDao.getByReceiptId(receiptId)
+            val existing = receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId)
             if (existing.isNotEmpty()) {
                 Timber.d("Receipt $receiptId already analyzed, returning cached results")
                 return CategorizationResult.AlreadyAnalyzed(existing)
             }
         } else {
             // Clear previous results if forcing re-analysis
-            itemCategorizationDao.deleteByReceiptId(receiptId)
+            receiptItemCategorizationRepository.deleteByReceiptId(receiptId)
         }
 
         // 3. Get receipt
@@ -92,7 +89,7 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         // 8. Create artifact (RUNNING)
         val targetKey = "receipt_items:$receiptId"
         val now = timeProvider.now()
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = receiptId,
             targetKey = targetKey,
@@ -190,42 +187,15 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         receiptId: Long,
         result: ReceiptItemCategorizationResult
     ) {
-        val now = timeProvider.now()
-
-        result.items.forEach { item ->
-            val alternativesJson = JSONArray().apply {
-                item.alternatives.forEach { alt ->
-                    put(JSONObject().apply {
-                        put("id", alt.categoryId)
-                        put("name", alt.categoryName)
-                        put("confidence", alt.confidence)
-                    })
-                }
-            }.toString()
-
-            val categorization = ReceiptItemCategorization(
-                receiptId = receiptId,
-                itemDescription = item.itemDescription,
-                itemAmount = item.amount,
-                suggestedCategoryId = item.suggestedCategory?.categoryId,
-                suggestedCategoryName = item.suggestedCategory?.categoryName,
-                confidence = item.confidence,
-                aiRationale = item.rationale,
-                alternativeCategoriesJson = alternativesJson,
-                userCorrectedCategoryId = null,
-                userCorrectedCategoryName = null,
-                userCorrectedAt = null,
-                taxAmount = result.taxDistribution[item.suggestedCategory?.categoryId],
-                isNewCategorySuggestion = item.suggestedCategory?.isNewCategorySuggestion ?: false,
-                createdAt = now,
-                updatedAt = now
-            )
-            itemCategorizationDao.insert(categorization)
-        }
+        receiptItemCategorizationRepository.saveCategorizationResult(
+            receiptId = receiptId,
+            result = result,
+            now = timeProvider.now()
+        )
     }
 
     private suspend fun updateArtifactReady(
-        baseEntity: AiArtifactEntity,
+        baseEntity: AiArtifactRecord,
         result: ReceiptItemCategorizationResult
     ) {
         val itemsArray = JSONArray().apply {
@@ -289,7 +259,7 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         return lines.joinToString("\n")
     }
 
-    private suspend fun updateArtifactFailed(baseEntity: AiArtifactEntity, reason: String) {
+    private suspend fun updateArtifactFailed(baseEntity: AiArtifactRecord, reason: String) {
         aiArtifactRepository.upsert(
             baseEntity.copy(
                 status = AiArtifactStatus.FAILED,

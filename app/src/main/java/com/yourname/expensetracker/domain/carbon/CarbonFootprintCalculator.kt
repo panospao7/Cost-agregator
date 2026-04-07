@@ -1,9 +1,8 @@
 package com.yourname.expensetracker.domain.carbon
 
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.UiText
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -120,7 +119,7 @@ class CarbonFootprintCalculator @Inject constructor(
         val expensesFlow = expenseDao.getExpensesBetweenFlow(startDate, endDate)
         val expenses = mutableListOf<Expense>()
         expensesFlow.collect { expenseList ->
-            expenses.addAll(expenseList.filter { it.transactionType == TransactionType.PURCHASE })
+            expenses.addAll(expenseList.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE })
         }
         
         val categoryEmissions = mutableMapOf<String, Double>()
@@ -292,7 +291,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "FUEL" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Transportation",
-                        title = UiText.from(R.string.domain_carbon_reduce_fuel),
+                        title = UiText.fromKey("domain_carbon_reduce_fuel"),
                         description = "Your fuel purchases account for significant emissions. Consider public transport, carpooling, or switching to an electric/hybrid vehicle.",
                         potentialImpact = "Up to 40% reduction",
                         difficulty = Difficulty.MEDIUM,
@@ -302,7 +301,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "FLIGHT" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Travel",
-                        title = UiText.from(R.string.domain_carbon_fly_less),
+                        title = UiText.fromKey("domain_carbon_fly_less"),
                         description = "Air travel has very high emissions. Consider train travel for shorter trips or purchase carbon offsets for necessary flights.",
                         potentialImpact = "50-100% reduction for avoided flights",
                         difficulty = Difficulty.HARD,
@@ -312,7 +311,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "CLOTHING" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Shopping",
-                        title = UiText.from(R.string.domain_carbon_sustainable_fashion),
+                        title = UiText.fromKey("domain_carbon_sustainable_fashion"),
                         description = "Fast fashion has high environmental impact. Try secondhand, sustainable brands, or a capsule wardrobe.",
                         potentialImpact = "30-50% reduction",
                         difficulty = Difficulty.EASY,
@@ -322,7 +321,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "RESTAURANT", "FAST_FOOD" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Food",
-                        title = UiText.from(R.string.domain_carbon_eat_plants),
+                        title = UiText.fromKey("domain_carbon_eat_plants"),
                         description = "Restaurant meals and meat-heavy options have higher emissions. Try more plant-based options and cook at home.",
                         potentialImpact = "20-30% reduction",
                         difficulty = Difficulty.EASY,
@@ -332,7 +331,7 @@ class CarbonFootprintCalculator @Inject constructor(
                 "ELECTRONICS" -> recommendations.add(
                     SustainabilityRecommendation(
                         category = "Technology",
-                        title = UiText.from(R.string.domain_carbon_extend_device),
+                        title = UiText.fromKey("domain_carbon_extend_device"),
                         description = "Electronics manufacturing is carbon-intensive. Keep devices longer, buy refurbished, and recycle properly.",
                         potentialImpact = "Up to 60% reduction",
                         difficulty = Difficulty.EASY,
@@ -347,7 +346,7 @@ class CarbonFootprintCalculator @Inject constructor(
             recommendations.add(
                 SustainabilityRecommendation(
                     category = "General",
-                    title = UiText.from(R.string.domain_carbon_track_improve),
+                        title = UiText.fromKey("domain_carbon_track_improve"),
                     description = "Your emissions are moderate. Continue tracking and look for small improvements in your daily spending habits.",
                     potentialImpact = "10-20% reduction",
                     difficulty = Difficulty.EASY,
@@ -360,7 +359,7 @@ class CarbonFootprintCalculator @Inject constructor(
         recommendations.add(
             SustainabilityRecommendation(
                 category = "Offset",
-                title = UiText.from(R.string.domain_carbon_purchase_offsets),
+                        title = UiText.fromKey("domain_carbon_purchase_offsets"),
                 description = "While reducing emissions is best, you can offset unavoidable emissions through verified carbon offset programs.",
                 potentialImpact = "100% offset possible",
                 difficulty = Difficulty.EASY,
@@ -436,6 +435,16 @@ class CarbonFootprintCalculator @Inject constructor(
             )
         }.sortedBy { it.month }
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
     
     // Data Classes
     data class CarbonFootprintReport(

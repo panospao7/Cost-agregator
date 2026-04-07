@@ -2,7 +2,6 @@ package com.yourname.expensetracker.domain.ai.usecase
 
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
@@ -14,6 +13,8 @@ import com.yourname.expensetracker.domain.ai.model.CategoryOption
 import com.yourname.expensetracker.domain.ai.model.MerchantTransactionHint
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.dto.CategoryRef
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import javax.inject.Inject
 
@@ -30,7 +31,7 @@ class CategorizationAssistInputBuilder @Inject constructor(
     ): CategorizationAssistInput {
         val review = item.review
         val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK)
-        val categories = categoryRepository.getAll()
+        val categoryRefs = categoryRepository.getAll().map { CategoryRef(id = it.id, name = it.name) }
         val rawMerchant = review.suggestedMerchant.trim().take(120)
         val merchant = if (shouldRedact) {
             CloudPiiSanitizer.sanitizeMerchant(rawMerchant, true)
@@ -47,8 +48,8 @@ class CategorizationAssistInputBuilder @Inject constructor(
             amount = review.suggestedAmount,
             currency = review.suggestedCurrency.take(8),
             transactionType = runCatching {
-                TransactionType.valueOf(review.suggestedType)
-            }.getOrDefault(TransactionType.PURCHASE),
+                DomainTransactionType.valueOf(review.suggestedType)
+            }.getOrDefault(DomainTransactionType.PURCHASE),
             date = review.suggestedDate,
             currentCategoryId = review.suggestedCategoryId,
             deterministicMatchType = review.matchType?.take(40),
@@ -57,7 +58,7 @@ class CategorizationAssistInputBuilder @Inject constructor(
             } else {
                 review.explanation?.take(AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS)
             },
-            candidateCategories = buildCategoryOptions(categories),
+            candidateCategories = buildCategoryOptions(categoryRefs),
             supportingText = buildReviewSupportingText(item, shouldRedact),
             recentTransactionsWithSameMerchant = recentHints
         )
@@ -72,7 +73,7 @@ class CategorizationAssistInputBuilder @Inject constructor(
         settings: AiSettings
     ): CategorizationAssistInput {
         val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.CATEGORIZATION_FALLBACK)
-        val categories = categoryRepository.getAll()
+        val categoryRefs = categoryRepository.getAll().map { CategoryRef(id = it.id, name = it.name) }
         val rawMerchant = draftMerchant?.trim()?.takeIf { it.isNotBlank() }
             ?: receipt.parsedMerchant?.trim()?.takeIf { it.isNotBlank() }
             ?: ""
@@ -91,12 +92,12 @@ class CategorizationAssistInputBuilder @Inject constructor(
             merchant = merchant,
             amount = draftAmount ?: receipt.parsedTotal ?: 0.0,
             currency = receipt.currency.take(8),
-            transactionType = TransactionType.PURCHASE,
+            transactionType = DomainTransactionType.PURCHASE,
             date = draftDate ?: receipt.parsedDate,
             currentCategoryId = currentCategoryId,
             deterministicMatchType = null,
             deterministicExplanation = null,
-            candidateCategories = buildCategoryOptions(categories),
+            candidateCategories = buildCategoryOptions(categoryRefs),
             supportingText = buildReceiptSupportingText(receipt, shouldRedact),
             recentTransactionsWithSameMerchant = recentHints
         )
@@ -160,7 +161,7 @@ class CategorizationAssistInputBuilder @Inject constructor(
     }
 
     private fun buildCategoryOptions(
-        categories: List<com.yourname.expensetracker.data.database.entity.Category>
+        categories: List<CategoryRef>
     ): List<CategoryOption> {
         return categories
             .sortedBy { it.name }

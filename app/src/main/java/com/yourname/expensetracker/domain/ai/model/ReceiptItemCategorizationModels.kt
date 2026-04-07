@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.ai.model
 
-import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.dto.CategoryRef
+import com.yourname.expensetracker.domain.dto.ReceiptItemCategorizationSnapshot
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 
 /**
@@ -10,7 +11,7 @@ data class ReceiptItemCategorizationInput(
     val receiptId: Long,
     val merchant: String,
     val lineItems: List<ReceiptParser.LineItem>,
-    val userCategories: List<Category>,
+    val userCategories: List<CategoryRef>,
     val cloudCategoryOptions: List<CloudCategoryOption> = emptyList(),
     val totalTax: Double?,
     val currency: String,
@@ -61,7 +62,7 @@ data class ReceiptItemCategorizationResult(
  */
 sealed interface CategorizationResult {
     data class Success(val result: ReceiptItemCategorizationResult) : CategorizationResult
-    data class AlreadyAnalyzed(val items: List<com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization>) : CategorizationResult
+    data class AlreadyAnalyzed(val items: List<ReceiptItemCategorizationSnapshot>) : CategorizationResult
     data object Disabled : CategorizationResult
     data object Error : CategorizationResult
 }

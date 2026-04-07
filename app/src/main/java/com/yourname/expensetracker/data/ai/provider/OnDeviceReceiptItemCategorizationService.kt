@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.ai.model.CategorySuggestion
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
 import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
+import com.yourname.expensetracker.domain.dto.CategoryRef
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -57,12 +58,12 @@ class OnDeviceReceiptItemCategorizationService @Inject constructor() : ReceiptIt
     private fun categorizeSingleItem(
         description: String,
         amount: Double,
-        userCategories: List<com.yourname.expensetracker.data.database.entity.Category>
+        userCategories: List<CategoryRef>
     ): CategorizedReceiptItem {
         val normalizedDesc = description.lowercase()
         
         // Find best matching category
-        var bestMatch: Pair<com.yourname.expensetracker.data.database.entity.Category, Float>? = null
+        var bestMatch: Pair<CategoryRef, Float>? = null
         var bestScore = 0f
         
         for (category in userCategories) {
@@ -95,10 +96,10 @@ class OnDeviceReceiptItemCategorizationService @Inject constructor() : ReceiptIt
             userCategories
                 .filter { it.id != bestMatch?.first?.id }
                 .take(2)
-                .map { category ->
+                .map { ref ->
                     CategorySuggestion(
-                        categoryId = category.id,
-                        categoryName = category.name,
+                        categoryId = ref.id,
+                        categoryName = ref.name,
                         confidence = 0.4f
                     )
                 }
@@ -109,10 +110,10 @@ class OnDeviceReceiptItemCategorizationService @Inject constructor() : ReceiptIt
         return CategorizedReceiptItem(
             itemDescription = description,
             amount = amount,
-            suggestedCategory = bestMatch?.let { (category, _) ->
+            suggestedCategory = bestMatch?.let { (ref, _) ->
                 CategorySuggestion(
-                    categoryId = category.id,
-                    categoryName = category.name,
+                    categoryId = ref.id,
+                    categoryName = ref.name,
                     confidence = confidence,
                     isNewCategorySuggestion = false
                 )

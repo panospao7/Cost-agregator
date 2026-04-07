@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.savings
 
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
@@ -96,7 +96,7 @@ class SmartSavingsEngine @Inject constructor(
         val expenses = expenseRepository.getExpensesBetween(monthStart, now)
         val totalSpent = expenses
             .asSequence()
-            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
             .sumOf { it.effectiveAmount }
         
         // Calculate days elapsed and month length
@@ -120,7 +120,7 @@ class SmartSavingsEngine @Inject constructor(
         val historyStart = now - (historyDays * 24 * 60 * 60 * 1000)
         val historyExpenses = expenseRepository.getExpensesBetween(historyStart, now)
             .asSequence()
-            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
             .toList()
 
         val totalHistorySpending = historyExpenses.sumOf { it.effectiveAmount }
@@ -151,7 +151,7 @@ class SmartSavingsEngine @Inject constructor(
         val expenses = expenseRepository.getExpensesBetween(monthStart, now)
         val spentToDate = expenses
             .asSequence()
-            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
             .sumOf { it.effectiveAmount }
 
         // Derive monthly discretionary baseline from recent real spending
@@ -159,7 +159,7 @@ class SmartSavingsEngine @Inject constructor(
         val categoriesById = categoryRepository.getAll().associateBy { it.id }
         val historicalPurchases = expenseRepository.getExpensesBetween(threeMonthsAgo, now)
             .asSequence()
-            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
             .toList()
         val discretionaryHistoricalTotal = historicalPurchases
             .asSequence()
@@ -300,4 +300,14 @@ class SmartSavingsEngine @Inject constructor(
     enum class TimeHorizon {
         WEEK, MONTH, QUARTER
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

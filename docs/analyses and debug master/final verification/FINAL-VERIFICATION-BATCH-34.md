@@ -1,5 +1,7 @@
 # Final Verification — Batch 34: AI Models, Policies & Services
 
+> **[RESOLVED BY A.2]** The domain/data layer boundary violations have been resolved. All domain models now use domain DTOs instead of Room entities. Data-layer imports removed from domain code.
+
 ## Scope
 ### Primary scoped files
 - `com/yourname/expensetracker/domain/ai/model/AiModels.kt`

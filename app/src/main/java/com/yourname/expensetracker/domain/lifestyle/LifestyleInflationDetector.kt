@@ -1,9 +1,8 @@
 package com.yourname.expensetracker.domain.lifestyle
 
-import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.UiText
 import kotlinx.coroutines.flow.first
 import java.time.Instant
@@ -39,11 +38,11 @@ class LifestyleInflationDetector @Inject constructor(
                 .toLocalDate()
             val month = YearMonth.from(date)
             
-            when (expense.transactionType) {
-                TransactionType.DEPOSIT -> {
+            when (expense.transactionType.toDomain()) {
+                DomainTransactionType.DEPOSIT -> {
                     incomeByMonth[month] = (incomeByMonth[month] ?: 0.0) + expense.effectiveAmount
                 }
-                TransactionType.PURCHASE -> {
+                DomainTransactionType.PURCHASE -> {
                     spendingByMonth[month] = (spendingByMonth[month] ?: 0.0) + expense.effectiveAmount
                     
                     // Track discretionary spending (non-essential categories)
@@ -294,7 +293,7 @@ class LifestyleInflationDetector @Inject constructor(
             recommendations.add(
                 LifestyleRecommendation(
                     type = RecommendationType.REDUCE_ELASTICITY,
-                    title = UiText.from(R.string.domain_lifestyle_spending_faster),
+                    title = UiText.fromKey("domain_lifestyle_spending_faster"),
                     description = "Your spending increases ${String.format("%.1f", elasticity * 100)}% " +
                             "for every 1% increase in income. Consider automating savings to reduce lifestyle creep.",
                     priority = RecommendationPriority.HIGH,
@@ -312,7 +311,7 @@ class LifestyleInflationDetector @Inject constructor(
             recommendations.add(
                 LifestyleRecommendation(
                     type = RecommendationType.LIFESTYLE_CREEP_ALERT,
-                    title = UiText.from(R.string.domain_lifestyle_creep),
+                    title = UiText.fromKey("domain_lifestyle_creep"),
                     description = "In ${recentCreep.month}, your spending grew ${String.format("%.1f", recentCreep.spendingGrowthPercent)}% " +
                             "while income grew ${String.format("%.1f", recentCreep.incomeGrowthPercent)}%",
                     priority = if (recentCreep.severity == CreepSeverity.HIGH) 
@@ -332,7 +331,7 @@ class LifestyleInflationDetector @Inject constructor(
             recommendations.add(
                 LifestyleRecommendation(
                     type = RecommendationType.SPENDING_REVIEW,
-                    title = UiText.from(R.string.domain_lifestyle_outpacing),
+                    title = UiText.fromKey("domain_lifestyle_outpacing"),
                     description = "Over the analysis period, your spending has grown ${String.format("%.1f", spendingTrend * 100)}% " +
                             "while income grew ${String.format("%.1f", incomeTrend * 100)}%",
                     priority = RecommendationPriority.MEDIUM,
@@ -349,7 +348,7 @@ class LifestyleInflationDetector @Inject constructor(
             recommendations.add(
                 LifestyleRecommendation(
                     type = RecommendationType.INCOME_OPTIMIZATION,
-                    title = UiText.from(R.string.domain_lifestyle_not_aligned),
+                    title = UiText.fromKey("domain_lifestyle_not_aligned"),
                     description = "There's a weak correlation between your income and spending patterns. " +
                             "This might indicate irregular income or inconsistent budgeting.",
                     priority = RecommendationPriority.LOW,
@@ -364,7 +363,16 @@ class LifestyleInflationDetector @Inject constructor(
         
         return recommendations
     }
-    
+
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
+
     data class LifestyleInflationReport(
         val analysisPeriodMonths: Int,
         val incomeSpendingCorrelation: Double,

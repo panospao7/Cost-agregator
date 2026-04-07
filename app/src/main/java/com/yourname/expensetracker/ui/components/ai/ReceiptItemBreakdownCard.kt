@@ -16,7 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
+import com.yourname.expensetracker.domain.dto.ReceiptItemCategorizationSnapshot
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -24,11 +24,11 @@ import com.yourname.expensetracker.R
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ReceiptItemBreakdownCard(
-    items: List<ReceiptItemCategorization>,
+    items: List<ReceiptItemCategorizationSnapshot>,
     categories: List<Category>,
     isLoading: Boolean,
-    onItemCategoryChanged: (ReceiptItemCategorization, Category?) -> Unit,
-    onShowRationale: (ReceiptItemCategorization) -> Unit,
+    onItemCategoryChanged: (ReceiptItemCategorizationSnapshot, Category?) -> Unit,
+    onShowRationale: (ReceiptItemCategorizationSnapshot) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -87,7 +87,7 @@ fun ReceiptItemBreakdownCard(
 
 @Composable
 private fun CategorizedItemRow(
-    item: ReceiptItemCategorization,
+    item: ReceiptItemCategorizationSnapshot,
     categories: List<Category>,
     onCategoryChanged: (Category?) -> Unit,
     onShowRationale: () -> Unit

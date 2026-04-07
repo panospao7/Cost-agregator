@@ -2,7 +2,7 @@ package com.yourname.expensetracker.domain.health
 
 import com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
 import com.yourname.expensetracker.data.database.entity.HealthScoreHistory
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
@@ -75,10 +75,10 @@ class FinancialHealthScoreV2 @Inject constructor(
             // Fetch all necessary data
             val expenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
             val purchases = expenses.filter { 
-                it.transactionType == TransactionType.PURCHASE && !it.isNotMine 
+                it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine 
             }
             val deposits = expenses.filter { 
-                it.transactionType == TransactionType.DEPOSIT 
+                it.transactionType.toDomain() == DomainTransactionType.DEPOSIT 
             }
             
             // Get budget statuses
@@ -312,7 +312,7 @@ class FinancialHealthScoreV2 @Inject constructor(
         val historicalExpenses = expenseRepository
             .getExpensesBetween(baselineStart, currentPeriodStart)
             .filter {
-                it.transactionType == TransactionType.PURCHASE && !it.isNotMine && it.date < currentPeriodStart
+                it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine && it.date < currentPeriodStart
             }
 
         if (historicalExpenses.isEmpty()) {
@@ -534,6 +534,16 @@ class FinancialHealthScoreV2 @Inject constructor(
             Timber.e(e, "Failed to save health score history")
         }
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }
 
 /**

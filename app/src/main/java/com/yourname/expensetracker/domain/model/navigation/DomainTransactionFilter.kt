@@ -1,15 +1,14 @@
 package com.yourname.expensetracker.domain.model.navigation
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.repository.OwnershipFilter
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 
 data class DomainTransactionFilter(
     val categoryId: Long? = null,
     val merchantName: String? = null,
-    val transactionType: TransactionType? = null,
+    val transactionType: DomainTransactionType? = null,
     val dateRange: Pair<Long, Long>? = null,
-    val ownership: OwnershipFilter? = null,
+    val ownership: DomainOwnershipFilter? = null,
     val minAmount: Double? = null,
     val maxAmount: Double? = null,
-    val correlationId: Long = System.currentTimeMillis()
+    val correlationId: Long = 0L
 )

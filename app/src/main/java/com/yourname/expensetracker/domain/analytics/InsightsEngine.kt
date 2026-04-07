@@ -3,10 +3,8 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
-import com.yourname.expensetracker.domain.model.dashboard.toEntityExpense
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -16,7 +14,6 @@ import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.jvm.JvmName
 import timber.log.Timber
 
 // === Engine ===
@@ -89,7 +86,7 @@ class InsightsEngine @Inject constructor(
 
         // Transaction size stats
         val currentMonthPurchases = allExpenses.filter {
-            it.transactionType == TransactionType.PURCHASE
+            it.transactionType.toDomain() == DomainTransactionType.PURCHASE
                     && it.date >= currentMonth.startMs
                     && it.date < currentMonth.endMs
                     && !it.isNotMine
@@ -339,7 +336,7 @@ class InsightsEngine @Inject constructor(
     ): Map<Long, Pair<Double, Int>> {
         // Group purchases by category, then by month, compute average
         val purchases = allExpenses.filter {
-            it.transactionType == TransactionType.PURCHASE
+            it.transactionType.toDomain() == DomainTransactionType.PURCHASE
                     && !it.isNotMine
                     && it.categoryId != null
                     && it.date < currentMonth.startMs // exclude current month
@@ -374,7 +371,7 @@ class InsightsEngine @Inject constructor(
         // DAO merchant stats alias merchantKey -> merchantName, so lookup must use the
         // same canonical key to avoid key mismatches across raw merchant labels.
         val purchasesByMerchantKey = allExpenses
-            .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
             .groupBy { it.merchantKey }
 
         return stats.map { ms ->
@@ -431,7 +428,7 @@ class InsightsEngine @Inject constructor(
         currentMonth: MonthPeriod
     ): Double? {
         val purchases = allExpenses.filter {
-            it.transactionType == TransactionType.PURCHASE
+            it.transactionType.toDomain() == DomainTransactionType.PURCHASE
                     && !it.isNotMine
                     && it.date < currentMonth.startMs
         }
@@ -606,7 +603,7 @@ class InsightsEngine @Inject constructor(
         val countsByDay = IntArray(7)
 
         allExpenses.forEach { expense ->
-            if (expense.transactionType != TransactionType.PURCHASE || expense.isNotMine) return@forEach
+            if (expense.transactionType.toDomain() != DomainTransactionType.PURCHASE || expense.isNotMine) return@forEach
             if (expense.date < startMs || expense.date >= endMs) return@forEach
 
             val dayOfWeek = TimePeriodUtils.getDayOfWeek(expense.date) // Sun=1..Sat=7
@@ -644,7 +641,7 @@ class InsightsEngine @Inject constructor(
         }
 
         // Fill in actual values - Optimized: reuse Date object
-        val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE }
+        val purchases = expenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE }
         val dateObj = java.util.Date()
         for (expense in purchases) {
             dateObj.time = expense.date
@@ -695,14 +692,19 @@ class InsightsEngine @Inject constructor(
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
     }
 
-    @JvmName("getSpendingPaceSuspendDashboard")
-    suspend fun getSpendingPaceSuspend(expenses: List<DashboardExpense>): SpendingPace {
-        return getSpendingPaceSuspend(expenses.map { it.toEntityExpense() })
-    }
-
     private fun fmt(amount: Double): String = String.format(java.util.Locale.getDefault(), "%.2f", amount)
     
     private fun formatDate(dateMs: Long): String {
          return DateFormatterUtils.monthDay().format(java.util.Date(dateMs))
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

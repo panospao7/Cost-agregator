@@ -4,7 +4,7 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.model.TransactionSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -24,21 +24,18 @@ class DashboardExpenseMapperTest {
 
         val dashboardExpense = expense.toDashboardExpenseFixture()
 
-        val mapped = dashboardExpense.toEntityExpense()
+        val mapped: TransactionSummary = dashboardExpense.toTransactionSummary()
 
         assertEquals(expense.id, mapped.id)
         assertApproxEquals(expense.amount, mapped.amount, 0.0001)
         assertEquals(expense.merchant, mapped.merchant)
-        assertEquals(expense.transactionType, mapped.transactionType)
         assertEquals(expense.date, mapped.date)
         assertEquals(expense.categoryId, mapped.categoryId)
-        assertEquals(expense.isNotMine, mapped.isNotMine)
-        assertEquals(expense.isManualEntry, mapped.isManualEntry)
-        assertEquals(MerchantKeyGenerator.generate(expense.merchant), mapped.merchantKey)
+        assertApproxEquals(expense.effectiveAmount, mapped.effectiveAmount, 0.0001)
     }
 
     @Test
-    fun `null category handled gracefully shows Uncategorized`() {
+    fun `null category handled gracefully`() {
         val expense = createExpense(
             date = "2026-03-06",
             amount = 18.40,
@@ -47,9 +44,9 @@ class DashboardExpenseMapperTest {
             id = 1002L
         )
 
-        val mapped = expense
+        val mapped: TransactionSummary = expense
             .toDashboardExpenseFixture()
-            .toEntityExpense()
+            .toTransactionSummary()
 
         assertNull(mapped.categoryId)
         val categoryLabel = mapped.categoryId?.toString() ?: "Uncategorized"
@@ -58,7 +55,7 @@ class DashboardExpenseMapperTest {
     }
 
     @Test
-    fun `shared expense effectiveAmount used instead of raw amount`() {
+    fun `shared expense effectiveAmount preserved in TransactionSummary`() {
         val sharedExpense = createExpense(
             date = "2026-03-07",
             amount = 120.0,
@@ -74,11 +71,12 @@ class DashboardExpenseMapperTest {
             amountOverride = sharedExpense.effectiveAmount
         )
 
-        val mapped = dashboardExpense.toEntityExpense()
+        val mapped: TransactionSummary = dashboardExpense.toTransactionSummary()
 
-        assertApproxEquals(120.0, sharedExpense.amount, 0.0001)
-        assertApproxEquals(30.0, sharedExpense.effectiveAmount, 0.0001)
+        // Raw amount as supplied to DashboardExpense
         assertApproxEquals(30.0, mapped.amount, 0.0001)
+        // effectiveAmount is carried through explicitly
+        assertApproxEquals(30.0, mapped.effectiveAmount, 0.0001)
     }
 
     @Test
@@ -89,9 +87,9 @@ class DashboardExpenseMapperTest {
             createExpense(date = "2026-03-10", amount = 30.0, merchant = "C", id = 2003L)
         )
 
-        val mapped = expenses
+        val mapped: List<TransactionSummary> = expenses
             .map { it.toDashboardExpenseFixture() }
-            .map { it.toEntityExpense() }
+            .map { it.toTransactionSummary() }
 
         assertEquals(expenses.size, mapped.size)
         assertEquals(expenses.map { it.id }, mapped.map { it.id })

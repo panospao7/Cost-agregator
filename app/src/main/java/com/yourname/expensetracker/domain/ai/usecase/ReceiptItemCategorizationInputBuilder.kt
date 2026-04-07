@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.CloudCategoryOption
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.dto.CategoryRef
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import java.security.MessageDigest
 import javax.inject.Inject
@@ -39,13 +40,15 @@ class ReceiptItemCategorizationInputBuilder @Inject constructor(
             }
         } ?: emptyList()
         
-        // Get user's categories
-        val categories = categoryRepository.getAll()
+        // Get user's categories and map to domain DTOs at the boundary
+        val categoryRefs = categoryRepository.getAll().map { category ->
+            CategoryRef(id = category.id, name = category.name)
+        }
         val cloudCategoryOptions = if (shouldRedact) {
-            categories.map { category ->
+            categoryRefs.map { ref ->
                 CloudCategoryOption(
-                    categoryId = category.id,
-                    cloudName = cloudSafeCategoryName(category.id, category.name)
+                    categoryId = ref.id,
+                    cloudName = cloudSafeCategoryName(ref.id, ref.name)
                 )
             }
         } else {
@@ -56,7 +59,7 @@ class ReceiptItemCategorizationInputBuilder @Inject constructor(
             receiptId = receipt.id,
             merchant = sanitizeMerchant(receipt.parsedMerchant ?: "Unknown Merchant", shouldRedact),
             lineItems = lineItems,
-            userCategories = categories,
+            userCategories = categoryRefs,
             cloudCategoryOptions = cloudCategoryOptions,
             totalTax = receipt.parsedTaxAmount,
             currency = receipt.currency,

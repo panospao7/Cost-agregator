@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.model
 
-import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.domain.dto.ReviewPriorityInput
 
 /**
  * Result of AI priority scoring for a review item.
@@ -44,23 +44,23 @@ data class ReviewPriorityFactors(
 ) {
     companion object {
         /**
-         * Creates factors from a PendingReview item using deterministic calculations.
+         * Creates factors from a [ReviewPriorityInput] snapshot using deterministic calculations.
          * This is used as the base score before AI enhancement.
          */
-        fun fromReview(review: PendingReview): ReviewPriorityFactors {
+        fun fromReview(review: ReviewPriorityInput, nowMs: Long): ReviewPriorityFactors {
             return ReviewPriorityFactors(
                 confidenceLevel = (1.0f - review.confidence).coerceIn(0f, 1f),
                 duplicateRisk = 0.5f, // Will be calculated by dedupe engine
                 merchantClarity = if (review.suggestedMerchant == "Unknown") 0.2f else 0.8f,
-                timeSensitivity = calculateTimeSensitivity(review.createdAt),
+                timeSensitivity = calculateTimeSensitivity(review.createdAt, nowMs),
                 categoryClarity = if (review.suggestedCategoryId == null) 0.3f else 0.9f,
                 amountSignificance = calculateAmountSignificance(review.suggestedAmount),
                 historicalPattern = 0.5f // Default, will be enhanced by AI
             )
         }
         
-        private fun calculateTimeSensitivity(createdAt: Long): Float {
-            val ageHours = (System.currentTimeMillis() - createdAt) / (1000 * 60 * 60)
+        private fun calculateTimeSensitivity(createdAt: Long, nowMs: Long): Float {
+            val ageHours = (nowMs - createdAt).coerceAtLeast(0L) / (1000 * 60 * 60)
             return when {
                 ageHours < 1 -> 0.2f // Very recent
                 ageHours < 24 -> 0.4f // Today

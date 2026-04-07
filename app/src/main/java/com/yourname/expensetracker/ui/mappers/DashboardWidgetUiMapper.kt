@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.ui.mappers
 
-import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.model.TransactionSummary
 import com.yourname.expensetracker.domain.model.dashboard.DomainBlockStatus
 import com.yourname.expensetracker.domain.model.dashboard.DomainDayBudgetStatus
 import com.yourname.expensetracker.domain.model.dashboard.DomainExpenseSummary
@@ -16,11 +16,11 @@ fun DomainBlockStatus.toUi(): BlockStatus = when (this) {
     DomainBlockStatus.NO_DATA -> BlockStatus.NO_DATA
 }
 
-private fun DomainExpenseSummary.toUiExpense(): Expense = Expense(
+private fun DomainExpenseSummary.toTransactionSummary(): TransactionSummary = TransactionSummary(
     id = id,
     amount = amount,
+    effectiveAmount = amount,
     merchant = description,
-    transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
     date = date,
     categoryId = categoryName?.toLongOrNull()
 )
@@ -37,7 +37,7 @@ fun DomainDayBudgetStatus.toUi(): DayBudgetStatus = DayBudgetStatus(
     plannedImpact = plannedImpact,
     recurringItems = recurringItems,
     plannedItems = plannedItems,
-    topTransactions = topTransactions.map { it.toUiExpense() }
+    topTransactions = topTransactions.map { it.toTransactionSummary() }
 )
 
 fun List<DomainDayBudgetStatus>.toUi(): List<DayBudgetStatus> = map { it.toUi() }

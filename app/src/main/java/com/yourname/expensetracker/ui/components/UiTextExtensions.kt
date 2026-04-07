@@ -75,6 +75,11 @@ private fun String.toResourceIdOrNull(): Int? {
         DomainTextKeys.SAVINGS_CENTURY_CLUB -> R.string.domain_savings_century_club
         DomainTextKeys.SAVINGS_GOAL_CRUSHER -> R.string.domain_savings_goal_crusher
         DomainTextKeys.SAVINGS_GRAND_SAVER -> R.string.domain_savings_grand_saver
+        DomainTextKeys.NARRATIVE_BUDGET_ALERTS -> R.string.domain_narrative_budget_alerts
+        DomainTextKeys.NARRATIVE_BUDGET_HEALTH -> R.string.domain_narrative_budget_health
+        DomainTextKeys.NARRATIVE_GOAL_RESERVES -> R.string.domain_narrative_goal_reserves
+        DomainTextKeys.NARRATIVE_COMMITTED_PLANS -> R.string.domain_narrative_committed_plans
+        DomainTextKeys.NARRATIVE_PREDICTED_ACTIVITY -> R.string.domain_narrative_predicted_activity
         DashboardTextKeys.WIDGET_BUDGET_EXCEEDED_FORMAT -> R.string.widget_budget_exceeded_format
         DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK -> R.string.widget_all_budgets_on_track
         DashboardTextKeys.WIDGET_INSIGHT_SPENT_LESS_FORMAT -> R.string.widget_insight_spent_less_format

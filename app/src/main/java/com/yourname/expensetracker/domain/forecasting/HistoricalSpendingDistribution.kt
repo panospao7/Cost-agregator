@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.forecasting
 
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
@@ -74,8 +74,8 @@ class HistoricalSpendingDistribution @Inject constructor(
         val allExpenses = expenseRepository.getExpensesBetween(lookbackStart, currentWeekStart)
 
         val spendingExpenses = allExpenses.filter { expense ->
-            (expense.transactionType == TransactionType.PURCHASE ||
-                expense.transactionType == TransactionType.WITHDRAWAL) &&
+            (expense.transactionType.toDomain() == DomainTransactionType.PURCHASE ||
+                expense.transactionType.toDomain() == DomainTransactionType.WITHDRAWAL) &&
                 !expense.isNotMine
         }
 
@@ -194,6 +194,16 @@ class HistoricalSpendingDistribution @Inject constructor(
             allWeeklyTotals = allWeeklyTotals
         )
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }
 
 /** Per-week aggregation data (internal). */

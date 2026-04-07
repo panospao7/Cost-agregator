@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.model
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 
 enum class DuplicateVerdict {
     LIKELY_DUPLICATE,
@@ -94,7 +94,7 @@ data class CategorizationAssistInput(
     val merchant: String,
     val amount: Double,
     val currency: String,
-    val transactionType: TransactionType,
+    val transactionType: DomainTransactionType,
     val date: Long?,
     val currentCategoryId: Long?,
     val deterministicMatchType: String?,

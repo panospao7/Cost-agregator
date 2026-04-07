@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.model
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.model.UiText
 
@@ -45,7 +45,7 @@ data class ExpenseQueryFilters(
     val period: PeriodRange? = null,
     val merchants: Set<String> = emptySet(),
     val categoryIds: Set<Long> = emptySet(),
-    val transactionTypes: Set<TransactionType> = emptySet(),
+    val transactionTypes: Set<DomainTransactionType> = emptySet(),
     val ownership: QueryOwnershipScope = QueryOwnershipScope.ALL,
     val minAmount: Double? = null,
     val maxAmount: Double? = null

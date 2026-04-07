@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
@@ -120,10 +120,10 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         }
 
         val matchedType = when {
-            normalized.contains("transfer") -> TransactionType.TRANSFER
-            normalized.contains("withdraw") || normalized.contains("atm") -> TransactionType.WITHDRAWAL
-            normalized.contains("deposit") || normalized.contains("income") || normalized.contains("salary") -> TransactionType.DEPOSIT
-            normalized.contains("purchase") || normalized.contains("spend") || normalized.contains("spent") -> TransactionType.PURCHASE
+            normalized.contains("transfer") -> DomainTransactionType.TRANSFER
+            normalized.contains("withdraw") || normalized.contains("atm") -> DomainTransactionType.WITHDRAWAL
+            normalized.contains("deposit") || normalized.contains("income") || normalized.contains("salary") -> DomainTransactionType.DEPOSIT
+            normalized.contains("purchase") || normalized.contains("spend") || normalized.contains("spent") -> DomainTransactionType.PURCHASE
             else -> null
         }
 

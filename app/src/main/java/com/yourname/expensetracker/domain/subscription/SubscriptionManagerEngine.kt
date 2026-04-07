@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.domain.subscription
 
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
 import com.yourname.expensetracker.data.database.entity.SubscriptionUsage
@@ -289,7 +288,7 @@ class SubscriptionManagerEngine @Inject constructor(
             recommendations.add(SubscriptionRecommendation(
                 subscription = subscription,
                 type = RecommendationType.PRICE_INCREASE,
-                title = UiText.from(R.string.domain_subscription_price_increased, increase.changePercent),
+                title = UiText.fromKey("domain_subscription_price_increased", increase.changePercent),
                 description = "Your subscription price went from €${String.format("%.2f", increase.oldAmount)} to €${String.format("%.2f", increase.newAmount)}. ${increase.reason ?: ""}",
                 potentialSavings = 0.0,
                 confidence = 0.9,
@@ -303,7 +302,7 @@ class SubscriptionManagerEngine @Inject constructor(
             recommendations.add(SubscriptionRecommendation(
                 subscription = subscription,
                 type = RecommendationType.UNDERUTILIZED,
-                title = UiText.from(R.string.domain_subscription_underutilized, usageStats.usesThisMonth, usageStats.targetUsesPerMonth),
+                title = UiText.fromKey("domain_subscription_underutilized", usageStats.usesThisMonth, usageStats.targetUsesPerMonth),
                 description = "You're only using ${String.format("%.0f", usageStats.usagePercentage)}% of your expected usage. Consider downgrading or canceling.",
                 potentialSavings = potentialSavings,
                 confidence = 0.85,
@@ -316,7 +315,7 @@ class SubscriptionManagerEngine @Inject constructor(
             recommendations.add(SubscriptionRecommendation(
                 subscription = subscription,
                 type = RecommendationType.UNUSED,
-                title = UiText.from(R.string.domain_subscription_no_usage),
+                title = UiText.fromKey("domain_subscription_no_usage"),
                 description = "You haven't recorded any usage for this subscription in the past month. Consider canceling to save €${String.format("%.2f", subscription.amount)} per month.",
                 potentialSavings = subscription.amount,
                 confidence = 0.95,
@@ -329,7 +328,7 @@ class SubscriptionManagerEngine @Inject constructor(
             recommendations.add(SubscriptionRecommendation(
                 subscription = subscription,
                 type = RecommendationType.CANCELLATION_OPPORTUNITY,
-                title = UiText.from(R.string.domain_subscription_high_cost),
+                title = UiText.fromKey("domain_subscription_high_cost"),
                 description = "Each use costs you €${String.format("%.2f", usageStats.costPerUse)}. This might not be worth it.",
                 potentialSavings = subscription.amount * 0.5,
                 confidence = 0.75,

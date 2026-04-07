@@ -5,10 +5,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
-import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.domain.dto.ReceiptItemCategorizationSnapshot
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
@@ -87,7 +87,7 @@ data class ReceiptScanState(
     val quickSavePreview: ReceiptQuickSavePreview? = null,
     
     // Item categorization
-    val itemCategorizations: List<ReceiptItemCategorization> = emptyList(),
+    val itemCategorizations: List<ReceiptItemCategorizationSnapshot> = emptyList(),
     val isAnalyzingItems: Boolean = false,
     val showItemBreakdown: Boolean = false,
     val itemAnalysisError: String? = null,
@@ -1071,7 +1071,7 @@ class ReceiptScanViewModel @Inject constructor(
 
             when (result) {
                 is com.yourname.expensetracker.domain.ai.model.CategorizationResult.Success -> {
-                    val items = receiptItemCategorizationRepository.getByReceiptId(receiptId)
+                    val items = receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId)
                     if (!_state.value.matchesReceiptForAnalysis(receiptId)) return
 
                     _state.update { current ->
@@ -1124,7 +1124,7 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update { it.copy(itemAnalysisError = null) }
     }
 
-    fun updateItemCategory(item: ReceiptItemCategorization, category: Category?) {
+    fun updateItemCategory(item: ReceiptItemCategorizationSnapshot, category: Category?) {
         viewModelScope.launch {
             val now = timeProvider.now()
             
@@ -1138,7 +1138,7 @@ class ReceiptScanViewModel @Inject constructor(
             
             // Reload items
             val receiptId = _state.value.receiptId ?: return@launch
-            val updatedItems = receiptItemCategorizationRepository.getByReceiptId(receiptId)
+            val updatedItems = receiptItemCategorizationRepository.getByReceiptIdAsSnapshots(receiptId)
             
             _state.update { it.copy(itemCategorizations = updatedItems) }
         }
@@ -1148,7 +1148,7 @@ class ReceiptScanViewModel @Inject constructor(
         _state.update { it.copy(showItemBreakdown = !it.showItemBreakdown) }
     }
 
-    fun showItemRationale(item: ReceiptItemCategorization) {
+    fun showItemRationale(item: ReceiptItemCategorizationSnapshot) {
         // This would show a dialog with AI rationale - for now just log it
         Timber.d("Item rationale: ${item.aiRationale}")
     }

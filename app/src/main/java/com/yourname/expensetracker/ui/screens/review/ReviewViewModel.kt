@@ -2,7 +2,6 @@ package com.yourname.expensetracker.ui.screens.review
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.TransactionType

@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.sqrt
@@ -16,7 +16,7 @@ class MerchantInsightEngine @Inject constructor() {
 
     fun calculate(allExpenses: List<Expense>): List<MerchantInsight> {
         val purchases = allExpenses.filter { 
-            it.transactionType == TransactionType.PURCHASE && 
+            it.transactionType.toDomain() == DomainTransactionType.PURCHASE && 
             !it.isNotMine 
         }
         
@@ -51,4 +51,14 @@ class MerchantInsightEngine @Inject constructor() {
         .sortedByDescending { it.totalSpent }
         .take(TOP_MERCHANTS_LIMIT)
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

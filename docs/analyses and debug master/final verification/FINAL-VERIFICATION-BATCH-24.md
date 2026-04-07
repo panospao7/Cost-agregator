@@ -1,5 +1,7 @@
 # Final Verification — Batch 24: Models & Data Classes
 
+> **[RESOLVED BY A.2]** The domain/data layer boundary violations have been resolved. All domain models now use domain DTOs instead of Room entities. Data-layer imports removed from domain code.
+
 ## Scope
 - `com/yourname/expensetracker/domain/model/SavingsGoal.kt`
 - `com/yourname/expensetracker/domain/model/FinancialForecast.kt`

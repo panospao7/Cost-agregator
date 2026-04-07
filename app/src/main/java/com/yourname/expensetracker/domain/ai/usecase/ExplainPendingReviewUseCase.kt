@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -75,7 +75,7 @@ class ExplainPendingReviewUseCase @Inject constructor(
 
         // ── 5a. Persist RUNNING tombstone ────────────────────────────────────
         val sourceHash = input.hashCode().toString()
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType    = AiTargetType.PENDING_REVIEW,
             targetKey     = targetKey,
             capability    = AiCapability.REVIEW_EXPLANATION,

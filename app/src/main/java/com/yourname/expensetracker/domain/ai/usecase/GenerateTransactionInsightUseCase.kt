@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -27,7 +27,7 @@ import javax.inject.Inject
  * This is a lightweight, synchronous-style use case that:
  * 1. Checks if AI is enabled
  * 2. Generates a short AI insight about the transaction (using dashboard briefing service)
- * 3. Returns an AiArtifactEntity (or null if AI fails/disabled)
+ * 3. Returns an AiArtifactRecord (or null if AI fails/disabled)
  * 4. Times out after 3 seconds to avoid blocking recommendation generation
  *
  * Design notes:
@@ -53,9 +53,9 @@ class GenerateTransactionInsightUseCase @Inject constructor(
      * Generate an AI insight for a transaction.
      *
      * @param transaction The transaction to generate an insight for
-     * @return AiArtifactEntity with insight text, or null if AI is disabled/fails
+     * @return AiArtifactRecord with insight text, or null if AI is disabled/fails
      */
-    suspend operator fun invoke(transaction: Expense): AiArtifactEntity? {
+    suspend operator fun invoke(transaction: Expense): AiArtifactRecord? {
         return withTimeoutOrNull(TIMEOUT_MS) {
             try {
                 generateInsightInternal(transaction)
@@ -69,7 +69,7 @@ class GenerateTransactionInsightUseCase @Inject constructor(
         }
     }
 
-    private suspend fun generateInsightInternal(transaction: Expense): AiArtifactEntity? {
+    private suspend fun generateInsightInternal(transaction: Expense): AiArtifactRecord? {
         // ── 1. Settings gate ─────────────────────────────────────────────────
         val settings = aiSettingsRepository.settings().first()
         Timber.d("GenerateTransactionInsightUseCase: Step 1 - Settings: aiEnabled=${settings.aiEnabled}, dashboardBriefingEnabled=${settings.dashboardBriefingEnabled}")
@@ -97,7 +97,7 @@ class GenerateTransactionInsightUseCase @Inject constructor(
         val targetKey = "transaction:${transaction.id}"
         val sourceHash = transaction.hashCode().toString()
 
-        val baseEntity = AiArtifactEntity(
+        val baseEntity = AiArtifactRecord(
             targetType = AiTargetType.EXPENSE,
             targetId = transaction.id,
             targetKey = targetKey,

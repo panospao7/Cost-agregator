@@ -88,7 +88,7 @@ class SpendingChallengeManager @Inject constructor(
     ): SpendingChallenge {
         val now = timeProvider.now()
         return SpendingChallenge(
-            id = System.currentTimeMillis(), // Temporary ID
+            id = now, // Use captured timeProvider value as temporary ID
             name = name,
             type = type,
             startDate = now,

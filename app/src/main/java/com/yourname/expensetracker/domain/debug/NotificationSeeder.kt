@@ -1,15 +1,10 @@
 package com.yourname.expensetracker.domain.debug
 
-import android.content.Context
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import javax.inject.Inject
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlin.random.Random
 
-class NotificationSeeder @Inject constructor(
-    @ApplicationContext private val context: Context
-) {
+class NotificationSeeder @Inject constructor() {
 
     val categories = mapOf(
         "Groceries" to listOf("AB Vassilopoulos", "Sklavenitis", "Lidl", "Masoutis", "My Market"),
@@ -87,7 +82,7 @@ class NotificationSeeder @Inject constructor(
         return RawNotification(
             packageName = packageName,
             appName = source,
-            title = context.getString(R.string.notification_deposit_received_title),
+            title = "Deposit Received",
             text = text,
             timestamp = date,
             capturedAt = System.currentTimeMillis()
@@ -104,16 +99,12 @@ class NotificationSeeder @Inject constructor(
         val sources = listOf("Revolut", "Piraeus", "Eurobank", "Alpha Bank")
         val source = sources.random()
 
-        val text = when (source) {
-            "Revolut" -> context.getString(R.string.notification_spent_at_format, amount, merchant)
-            "Piraeus" -> context.getString(R.string.notification_spent_at_format, amount, merchant)
-            else -> context.getString(R.string.notification_spent_at_format, amount, merchant)
-        }
+        val text = "Spent €%.2f at %s".format(amount, merchant)
 
         return RawNotification(
             packageName = "com.simulation.$source".lowercase(),
             appName = source,
-            title = context.getString(R.string.notification_transaction_alert_title),
+            title = "Transaction Alert",
             text = text,
             timestamp = date,
             capturedAt = System.currentTimeMillis()
@@ -137,8 +128,8 @@ class NotificationSeeder @Inject constructor(
         return RawNotification(
             packageName = "com.simulation.revolut",
             appName = "Revolut",
-            title = context.getString(R.string.notification_recurring_payment_title),
-            text = context.getString(R.string.notification_spent_at_format, amount, merchant),
+            title = "Recurring Payment",
+            text = "Spent €%.2f at %s".format(amount, merchant),
             timestamp = date,
             capturedAt = System.currentTimeMillis()
         )
@@ -163,8 +154,8 @@ class NotificationSeeder @Inject constructor(
         return RawNotification(
             packageName = "com.unknown.app",
             appName = "Unknown App",
-            title = context.getString(R.string.notification_payment_title),
-            text = context.getString(R.string.notification_payment_unknown_merchant_format, amount),
+            title = "Payment",
+            text = "Payment of €%.2f from unknown merchant".format(amount),
             timestamp = date,
             capturedAt = System.currentTimeMillis()
         )

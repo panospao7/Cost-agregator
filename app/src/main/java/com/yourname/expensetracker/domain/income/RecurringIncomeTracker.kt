@@ -2,7 +2,7 @@ package com.yourname.expensetracker.domain.income
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +30,7 @@ class RecurringIncomeTracker @Inject constructor(
         val deposits = expenseDao.getExpensesByTypeBetween(
             threeMonthsAgo,
             timeProvider.now(),
-            TransactionType.DEPOSIT.name
+            DomainTransactionType.DEPOSIT.name
         )
         
         // Group by merchant/payer
@@ -110,9 +110,9 @@ class RecurringIncomeTracker @Inject constructor(
         var spending = 0.0
         
         for (expense in expenses) {
-            when (expense.transactionType) {
-                TransactionType.DEPOSIT -> income += expense.effectiveAmount
-                TransactionType.PURCHASE, TransactionType.WITHDRAWAL -> spending += expense.effectiveAmount
+            when (expense.transactionType.toDomain()) {
+                DomainTransactionType.DEPOSIT -> income += expense.effectiveAmount
+                DomainTransactionType.PURCHASE, DomainTransactionType.WITHDRAWAL -> spending += expense.effectiveAmount
                 else -> {}
             }
         }
@@ -159,6 +159,15 @@ class RecurringIncomeTracker @Inject constructor(
         calendar.set(java.util.Calendar.SECOND, 0)
         return calendar.timeInMillis
     }
+
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }
 
 data class RecurringIncome(

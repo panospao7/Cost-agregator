@@ -23,6 +23,8 @@
 **Affected files:** `BlockPartyDay.kt`, `DashboardExpenseMapper.kt`, `AiArtifactPresentation.kt`, `ReceiptItemCategorizationModels.kt`, `AiArtifactRepository.kt`, `FinancialQueryModels.kt`, `CaptureAssistModels.kt`, `SemanticDuplicateModels.kt`, `ReviewPriorityModels.kt`, `DomainTransactionFilter.kt`, `NarrativeGenerator.kt`
 **Suggested fix:** Introduce domain DTOs for all cross-boundary data. Move entity mappers to the data/adapter layer. Stop round-tripping through `Expense` — keep `DashboardExpense` downstream or extend it with ownership/share fields.
 
+**[RESOLVED BY A.2]**
+
 ### A.3: Non-deterministic Default Values (System.currentTimeMillis, UUID.randomUUID)
 **Batches affected:** 01, 07, 10, 16, 17, 24, 34, 36, 38, 40, 41, 47
 **Severity:** HIGH

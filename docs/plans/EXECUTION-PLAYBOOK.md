@@ -1,10 +1,22 @@
-# Execution Playbook — ExpenseTracker Refactoring
+its cruc# Execution Playbook — ExpenseTracker Refactoring
 
 > **Project:** ExpenseTracker (Android/Kotlin/Clean Architecture)
 > **Branch:** `master-refactor`
 > **Current Phase:** Phase 1 — Universal Epics
-> **Active Epic:** A.2 — Domain/Data Layer Boundary Violations
-> **Status:** A.1 COMPLETE — Ready for A.2
+> **Active Epic:** A.3 — Non-deterministic Default Values
+> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 next
+
+---
+
+## 0. AUTONOMOUS EXECUTION RULES (CRITICAL)
+- **Full Cycle Completion:** Only move to the next epic when the current one is FULLY complete (Plan → Code → Review PASS → Documentation → Commit).
+- **No Permission Requests:** Do NOT ask the user for permission or directions. Follow the instructions autonomously.
+- **No Stopping:** Do NOT stop until ALL 10 epics (A.1 through A.10) are resolved.
+- **Commit but Don't Push:** At the end of each epic, commit the changes but DO NOT push to remote. Push only when all 10 epics are complete.
+- **Documentation is Mandatory:** Every epic MUST update the Registry and affected Batch reports BEFORE the commit. No exceptions.
+- **Review Loop:** If the reviewer finds issues, fix them one at a time using @coder, then re-review. Repeat until PASS.
+- **Micro-Batch Coding:** Always use @specialist-coder for 1-5 files at a time. Never batch large changes.
+- **Sequential Execution:** Complete A.1 → A.2 → A.3 → ... → A.10 in order. Do not skip or parallelize epics.
 
 ---
 
@@ -161,7 +173,15 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Batch 4: Verification (Tests) — **COMPLETED** (review PASS)
   - [x] Batch 5: Documentation Updates — **COMPLETED**
   - [x] **Step 4: Review** — **PASS**
-- [ ] **A.2:** Domain/Data Layer Boundary Violations
+- [x] **A.2:** Domain/Data Layer Boundary Violations
+  - [x] Plan created (`PLAN-A2-domain-data-boundary.md`)
+  - [x] Batch 1: Dashboard/BlockParty boundary cleanup — **COMPLETED**
+  - [x] Batch 2: Domain enums + AI DTO migration — **COMPLETED**
+  - [x] Batch 3: AI Artifact repository DTO migration — **COMPLETED**
+  - [x] Batch 4: Narrative/resource boundary cleanup — **COMPLETED**
+  - [x] Review: PASS (8 issues found → all resolved after 3 review passes)
+  - [x] Documentation Updates — **COMPLETED**
+  - [x] Commit — **COMPLETED**
 - [ ] **A.3:** Non-deterministic Default Values
 - [ ] **A.4:** Duplicate Detection Logic Inconsistencies
 - [ ] **A.5:** Time Boundary / Calendar Arithmetic Inconsistencies
@@ -195,5 +215,5 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
 
 ---
 
-*Last Updated: 2026-04-07*
-*Next Action: Begin A.2 — Domain/Data Layer Boundary Violations*
+*Last Updated: 2026-04-08*
+*Next Action: Begin A.3 — Non-deterministic Default Values*

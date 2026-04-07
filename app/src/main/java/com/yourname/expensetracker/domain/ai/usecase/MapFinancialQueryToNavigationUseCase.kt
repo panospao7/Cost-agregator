@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.repository.OwnershipFilter
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
+import com.yourname.expensetracker.domain.model.navigation.DomainOwnershipFilter
 import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import javax.inject.Inject
 
@@ -23,10 +23,10 @@ class MapFinancialQueryToNavigationUseCase @Inject constructor() {
             dateRange = period?.let { it.start to it.end },
             ownership = when (intent.filters.ownership) {
                 QueryOwnershipScope.ALL -> null
-                QueryOwnershipScope.MINE -> OwnershipFilter.MINE
-                QueryOwnershipScope.NOT_MINE -> OwnershipFilter.NOT_MINE
-                QueryOwnershipScope.SHARED -> OwnershipFilter.SHARED
-                QueryOwnershipScope.TRANSFER -> OwnershipFilter.TRANSFER
+                QueryOwnershipScope.MINE -> DomainOwnershipFilter.MINE
+                QueryOwnershipScope.NOT_MINE -> DomainOwnershipFilter.NOT_MINE
+                QueryOwnershipScope.SHARED -> DomainOwnershipFilter.SHARED
+                QueryOwnershipScope.TRANSFER -> DomainOwnershipFilter.TRANSFER
             },
             minAmount = intent.filters.minAmount,
             maxAmount = intent.filters.maxAmount

@@ -1,17 +1,12 @@
 package com.yourname.expensetracker.domain.debug
 
-import android.content.Context
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
-import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /** Detects and categorizes issues in debug data. */
 @Singleton
-class DebugIssueDetector @Inject constructor(
-    @ApplicationContext private val context: Context
-) {
+class DebugIssueDetector @Inject constructor() {
 
     fun detectIssues(
         rawText: String,
@@ -25,8 +20,8 @@ class DebugIssueDetector @Inject constructor(
                 DebugIssue(
                     severity = IssueSeverity.CRITICAL,
                     category = "PARSING_FAILURE",
-                    message = context.getString(R.string.debug_issue_no_transactions),
-                    suggestion = context.getString(R.string.debug_suggestion_check_document_format)
+                    message = "No transactions parsed from document",
+                    suggestion = "Check document format and try again"
                 )
             )
         }
@@ -37,9 +32,9 @@ class DebugIssueDetector @Inject constructor(
                     DebugIssue(
                         severity = IssueSeverity.CRITICAL,
                         category = "MISSING_FIELD",
-                        message = context.getString(R.string.debug_issue_missing_merchant_format, index + 1),
+                        message = "Transaction #${index + 1}: Missing merchant name",
                         transactionIndex = index,
-                        suggestion = context.getString(R.string.debug_suggestion_verify_ocr)
+                        suggestion = "Verify OCR quality and retry"
                     )
                 )
             }
@@ -49,9 +44,9 @@ class DebugIssueDetector @Inject constructor(
                     DebugIssue(
                         severity = IssueSeverity.CRITICAL,
                         category = "INVALID_AMOUNT",
-                        message = context.getString(R.string.debug_issue_invalid_amount_format, index + 1, tx.amount),
+                        message = "Transaction #${index + 1}: Invalid amount ${tx.amount}",
                         transactionIndex = index,
-                        suggestion = context.getString(R.string.debug_suggestion_check_number_format)
+                        suggestion = "Check number format in document"
                     )
                 )
             }
@@ -61,9 +56,9 @@ class DebugIssueDetector @Inject constructor(
                     DebugIssue(
                         severity = IssueSeverity.WARNING,
                         category = "LOW_CONFIDENCE",
-                        message = context.getString(R.string.debug_issue_low_confidence_format, index + 1, (tx.confidence * 100).toInt()),
+                        message = "Transaction #${index + 1}: Low confidence ${(tx.confidence * 100).toInt()}%",
                         transactionIndex = index,
-                        suggestion = context.getString(R.string.debug_suggestion_verify_manually)
+                        suggestion = "Verify transaction manually"
                     )
                 )
             }
@@ -73,9 +68,9 @@ class DebugIssueDetector @Inject constructor(
                     DebugIssue(
                         severity = IssueSeverity.WARNING,
                         category = "MISSING_DATE",
-                        message = context.getString(R.string.debug_issue_missing_date_format, index + 1),
+                        message = "Transaction #${index + 1}: Missing date",
                         transactionIndex = index,
-                        suggestion = context.getString(R.string.debug_suggestion_date_will_default)
+                        suggestion = "Date will default to today"
                     )
                 )
             }
@@ -85,9 +80,9 @@ class DebugIssueDetector @Inject constructor(
                     DebugIssue(
                         severity = IssueSeverity.WARNING,
                         category = "UNUSUAL_AMOUNT",
-                        message = context.getString(R.string.debug_issue_unusual_amount_format, index + 1, tx.amount),
+                        message = "Transaction #${index + 1}: Unusual amount ${tx.amount}",
                         transactionIndex = index,
-                        suggestion = context.getString(R.string.debug_suggestion_verify_decimal_format)
+                        suggestion = "Verify decimal format in document"
                     )
                 )
             }
@@ -101,8 +96,8 @@ class DebugIssueDetector @Inject constructor(
                 DebugIssue(
                     severity = IssueSeverity.WARNING,
                     category = "OCR_QUALITY",
-                    message = context.getString(R.string.debug_ocr_short_output_format, lineCount),
-                    suggestion = context.getString(R.string.debug_ocr_document_not_fully_scanned)
+                    message = "OCR output is short: $lineCount lines",
+                    suggestion = "Document may not be fully scanned"
                 )
             )
         }
@@ -112,8 +107,8 @@ class DebugIssueDetector @Inject constructor(
                 DebugIssue(
                     severity = IssueSeverity.WARNING,
                     category = "OCR_QUALITY",
-                    message = context.getString(R.string.debug_ocr_little_text_format, charCount),
-                    suggestion = context.getString(R.string.debug_ocr_rescan_better_format)
+                    message = "Little text extracted: $charCount chars",
+                    suggestion = "Rescan with better lighting"
                 )
             )
         }
@@ -124,8 +119,8 @@ class DebugIssueDetector @Inject constructor(
                 DebugIssue(
                     severity = IssueSeverity.WARNING,
                     category = "OCR_QUALITY",
-                    message = context.getString(R.string.debug_ocr_unrecognized_chars),
-                    suggestion = context.getString(R.string.debug_ocr_poor_quality)
+                    message = "Unrecognized characters detected",
+                    suggestion = "Poor OCR quality, try better image"
                 )
             )
         }
@@ -135,8 +130,8 @@ class DebugIssueDetector @Inject constructor(
                 DebugIssue(
                     severity = IssueSeverity.INFO,
                     category = "PERFORMANCE",
-                    message = context.getString(R.string.debug_performance_slow_format, processingTimeMs / 1000.0),
-                    suggestion = context.getString(R.string.debug_suggestion_use_pdf)
+                    message = "Processing took ${processingTimeMs / 1000.0}s",
+                    suggestion = "Use PDF format for better performance"
                 )
             )
         } else {
@@ -144,7 +139,7 @@ class DebugIssueDetector @Inject constructor(
                 DebugIssue(
                     severity = IssueSeverity.INFO,
                     category = "PERFORMANCE",
-                    message = context.getString(R.string.debug_performance_fast_format, processingTimeMs)
+                    message = "Processing took ${processingTimeMs}ms"
                 )
             )
         }
@@ -155,7 +150,7 @@ class DebugIssueDetector @Inject constructor(
                 DebugIssue(
                     severity = IssueSeverity.INFO,
                     category = "SUMMARY",
-                    message = context.getString(R.string.debug_summary_parsed_format, successCount, transactions.size)
+                    message = "Successfully parsed $successCount of ${transactions.size} transactions"
                 )
             )
         }

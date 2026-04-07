@@ -3,7 +3,6 @@ package com.yourname.expensetracker.domain.logic
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -272,7 +271,7 @@ class SynthesisEngine @Inject constructor(
 
     fun calculateBlockPartyData(
         forecast: FinancialForecast,
-        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        expenses: List<TransactionSummary>,
         dailySpending: List<Float>,
         budgetLimit: Double
     ): List<BlockPartyDay> {
@@ -321,9 +320,7 @@ class SynthesisEngine @Inject constructor(
         val dayBucketCalendar = Calendar.getInstance()
         val expensesByDay = expenses.filter {
             it.date >= startOfMonth &&
-                it.date < endOfMonthExclusive &&
-                it.transactionType == TransactionType.PURCHASE &&
-                !it.isNotMine
+                it.date < endOfMonthExclusive
         }
             .groupBy { expense ->
                 dayBucketCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)

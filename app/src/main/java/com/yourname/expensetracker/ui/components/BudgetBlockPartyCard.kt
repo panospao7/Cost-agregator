@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.domain.model.TransactionSummary
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Date
 import java.util.Calendar
@@ -49,7 +50,7 @@ data class DayBudgetStatus(
     val plannedImpact: Double = 0.0,
     val recurringItems: List<String> = emptyList(),
     val plannedItems: List<String> = emptyList(),
-    val topTransactions: List<com.yourname.expensetracker.data.database.entity.Expense> = emptyList()
+    val topTransactions: List<TransactionSummary> = emptyList()
 )
 
 @Composable

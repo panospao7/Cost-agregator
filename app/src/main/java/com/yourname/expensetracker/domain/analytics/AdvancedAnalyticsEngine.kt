@@ -3,7 +3,7 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.BuildConfig
 import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -154,8 +154,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val budgets = budgetsDeferred.await()
         
         // Filter to purchases only, excluding "not mine" expenses
-        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
-        val previousPurchases = previousExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+        val currentPurchases = currentExpenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
+        val previousPurchases = previousExpenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
         
         // Build lookup maps
         val categoryMap = categories.associateBy { it.id }
@@ -245,7 +245,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val currentExpenses = currentExpensesDeferred.await()
         val historicalExpenses = historicalExpensesDeferred.await()
         
-        val currentPurchases = currentExpenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+        val currentPurchases = currentExpenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
         
         currentPurchases
             .groupBy { it.merchant }
@@ -257,7 +257,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 // Historical context for price trends
                 val historicalForMerchant = historicalExpenses
                     .filter {
-                        it.transactionType == TransactionType.PURCHASE &&
+                        it.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
                         !it.isNotMine &&
                         it.merchant.equals(merchant, ignoreCase = true)
                     }
@@ -329,7 +329,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val expenses = withContext(ioDispatcher) {
                 expenseRepository.getExpensesBetween(period.startMs, period.endMs)
             }
-            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            val purchases = expenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
         
         if (purchases.isEmpty()) {
             return@coroutineScope createEmptyPatternAnalysis(period)
@@ -428,7 +428,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val expenses = withContext(ioDispatcher) {
                 expenseRepository.getExpensesBetween(period.startMs, period.endMs)
             }
-            val purchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+            val purchases = expenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
         
         if (purchases.isEmpty()) {
             return@coroutineScope createEmptyStatisticalInsights(period)
@@ -962,4 +962,14 @@ class AdvancedAnalyticsEngine @Inject constructor(
             .maxByOrNull { it.value.size }
             ?.key
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
 import com.yourname.expensetracker.data.database.dao.AnomalyAlertDao
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
@@ -252,7 +252,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             val expenses = expenseRepository.getExpensesSince(monthStart)
             
             val spentToDate = expenses
-                .filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+                .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
                 .sumOf { it.effectiveAmount }
             
             // Include known upcoming recurring obligations in next 7 days
@@ -437,4 +437,14 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             else -> null
         }
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

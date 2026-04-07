@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.service
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.repository.OwnershipFilter
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.navigation.DomainOwnershipFilter
 import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import org.json.JSONObject
 import javax.inject.Inject
@@ -76,7 +76,7 @@ class TransactionFilterSerializer @Inject constructor() {
 
             val transactionType = json.optString(KEY_TRANSACTION_TYPE).takeIf { it.isNotBlank() }?.let {
                 try {
-                    TransactionType.valueOf(it)
+                    DomainTransactionType.valueOf(it)
                 } catch (e: IllegalArgumentException) {
                     null // Ignore invalid transaction types
                 }
@@ -91,7 +91,7 @@ class TransactionFilterSerializer @Inject constructor() {
             
             val ownership = json.optString(KEY_OWNERSHIP).takeIf { it.isNotBlank() }?.let {
                 try {
-                    OwnershipFilter.valueOf(it)
+                    DomainOwnershipFilter.valueOf(it)
                 } catch (e: IllegalArgumentException) {
                     null // Ignore invalid ownership filters
                 }
