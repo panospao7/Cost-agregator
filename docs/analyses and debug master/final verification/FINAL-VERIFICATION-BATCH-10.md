@@ -1,5 +1,7 @@
 # Final Verification — Batch 10: AI Services - Hybrid + Workers
 
+> **[RESOLVED BY A.3]** The non-deterministic default values issue (System.currentTimeMillis) has been fixed across the codebase.
+
 ## Scope
 - `com/yourname/expensetracker/data/ai/provider/HybridReviewExplanationService.kt`
 - `com/yourname/expensetracker/data/ai/provider/HybridReceiptItemCategorizationService.kt`

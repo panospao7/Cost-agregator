@@ -1,6 +1,7 @@
 # Final Verification — Batch 17: UI Screens
 
 > **[RESOLVED BY A.1]** The `effectiveAmount` vs `amount` inconsistency has been standardized across the codebase. All related issues in this batch are now resolved.
+> **[RESOLVED BY A.3]** The non-deterministic default values issue (System.currentTimeMillis) has been fixed across the codebase.
 
 ## Scope
 - `com/yourname/expensetracker/ui/screens/home/HomeScreen.kt`

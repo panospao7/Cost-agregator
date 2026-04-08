@@ -1,5 +1,7 @@
 # Final Verification — Batch 07: AI Use Cases - Input Builders
 
+> **[RESOLVED BY A.3]** The non-deterministic default values issue (System.currentTimeMillis) has been fixed across the codebase.
+
 ## Scope
 - Primary batch files analyzed:
   - `domain/ai/usecase/CategorizationAssistInputBuilder.kt`

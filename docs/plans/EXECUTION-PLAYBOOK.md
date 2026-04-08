@@ -130,6 +130,193 @@ This is the **single source of truth** for all issues. It is organized into:
   - Write a review report to `docs/reviews/REVIEW-<ID>-<BATCH>.md`.
   - If issues found, provide a remedy plan for the `@coder` to execute.
 
+## 4a. Agent Prompt Templates
+
+### @reviewer — Initial Review (After Code Implementation)
+```
+You are the @reviewer agent. Review the implementation of [EPIC-NAME] against the plan.
+
+## READ FIRST
+1. Read the plan: `docs/plans/PLAN-[ID].md`
+2. Read all modified files from the implementation
+
+## VERIFICATION CHECKS
+- [ ] Cross-reference every checklist item in the plan against actual code
+- [ ] Check for constraint violations (Room schemas, public APIs, etc.)
+- [ ] Search for regressions in dependent pipelines
+- [ ] Run grep for anti-patterns specific to this epic
+
+## OUTPUT
+Write a review report to `docs/reviews/REVIEW-[ID].md` with:
+- ✅ Items correctly implemented
+- ⚠️ Items partially implemented or needing attention
+- ❌ Items not implemented or incorrectly implemented
+- Remedy plan for any issues found (use @coder for ONE fix at a time)
+
+**If issues found:** Do NOT fix them yourself. Call @coder for each fix individually, then re-review.
+```
+
+### @reviewer — Re-review (After Fixes)
+```
+You are the @reviewer agent. Re-evaluate [EPIC-NAME] after fixes were applied.
+
+## READ FIRST
+1. Read the previous review: `docs/reviews/REVIEW-[ID].md`
+2. Read the fix that was applied
+
+## VERIFICATION CHECKS
+- [ ] Verify the fix was implemented correctly
+- [ ] Check for new regressions introduced by the fix
+- [ ] Run verification commands to confirm fix works
+
+## OUTPUT
+Update the review report with:
+- Status of previously found issues (✅ fixed / ❌ still broken)
+- Any new issues discovered
+- Final verdict: ✅ PASS or ❌ FAIL
+```
+
+### @coder — Fix Single Issue
+```
+Fix issue #[N] from the review report.
+
+## PROBLEM
+[Description from review report]
+
+## FILE
+- [File path]
+
+## REMEDY
+[Exact fix required - be specific about what to change]
+
+## VERIFICATION
+After the fix, run: `./gradlew.bat :app:testDebugUnitTest --tests "[RelevantTest]"`
+```
+
+### @planner — Create Plan
+```
+You are the @planner agent. Your task is to read the selected epic from our MASTER-ISSUE-REGISTRY.md and generate an implementation_plan.md artifact. This plan will be handed off to an AI Coding Agent for execution.
+
+## INPUT: EXACT REGISTRY TEXT (Do NOT read the full registry, use only this)
+```
+[PASTE THE EXACT EPIC TEXT FROM MASTER-ISSUE-REGISTRY.md]
+```
+
+## REQUIRED OUTPUT STRUCTURE
+Write the plan to: `docs/plans/PLAN-[ID].md`
+The plan MUST strictly follow this structure:
+
+### 1. Objective & Blast Radius
+- **The Core Issue:** State exactly what the bug/drift is in 1-2 sentences.
+- **Blast Radius:** List all downstream repositories, engines, or UI components that will be affected.
+
+### 2. The Single Source of Truth (The Standard)
+- Define the canonical rule or utility that will fix this.
+
+### 3. File-by-File Execution Checklist
+- Group changes logically (Domain Layer first, then Data Layer, then UI Layer).
+- For each file, be relentlessly specific about what to change and what NOT to change. Use checkboxes `[ ]`.
+- Include `> [!WARNING]` GitHub-style alerts to explicitly forbid dangerous changes.
+
+### 4. Verification Plan
+- **Unit Tests:** Tell the agent exactly which existing test files to update or run.
+- **Syntax/Lint:** Instruct it to ensure no imports were broken.
+
+### 5. Documentation & Registry Updates (CRITICAL)
+- **Registry Update:** Specify exactly which lines/sections in `MASTER-ISSUE-REGISTRY.md` must be marked `[RESOLVED BY ID]`.
+- **Batch Reports:** Instruct the agent to update the affected batch report files.
+
+## CONSTRAINTS
+
+### Universal (Always Apply)
+- Do NOT break public repository APIs (add deprecation path if needed)
+- Keep all changes backward-compatible where possible
+- ALWAYS verify build compiles and tests pass after each micro-batch
+- Do NOT hallucinate — if a file doesn't exist or method signature is unclear, READ it first
+
+### Job-Specific (From Epic Analysis)
+- [Specify based on the epic, e.g.:]
+- Do NOT change Room entity definitions or @Entity annotations
+- All new domain DTOs must be placed in `domain/model/` or `domain/dto/`
+- Do NOT modify specific files/layers as identified in blast radius
+```
+
+### @specialist-coder — Execute Micro-Batch
+```
+You are the @specialist-coder agent. Your task is to execute **Batch N** of the [EPIC-NAME] plan.
+
+## READ FIRST (In this exact order)
+1. Read the Execution Playbook: `docs/plans/EXECUTION-PLAYBOOK.md`
+2. Read the full plan: `docs/plans/PLAN-[ID].md` (focus on the assigned batch)
+3. Read all target files for this batch
+
+## EXECUTE: Files in this batch ONLY
+Apply changes as specified in the plan. Do NOT touch any other files.
+
+## ⚠️ STRICT CONSTRAINTS
+> [!WARNING]
+> - Do NOT change Room entities, @Entity annotations, table schemas, migrations, or column names.
+> - Do NOT change the public API without adding a deprecation path.
+> - Do NOT touch files outside this batch.
+> - Do NOT refactor unrelated code.
+
+## ✅ VERIFICATION (Do this before finishing)
+1. Read every modified file and verify correctness.
+2. Check imports — ensure no broken imports.
+3. Run compile to verify: `./gradlew.bat :app:compileDebugKotlin`
+4. Report back with exact changes made in each file.
+```
+
+### @coder — Fix Single Issue
+```
+You are the @coder agent. Fix ISSUE-[N] from the [EPIC] final verification report.
+
+## READ FIRST
+1. Read the final verification report: `docs/reviews/REVIEW-[ID].md` (find ISSUE-[N])
+2. Understand the exact problem and remedy specified
+
+## PROBLEM
+[Description of what is broken]
+
+## FILE
+- [File path to fix]
+
+## REMEDY
+[Exact fix required - be specific about what to change]
+
+## ⚠️ CONSTRAINTS
+> [!WARNING]
+> - Do NOT change Room entities, schemas, or migrations.
+> - Only change what's needed to fix this specific issue.
+> - Do NOT refactor unrelated code.
+
+## ✅ VERIFICATION
+After the fix, run verification commands to confirm:
+- `./gradlew.bat :app:compileDebugKotlin`
+- `./gradlew.bat :app:testDebugUnitTest --tests "[RelevantTest]"`
+
+Report back with the exact changes made.
+```
+
+### @debugger — Deep Investigation
+```
+Investigate the root cause of [ISSUE/DESCRIPTION].
+
+## SYMPTOMS
+[What is broken / error message / unexpected behavior]
+
+## INVESTIGATION
+1. Read relevant source files
+2. Trace the code path to find the root cause
+3. Identify what needs to change to fix it
+
+## OUTPUT
+Provide:
+- Root cause analysis
+- Exact file and line numbers
+- Recommended fix (use @coder to implement)
+```
+
 ### @debugger
 - **Task:** Deep bug/root-cause investigation when implementation is blocked.
 
@@ -182,7 +369,12 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Review: PASS (8 issues found → all resolved after 3 review passes)
   - [x] Documentation Updates — **COMPLETED**
   - [x] Commit — **COMPLETED**
-- [ ] **A.3:** Non-deterministic Default Values
+- [x] **A.3:** Non-deterministic Default Values
+  - [x] Plan created (`PLAN-A3-non-deterministic-defaults.md`)
+  - [x] All batches implemented (TimeProvider injection, correlationId fixes, test updates)
+  - [x] Review: **PASS** (after 4 review passes, 9 issues fixed)
+  - [x] Registry updated (`[RESOLVED BY A.3]`)
+  - [x] **Awaiting commit** (will commit after A.10 completes)
 - [ ] **A.4:** Duplicate Detection Logic Inconsistencies
 - [ ] **A.5:** Time Boundary / Calendar Arithmetic Inconsistencies
 - [ ] **A.6:** Mixed Numeric Types (Float vs Double)

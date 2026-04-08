@@ -32,6 +32,8 @@
 **Affected files:** `ReviewPriorityModels.kt`, `NotificationIdGenerator.kt`, `SpendingChallengeManager.kt`, `DomainTransactionFilter.kt`, `TransactionFilter.kt`, `DailyBriefingWorker.kt`, `InvestmentTracker.kt`, `FeatureExtractor.kt`, `ConfidenceRouter.kt`, `ReviewExplanationInputBuilder.kt`, `DashboardBriefingInputBuilder.kt`, `AddGroupExpenseUseCase.kt`, `SharedExpenseBudgetOffsetEngine.kt`, `SharedExpenseManager.kt`
 **Suggested fix:** Inject `TimeProvider` everywhere. Replace all `System.currentTimeMillis()` calls with `timeProvider.now()`. For IDs, use UUID or auto-generated DB keys instead of timestamp-based IDs.
 
+**[RESOLVED BY A.3]**
+
 ### A.4: Duplicate Detection Logic Inconsistencies
 **Batches affected:** 05, 07, 12, 33, 41, 43
 **Severity:** HIGH

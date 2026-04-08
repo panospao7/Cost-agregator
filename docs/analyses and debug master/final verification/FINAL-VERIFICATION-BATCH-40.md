@@ -1,5 +1,7 @@
 # Final Verification — Batch 40: Forecasting & Groups
 
+> **[RESOLVED BY A.3]** The non-deterministic default values issue (System.currentTimeMillis) has been fixed across the codebase.
+
 ## Scope
 - `com/yourname/expensetracker/domain/forecasting/DataQualityAssessor.kt`
 - `com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt`

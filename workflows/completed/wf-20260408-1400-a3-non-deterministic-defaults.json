@@ -1,0 +1,33 @@
+{
+  "workflow_id": "wf-20260408-1400-a3-non-deterministic-defaults",
+  "title": "A.3 — Non-deterministic Default Values",
+  "mode": "standard",
+  "status": "completed",
+  "current_phase": "documentation",
+  "timestamps": {
+    "created_at": "2026-04-08T14:00:00Z",
+    "updated_at": "2026-04-08T14:30:00Z"
+  },
+  "phases": [
+    {"name": "planning", "status": "completed"},
+    {"name": "implementation", "status": "completed"},
+    {"name": "review", "status": "completed"},
+    {"name": "documentation", "status": "completed"}
+  ],
+  "tasks": [
+    {"description": "TimeProvider injection across codebase", "status": "completed"},
+    {"description": "correlationId deterministic defaults", "status": "completed"},
+    {"description": "DailyBriefingWorker single-clock flow", "status": "completed"},
+    {"description": "Test fixes", "status": "completed"},
+    {"description": "Registry and Batch report updates", "status": "completed"}
+  ],
+  "metadata": {
+    "feature_description": "A.3 — Non-deterministic Default Values",
+    "review_gate": "required",
+    "test_gate": "required",
+    "security_gate": "optional",
+    "review_pass": true,
+    "review_passes_required": 4,
+    "issues_fixed": 9
+  }
+}

@@ -1,6 +1,7 @@
 # Final Verification — Batch 47: Domain Models — Remaining & Text/Widgets
 
 > **[RESOLVED BY A.2]** The domain/data layer boundary violations have been resolved. All domain models now use domain DTOs instead of Room entities. Data-layer imports removed from domain code.
+> **[RESOLVED BY A.3]** The non-deterministic default values issue (System.currentTimeMillis) has been fixed across the codebase.
 
 ## Scope
 Requested `DashboardBlockStatus.kt` and `DashboardDayBudgetStatus.kt` are not present in the repository; the reviewed replacements are `DomainBlockStatus.kt` and `DomainDayBudgetStatus.kt`.
