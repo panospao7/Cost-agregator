@@ -4,10 +4,10 @@ import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
-import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
@@ -114,7 +114,7 @@ class ReviewQueueRepositoryTest {
     }
 
     @Test
-    fun `approveReview returns Duplicate result if duplicates found`() = runTest {
+    fun `approveReview returns Duplicate result if canonical policy detects duplicate`() = runTest {
         // Arrange
         val reviewId = 2L
         val pendingReview = PendingReview(
@@ -139,7 +139,58 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        // Atomic insert returns -1 when duplicate constraint is triggered
+        // Canonical currency+type-aware policy detects duplicate before insert
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 10.0,
+                merchant = "Dup",
+                date = any(),
+                currency = "EUR",
+                transactionType = "PURCHASE",
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        } returns true
+
+        // Act
+        val result = repository.approveReview(reviewId)
+
+        // Assert
+        assertEquals(Result.Duplicate, result)
+        coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE) }
+        // insertAtomic must NOT be called when the pre-check already detected a duplicate
+        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+    }
+
+    @Test
+    fun `approveReview falls back to Duplicate if insertAtomic races after policy check`() = runTest {
+        // Arrange — simulates a race where isDuplicateCurrencyAware returned false but a
+        // concurrent transaction committed first, causing insertAtomic to return -1.
+        val reviewId = 5L
+        val pendingReview = PendingReview(
+            id = reviewId,
+            rawNotificationId = 10L,
+            suggestedAmount = 25.0,
+            suggestedCurrency = "USD",
+            suggestedMerchant = "RaceMerchant",
+            suggestedType = "PURCHASE",
+            suggestedCategoryId = 1L,
+            confidence = 0.9f,
+            packageName = "com.race",
+            notificationTitle = "Race",
+            notificationText = "Race"
+        )
+
+        coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId,
+                PendingReviewStatus.PENDING,
+                PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        // Pre-check says no duplicate (race window), but insertAtomic is blocked by constraint
+        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
         coEvery { expenseDao.insertAtomic(any()) } returns -1L
 
         // Act
@@ -148,7 +199,6 @@ class ReviewQueueRepositoryTest {
         // Assert
         assertEquals(Result.Duplicate, result)
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE) }
-        coVerify(exactly = 0) { expenseDao.insert(any()) }
     }
 
     @Test
@@ -216,5 +266,232 @@ class ReviewQueueRepositoryTest {
         assertTrue(correctionSlot.captured.wasRejected)
         assertFalse(correctionSlot.captured.wasApproved)
         assertEquals("Bad Merchant", correctionSlot.captured.originalMerchant)
+    }
+
+    @Test
+    fun `approveReview allows DEPOSIT with same amount-merchant-date-currency as existing PURCHASE`() = runTest {
+        // Scenario: A PURCHASE for €10 at "Acme" already exists. A DEPOSIT review for
+        // the same amount/merchant/date/currency must NOT be blocked — the types are
+        // incompatible, so the canonical policy should pass through to insert.
+        val reviewId = 6L
+        val pendingReview = PendingReview(
+            id = reviewId,
+            rawNotificationId = 11L,
+            suggestedAmount = 10.0,
+            suggestedCurrency = "EUR",
+            suggestedMerchant = "Acme",
+            suggestedType = "DEPOSIT",          // ← different type from the existing PURCHASE
+            suggestedCategoryId = 1L,
+            confidence = 0.9f,
+            packageName = "com.bank",
+            notificationTitle = "Deposit",
+            notificationText = "Deposit 10 EUR"
+        )
+
+        coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId,
+                PendingReviewStatus.PENDING,
+                PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        // The currency+type-aware policy returns false: DEPOSIT vs PURCHASE types differ
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 10.0,
+                merchant = "Acme",
+                date = any(),
+                currency = "EUR",
+                transactionType = "DEPOSIT",
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        } returns false
+        coEvery { expenseDao.insertAtomic(any()) } returns 200L
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue("DEPOSIT with incompatible type to existing PURCHASE must be approved, got $result",
+            result is Result.Success)
+        assertEquals(200L, (result as Result.Success).data)
+        // insertAtomic must be called — not short-circuited by a type-blind key check
+        coVerify { expenseDao.insertAtomic(match { it.transactionType == TransactionType.DEPOSIT }) }
+        coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
+    }
+
+    @Test
+    fun `approveReview allows same amount-merchant-date with different currency`() = runTest {
+        // Scenario: An expense for 50 USD at "Shop" already exists. A review for
+        // 50 EUR at "Shop" on the same date must NOT be blocked — currencies differ.
+        val reviewId = 7L
+        val pendingReview = PendingReview(
+            id = reviewId,
+            rawNotificationId = 12L,
+            suggestedAmount = 50.0,
+            suggestedCurrency = "EUR",          // ← different currency from the existing USD row
+            suggestedMerchant = "Shop",
+            suggestedType = "PURCHASE",
+            suggestedCategoryId = 2L,
+            confidence = 0.85f,
+            packageName = "com.wallet",
+            notificationTitle = "Shop",
+            notificationText = "Paid 50 EUR"
+        )
+
+        coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId,
+                PendingReviewStatus.PENDING,
+                PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        // The currency-aware policy returns false: EUR ≠ USD
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 50.0,
+                merchant = "Shop",
+                date = any(),
+                currency = "EUR",
+                transactionType = "PURCHASE",
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        } returns false
+        coEvery { expenseDao.insertAtomic(any()) } returns 300L
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue("EUR expense must not be blocked by existing USD expense, got $result",
+            result is Result.Success)
+        assertEquals(300L, (result as Result.Success).data)
+        coVerify { expenseDao.insertAtomic(match { it.currency == "EUR" && it.amount == 50.0 }) }
+        coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
+    }
+
+    /**
+     * Key collision path test (ISSUE-1 fix verification).
+     *
+     * Before the fix, approving a DEPOSIT review when a PURCHASE with the same
+     * amount/merchant/date/currency already existed would generate an IDENTICAL
+     * type-blind dedupeKey (e.g. "10.00_acme_<bucket>_EUR"). Even though
+     * isDuplicateCurrencyAware correctly returned false, insertAtomic would fail
+     * with -1 due to the unique-index collision on the persisted key.
+     *
+     * After the fix, the DEPOSIT generates key "10.00_acme_<bucket>_EUR_DEPOSIT"
+     * (type suffix included), which is distinct from the existing PURCHASE key
+     * "10.00_acme_<bucket>_EUR_PURCHASE". insertAtomic therefore never collides
+     * for incompatible-type rows and the approval succeeds.
+     *
+     * This test captures the Expense passed to insertAtomic and verifies that its
+     * dedupeKey includes the transaction-type suffix, proving that the persisted
+     * unique index can no longer falsely block incompatible-type approvals.
+     */
+    @Test
+    fun `approveReview dedupeKey includes transaction type suffix to prevent false unique-index collision`() = runTest {
+        val date = 1_700_000_000_000L
+        val amount = 10.0
+        val merchant = "Acme"
+        val currency = "EUR"
+
+        val reviewId = 8L
+        val pendingReview = PendingReview(
+            id = reviewId,
+            rawNotificationId = 13L,
+            suggestedAmount = amount,
+            suggestedCurrency = currency,
+            suggestedMerchant = merchant,
+            suggestedType = "DEPOSIT",
+            suggestedDate = date,
+            suggestedCategoryId = null,
+            confidence = 0.95f,
+            packageName = "com.bank",
+            notificationTitle = "Deposit",
+            notificationText = "Deposit $amount $currency"
+        )
+
+        coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
+        coEvery {
+            pendingReviewDao.transitionStatus(reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING)
+        } returns 1
+        // Policy says not a duplicate (incompatible type with existing PURCHASE)
+        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
+
+        val insertedExpenseSlot = slot<Expense>()
+        coEvery { expenseDao.insertAtomic(capture(insertedExpenseSlot)) } returns 400L
+
+        val result = repository.approveReview(reviewId)
+
+        assertTrue("DEPOSIT approval must succeed, got $result", result is Result.Success)
+
+        // Verify the persisted dedupeKey is type-aware.
+        // The expected key includes "_DEPOSIT" suffix so it does NOT collide with
+        // the "_PURCHASE" key that a PURCHASE row for the same transaction would have.
+        val expectedDepositKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            amount, merchant, date, currency, TransactionType.DEPOSIT
+        )
+        val expectedPurchaseKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            amount, merchant, date, currency, TransactionType.PURCHASE
+        )
+
+        val actualKey = insertedExpenseSlot.captured.dedupeKey
+        assertNotNull("dedupeKey must not be null", actualKey)
+        assertEquals(
+            "Persisted dedupeKey must match the type-aware DEPOSIT key",
+            expectedDepositKey,
+            actualKey
+        )
+        assertNotEquals(
+            "DEPOSIT dedupeKey must differ from PURCHASE dedupeKey to prevent unique-index collision",
+            expectedPurchaseKey,
+            actualKey
+        )
+        assertTrue(
+            "Type-aware dedupeKey must end with the transaction type suffix",
+            actualKey!!.endsWith("_DEPOSIT")
+        )
+    }
+
+    /**
+     * Verifies that the type-aware key still acts as a race guard for same-type
+     * concurrent approvals: if two PURCHASE reviews for the same transaction race,
+     * the second insertAtomic returns -1 (key collision on the PURCHASE-keyed entry)
+     * and the approval correctly returns Duplicate.
+     */
+    @Test
+    fun `approveReview still returns Duplicate when insertAtomic races on same-type key`() = runTest {
+        val reviewId = 9L
+        val pendingReview = PendingReview(
+            id = reviewId,
+            rawNotificationId = 14L,
+            suggestedAmount = 30.0,
+            suggestedCurrency = "GBP",
+            suggestedMerchant = "CafeRace",
+            suggestedType = "PURCHASE",
+            suggestedCategoryId = null,
+            confidence = 0.9f,
+            packageName = "com.race2",
+            notificationTitle = "Race2",
+            notificationText = "Race2"
+        )
+
+        coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
+        coEvery {
+            pendingReviewDao.transitionStatus(reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING)
+        } returns 1
+        // Policy says no duplicate (concurrent winner committed after this check)
+        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
+        // insertAtomic fails because a concurrent PURCHASE for the same tx won the race
+        coEvery { expenseDao.insertAtomic(any()) } returns -1L
+
+        val result = repository.approveReview(reviewId)
+
+        assertEquals(
+            "Same-type race must still return Duplicate when insertAtomic conflicts",
+            Result.Duplicate,
+            result
+        )
+        coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE) }
     }
 }

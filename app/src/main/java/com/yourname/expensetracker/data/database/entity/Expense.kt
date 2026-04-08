@@ -5,7 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 
 @Entity(
     tableName = "expenses",
@@ -123,24 +123,30 @@ data class Expense(
             else -> amount
         }
     companion object {
-        private const val DUPLICATE_WINDOW_MS = 300_000L // 5 minutes
-
         /**
          * Generate a deduplication key from the core transaction fields.
          *
-         * Uses [MerchantKeyGenerator] (Greek→Latin diphthong-aware, lowercase,
-         * strip [^a-z0-9]) so that the same merchant expressed in different scripts
-         * (e.g. bank SMS in Greek vs Google Wallet in Latin) maps to the same bucket.
+         * Delegates to [DuplicateDetectionPolicy.generateDedupeKey] which uses
+         * [MerchantKeyGenerator] for merchant normalization, locale-invariant
+         * amount formatting, and includes the normalized currency code.
          *
-         * No length cap is applied — the old take(20) caused false-positive
-         * duplicate matches between distinct merchants with long common prefixes.
+         * Key format: `{amount}_{merchantKey}_{dateBucket}_{currency}`
+         *
+         * **Currency is required** — callers must supply an explicit ISO-4217 code.
+         * Omitting currency is no longer allowed on this blocking path; doing so
+         * previously caused a silent EUR fallback that masked cross-currency duplicates.
+         *
+         * @param amount   transaction amount
+         * @param merchant raw merchant display name
+         * @param date     event timestamp (epoch ms)
+         * @param currency ISO-4217 currency code (required; use the expense's actual currency)
          */
-        fun generateDedupeKey(amount: Double, merchant: String, date: Long): String {
-            val normalizedMerchant = MerchantKeyGenerator.generate(merchant)
-            val roundedAmount = "%.2f".format(amount)
-            val dateBucket = date / DUPLICATE_WINDOW_MS
-            return "${roundedAmount}_${normalizedMerchant}_$dateBucket"
-        }
+        fun generateDedupeKey(
+            amount: Double,
+            merchant: String,
+            date: Long,
+            currency: String
+        ): String = DuplicateDetectionPolicy.generateDedupeKey(amount, merchant, date, currency)
     }
 }
 

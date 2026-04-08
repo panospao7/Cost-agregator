@@ -11,6 +11,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -334,6 +335,277 @@ interface ExpenseDao {
             maxAmount = maxAmount
         )
     }
+    // ── Currency-aware + type-aware duplicate-candidate queries (A.4) ──
+
+    /**
+     * Check existence of a matching expense by **merchantKey** within a time/amount
+     * range, restricted to the given currency and compatible transaction type.
+     *
+     * Type compatibility: if [transactionType] is `'UNKNOWN'`, any type matches;
+     * otherwise the existing row must be `UNKNOWN` or equal to [transactionType].
+     */
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM expenses
+            WHERE merchantKey = :merchantKey
+              AND date >= :startDate
+              AND date < :endDate
+              AND amount BETWEEN :minAmount AND :maxAmount
+              AND UPPER(currency) = UPPER(:currency)
+              AND (
+                  :transactionType = 'UNKNOWN'
+                  OR transactionType = 'UNKNOWN'
+                  OR transactionType = :transactionType
+              )
+            LIMIT 1
+        )
+    """)
+    suspend fun existsByMerchantKeyInRangeCurrencyAware(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Boolean
+
+    /**
+     * Check existence of a matching expense by raw **merchant** name within a
+     * time/amount range, restricted to the given currency and compatible
+     * transaction type.
+     */
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM expenses
+            WHERE merchant = :merchant
+              AND date >= :startDate
+              AND date < :endDate
+              AND amount BETWEEN :minAmount AND :maxAmount
+              AND UPPER(currency) = UPPER(:currency)
+              AND (
+                  :transactionType = 'UNKNOWN'
+                  OR transactionType = 'UNKNOWN'
+                  OR transactionType = :transactionType
+              )
+            LIMIT 1
+        )
+    """)
+    suspend fun existsByMerchantInRangeCurrencyAware(
+        merchant: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Boolean
+
+    /**
+     * Fetch the best duplicate candidate by **merchantKey** within a time/amount
+     * range, restricted to the given currency and compatible transaction type.
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE merchantKey = :merchantKey
+          AND date >= :startDate
+          AND date < :endDate
+          AND amount BETWEEN :minAmount AND :maxAmount
+          AND UPPER(currency) = UPPER(:currency)
+          AND (
+              :transactionType = 'UNKNOWN'
+              OR transactionType = 'UNKNOWN'
+              OR transactionType = :transactionType
+          )
+        ORDER BY date DESC
+        LIMIT 1
+    """)
+    suspend fun getDuplicateCandidateByMerchantKeyInRangeCurrencyAware(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Expense?
+
+    /**
+     * Fetch the best duplicate candidate by raw **merchant** name within a
+     * time/amount range, restricted to the given currency and compatible
+     * transaction type.
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE merchant = :merchant
+          AND date >= :startDate
+          AND date < :endDate
+          AND amount BETWEEN :minAmount AND :maxAmount
+          AND UPPER(currency) = UPPER(:currency)
+          AND (
+              :transactionType = 'UNKNOWN'
+              OR transactionType = 'UNKNOWN'
+              OR transactionType = :transactionType
+          )
+        ORDER BY date DESC
+        LIMIT 1
+    """)
+    suspend fun getDuplicateCandidateByMerchantInRangeCurrencyAware(
+        merchant: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Expense?
+
+    /**
+     * Policy-aware duplicate check.
+     *
+     * Uses [DuplicateDetectionPolicy] constants for the default window and
+     * tolerance. Filters by currency (case-insensitive) and compatible
+     * transaction type.
+     *
+     * The check order:
+     *  1. merchantKey + time/amount/currency/type
+     *  2. raw merchant + time/amount/currency/type
+     *
+     * NOTE: The type-blind exact dedupe-key short-circuit that formerly appeared
+     * here has been intentionally removed. Because the persisted [dedupeKey] does
+     * NOT encode the transaction type, the same key can legitimately belong to a
+     * PURCHASE and a DEPOSIT/TRANSFER with the same amount/merchant/date/currency.
+     * Pre-blocking on an exact key collision would therefore reject valid distinct
+     * approvals before currency and type compatibility are ever checked.
+     *
+     * Race-condition protection is preserved by [ExpenseDao.insertAtomic], which
+     * uses [OnConflictStrategy.IGNORE] backed by the unique index on [dedupeKey].
+     * A concurrent commit of the same expense between this check and the insert
+     * will cause [insertAtomic] to return -1 (0 rows inserted), which the caller
+     * then correctly treats as a duplicate.
+     *
+     * Backward compatibility with mixed old/new dedupe-key rows is maintained by
+     * the merchant/amount/date/currency/type range queries below, which catch
+     * legacy rows regardless of their key format.
+     */
+    @Transaction
+    suspend fun isDuplicateCurrencyAware(
+        amount: Double,
+        merchant: String,
+        date: Long,
+        currency: String,
+        transactionType: String,
+        windowMs: Long = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+        merchantKey: String? = null,
+        dedupeKey: String? = null
+    ): Boolean {
+        val startDate = date - windowMs
+        val endDate = date + windowMs + 1
+        val tolerance = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+        val minAmount = amount - tolerance
+        val maxAmount = amount + tolerance
+        val normalizedCurrency = DuplicateDetectionPolicy.normalizeCurrency(currency)
+
+        val normalizedMerchantKey = merchantKey?.takeIf { it.isNotBlank() }
+        return if (normalizedMerchantKey != null) {
+            existsByMerchantKeyInRangeCurrencyAware(
+                merchantKey = normalizedMerchantKey,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount,
+                currency = normalizedCurrency,
+                transactionType = transactionType
+            ) || existsByMerchantInRangeCurrencyAware(
+                merchant = merchant,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount,
+                currency = normalizedCurrency,
+                transactionType = transactionType
+            )
+        } else {
+            existsByMerchantInRangeCurrencyAware(
+                merchant = merchant,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount,
+                currency = normalizedCurrency,
+                transactionType = transactionType
+            )
+        }
+    }
+
+    /**
+     * Policy-aware duplicate candidate retrieval for import / review flows.
+     *
+     * Uses [DuplicateDetectionPolicy] for currency normalization and
+     * transaction-type compatibility. Falls back from merchantKey to raw
+     * merchant name, mirroring [getDuplicateCandidateForImport].
+     */
+    @Transaction
+    suspend fun getDuplicateCandidateForImportCurrencyAware(
+        merchantKey: String,
+        merchant: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Expense? {
+        val normalizedCurrency = DuplicateDetectionPolicy.normalizeCurrency(currency)
+        return getDuplicateCandidateByMerchantKeyInRangeCurrencyAware(
+            merchantKey = merchantKey,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = normalizedCurrency,
+            transactionType = transactionType
+        ) ?: getDuplicateCandidateByMerchantInRangeCurrencyAware(
+            merchant = merchant,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = normalizedCurrency,
+            transactionType = transactionType
+        )
+    }
+
+    /**
+     * Fetch all duplicate candidates within a policy-derived time/amount window
+     * for a given currency and compatible transaction type.
+     *
+     * Used by [ExpenseRepository.getDuplicateCandidatesInWindow] to serve
+     * use cases and engines that need a full candidate list (not just
+     * an existence check).
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE date >= :startDate AND date < :endDate
+          AND amount BETWEEN :minAmount AND :maxAmount
+          AND UPPER(currency) = UPPER(:currency)
+          AND (
+              :transactionType = 'UNKNOWN'
+              OR transactionType = 'UNKNOWN'
+              OR transactionType = :transactionType
+          )
+          AND isNotMine = 0
+        ORDER BY date DESC
+    """)
+    suspend fun getDuplicateCandidatesInRange(
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): List<Expense>
+
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE transactionType = 'PURCHASE' 

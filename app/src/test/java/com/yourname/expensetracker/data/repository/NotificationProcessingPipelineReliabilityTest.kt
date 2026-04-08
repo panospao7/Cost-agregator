@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
@@ -32,6 +33,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.junit.Test
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 
@@ -163,6 +165,63 @@ class NotificationProcessingPipelineReliabilityTest {
             currency = "EUR"
         )
         assertFalse(duplicate)
+    }
+
+    // ── ISSUE-4: boundary-convention tests ───────────────────────────────────────
+
+    /**
+     * The pending-review endDate passed to [PendingReviewDao.hasPendingDuplicateInRangeTypeAware]
+     * must equal [DuplicateDetectionPolicy.windowEndExclusive] so that both expense and
+     * pending-review duplicate windows share the same inclusive range
+     * [date - windowMs, date + windowMs] under the DAO's exclusive-end SQL convention.
+     */
+    @Test
+    fun `windowEndExclusive is date plus window plus 1 - matching ExpenseDao convention`() {
+        val date = 1_000_000L
+        val windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
+
+        // ExpenseDao.isDuplicateCurrencyAware computes: endDate = date + windowMs + 1
+        val expenseDaoEndDate = date + windowMs + 1L
+
+        // The shared helper must produce the same value.
+        val pendingReviewEndDate = DuplicateDetectionPolicy.windowEndExclusive(date, windowMs)
+
+        assertEquals(
+            "windowEndExclusive must match ExpenseDao's date + windowMs + 1 convention",
+            expenseDaoEndDate,
+            pendingReviewEndDate
+        )
+    }
+
+    @Test
+    fun `windowEndExclusive includes exact boundary timestamp under exclusive SQL`() {
+        val date = 1_000_000L
+        val windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
+
+        // A pending-review at exactly date + windowMs is at the inclusive edge.
+        val boundaryTimestamp = date + windowMs
+
+        // Under the exclusive-end SQL convention (suggestedDate < :endDate):
+        // endDate = date + windowMs     → boundaryTimestamp < endDate is FALSE (misses it)
+        // endDate = date + windowMs + 1 → boundaryTimestamp < endDate is TRUE  (catches it)
+        val endDateWithoutFix = date + windowMs
+        val endDateWithFix = DuplicateDetectionPolicy.windowEndExclusive(date, windowMs)
+
+        assertFalse(
+            "Without the fix the exact boundary timestamp is excluded by the SQL < predicate",
+            boundaryTimestamp < endDateWithoutFix
+        )
+        assertTrue(
+            "With windowEndExclusive the exact boundary timestamp is included by the SQL < predicate",
+            boundaryTimestamp < endDateWithFix
+        )
+    }
+
+    @Test
+    fun `windowEndExclusive with default windowMs uses DUPLICATE_WINDOW_MS`() {
+        val date = 5_000_000L
+        val expected = date + DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS + 1L
+        assertEquals(expected, DuplicateDetectionPolicy.windowEndExclusive(date))
     }
 
     private fun testNotification(pkg: String): RawNotification =

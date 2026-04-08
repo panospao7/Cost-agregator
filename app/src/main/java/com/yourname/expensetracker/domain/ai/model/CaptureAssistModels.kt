@@ -133,7 +133,8 @@ data class DedupeCandidateSummary(
     val currency: String,
     val date: Long,
     val sourceLabel: String,
-    val textPreview: String? = null
+    val textPreview: String? = null,
+    val transactionType: String? = null
 )
 
 data class DedupeJudgeInput(

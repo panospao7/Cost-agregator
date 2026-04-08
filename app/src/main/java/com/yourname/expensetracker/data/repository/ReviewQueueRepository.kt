@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -105,7 +106,13 @@ class ReviewQueueRepository @Inject constructor(
             paymentMethod = PaymentMethod.CARD,
             isManualEntry = review.scannedReceiptId != null,
             notes = if (review.scannedReceiptId != null) "Scanned from receipt" else null,
-            dedupeKey = Expense.generateDedupeKey(amount, merchant, transactionDate),
+            // Use the type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows
+            // never collide on the persisted unique dedupeKey index (ISSUE-1 fix).
+            // The range-based isDuplicateCurrencyAware pre-check remains the
+            // canonical policy gate; insertAtomic is now purely a race guard.
+            dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                amount, merchant, transactionDate, review.suggestedCurrency, type
+            ),
             // Prefer user-provided location, fall back to review-captured GPS
             latitude = finalLatitude ?: review.suggestedLatitude,
             longitude = finalLongitude ?: review.suggestedLongitude,
@@ -130,6 +137,30 @@ class ReviewQueueRepository @Inject constructor(
                 return@withTransaction txAlreadyProcessed
             }
 
+            // Pre-insert canonical duplicate check: uses currency + transaction-type aware
+            // policy so that (a) PURCHASE vs DEPOSIT/TRANSFER are never conflated, and
+            // (b) legacy rows with the old 3-part dedupe key are still caught by the
+            // merchant/amount/date/currency/type window query (not just by key collision).
+            // insertAtomic() below is kept only as a final race-condition guard.
+            val isDuplicate = expenseDao.isDuplicateCurrencyAware(
+                amount = expense.amount,
+                merchant = expense.merchant,
+                date = expense.date,
+                currency = expense.currency,
+                transactionType = expense.transactionType.name,
+                merchantKey = expense.merchantKey,
+                dedupeKey = expense.dedupeKey
+            )
+            if (isDuplicate) {
+                sourceStatsDao.incrementDuplicate(review.packageName)
+                sourceStatsDao.decrementPending(review.packageName)
+                pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
+                return@withTransaction txDuplicate
+            }
+
+            // insertAtomic() is IGNORE-on-conflict — kept as a last-line race guard
+            // in case a concurrent transaction commits the same expense between the
+            // check above and this insert.
             val id = expenseDao.insertAtomic(expense)
             if (id > 0) {
                 review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
@@ -346,12 +377,13 @@ class ReviewQueueRepository @Inject constructor(
             )
             val categoryId = classification.categoryId.takeIf { category -> category > 0 }
 
+            val recoveredType = it.type.toDbTransactionType()
             Expense(
                 amount = it.amount,
                 currency = it.currency,
                 merchant = correctedMerchant,
                 merchantKey = MerchantKeyGenerator.generate(correctedMerchant),
-                transactionType = it.type.toDbTransactionType(),
+                transactionType = recoveredType,
                 date = notification.timestamp,
                 rawNotificationId = id,
                 categoryId = categoryId,
@@ -359,7 +391,11 @@ class ReviewQueueRepository @Inject constructor(
                 paymentMethod = PaymentMethod.CARD,
                 isManualEntry = false,
                 notes = "Manually recovered from debug log",
-                dedupeKey = Expense.generateDedupeKey(it.amount, correctedMerchant, notification.timestamp)
+                // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows
+                // never collide on the persisted unique dedupeKey index (ISSUE-8 fix).
+                dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                    it.amount, correctedMerchant, notification.timestamp, it.currency, recoveredType
+                )
             )
         }
 

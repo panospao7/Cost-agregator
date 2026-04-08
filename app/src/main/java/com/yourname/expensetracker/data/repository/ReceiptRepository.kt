@@ -15,6 +15,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.DuplicateResolution
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer as NewMerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -66,8 +67,9 @@ class ReceiptRepository @Inject constructor(
     private val warrantyUseCase: AutoCreateWarrantyFromReceiptUseCase
 ) {
     private companion object {
-        private const val STATEMENT_DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000L // 24h
-        private const val AMOUNT_TOLERANCE = 0.01
+        // Use the canonical policy for all duplicate detection constants.
+        private val STATEMENT_DEDUPE_WINDOW_MS = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
+        private val AMOUNT_TOLERANCE = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
     }
 
     private enum class StatementInsertOutcome {
@@ -303,13 +305,38 @@ class ReceiptRepository @Inject constructor(
             paymentMethod = paymentMethod,
             isManualEntry = true,
             notes = notes ?: "Scanned from receipt",
-            dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date),
+            // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never
+            // collide on the persisted unique dedupeKey index (ISSUE-8 fix).
+            dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                amount, normalizedMerchant, date, currency, TransactionType.PURCHASE
+            ),
             latitude = latitude,
             longitude = longitude,
             locationSource = locationSource
         )
 
         val expenseId = database.withTransaction {
+            // Pre-insert canonical duplicate check: uses currency + transaction-type
+            // aware policy so that (a) PURCHASE vs DEPOSIT/TRANSFER are never conflated,
+            // and (b) legacy rows with the old 3-part dedupe key are still caught by the
+            // merchant/amount/date/currency/type window query (not just by key collision).
+            // insertAtomic() below is kept only as a final race-condition guard.
+            val isDuplicate = expenseDao.isDuplicateCurrencyAware(
+                amount = expense.amount,
+                merchant = expense.merchant,
+                date = expense.date,
+                currency = expense.currency,
+                transactionType = expense.transactionType.name,
+                merchantKey = expense.merchantKey,
+                dedupeKey = expense.dedupeKey
+            )
+            if (isDuplicate) {
+                return@withTransaction -1L
+            }
+
+            // insertAtomic() is IGNORE-on-conflict — kept as a last-line race guard
+            // in case a concurrent transaction commits the same expense between the
+            // check above and this insert.
             val id = expenseDao.insertAtomic(expense)
             if (id > 0) {
                 scannedReceiptDao.linkToExpense(receiptId, id)
@@ -514,19 +541,21 @@ class ReceiptRepository @Inject constructor(
 
                     val transactionDate = tx.date ?: timeProvider.now()
                     val merchantKey = MerchantKeyGenerator.generate(normalizedMerchant)
+                    val transactionType = tx.type.toDbTransactionType()
                     val startDate = transactionDate - STATEMENT_DEDUPE_WINDOW_MS
                     val endDate = transactionDate + STATEMENT_DEDUPE_WINDOW_MS + 1
                     val minAmount = tx.amount - AMOUNT_TOLERANCE
                     val maxAmount = tx.amount + AMOUNT_TOLERANCE
 
-                    val prefetchedPendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRange(
+                    val prefetchedPendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware(
                         merchantKey = merchantKey,
                         merchantName = normalizedMerchant,
                         startDate = startDate,
                         endDate = endDate,
                         minAmount = minAmount,
                         maxAmount = maxAmount,
-                        currency = tx.currency
+                        currency = tx.currency,
+                        transactionType = transactionType.name
                     )
                     val prefetchedDuplicateResolution = prefetchedPendingReviewDuplicate?.let {
                         crossSourceDeduplication.resolvePendingReviewDuplicate(
@@ -555,27 +584,30 @@ class ReceiptRepository @Inject constructor(
                     // cannot be fully enforced with a strict DB unique index. Keep read+write
                     // in one transaction to avoid non-atomic check/delete/insert races.
                     val outcome = database.withTransaction {
-                        val hasExpenseDuplicate = hasExpenseDuplicateInRange(
-                            merchantKey = merchantKey,
-                            merchantName = normalizedMerchant,
-                            startDate = startDate,
-                            endDate = endDate,
-                            minAmount = minAmount,
-                            maxAmount = maxAmount
-                        )
-
-                        if (hasExpenseDuplicate) {
-                            return@withTransaction StatementInsertOutcome.SKIPPED_EXPENSE_DUPLICATE
-                        }
-
-                        val transactionalPendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRange(
+                        val hasExpenseDuplicate = hasExpenseDuplicateInRangeCurrencyAware(
                             merchantKey = merchantKey,
                             merchantName = normalizedMerchant,
                             startDate = startDate,
                             endDate = endDate,
                             minAmount = minAmount,
                             maxAmount = maxAmount,
-                            currency = tx.currency
+                            currency = tx.currency,
+                            transactionType = transactionType.name
+                        )
+
+                        if (hasExpenseDuplicate) {
+                            return@withTransaction StatementInsertOutcome.SKIPPED_EXPENSE_DUPLICATE
+                        }
+
+                        val transactionalPendingReviewDuplicate = pendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware(
+                            merchantKey = merchantKey,
+                            merchantName = normalizedMerchant,
+                            startDate = startDate,
+                            endDate = endDate,
+                            minAmount = minAmount,
+                            maxAmount = maxAmount,
+                            currency = tx.currency,
+                            transactionType = transactionType.name
                         )
 
                         if (transactionalPendingReviewDuplicate != null) {
@@ -691,6 +723,36 @@ class ReceiptRepository @Inject constructor(
             endDate = endDate,
             minAmount = minAmount,
             maxAmount = maxAmount
+        )
+    }
+
+    private suspend fun hasExpenseDuplicateInRangeCurrencyAware(
+        merchantKey: String,
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Boolean {
+        val normalizedCurrency = DuplicateDetectionPolicy.normalizeCurrency(currency)
+        return expenseDao.existsByMerchantKeyInRangeCurrencyAware(
+            merchantKey = merchantKey,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = normalizedCurrency,
+            transactionType = transactionType
+        ) || expenseDao.existsByMerchantInRangeCurrencyAware(
+            merchant = merchantName,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = normalizedCurrency,
+            transactionType = transactionType
         )
     }
 

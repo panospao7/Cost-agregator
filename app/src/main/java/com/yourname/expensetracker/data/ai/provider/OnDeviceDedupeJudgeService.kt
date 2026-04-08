@@ -60,12 +60,13 @@ class OnDeviceDedupeJudgeService @Inject constructor() : DedupeJudgeService {
 
     internal fun buildPrompt(input: DedupeJudgeInput): String {
         val candidates = input.candidates.joinToString("\n") { candidate ->
-            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=${candidate.merchant}, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, source=${candidate.sourceLabel}, preview=${candidate.textPreview ?: "none"}"
+            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=${candidate.merchant}, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, txType=${candidate.transactionType ?: "UNKNOWN"}, source=${candidate.sourceLabel}, preview=${candidate.textPreview ?: "none"}"
         }
 
         return buildString {
             appendLine("Judge whether this pending review is likely a duplicate of one bounded candidate set.")
             appendLine("Stay conservative and prefer UNCERTAIN when evidence is weak.")
+            appendLine("Note: Transactions of different types (e.g. PURCHASE vs DEPOSIT) are never duplicates.")
             appendLine("Return ONLY one JSON object.")
             appendLine()
             appendLine("JSON schema: {\"verdict\":\"LIKELY_DUPLICATE|LIKELY_DISTINCT|UNCERTAIN\",\"matchedTargetType\":\"PENDING_REVIEW|EXPENSE|null\",\"matchedTargetId\":0,\"confidence\":0.0,\"rationale\":\"short explanation\"}")
@@ -76,6 +77,7 @@ class OnDeviceDedupeJudgeService @Inject constructor() : DedupeJudgeService {
             appendLine("- merchant=${input.subject.merchant}")
             appendLine("- amount=${input.subject.amount} ${input.subject.currency}")
             appendLine("- date=${input.subject.date}")
+            appendLine("- txType=${input.subject.transactionType ?: "UNKNOWN"}")
             appendLine("- source=${input.subject.sourceLabel}")
             appendLine("- preview=${input.subject.textPreview ?: "none"}")
             appendLine()

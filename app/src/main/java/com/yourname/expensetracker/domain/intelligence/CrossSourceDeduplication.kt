@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.ai.model.DuplicateCheckCandidate
 import com.yourname.expensetracker.domain.ai.service.SemanticDuplicateDetector
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -25,16 +26,14 @@ import javax.inject.Singleton
  * 1. Fast deterministic checks (date, amount, basic merchant matching)
  * 2. Levenshtein distance for merchant names
  * 3. [NEW] AI semantic analysis for ambiguous cases (multilingual, variations)
+ *
+ * All window, tolerance, currency, type-compatibility, and scoring constants
+ * are delegated to [DuplicateDetectionPolicy].
  */
 @Singleton
 class CrossSourceDeduplication @Inject constructor(
     private val semanticDetector: SemanticDuplicateDetector
 ) {
-
-    companion object {
-        private const val TIME_WINDOW_MS = 24 * 60 * 60 * 1000L // 24 hours
-        private const val AMOUNT_TOLERANCE = 0.01
-    }
 
     /**
      * Check if expense might be duplicate from different source
@@ -72,43 +71,76 @@ class CrossSourceDeduplication @Inject constructor(
     /**
      * Check if a statement transaction matches any existing PendingReview.
      * Used to prevent creating duplicate pending reviews from bank statements.
-     * 
-     * @param amount Transaction amount
-     * @param merchant Merchant name
-     * @param date Transaction date
-     * @param pendingReviews List of recent pending reviews to check against
-     * @return The matching PendingReview if duplicate found, null otherwise
+     *
+     * Routes through the canonical duplicate policy so matching is:
+     *  - **Currency-aware**: different ISO-4217 currencies never match.
+     *  - **Type-compatible**: incompatible transaction types (e.g. PURCHASE vs
+     *    DEPOSIT) never match; UNKNOWN is treated as compatible with any type.
+     *  - **Ranked**: when multiple candidates pass the hard filters the best one
+     *    is chosen via [DuplicateDetectionPolicy.bestCandidate] (smallest time
+     *    delta → smallest amount delta → highest merchant confidence).
+     *
+     * @param amount          Transaction amount
+     * @param merchant        Merchant name
+     * @param date            Transaction date (epoch ms)
+     * @param pendingReviews  List of recent pending reviews to check against
+     * @param currency        ISO-4217 currency code of the new transaction
+     *                        (null / blank falls back to [DuplicateDetectionPolicy.DEFAULT_CURRENCY])
+     * @param transactionType Transaction type of the new transaction; UNKNOWN is
+     *                        compatible with every review type (safe default for
+     *                        callers that do not yet supply a type)
+     * @return The best-ranked matching PendingReview if a duplicate is found, null otherwise
      */
     fun findPendingReviewDuplicate(
         amount: Double,
         merchant: String,
         date: Long,
-        pendingReviews: List<PendingReview>
+        pendingReviews: List<PendingReview>,
+        currency: String? = null,
+        transactionType: TransactionType = TransactionType.UNKNOWN
     ): PendingReview? {
-        val normalizedMerchant = normalizeMerchant(merchant)
-        
+        val normalizedMerchant = DuplicateDetectionPolicy.normalizeMerchant(merchant)
+        val normalizedCurrency = DuplicateDetectionPolicy.normalizeCurrency(currency)
+
+        val scoredCandidates =
+            mutableListOf<DuplicateDetectionPolicy.ScoredCandidate<PendingReview>>()
+
         for (review in pendingReviews) {
             // Skip if no suggested date
             val reviewDate = review.suggestedDate ?: continue
-            
-            // Check date is within window
-            if (kotlin.math.abs(date - reviewDate) > TIME_WINDOW_MS) {
-                continue
-            }
-            
-            // Check amount matches
-            if (kotlin.math.abs(amount - review.suggestedAmount) > AMOUNT_TOLERANCE) {
-                continue
-            }
-            
-            // Check merchant similarity
-            val reviewMerchant = normalizeMerchant(review.suggestedMerchant)
-            if (isMerchantSimilar(normalizedMerchant, reviewMerchant)) {
-                return review
-            }
+
+            // Check date is within canonical window
+            if (!DuplicateDetectionPolicy.isWithinWindow(date, reviewDate)) continue
+
+            // Check amount matches within shared tolerance
+            if (!DuplicateDetectionPolicy.areAmountsEqual(amount, review.suggestedAmount)) continue
+
+            // Currency-aware guard: different currencies cannot be the same charge
+            val reviewCurrency = DuplicateDetectionPolicy.normalizeCurrency(review.suggestedCurrency)
+            if (normalizedCurrency != reviewCurrency) continue
+
+            // Transaction-type compatibility guard
+            val reviewType = runCatching {
+                TransactionType.valueOf(review.suggestedType)
+            }.getOrDefault(TransactionType.UNKNOWN)
+            if (!DuplicateDetectionPolicy.areTypesCompatible(transactionType, reviewType)) continue
+
+            // Merchant similarity hard filter + confidence for ranking
+            val reviewMerchant = DuplicateDetectionPolicy.normalizeMerchant(review.suggestedMerchant)
+            val merchantConf = calculateDeterministicMerchantSimilarity(normalizedMerchant, reviewMerchant)
+            if (merchantConf < 0.8f) continue
+
+            scoredCandidates.add(
+                DuplicateDetectionPolicy.ScoredCandidate(
+                    candidate = review,
+                    timeDeltaMs = kotlin.math.abs(date - reviewDate),
+                    amountDelta = kotlin.math.abs(amount - review.suggestedAmount),
+                    merchantConfidence = merchantConf
+                )
+            )
         }
-        
-        return null
+
+        return DuplicateDetectionPolicy.bestCandidate(scoredCandidates)
     }
 
     /**
@@ -119,7 +151,7 @@ class CrossSourceDeduplication @Inject constructor(
      * @param merchant Merchant name
      * @param date Transaction date
      * @param expenses List of recent expenses to check against
-     * @param timeWindowMs Optional time window override (default uses companion window)
+     * @param timeWindowMs Optional time window override (default uses canonical policy window)
      * @param latitude Optional latitude of the new transaction (for proximity scoring)
      * @param longitude Optional longitude of the new transaction (for proximity scoring)
      * @return The matching Expense if duplicate found, null otherwise
@@ -129,37 +161,42 @@ class CrossSourceDeduplication @Inject constructor(
         merchant: String,
         date: Long,
         expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
-        timeWindowMs: Long = TIME_WINDOW_MS,
+        timeWindowMs: Long = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
         latitude: Double? = null,
         longitude: Double? = null
     ): com.yourname.expensetracker.data.database.entity.Expense? {
-        val normalizedMerchant = normalizeMerchant(merchant)
+        val normalizedMerchant = DuplicateDetectionPolicy.normalizeMerchant(merchant)
 
         // Collect all candidates that pass the hard filters (date, amount, merchant)
-        // then pick the one with the best composite confidence if location is available.
-        data class Candidate(
-            val expense: com.yourname.expensetracker.data.database.entity.Expense,
-            val confidence: Float
-        )
-
-        val candidates = mutableListOf<Candidate>()
+        // then use the policy's deterministic tie-break ranking.
+        val scoredCandidates = mutableListOf<DuplicateDetectionPolicy.ScoredCandidate<com.yourname.expensetracker.data.database.entity.Expense>>()
 
         for (expense in expenses) {
             // Check date is within window
-            if (kotlin.math.abs(date - expense.date) > timeWindowMs) continue
+            if (!DuplicateDetectionPolicy.isWithinWindow(date, expense.date, timeWindowMs)) continue
 
-            // Check amount matches
-            if (kotlin.math.abs(amount - expense.amount) > AMOUNT_TOLERANCE) continue
+            // Check amount matches within shared tolerance
+            if (!DuplicateDetectionPolicy.areAmountsEqual(amount, expense.amount)) continue
 
             // Check merchant similarity
-            val expenseMerchant = normalizeMerchant(expense.merchant)
+            val expenseMerchant = DuplicateDetectionPolicy.normalizeMerchant(expense.merchant)
             if (!isMerchantSimilar(normalizedMerchant, expenseMerchant)) continue
 
-            val conf = calculateConfidence(amount, expense.merchant, date, latitude, longitude, expense)
-            candidates.add(Candidate(expense, conf))
+            val merchantConf = calculateDeterministicMerchantSimilarity(normalizedMerchant, expenseMerchant)
+            val locBoost = calculateLocationBoost(latitude, longitude, expense)
+
+            scoredCandidates.add(
+                DuplicateDetectionPolicy.ScoredCandidate(
+                    candidate = expense,
+                    timeDeltaMs = kotlin.math.abs(date - expense.date),
+                    amountDelta = kotlin.math.abs(amount - expense.amount),
+                    merchantConfidence = merchantConf,
+                    locationBoost = locBoost
+                )
+            )
         }
 
-        return candidates.maxByOrNull { it.confidence }?.expense
+        return DuplicateDetectionPolicy.bestCandidate(scoredCandidates)
     }
 
     /**
@@ -339,12 +376,22 @@ class CrossSourceDeduplication @Inject constructor(
         return prev[n]
     }
 
-    private fun normalizeMerchant(merchant: String): String {
-        return merchant
-            .lowercase()
-            .replace(Regex("""[#@$%^&*!]"""), "")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
+    /**
+     * Calculate location proximity boost for scoring.
+     */
+    private fun calculateLocationBoost(
+        newLat: Double?,
+        newLon: Double?,
+        existing: com.yourname.expensetracker.data.database.entity.Expense
+    ): Float {
+        val distKm = GeoUtils.haversineKmOrNull(newLat, newLon, existing.latitude, existing.longitude)
+            ?: return 0f
+        return when {
+            distKm < 0.2  ->  0.15f  // < 200 m  — very likely same physical location
+            distKm < 1.0  ->  0.05f  // 200 m – 1 km — plausible
+            distKm < 5.0  ->  0.0f   // 1–5 km   — no effect
+            else          -> -0.15f  // > 5 km   — suspicious
+        }
     }
 
     private fun calculateConfidence(
@@ -363,22 +410,18 @@ class CrossSourceDeduplication @Inject constructor(
         }
 
         // Location proximity boost/penalty
-        val distKm = GeoUtils.haversineKmOrNull(newLat, newLon, existing?.latitude, existing?.longitude)
-        if (distKm != null) {
-            confidence += when {
-                distKm < 0.2  ->  0.15f  // < 200 m  — very likely same physical location
-                distKm < 1.0  ->  0.05f  // 200 m – 1 km — plausible
-                distKm < 5.0  ->  0.0f   // 1–5 km   — no effect
-                else          -> -0.15f  // > 5 km   — suspicious
-            }
+        if (existing != null) {
+            confidence += calculateLocationBoost(newLat, newLon, existing)
         }
 
         return confidence.coerceIn(0f, 1f)
     }
 
     /**
-     * Generate enhanced dedupe key that includes source
-     * Prevents duplicates from different sources for same transaction
+     * Generate enhanced dedupe key that includes source.
+     * Prevents duplicates from different sources for same transaction.
+     *
+     * Uses [DuplicateDetectionPolicy.formatAmount] for locale-invariant formatting.
      */
     fun generateSourceAwareDedupeKey(
         amount: Double,
@@ -386,9 +429,9 @@ class CrossSourceDeduplication @Inject constructor(
         date: Long,
         source: String
     ): String {
-        val normalizedMerchant = normalizeMerchant(merchant)
+        val normalizedMerchant = DuplicateDetectionPolicy.normalizeMerchant(merchant)
         val hourRoundedDate = (date / 3600000) * 3600000
-        val roundedAmount = "%.2f".format(amount)
+        val roundedAmount = DuplicateDetectionPolicy.formatAmount(amount)
         return "$source:$roundedAmount:$normalizedMerchant:$hourRoundedDate"
     }
 }

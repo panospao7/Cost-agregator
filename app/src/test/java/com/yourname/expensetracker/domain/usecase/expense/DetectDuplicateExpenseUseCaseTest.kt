@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -38,7 +39,15 @@ class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
         val date = 1_710_000_000_000L
         val existing = expense(id = 99L, merchant = "Coffee Shop", amount = 4.50, date = date)
 
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(existing)
+        coEvery {
+            expenseRepository.getDuplicateCandidatesInWindow(
+                amount = 4.50,
+                date = date,
+                currency = "EUR",
+                transactionType = any(),
+                windowMs = any()
+            )
+        } returns listOf(existing)
         coEvery {
             crossSourceDeduplication.findExpenseDuplicate(
                 amount = 4.50,
@@ -53,6 +62,7 @@ class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
             amount = 4.50,
             merchant = "Coffee Shop",
             date = date,
+            currency = "EUR",
             source = DetectDuplicateExpenseUseCase.DuplicateDetectionSource.MANUAL_ENTRY
         )
 
@@ -63,7 +73,9 @@ class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
     @Test
     fun `no duplicate returns empty`() = runTest {
         val date = 1_710_000_500_000L
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery {
+            expenseRepository.getDuplicateCandidatesInWindow(any(), any(), any(), any(), any())
+        } returns emptyList()
         coEvery {
             crossSourceDeduplication.findExpenseDuplicate(
                 amount = any(),
@@ -74,39 +86,77 @@ class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
             )
         } returns null
 
-        val result = useCase(amount = 13.99, merchant = "Bakery", date = date)
+        val result = useCase(amount = 13.99, merchant = "Bakery", date = date, currency = "EUR")
 
         assertTrue(result is DuplicateCheckResult.None)
     }
 
     @Test
-    fun `time window boundary check`() = runTest {
+    fun `time window boundary check - delegates to getDuplicateCandidatesInWindow with correct window`() = runTest {
         val date = 1_710_001_000_000L
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery {
+            expenseRepository.getDuplicateCandidatesInWindow(any(), any(), any(), any(), any())
+        } returns emptyList()
         coEvery { crossSourceDeduplication.findExpenseDuplicate(any(), any(), any(), any(), any()) } returns null
 
         useCase(
             amount = 10.0,
             merchant = "Boundary",
             date = date,
+            currency = "EUR",
             source = DetectDuplicateExpenseUseCase.DuplicateDetectionSource.NOTIFICATION
         )
 
-        val expectedWindow = 5 * 60 * 1000L
-        val expectedStart = date - expectedWindow
-        val expectedEndExclusive = date + expectedWindow + 1
-        coVerify(exactly = 1) { expenseRepository.getExpensesBetween(expectedStart, expectedEndExclusive) }
+        val expectedWindow = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
+        coVerify(exactly = 1) {
+            expenseRepository.getDuplicateCandidatesInWindow(
+                amount = 10.0,
+                date = date,
+                currency = "EUR",
+                transactionType = TransactionType.UNKNOWN,
+                windowMs = expectedWindow
+            )
+        }
     }
 
     @Test
     fun `empty expense list no duplicates`() = runTest {
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery {
+            expenseRepository.getDuplicateCandidatesInWindow(any(), any(), any(), any(), any())
+        } returns emptyList()
         coEvery { crossSourceDeduplication.findExpenseDuplicate(any(), any(), any(), any(), any()) } returns null
 
-        val result = useCase(amount = 1.0, merchant = "", date = 1_700_000_000_000L)
+        val result = useCase(amount = 1.0, merchant = "", date = 1_700_000_000_000L, currency = "EUR")
 
         assertTrue(result is DuplicateCheckResult.None)
         coVerify(exactly = 1) { crossSourceDeduplication.findExpenseDuplicate(any(), any(), any(), emptyList(), any()) }
+    }
+
+    @Test
+    fun `explicit currency and transaction type are forwarded to getDuplicateCandidatesInWindow`() = runTest {
+        val date = 1_710_002_000_000L
+        coEvery {
+            expenseRepository.getDuplicateCandidatesInWindow(any(), any(), any(), any(), any())
+        } returns emptyList()
+        coEvery { crossSourceDeduplication.findExpenseDuplicate(any(), any(), any(), any(), any()) } returns null
+
+        useCase(
+            amount = 20.0,
+            merchant = "ATM",
+            date = date,
+            currency = "USD",
+            transactionType = TransactionType.PURCHASE
+        )
+
+        coVerify(exactly = 1) {
+            expenseRepository.getDuplicateCandidatesInWindow(
+                amount = 20.0,
+                date = date,
+                currency = "USD",
+                transactionType = TransactionType.PURCHASE,
+                windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
+            )
+        }
     }
 
     private fun expense(id: Long, merchant: String, amount: Double, date: Long): Expense {

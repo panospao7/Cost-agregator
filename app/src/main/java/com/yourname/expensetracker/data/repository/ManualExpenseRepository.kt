@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -125,7 +126,11 @@ class ManualExpenseRepository @Inject constructor(
                 paymentMethod = paymentMethod,
                 isManualEntry = true,
                 notes = notes,
-                dedupeKey = Expense.generateDedupeKey(amount, normalizedMerchant, date),
+                // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never
+                // collide on the persisted unique dedupeKey index (ISSUE-8 fix).
+                dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                    amount, normalizedMerchant, date, currency, transactionType
+                ),
                 transferDirection = transferDirection,
                 transferAccountName = transferAccountName,
                 isNotMine = isNotMine,
@@ -139,6 +144,27 @@ class ManualExpenseRepository @Inject constructor(
                 locationSource = locationSource
             )
 
+            // Pre-insert canonical duplicate check: uses currency + transaction-type
+            // aware policy so that (a) PURCHASE vs DEPOSIT/TRANSFER are never conflated,
+            // and (b) legacy rows with the old 3-part dedupe key are still caught by the
+            // merchant/amount/date/currency/type window query (not just by key collision).
+            // insertAtomic() below is kept only as a final race-condition guard.
+            val isDuplicate = expenseDao.isDuplicateCurrencyAware(
+                amount = expense.amount,
+                merchant = expense.merchant,
+                date = expense.date,
+                currency = expense.currency,
+                transactionType = expense.transactionType.name,
+                merchantKey = expense.merchantKey,
+                dedupeKey = expense.dedupeKey
+            )
+            if (isDuplicate) {
+                return@withTransaction Result.Duplicate
+            }
+
+            // insertAtomic() is IGNORE-on-conflict — kept as a last-line race guard
+            // in case a concurrent transaction commits the same expense between the
+            // check above and this insert.
             val id = expenseDao.insertAtomic(expense)
 
             if (id <= 0) {

@@ -23,6 +23,7 @@ import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.RoutingDecision
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -305,7 +306,7 @@ class NotificationProcessingPipeline @Inject constructor(
             return existing.any { review ->
                 review.status == com.yourname.expensetracker.data.database.entity.PendingReviewStatus.PENDING &&
                     review.suggestedCurrency.equals(currency, ignoreCase = true) &&
-                    abs(review.suggestedAmount - amount) < 0.01
+                    abs(review.suggestedAmount - amount) < DuplicateDetectionPolicy.AMOUNT_TOLERANCE
             }
         }
 
@@ -412,11 +413,17 @@ class NotificationProcessingPipeline @Inject constructor(
 
         val eventDate = parsed.date ?: notification.timestamp
         val merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
-        val dedupeKey = Expense.generateDedupeKey(parsed.amount, correctedMerchant, eventDate)
+        val transactionType = parsed.type.toDbTransactionType()
+        // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never collide on
+        // the persisted unique dedupeKey index (ISSUE-8 fix). UNKNOWN type falls back to
+        // the type-blind key for backward compatibility with legacy rows.
+        val dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            parsed.amount, correctedMerchant, eventDate, parsed.currency, transactionType
+        )
 
         return PreDbContext(
             parsed = parsed,
-            transactionType = parsed.type.toDbTransactionType(),
+            transactionType = transactionType,
             fullNotificationText = fullNotificationText,
             routingResult = routingResult,
             correctedMerchant = correctedMerchant,
@@ -435,11 +442,13 @@ class NotificationProcessingPipeline @Inject constructor(
         rawId: Long,
         preDb: PreDbContext
     ): ParsedDbOutcome {
-        val isDuplicate = expenseDao.isDuplicate(
+        val isDuplicate = expenseDao.isDuplicateCurrencyAware(
             amount = preDb.parsed.amount,
             merchant = preDb.correctedMerchant,
             date = preDb.eventDate,
-            windowMs = 300_000,
+            currency = preDb.parsed.currency,
+            transactionType = preDb.transactionType.name,
+            windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
             merchantKey = preDb.merchantKey,
             dedupeKey = preDb.dedupeKey
         )
@@ -488,11 +497,13 @@ class NotificationProcessingPipeline @Inject constructor(
         rawId: Long,
         preDb: PreDbContext
     ): ParsedDbOutcome {
-        val isDuplicate = expenseDao.isDuplicate(
+        val isDuplicate = expenseDao.isDuplicateCurrencyAware(
             amount = preDb.parsed.amount,
             merchant = preDb.correctedMerchant,
             date = preDb.eventDate,
-            windowMs = 300_000,
+            currency = preDb.parsed.currency,
+            transactionType = preDb.transactionType.name,
+            windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
             merchantKey = preDb.merchantKey,
             dedupeKey = preDb.dedupeKey
         )
@@ -502,14 +513,19 @@ class NotificationProcessingPipeline @Inject constructor(
             return ParsedDbOutcome.Duplicate
         }
 
-        val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRange(
+        // Use the shared windowEndExclusive helper so the pending-review boundary
+        // matches the expense-duplicate boundary: both DAO queries use SQL `< :endDate`
+        // (exclusive), so endDate must be date + windowMs + 1 to cover the full
+        // inclusive range [date - windowMs, date + windowMs].
+        val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
             merchantKey = preDb.merchantKey,
             merchantName = preDb.correctedMerchant,
-            startDate = preDb.eventDate - 300_000,
-            endDate = preDb.eventDate + 300_000,
-            minAmount = preDb.parsed.amount - 0.01,
-            maxAmount = preDb.parsed.amount + 0.01,
-            currency = preDb.parsed.currency
+            startDate = preDb.eventDate - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+            endDate = DuplicateDetectionPolicy.windowEndExclusive(preDb.eventDate),
+            minAmount = preDb.parsed.amount - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+            maxAmount = preDb.parsed.amount + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+            currency = preDb.parsed.currency,
+            transactionType = preDb.transactionType.name
         )
         if (hasPendingDuplicate) {
             dao.markRelevance(rawId, false)

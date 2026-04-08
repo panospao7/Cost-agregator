@@ -330,4 +330,211 @@ interface PendingReviewDao {
             currency = currency
         )
     }
+
+    // ── Currency + transaction-type–aware duplicate queries (A.4) ──
+
+    /**
+     * Check existence of a pending review duplicate by **merchantKey**,
+     * restricted to the given currency and compatible transaction type.
+     *
+     * Type compatibility: if [transactionType] is `'UNKNOWN'`, any type matches;
+     * otherwise the existing row must be `UNKNOWN` or equal to [transactionType].
+     */
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1
+            FROM pending_reviews
+            WHERE status = 'PENDING'
+              AND suggestedMerchantKey = :merchantKey
+              AND suggestedDate >= :startDate
+              AND suggestedDate < :endDate
+              AND suggestedAmount BETWEEN :minAmount AND :maxAmount
+              AND UPPER(suggestedCurrency) = UPPER(:currency)
+              AND (
+                  :transactionType = 'UNKNOWN'
+                  OR suggestedType = 'UNKNOWN'
+                  OR suggestedType = :transactionType
+              )
+        )
+    """)
+    suspend fun hasPendingDuplicateByMerchantKeyInRangeTypeAware(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Boolean
+
+    /**
+     * Check existence of a pending review duplicate by raw **merchant name**
+     * (fallback for legacy rows without merchantKey), restricted to the given
+     * currency and compatible transaction type.
+     */
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1
+            FROM pending_reviews
+            WHERE status = 'PENDING'
+              AND suggestedMerchant = :merchantName
+              AND suggestedMerchantKey IS NULL
+              AND suggestedDate >= :startDate
+              AND suggestedDate < :endDate
+              AND suggestedAmount BETWEEN :minAmount AND :maxAmount
+              AND UPPER(suggestedCurrency) = UPPER(:currency)
+              AND (
+                  :transactionType = 'UNKNOWN'
+                  OR suggestedType = 'UNKNOWN'
+                  OR suggestedType = :transactionType
+              )
+        )
+    """)
+    suspend fun hasPendingDuplicateByMerchantNameInRangeTypeAware(
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Boolean
+
+    /**
+     * Composite pending-review duplicate-existence check with currency **and**
+     * transaction-type awareness.
+     *
+     * Falls back from merchantKey to raw merchantName, preserving the same
+     * fallback semantics as [hasPendingDuplicateInRange].
+     */
+    @Transaction
+    suspend fun hasPendingDuplicateInRangeTypeAware(
+        merchantKey: String,
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Boolean {
+        return hasPendingDuplicateByMerchantKeyInRangeTypeAware(
+            merchantKey = merchantKey,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = currency,
+            transactionType = transactionType
+        ) || hasPendingDuplicateByMerchantNameInRangeTypeAware(
+            merchantName = merchantName,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = currency,
+            transactionType = transactionType
+        )
+    }
+
+    /**
+     * Fetch the best pending-review duplicate candidate by **merchantKey**,
+     * restricted to currency and compatible transaction type.
+     */
+    @Query("""
+        SELECT *
+        FROM pending_reviews
+        WHERE status = 'PENDING'
+          AND suggestedMerchantKey = :merchantKey
+          AND suggestedDate >= :startDate
+          AND suggestedDate < :endDate
+          AND suggestedAmount BETWEEN :minAmount AND :maxAmount
+          AND UPPER(suggestedCurrency) = UPPER(:currency)
+          AND (
+              :transactionType = 'UNKNOWN'
+              OR suggestedType = 'UNKNOWN'
+              OR suggestedType = :transactionType
+          )
+        ORDER BY createdAt DESC
+        LIMIT 1
+    """)
+    suspend fun getPendingDuplicateCandidateByMerchantKeyInRangeTypeAware(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): PendingReview?
+
+    /**
+     * Fetch the best pending-review duplicate candidate by raw **merchant name**
+     * (fallback for legacy rows without merchantKey), restricted to currency and
+     * compatible transaction type.
+     */
+    @Query("""
+        SELECT *
+        FROM pending_reviews
+        WHERE status = 'PENDING'
+          AND suggestedMerchant = :merchantName
+          AND suggestedMerchantKey IS NULL
+          AND suggestedDate >= :startDate
+          AND suggestedDate < :endDate
+          AND suggestedAmount BETWEEN :minAmount AND :maxAmount
+          AND UPPER(suggestedCurrency) = UPPER(:currency)
+          AND (
+              :transactionType = 'UNKNOWN'
+              OR suggestedType = 'UNKNOWN'
+              OR suggestedType = :transactionType
+          )
+        ORDER BY createdAt DESC
+        LIMIT 1
+    """)
+    suspend fun getPendingDuplicateCandidateByMerchantNameInRangeTypeAware(
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): PendingReview?
+
+    /**
+     * Composite pending-review duplicate-candidate retrieval with currency
+     * **and** transaction-type awareness.
+     *
+     * Falls back from merchantKey to raw merchantName, preserving the same
+     * fallback semantics as [getPendingDuplicateCandidateInRange].
+     */
+    @Transaction
+    suspend fun getPendingDuplicateCandidateInRangeTypeAware(
+        merchantKey: String,
+        merchantName: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): PendingReview? {
+        return getPendingDuplicateCandidateByMerchantKeyInRangeTypeAware(
+            merchantKey = merchantKey,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = currency,
+            transactionType = transactionType
+        ) ?: getPendingDuplicateCandidateByMerchantNameInRangeTypeAware(
+            merchantName = merchantName,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = currency,
+            transactionType = transactionType
+        )
+    }
 }

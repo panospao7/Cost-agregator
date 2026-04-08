@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -547,4 +548,41 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun getAverageDailySpend(startMs: Long, endMs: Long): Double? =
         expenseDao.getAverageDailySpend(startMs, endMs)
+
+    // ── Policy-aware duplicate-candidate retrieval (A.4) ──────────────────
+
+    /**
+     * Retrieve all duplicate candidates within the canonical
+     * [DuplicateDetectionPolicy] time/amount window for a given currency and
+     * transaction type.
+     *
+     * This is the **dedicated duplicate-detection path** for use cases/engines.
+     * [getExpensesBetween] must remain untouched for analytics/export callers.
+     *
+     * @param amount          transaction amount
+     * @param date            event timestamp (epoch ms)
+     * @param currency        ISO-4217 currency code (null defaults to EUR)
+     * @param transactionType transaction type for compatible filtering
+     * @param windowMs        override window (defaults to [DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS])
+     */
+    suspend fun getDuplicateCandidatesInWindow(
+        amount: Double,
+        date: Long,
+        currency: String? = null,
+        transactionType: TransactionType = TransactionType.UNKNOWN,
+        windowMs: Long = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
+    ): List<Expense> {
+        val tolerance = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+        val normalizedCurrency = DuplicateDetectionPolicy.normalizeCurrency(currency)
+        val startDate = date - windowMs
+        val endDateExclusive = date + windowMs + 1
+        return expenseDao.getDuplicateCandidatesInRange(
+            startDate = startDate,
+            endDate = endDateExclusive,
+            minAmount = amount - tolerance,
+            maxAmount = amount + tolerance,
+            currency = normalizedCurrency,
+            transactionType = transactionType.name
+        )
+    }
 }

@@ -182,7 +182,7 @@ class CloudDedupeJudgeService @Inject constructor(
 
     private fun buildPrompt(input: DedupeJudgeInput): String {
         val candidates = input.candidates.joinToString("\n") { candidate ->
-            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=${candidate.merchant}, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, source=${candidate.sourceLabel}, preview=${candidate.textPreview ?: "none"}"
+            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=${candidate.merchant}, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, txType=${candidate.transactionType ?: "UNKNOWN"}, source=${candidate.sourceLabel}, preview=${candidate.textPreview ?: "none"}"
         }
 
         return """
@@ -190,6 +190,7 @@ class CloudDedupeJudgeService @Inject constructor(
             Stay conservative.
             Never assume certainty from weak evidence.
             Use only the subject and candidates below.
+            Note: Transactions of different types (e.g. PURCHASE vs DEPOSIT) are never duplicates.
             Return JSON only.
 
             JSON schema:
@@ -207,6 +208,7 @@ class CloudDedupeJudgeService @Inject constructor(
             - merchant=${input.subject.merchant}
             - amount=${input.subject.amount} ${input.subject.currency}
             - date=${input.subject.date}
+            - txType=${input.subject.transactionType ?: "UNKNOWN"}
             - source=${input.subject.sourceLabel}
             - preview=${input.subject.textPreview ?: "none"}
 

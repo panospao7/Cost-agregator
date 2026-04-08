@@ -41,6 +41,8 @@
 **Affected files:** `DetectDuplicateExpenseUseCase.kt`, `Expense.generateDedupeKey()`, `ExpenseDao.kt`, `ExpenseRepository.kt`, `NotificationProcessingPipeline.kt`, `ReceiptRepository.kt`, `ReviewQueueRepository.kt`, `CrossSourceDeduplication.kt`, `DedupeJudgeInputBuilder.kt`
 **Suggested fix:** Include currency in the dedupe key. Centralize duplicate policy (window, merchant normalization, amount tolerance, scoring) behind one shared component. Filter candidates by compatible transaction type. Make dedupe key generation locale-invariant.
 
+**[RESOLVED BY A.4]**
+
 ### A.5: Time Boundary / Calendar Arithmetic Inconsistencies
 **Batches affected:** 01, 02, 03, 04, 10, 16, 17, 30, 32, 36, 37, 41, 43
 **Severity:** HIGH

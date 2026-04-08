@@ -1,10 +1,11 @@
 package com.yourname.expensetracker.domain.usecase.expense
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import javax.inject.Inject
 
 class DetectDuplicateExpenseUseCase @Inject constructor(
@@ -14,22 +15,36 @@ class DetectDuplicateExpenseUseCase @Inject constructor(
 ) {
     companion object {
         private const val AUTO_WINDOW_MS = -1L
-        private const val FIVE_MINUTES_MS = 5 * 60 * 1000L
-        private const val TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000L
     }
 
     enum class DuplicateDetectionSource(val defaultWindowMs: Long) {
-        NOTIFICATION(defaultWindowMs = FIVE_MINUTES_MS),
-        MANUAL_ENTRY(defaultWindowMs = TWENTY_FOUR_HOURS_MS),
-        STATEMENT_IMPORT(defaultWindowMs = TWENTY_FOUR_HOURS_MS),
-        OCR_IMPORT(defaultWindowMs = TWENTY_FOUR_HOURS_MS),
-        UNKNOWN(defaultWindowMs = TWENTY_FOUR_HOURS_MS)
+        NOTIFICATION(defaultWindowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS),
+        MANUAL_ENTRY(defaultWindowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS),
+        STATEMENT_IMPORT(defaultWindowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS),
+        OCR_IMPORT(defaultWindowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS),
+        UNKNOWN(defaultWindowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS)
     }
 
+    /**
+     * Check for duplicate expenses.
+     *
+     * @param amount          transaction amount
+     * @param merchant        merchant display name
+     * @param date            event timestamp (epoch ms)
+     * @param currency        ISO-4217 currency code; **must be provided explicitly** for blocking
+     *                        duplicate checks — callers that genuinely do not know the currency
+     *                        should pass [DuplicateDetectionPolicy.DEFAULT_CURRENCY] rather than
+     *                        null so that the candidate query is always currency-aware.
+     * @param transactionType transaction type for type-compatible filtering
+     * @param windowMs        override window (-1 = use source default)
+     * @param source          ingestion source (determines default window)
+     */
     suspend operator fun invoke(
         amount: Double,
         merchant: String,
         date: Long,
+        currency: String,
+        transactionType: TransactionType = TransactionType.UNKNOWN,
         windowMs: Long = AUTO_WINDOW_MS,
         source: DuplicateDetectionSource = DuplicateDetectionSource.UNKNOWN
     ): DuplicateCheckResult {
@@ -39,21 +54,14 @@ class DetectDuplicateExpenseUseCase @Inject constructor(
             windowMs.coerceAtLeast(0L)
         }
 
-        val startDate = date - effectiveWindowMs
-        val endDateExclusive = date + effectiveWindowMs + 1
-        val targetMerchantKey = MerchantKeyGenerator.generate(merchant)
+        val nearbyExpenses = expenseRepository.getDuplicateCandidatesInWindow(
+            amount = amount,
+            date = date,
+            currency = currency,
+            transactionType = transactionType,
+            windowMs = effectiveWindowMs
+        )
 
-        val nearbyExpenses = expenseRepository.getExpensesBetween(startDate, endDateExclusive)
-            .asSequence()
-            // Optional pre-filter: amount band for faster candidate pruning
-            .filter { expense -> kotlin.math.abs(expense.amount - amount) <= 0.01 }
-            // Optional pre-filter: canonical merchant key if available on both rows
-            .filter { expense ->
-                val existingKey = expense.merchantKey
-                existingKey == null || existingKey == targetMerchantKey
-            }
-            .toList()
-        
         val duplicate = crossSourceDeduplication.findExpenseDuplicate(
             amount = amount,
             merchant = merchant,
@@ -61,7 +69,7 @@ class DetectDuplicateExpenseUseCase @Inject constructor(
             expenses = nearbyExpenses,
             timeWindowMs = effectiveWindowMs
         )
-        
+
         return if (duplicate != null) {
             DuplicateCheckResult.Duplicate(duplicate)
         } else {

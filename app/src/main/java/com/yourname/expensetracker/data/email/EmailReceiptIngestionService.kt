@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.email.provider.ParsedEmailReceipt
 import com.yourname.expensetracker.data.email.provider.UberReceiptParser
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
@@ -294,7 +295,11 @@ class EmailReceiptIngestionService @Inject constructor(
                 notes = receipt.items
                     .takeIf { it.isNotEmpty() }
                     ?.joinToString(prefix = "Email receipt: ", separator = ", ") { it.description },
-                dedupeKey = Expense.generateDedupeKey(receipt.amount, merchant, receipt.date)
+                // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never
+                // collide on the persisted unique dedupeKey index (ISSUE-8 fix).
+                dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                    receipt.amount, merchant, receipt.date, receipt.currency, TransactionType.PURCHASE
+                )
             )
 
             val expenseId = expenseDao.insertAtomic(expense)

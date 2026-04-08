@@ -116,6 +116,137 @@ class DuplicateLogicConsistencyIntegrationTest {
         assertNull(duplicate)
     }
 
+    // ── ISSUE-5 regression: currency-aware, type-compatible, ranked ───────
+
+    @Test
+    fun `findPendingReviewDuplicate - currency mismatch returns null`() {
+        val date = System.currentTimeMillis()
+        val review = createPendingReview(1, 25.50, "Starbucks", date, currency = "USD")
+
+        val result = deduplication.findPendingReviewDuplicate(
+            amount = 25.50,
+            merchant = "Starbucks",
+            date = date,
+            pendingReviews = listOf(review),
+            currency = "EUR"
+        )
+        assertNull("Different currency should not match", result)
+    }
+
+    @Test
+    fun `findPendingReviewDuplicate - same currency matches`() {
+        val date = System.currentTimeMillis()
+        val review = createPendingReview(1, 25.50, "Starbucks", date, currency = "EUR")
+
+        val result = deduplication.findPendingReviewDuplicate(
+            amount = 25.50,
+            merchant = "Starbucks",
+            date = date,
+            pendingReviews = listOf(review),
+            currency = "EUR"
+        )
+        assertNotNull("Same currency should match", result)
+        assertEquals(review.id, result!!.id)
+    }
+
+    @Test
+    fun `findPendingReviewDuplicate - incompatible transaction type returns null`() {
+        val date = System.currentTimeMillis()
+        // Review is a DEPOSIT, but we are checking a PURCHASE
+        val review = createPendingReview(
+            1, 25.50, "Starbucks", date,
+            currency = "EUR",
+            type = TransactionType.DEPOSIT
+        )
+
+        val result = deduplication.findPendingReviewDuplicate(
+            amount = 25.50,
+            merchant = "Starbucks",
+            date = date,
+            pendingReviews = listOf(review),
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
+        assertNull("Incompatible transaction types should not match", result)
+    }
+
+    @Test
+    fun `findPendingReviewDuplicate - compatible transaction types match`() {
+        val date = System.currentTimeMillis()
+        val review = createPendingReview(
+            1, 25.50, "Starbucks", date,
+            currency = "EUR",
+            type = TransactionType.PURCHASE
+        )
+
+        val result = deduplication.findPendingReviewDuplicate(
+            amount = 25.50,
+            merchant = "Starbucks",
+            date = date,
+            pendingReviews = listOf(review),
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
+        assertNotNull("Matching transaction type should match", result)
+        assertEquals(review.id, result!!.id)
+    }
+
+    @Test
+    fun `findPendingReviewDuplicate - UNKNOWN type matches any review type`() {
+        val date = System.currentTimeMillis()
+        val review = createPendingReview(
+            1, 25.50, "Starbucks", date,
+            currency = "EUR",
+            type = TransactionType.DEPOSIT
+        )
+
+        // UNKNOWN incoming type is compatible with anything
+        val result = deduplication.findPendingReviewDuplicate(
+            amount = 25.50,
+            merchant = "Starbucks",
+            date = date,
+            pendingReviews = listOf(review),
+            currency = "EUR",
+            transactionType = TransactionType.UNKNOWN
+        )
+        assertNotNull("UNKNOWN type should be compatible with any review type", result)
+    }
+
+    @Test
+    fun `findPendingReviewDuplicate - ranked selection returns closest in time`() {
+        val now = System.currentTimeMillis()
+        // Two candidates that both pass hard filters; reviewClose is temporally nearer
+        val reviewFar   = createPendingReview(1, 25.50, "Starbucks", now - 240_000L, currency = "EUR") // 4 min ago
+        val reviewClose = createPendingReview(2, 25.50, "Starbucks", now - 60_000L,  currency = "EUR") // 1 min ago
+
+        val result = deduplication.findPendingReviewDuplicate(
+            amount = 25.50,
+            merchant = "Starbucks",
+            date = now,
+            pendingReviews = listOf(reviewFar, reviewClose),
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
+        assertNotNull(result)
+        assertEquals("Should prefer temporally closest candidate", reviewClose.id, result!!.id)
+    }
+
+    @Test
+    fun `findPendingReviewDuplicate - null currency parameter defaults to EUR and matches EUR review`() {
+        val date = System.currentTimeMillis()
+        val review = createPendingReview(1, 25.50, "Starbucks", date, currency = "EUR")
+
+        // null currency → defaults to EUR in the policy
+        val result = deduplication.findPendingReviewDuplicate(
+            amount = 25.50,
+            merchant = "Starbucks",
+            date = date,
+            pendingReviews = listOf(review),
+            currency = null
+        )
+        assertNotNull("null currency should default to EUR and match EUR review", result)
+    }
+
     @Test
     fun `consistency - both methods use same amount tolerance`() {
         val amount = 25.50
@@ -232,15 +363,17 @@ class DuplicateLogicConsistencyIntegrationTest {
         id: Long,
         amount: Double,
         merchant: String,
-        date: Long?
+        date: Long?,
+        currency: String = "EUR",
+        type: TransactionType = TransactionType.PURCHASE
     ): PendingReview {
         return PendingReview(
             id = id,
             rawNotificationId = null,
             suggestedAmount = amount,
-            suggestedCurrency = "EUR",
+            suggestedCurrency = currency,
             suggestedMerchant = merchant,
-            suggestedType = TransactionType.PURCHASE.name,
+            suggestedType = type.name,
             suggestedCategoryId = null,
             suggestedDate = date,
             confidence = 0.9f,

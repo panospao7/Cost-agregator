@@ -28,7 +28,7 @@ class ExpenseEntityStressTest {
             Locale.setDefault(Locale.US)
             
             // With US locale: 1234.56 -> "1234.56"
-            val key = Expense.generateDedupeKey(1234.56, "shop", 1000000L)
+            val key = Expense.generateDedupeKey(1234.56, "shop", 1000000L, "EUR")
             assertTrue(key.startsWith("1234.56_"))
         } finally {
             Locale.setDefault(originalLocale)
@@ -36,42 +36,39 @@ class ExpenseEntityStressTest {
     }
 
     @Test
-    fun `stress - dedupe key with German locale causes comma`() {
-        // BUG: This test documents the locale bug
+    fun `stress - dedupe key with German locale still uses dot (A4 regression)`() {
+        // FIXED by A.4: generateDedupeKey now uses Locale.ROOT via DuplicateDetectionPolicy
         val originalLocale = Locale.getDefault()
         try {
             Locale.setDefault(Locale.GERMANY)
             
-            // With German locale: 1234.56 -> "1234,56" (BUG!)
-            val key = Expense.generateDedupeKey(1234.56, "shop", 1000000L)
+            val key = Expense.generateDedupeKey(1234.56, "shop", 1000000L, "EUR")
             
-            // This will create a key with comma which breaks uniqueness
-            // The key should always use dot but doesn't due to the bug
-            assertFalse(key.startsWith("1234.56_")) // Will fail - comma used
+            // After A.4 fix, German locale must still produce dot-based amount
+            assertTrue(key.startsWith("1234.56_"))
         } finally {
             Locale.setDefault(originalLocale)
         }
     }
 
     @Test
-    fun `stress - dedupe key with Greek locale causes comma`() {
-        // BUG: Greek locale also uses comma
+    fun `stress - dedupe key with Greek locale still uses dot (A4 regression)`() {
+        // FIXED by A.4: Greek locale also uses Locale.ROOT now
         val originalLocale = Locale.getDefault()
         try {
             Locale.setDefault(Locale("el", "GR"))
             
-            val key = Expense.generateDedupeKey(1234.56, "shop", 1000000L)
+            val key = Expense.generateDedupeKey(1234.56, "shop", 1000000L, "EUR")
             
-            // Expected: "1234.56_shop_X"
-            // Actual: "1234,56_shop_X" (BUG - comma)
-            assertFalse(key.startsWith("1234.56_"))
+            // After A.4 fix, Greek locale must still produce dot-based amount
+            assertTrue(key.startsWith("1234.56_"))
         } finally {
             Locale.setDefault(originalLocale)
         }
     }
 
     @Test
-    fun `stress - dedupe keys differ across locales for same amount`() {
+    fun `stress - dedupe keys identical across locales for same amount (A4 regression)`() {
         val originalLocale = Locale.getDefault()
         
         val usKey: String
@@ -79,36 +76,35 @@ class ExpenseEntityStressTest {
         
         try {
             Locale.setDefault(Locale.US)
-            usKey = Expense.generateDedupeKey(999.99, "merchant", 500000L)
+            usKey = Expense.generateDedupeKey(999.99, "merchant", 500000L, "EUR")
             
             Locale.setDefault(Locale.GERMANY)
-            germanKey = Expense.generateDedupeKey(999.99, "merchant", 500000L)
+            germanKey = Expense.generateDedupeKey(999.99, "merchant", 500000L, "EUR")
         } finally {
             Locale.setDefault(originalLocale)
         }
         
-        // These SHOULD be equal but aren't due to the bug
-        // Documenting the bug
-        assertNotEquals(usKey, germanKey)
+        // FIXED by A.4: keys MUST be identical regardless of locale
+        assertEquals(usKey, germanKey)
     }
 
     @Test
-    fun `stress - many amounts with locale variation`() {
+    fun `stress - many amounts with locale variation produce identical keys (A4 regression)`() {
         val originalLocale = Locale.getDefault()
         try {
             Locale.setDefault(Locale.US)
             val usKeys = (1..100).map { i ->
-                Expense.generateDedupeKey(i.toDouble(), "shop", 1000000L)
+                Expense.generateDedupeKey(i.toDouble(), "shop", 1000000L, "EUR")
             }
             
             Locale.setDefault(Locale.GERMANY)
             val germanKeys = (1..100).map { i ->
-                Expense.generateDedupeKey(i.toDouble(), "shop", 1000000L)
+                Expense.generateDedupeKey(i.toDouble(), "shop", 1000000L, "EUR")
             }
             
-            // All should be equal but aren't
-            usKeys.zip(germanKeys).forEach { (us, de) ->
-                assertNotEquals("Keys differ for amount $us", us, de)
+            // FIXED by A.4: all keys must be identical across locales
+            usKeys.zip(germanKeys).forEachIndexed { idx, (us, de) ->
+                assertEquals("Keys for amount ${idx + 1} must be equal", us, de)
             }
         } finally {
             Locale.setDefault(originalLocale)
@@ -350,8 +346,8 @@ class ExpenseEntityStressTest {
         val t1 = 300_000L // bucket 1
         val t2 = 600_000L // bucket 2
         
-        val key1 = Expense.generateDedupeKey(50.0, "shop", t1)
-        val key2 = Expense.generateDedupeKey(50.0, "shop", t2)
+        val key1 = Expense.generateDedupeKey(50.0, "shop", t1, "EUR")
+        val key2 = Expense.generateDedupeKey(50.0, "shop", t2, "EUR")
         
         assertNotEquals(key1, key2)
     }
@@ -361,8 +357,8 @@ class ExpenseEntityStressTest {
         val t1 = 299_999L // bucket 0
         val t2 = 300_000L // bucket 1
         
-        val key1 = Expense.generateDedupeKey(50.0, "shop", t1)
-        val key2 = Expense.generateDedupeKey(50.0, "shop", t2)
+        val key1 = Expense.generateDedupeKey(50.0, "shop", t1, "EUR")
+        val key2 = Expense.generateDedupeKey(50.0, "shop", t2, "EUR")
         
         assertNotEquals(key1, key2)
     }
@@ -372,16 +368,16 @@ class ExpenseEntityStressTest {
         val t1 = 100_000L // bucket 0
         val t2 = 299_999L // still bucket 0
         
-        val key1 = Expense.generateDedupeKey(50.0, "shop", t1)
-        val key2 = Expense.generateDedupeKey(50.0, "shop", t2)
+        val key1 = Expense.generateDedupeKey(50.0, "shop", t1, "EUR")
+        val key2 = Expense.generateDedupeKey(50.0, "shop", t2, "EUR")
         
         assertEquals(key1, key2)
     }
 
     @Test
     fun `stress - dedupe key with very small amounts`() {
-        val key1 = Expense.generateDedupeKey(0.01, "shop", 1000000L)
-        val key2 = Expense.generateDedupeKey(0.02, "shop", 1000000L)
+        val key1 = Expense.generateDedupeKey(0.01, "shop", 1000000L, "EUR")
+        val key2 = Expense.generateDedupeKey(0.02, "shop", 1000000L, "EUR")
         
         assertNotEquals(key1, key2)
         assertTrue(key1.contains("0.01"))
@@ -390,18 +386,18 @@ class ExpenseEntityStressTest {
 
     @Test
     fun `stress - dedupe key with very large amounts`() {
-        val key = Expense.generateDedupeKey(999999.99, "shop", 1000000L)
+        val key = Expense.generateDedupeKey(999999.99, "shop", 1000000L, "EUR")
         assertTrue(key.contains("999999.99"))
     }
 
     @Test
     fun `stress - dedupe key with amounts that round differently`() {
         // 1.255 should round to 1.26
-        val key1 = Expense.generateDedupeKey(1.255, "shop", 1000000L)
+        val key1 = Expense.generateDedupeKey(1.255, "shop", 1000000L, "EUR")
         assertTrue(key1.contains("1.26"))
         
         // 1.254 should round to 1.25
-        val key2 = Expense.generateDedupeKey(1.254, "shop", 1000000L)
+        val key2 = Expense.generateDedupeKey(1.254, "shop", 1000000L, "EUR")
         assertTrue(key2.contains("1.25"))
     }
 
@@ -411,9 +407,9 @@ class ExpenseEntityStressTest {
 
     @Test
     fun `stress - dedupe key normalizes merchant case`() {
-        val key1 = Expense.generateDedupeKey(50.0, "STARBUCKS", 1000000L)
-        val key2 = Expense.generateDedupeKey(50.0, "starbucks", 1000000L)
-        val key3 = Expense.generateDedupeKey(50.0, "Starbucks", 1000000L)
+        val key1 = Expense.generateDedupeKey(50.0, "STARBUCKS", 1000000L, "EUR")
+        val key2 = Expense.generateDedupeKey(50.0, "starbucks", 1000000L, "EUR")
+        val key3 = Expense.generateDedupeKey(50.0, "Starbucks", 1000000L, "EUR")
         
         assertEquals(key1, key2)
         assertEquals(key2, key3)
@@ -422,8 +418,8 @@ class ExpenseEntityStressTest {
     @Test
     fun `stress - dedupe key normalizes Greek characters`() {
         // Greek sigma can be at end of word (ς) or middle (σ)
-        val key1 = Expense.generateDedupeKey(50.0, "Καφές", 1000000L) // ends with ς
-        val key2 = Expense.generateDedupeKey(50.0, "Καφεσ", 1000000L)  // ends with σ
+        val key1 = Expense.generateDedupeKey(50.0, "Καφές", 1000000L, "EUR") // ends with ς
+        val key2 = Expense.generateDedupeKey(50.0, "Καφεσ", 1000000L, "EUR")  // ends with σ
         
         // Keys should be equal after normalization
         // This tests MerchantKeyGenerator normalization
@@ -431,8 +427,8 @@ class ExpenseEntityStressTest {
 
     @Test
     fun `stress - dedupe key removes special characters`() {
-        val key1 = Expense.generateDedupeKey(50.0, "Shop-123", 1000000L)
-        val key2 = Expense.generateDedupeKey(50.0, "Shop123", 1000000L)
+        val key1 = Expense.generateDedupeKey(50.0, "Shop-123", 1000000L, "EUR")
+        val key2 = Expense.generateDedupeKey(50.0, "Shop123", 1000000L, "EUR")
         
         // After removing non-alphanumeric, should be same
         // This tests the MerchantKeyGenerator
@@ -456,7 +452,7 @@ class ExpenseEntityStressTest {
             }.joinToString("")
             
             try {
-                val key = Expense.generateDedupeKey(100.0, merchant, 1000000L)
+                val key = Expense.generateDedupeKey(100.0, merchant, 1000000L, "EUR")
                 assertNotNull(key)
             } catch (e: Exception) {
                 fail("generateDedupeKey crashed with: $merchant")
@@ -470,7 +466,7 @@ class ExpenseEntityStressTest {
             val amount = Random.nextDouble(0.0, 1000000.0)
             
             try {
-                val key = Expense.generateDedupeKey(amount, "shop", 1000000L)
+                val key = Expense.generateDedupeKey(amount, "shop", 1000000L, "EUR")
                 assertNotNull(key)
                 // Valid amounts should create valid keys
             } catch (e: Exception) {
@@ -485,47 +481,47 @@ class ExpenseEntityStressTest {
 
     @Test
     fun `stress - zero amount`() {
-        val key = Expense.generateDedupeKey(0.0, "shop", 1000000L)
+        val key = Expense.generateDedupeKey(0.0, "shop", 1000000L, "EUR")
         assertTrue(key.contains("0.00"))
     }
 
     @Test
     fun `stress - very long merchant name`() {
         val longMerchant = "A".repeat(1000)
-        val key = Expense.generateDedupeKey(50.0, longMerchant, 1000000L)
+        val key = Expense.generateDedupeKey(50.0, longMerchant, 1000000L, "EUR")
         assertNotNull(key)
     }
 
     @Test
     fun `stress - unicode merchant name`() {
         val unicode = "🛒shop" // emoji + text
-        val key = Expense.generateDedupeKey(50.0, unicode, 1000000L)
+        val key = Expense.generateDedupeKey(50.0, unicode, 1000000L, "EUR")
         assertNotNull(key)
     }
 
     @Test
     fun `stress - empty merchant name`() {
-        val key = Expense.generateDedupeKey(50.0, "", 1000000L)
+        val key = Expense.generateDedupeKey(50.0, "", 1000000L, "EUR")
         assertNotNull(key)
     }
 
     @Test
     fun `stress - timestamp at epoch`() {
-        val key = Expense.generateDedupeKey(50.0, "shop", 0L)
-        assertTrue(key.endsWith("_0"))
+        val key = Expense.generateDedupeKey(50.0, "shop", 0L, "EUR")
+        assertTrue(key.contains("_0_"))
     }
 
     @Test
     fun `stress - negative timestamp`() {
         // Negative timestamps (before epoch) should still work
-        val key = Expense.generateDedupeKey(50.0, "shop", -1000L)
+        val key = Expense.generateDedupeKey(50.0, "shop", -1000L, "EUR")
         assertNotNull(key)
     }
 
     @Test
     fun `stress - very large timestamp`() {
         // Far future timestamps
-        val key = Expense.generateDedupeKey(50.0, "shop", Long.MAX_VALUE)
+        val key = Expense.generateDedupeKey(50.0, "shop", Long.MAX_VALUE, "EUR")
         assertNotNull(key)
     }
 
@@ -535,14 +531,14 @@ class ExpenseEntityStressTest {
 
     @Test
     fun `regression - basic dedupe key format unchanged`() {
-        val key = Expense.generateDedupeKey(12.50, "cafe", 300000L)
-        assertEquals("12.50_cafe_1", key)
+        val key = Expense.generateDedupeKey(12.50, "cafe", 300000L, "EUR")
+        assertEquals("12.50_cafe_1_EUR", key)
     }
 
     @Test
     fun `regression - case normalization unchanged`() {
-        val key1 = Expense.generateDedupeKey(20.0, "Starbucks", 1000000L)
-        val key2 = Expense.generateDedupeKey(20.0, "STARBUCKS", 1000000L)
+        val key1 = Expense.generateDedupeKey(20.0, "Starbucks", 1000000L, "EUR")
+        val key2 = Expense.generateDedupeKey(20.0, "STARBUCKS", 1000000L, "EUR")
         assertEquals(key1, key2)
     }
 
@@ -550,57 +546,53 @@ class ExpenseEntityStressTest {
     fun `regression - 5-minute window unchanged`() {
         val t1 = 600000L
         val t2 = 899999L
-        val key1 = Expense.generateDedupeKey(5.0, "kiosk", t1)
-        val key2 = Expense.generateDedupeKey(5.0, "kiosk", t2)
+        val key1 = Expense.generateDedupeKey(5.0, "kiosk", t1, "EUR")
+        val key2 = Expense.generateDedupeKey(5.0, "kiosk", t2, "EUR")
         assertEquals(key1, key2)
     }
 
     // ============================================================================
-    // SECTION 10: KNOWN BUGS DOCUMENTATION
+    // SECTION 10: A.4 REGRESSION — LOCALE BUG FIXED
     // ============================================================================
 
     @Test
-    fun `bug - locale affects dedupe key generation`() {
-        // BUG: generateDedupeKey uses default locale for formatting
-        // This causes different keys for same amount in different locales
+    fun `regression A4 - locale no longer affects dedupe key generation`() {
+        // FIXED by A.4: generateDedupeKey now delegates to DuplicateDetectionPolicy
+        // which uses Locale.ROOT for amount formatting.
         
         val originalLocale = Locale.getDefault()
         
         try {
             Locale.setDefault(Locale.US)
-            val usKey = Expense.generateDedupeKey(100.50, "test", 1000L)
+            val usKey = Expense.generateDedupeKey(100.50, "test", 1000L, "EUR")
             
             Locale.setDefault(Locale.GERMANY)
-            val deKey = Expense.generateDedupeKey(100.50, "test", 1000L)
+            val deKey = Expense.generateDedupeKey(100.50, "test", 1000L, "EUR")
             
-            // Keys should be identical but aren't due to locale bug
-            assertNotEquals(usKey, deKey)
+            // Keys MUST be identical now that Locale.ROOT is enforced
+            assertEquals(usKey, deKey)
         } finally {
             Locale.setDefault(originalLocale)
         }
     }
 
     @Test
-    fun `bug - migration mismatch with locale`() {
-        // BUG: Old data uses SQLite printf (always dot)
-        // New data from Kotlin uses default locale (comma in EU)
-        // This can cause duplicate detection to fail
+    fun `regression A4 - migration mismatch with locale is fixed`() {
+        // FIXED by A.4: Both SQLite printf (always dot) and Kotlin formatting
+        // now produce the same dot-based output because Locale.ROOT is used.
         
-        // Document the expected vs actual behavior
         val originalLocale = Locale.getDefault()
         
         try {
             Locale.setDefault(Locale.US)
-            val key1 = Expense.generateDedupeKey(100.00, "shop", 1000L)
+            val key1 = Expense.generateDedupeKey(100.00, "shop", 1000L, "EUR")
             
             Locale.setDefault(Locale.GERMANY)
-            val key2 = Expense.generateDedupeKey(100.00, "shop", 1000L)
+            val key2 = Expense.generateDedupeKey(100.00, "shop", 1000L, "EUR")
             
-            // key1: "100.00_shop_0"
-            // key2: "100,00_shop_0" (comma - BUG)
-            
-            assertNotEquals(key1, key2)
-            // This means duplicate detection may fail for European locale users
+            // Both keys must be identical — no comma/dot mismatch
+            assertEquals(key1, key2)
+            assertTrue("Key must use dot decimal separator", key1.contains("100.00"))
         } finally {
             Locale.setDefault(originalLocale)
         }
