@@ -4,6 +4,7 @@ import android.content.Context
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -23,7 +24,8 @@ class HybridExpenseClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
     private val categoryRepository: CategoryRepository,
     private val categorizationEngine: CategorizationEngine,
-    private val nbClassifier: ExpenseCategoryClassifier
+    private val nbClassifier: ExpenseCategoryClassifier,
+    private val timeProvider: TimeProvider
 ) {
     companion object {
         private const val TAG = "HybridClassifier"
@@ -70,7 +72,8 @@ class HybridExpenseClassifier @Inject constructor(
             text = notificationText,
             packageName = packageName,
             amount = amount,
-            merchant = merchantNormalized
+            merchant = merchantNormalized,
+            eventTimeMillis = timeProvider.now()
         )
 
         // 1. Merchant Dictionary (single source of truth)
@@ -161,7 +164,8 @@ class HybridExpenseClassifier @Inject constructor(
             text = null,
             packageName = packageName,
             amount = amount,
-            merchant = merchantName
+            merchant = merchantName,
+            eventTimeMillis = timeProvider.now()
         )
         nbClassifier.train(features, correctCategoryId)
         

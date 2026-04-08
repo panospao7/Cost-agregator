@@ -1,12 +1,13 @@
 package com.yourname.expensetracker.domain.engine
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
@@ -400,7 +401,7 @@ class DashboardFollowThroughEngineTest {
 
         val filter = serializer.deserialize(highAmountRec.filterCriteria)
         assertNotNull(filter)
-        assertEquals(TransactionType.PURCHASE, filter.transactionType)
+        assertEquals(DomainTransactionType.PURCHASE, filter.transactionType)
     }
 
     // Helper functions
@@ -426,8 +427,8 @@ class DashboardFollowThroughEngineTest {
     private fun createAiArtifact(
         id: Long = 1,
         summaryText: String = "AI-generated summary"
-    ): AiArtifactEntity {
-        return AiArtifactEntity(
+    ): AiArtifactRecord {
+        return AiArtifactRecord(
             id = id,
             targetType = AiTargetType.DASHBOARD,
             targetKey = "test_key",

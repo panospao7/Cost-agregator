@@ -994,24 +994,13 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
 
         // Generate Block Party data with large expense list
         val expenses = (1..1000).map { i ->
-            com.yourname.expensetracker.data.database.entity.Expense(
+            com.yourname.expensetracker.domain.model.TransactionSummary(
                 id = i.toLong(),
                 amount = 10.0 + (i % 100),
-                currency = "EUR",
+                effectiveAmount = 10.0 + (i % 100),
                 merchant = "Merchant$i",
-                transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
                 date = getTimestampForDayOfMonth(2024, 5, (i % 30) + 1),
-                categoryId = (i % 10).toLong(),
-                paymentMethod = com.yourname.expensetracker.data.database.entity.PaymentMethod.CARD,
-                isManualEntry = false,
-                dedupeKey = "key_$i",
-                transferDirection = null,
-                transferAccountName = null,
-                latitude = null,
-                longitude = null,
-                locationSource = null,
-                isNotMine = false,
-                notes = null
+                categoryId = (i % 10).toLong()
             )
         }
 

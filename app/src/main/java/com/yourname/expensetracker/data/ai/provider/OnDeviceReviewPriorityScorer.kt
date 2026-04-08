@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewPriorityScorer
 import com.yourname.expensetracker.domain.dto.ReviewPriorityInput
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
@@ -44,7 +45,8 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
     private val router: AiCapabilityRouter,
     private val settingsRepository: AiSettingsRepository,
     private val deduplication: CrossSourceDeduplication,
-    private val reviewQueueRepository: ReviewQueueRepository
+    private val reviewQueueRepository: ReviewQueueRepository,
+    private val timeProvider: TimeProvider
 ) : ReviewPriorityScorer {
 
     companion object {
@@ -66,7 +68,7 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
         val useAi = decision.route == AiRoute.ON_DEVICE
         
         return inputs.mapIndexed { index, input ->
-            val baseFactors = ReviewPriorityFactors.fromReview(input, System.currentTimeMillis())
+            val baseFactors = ReviewPriorityFactors.fromReview(input, timeProvider.now())
             val duplicateRisk = calculateDuplicateRisk(input, inputs)
             val baseScore = calculateScoreFromFactors(baseFactors.copy(duplicateRisk = duplicateRisk))
             
@@ -105,12 +107,12 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
                 priorityScore = calculateBaseScore(review),
                 urgencyReason = null,
                 estimatedApprovalTime = null,
-                factors = ReviewPriorityFactors.fromReview(review.toReviewPriorityInput(), System.currentTimeMillis())
+                factors = ReviewPriorityFactors.fromReview(review.toReviewPriorityInput(), timeProvider.now())
             )
     }
 
     override fun calculateBaseScore(review: PendingReview): Float {
-        val factors = ReviewPriorityFactors.fromReview(review.toReviewPriorityInput(), System.currentTimeMillis())
+        val factors = ReviewPriorityFactors.fromReview(review.toReviewPriorityInput(), timeProvider.now())
         return calculateScoreFromFactors(factors)
     }
     

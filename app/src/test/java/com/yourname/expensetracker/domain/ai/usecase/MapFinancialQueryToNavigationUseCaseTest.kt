@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.repository.OwnershipFilter
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.navigation.DomainOwnershipFilter
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
@@ -30,7 +30,7 @@ class MapFinancialQueryToNavigationUseCaseTest {
                 period = PeriodRange(100L, 200L),
                 categoryIds = setOf(2L),
                 merchants = setOf("Lidl"),
-                transactionTypes = setOf(TransactionType.PURCHASE),
+                transactionTypes = setOf(DomainTransactionType.PURCHASE),
                 ownership = QueryOwnershipScope.SHARED,
                 minAmount = 10.0,
                 maxAmount = 30.0
@@ -43,9 +43,9 @@ class MapFinancialQueryToNavigationUseCaseTest {
         requireNotNull(result)
         assertEquals(2L, result.categoryId)
         assertEquals("Lidl", result.merchantName)
-        assertEquals(TransactionType.PURCHASE, result.transactionType)
+        assertEquals(DomainTransactionType.PURCHASE, result.transactionType)
         assertEquals(Pair(100L, 200L), result.dateRange)
-        assertEquals(OwnershipFilter.SHARED, result.ownership)
+        assertEquals(DomainOwnershipFilter.SHARED, result.ownership)
         assertEquals(10.0, result.minAmount)
         assertEquals(30.0, result.maxAmount)
     }

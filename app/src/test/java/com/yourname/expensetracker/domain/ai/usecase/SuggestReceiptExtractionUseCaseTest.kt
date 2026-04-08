@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
@@ -134,7 +134,7 @@ class SuggestReceiptExtractionUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { receiptAssistService.suggest(input) } returns AiServiceResult.Success(suggestion)
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(receiptId = 1L)
@@ -179,7 +179,7 @@ class SuggestReceiptExtractionUseCaseTest {
         every { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(receiptId = 1L)
@@ -211,7 +211,7 @@ class SuggestReceiptExtractionUseCaseTest {
         )
         coEvery { receiptAssistService.suggest(input) } returns AiServiceResult.Success(suggestion)
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(receiptId = 1L)
@@ -234,7 +234,7 @@ class SuggestReceiptExtractionUseCaseTest {
         coEvery { receiptAssistService.suggest(input) } returns
             AiServiceResult.Failure(AiServiceError.Unknown("provider unavailable"))
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(receiptId = 1L)
@@ -279,7 +279,7 @@ class SuggestReceiptExtractionUseCaseTest {
         confidence = confidence
     )
 
-    private fun freshReadyArtifact(sourceHash: String) = AiArtifactEntity(
+    private fun freshReadyArtifact(sourceHash: String) = AiArtifactRecord(
         id = 10L,
         targetType = AiTargetType.SCANNED_RECEIPT,
         targetId = 1L,

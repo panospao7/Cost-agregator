@@ -347,7 +347,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
     @Test
     fun `shared expenses counted correctly in monthly totals`() = runTest {
         val sharedExpenseDataPort = mockk<SharedExpenseDataPort>(relaxed = true)
-        val manager = SharedExpenseManager(sharedExpenseDataPort, Dispatchers.Unconfined)
+        val manager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, Dispatchers.Unconfined)
 
         coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns listOf(
             SharedExpenseMember(id = 1L, groupId = 1L, name = "Me"),
@@ -480,6 +480,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 coEvery { getGroupMembersOnce(any()) } returns emptyList()
                 coEvery { getGroupExpensesOnce(any()) } returns emptyList()
             },
+            timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined
         )
         val balances = sharedManager.calculateBalances(1L)

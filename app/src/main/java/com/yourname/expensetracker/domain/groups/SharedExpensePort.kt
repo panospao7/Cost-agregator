@@ -11,7 +11,7 @@ data class SharedExpenseGroup(
     val description: String? = null,
     val defaultCurrency: String = "EUR",
     val isActive: Boolean = true,
-    val createdAt: Long = System.currentTimeMillis(),
+    val createdAt: Long = 0L, // sentinel — callers MUST supply an explicit boundary timestamp
     val createdBy: String = "me"
 )
 
@@ -24,7 +24,7 @@ data class SharedExpenseMember(
     val name: String,
     val email: String? = null,
     val isCurrentUser: Boolean = false,
-    val joinedAt: Long = System.currentTimeMillis()
+    val joinedAt: Long = 0L // sentinel — callers MUST supply an explicit boundary timestamp
 )
 
 /**

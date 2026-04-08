@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.groups
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
 import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
@@ -25,6 +26,7 @@ import kotlin.math.floor
 @Singleton
 class SharedExpenseManager @Inject constructor(
     private val sharedExpenseDataPort: SharedExpenseDataPort,
+    private val timeProvider: TimeProvider,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     
@@ -41,19 +43,22 @@ class SharedExpenseManager @Inject constructor(
         defaultCurrency: String = "EUR",
         currentUserName: String = "Me"
     ): Long = withContext(ioDispatcher) {
-        // Create domain group model
+        // Create domain group model — capture creation timestamp at the boundary
         val group = SharedExpenseGroup(
             name = name,
             description = description,
-            defaultCurrency = defaultCurrency
+            defaultCurrency = defaultCurrency,
+            createdAt = timeProvider.now()
         )
 
         // Create domain members (groupId will be set by data-layer transaction coordinator)
+        val membersJoinedAt = timeProvider.now()
         val members = memberNames.map { name ->
             SharedExpenseMember(
                 groupId = 0, // Will be replaced by actual groupId in transaction
                 name = name,
-                isCurrentUser = (name == currentUserName)
+                isCurrentUser = (name == currentUserName),
+                joinedAt = membersJoinedAt
             )
         }
 
@@ -70,7 +75,8 @@ class SharedExpenseManager @Inject constructor(
                 groupId = groupId,
                 name = name,
                 email = email,
-                isCurrentUser = false
+                isCurrentUser = false,
+                joinedAt = timeProvider.now()
             )
             sharedExpenseDataPort.addMember(member)
         }
@@ -160,7 +166,7 @@ class SharedExpenseManager @Inject constructor(
             groupId = groupId,
             expenseId = expenseId,
             paidById = paidById,
-            date = System.currentTimeMillis(),
+            date = timeProvider.now(),
             description = description,
             totalAmount = totalAmount,
             currency = resolvedCurrency,

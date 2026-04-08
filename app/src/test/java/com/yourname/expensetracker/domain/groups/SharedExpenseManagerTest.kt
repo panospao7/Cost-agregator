@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.domain.logic.SplitCalculator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -21,6 +22,7 @@ class SharedExpenseManagerTest {
 
     private val testDispatcher = StandardTestDispatcher()
     private val sharedExpenseDataPort = mockk<SharedExpenseDataPort>(relaxed = true)
+    private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
 
     private lateinit var manager: SharedExpenseManager
 
@@ -30,6 +32,7 @@ class SharedExpenseManagerTest {
         every { sharedExpenseDataPort.getActiveGroups() } returns flowOf(emptyList())
         manager = SharedExpenseManager(
             sharedExpenseDataPort = sharedExpenseDataPort,
+            timeProvider = timeProvider,
             ioDispatcher = testDispatcher
         )
     }

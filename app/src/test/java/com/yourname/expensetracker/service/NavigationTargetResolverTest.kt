@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.service
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.repository.OwnershipFilter
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.navigation.DomainOwnershipFilter
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import io.mockk.every
@@ -110,7 +110,7 @@ class NavigationTargetResolverTest {
         val expectedFilter = DomainTransactionFilter(
             categoryId = 123L,
             merchantName = "Test Merchant",
-            transactionType = TransactionType.PURCHASE,
+            transactionType = DomainTransactionType.PURCHASE,
             minAmount = 10.0,
             maxAmount = 100.0
         )
@@ -126,7 +126,7 @@ class NavigationTargetResolverTest {
         val resultFilter = (action as NavigationAction.ToTransactionList).filter
         assertEquals(123L, resultFilter.categoryId)
         assertEquals("Test Merchant", resultFilter.merchantName)
-        assertEquals(TransactionType.PURCHASE, resultFilter.transactionType)
+        assertEquals(DomainTransactionType.PURCHASE, resultFilter.transactionType)
     }
 
     @Test
@@ -371,9 +371,9 @@ class NavigationTargetResolverTest {
         val filter = DomainTransactionFilter(
             categoryId = 123L,
             merchantName = "Test",
-            transactionType = TransactionType.PURCHASE,
+            transactionType = DomainTransactionType.PURCHASE,
             dateRange = Pair(1000000L, 2000000L),
-            ownership = OwnershipFilter.ALL,
+            ownership = DomainOwnershipFilter.ALL,
             minAmount = 10.0,
             maxAmount = 100.0
         )

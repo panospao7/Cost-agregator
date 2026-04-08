@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNot
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
@@ -35,18 +36,19 @@ class DailyBriefingWorker @AssistedInject constructor(
     private val generateDashboardBriefingUseCase: GenerateDashboardBriefingUseCase,
     private val dashboardDataProvider: DashboardDataProvider,
     private val analyticsRepository: DashboardAnalyticsRepository,
-    private val deliverProactiveBriefingNotificationUseCase: DeliverProactiveBriefingNotificationUseCase
+    private val deliverProactiveBriefingNotificationUseCase: DeliverProactiveBriefingNotificationUseCase,
+    private val timeProvider: TimeProvider
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Timber.d("DailyBriefingWorker: starting.")
         return try {
-            val startedAt = System.currentTimeMillis()
+            val startedAt = timeProvider.now()
             val dateKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(startedAt))
             val processedData = dashboardDataProvider
                 .getProcessedDataFlow(analyticsRepository)
                 .first()
-            generateDashboardBriefingUseCase(processedData)
+            generateDashboardBriefingUseCase(processedData, startedAt)
             deliverProactiveBriefingNotificationUseCase(
                 dateKey = dateKey,
                 startedAt = startedAt

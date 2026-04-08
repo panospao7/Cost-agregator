@@ -5,6 +5,7 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.domain.groups.SettlementCalculator
 import com.yourname.expensetracker.domain.groups.SharedExpenseDataPort
 import com.yourname.expensetracker.domain.groups.SharedExpenseManager
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.mockk
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.junit.Assert.assertEquals
@@ -30,6 +31,7 @@ class FinancialArithmeticPrecisionTest : AnalyticsEngineTestBase() {
         settlementCalculator = SettlementCalculator()
         sharedExpenseManager = SharedExpenseManager(
             sharedExpenseDataPort = mockk<SharedExpenseDataPort>(relaxed = true),
+            timeProvider = timeProvider,
             ioDispatcher = StandardTestDispatcher()
         )
 

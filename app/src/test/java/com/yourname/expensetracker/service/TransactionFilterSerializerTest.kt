@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.service
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.data.repository.OwnershipFilter
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.navigation.DomainOwnershipFilter
 import com.yourname.expensetracker.domain.model.navigation.DomainTransactionFilter
 import org.junit.Before
 import org.junit.Test
@@ -25,9 +25,9 @@ class TransactionFilterSerializerTest {
         val filter = DomainTransactionFilter(
             categoryId = 123L,
             merchantName = "Test Merchant",
-            transactionType = TransactionType.PURCHASE,
+            transactionType = DomainTransactionType.PURCHASE,
             dateRange = Pair(1000000L, 2000000L),
-            ownership = OwnershipFilter.ALL,
+            ownership = DomainOwnershipFilter.ALL,
             minAmount = 10.0,
             maxAmount = 100.0
         )

@@ -10,5 +10,5 @@ data class TransactionFilter(
     val ownership: com.yourname.expensetracker.data.repository.OwnershipFilter? = null,
     val minAmount: Double? = null,
     val maxAmount: Double? = null,
-    val correlationId: Long = System.currentTimeMillis()
+    val correlationId: Long = 0L
 )

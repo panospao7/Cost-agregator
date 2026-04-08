@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
@@ -372,7 +372,7 @@ class HybridServiceDelegationTest {
             merchant = "Metro",
             amount = 25.0,
             currency = "EUR",
-            transactionType = TransactionType.PURCHASE,
+            transactionType = DomainTransactionType.PURCHASE,
             date = 1_700_000_000_000,
             currentCategoryId = null,
             deterministicMatchType = null,

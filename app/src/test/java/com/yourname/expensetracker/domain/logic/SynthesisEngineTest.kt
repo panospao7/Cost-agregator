@@ -3,8 +3,7 @@ package com.yourname.expensetracker.domain.logic
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.TransactionSummary
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
@@ -191,11 +190,13 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         val calendar = Calendar.getInstance().apply { timeInMillis = 1705320000000L } // Jan 15, 2024
         calendar.set(Calendar.DAY_OF_MONTH, 10)
         calendar.set(Calendar.HOUR_OF_DAY, 12)
-        val expenseOnDay10 = com.yourname.expensetracker.data.database.entity.Expense(
+        val expenseOnDay10 = TransactionSummary(
+            id = 0,
             amount = 42.0,
+            effectiveAmount = 42.0,
             merchant = "Test Merchant",
-            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
-            date = calendar.timeInMillis
+            date = calendar.timeInMillis,
+            categoryId = null
         )
 
         val blockParty = engine.calculateBlockPartyData(
@@ -346,11 +347,9 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         )
 
         val day10Ts = millis(2024, Calendar.JANUARY, 10)
+        // Only pass valid PURCHASE mine-only transactions (callers filter before calling calculateBlockPartyData)
         val mixedTransactions = listOf(
-            expense(amount = 40.0, type = TransactionType.PURCHASE, date = day10Ts, merchant = "Valid Purchase", isNotMine = false),
-            expense(amount = 999.0, type = TransactionType.DEPOSIT, date = day10Ts, merchant = "Salary"),
-            expense(amount = 250.0, type = TransactionType.TRANSFER, date = day10Ts, merchant = "Internal Transfer"),
-            expense(amount = 80.0, type = TransactionType.PURCHASE, date = day10Ts, merchant = "Shared", isNotMine = true)
+            expense(amount = 40.0, date = day10Ts, merchant = "Valid Purchase", isSharedExpense = false)
         )
 
         val blockParty = engine.calculateBlockPartyData(
@@ -363,7 +362,6 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         val day10 = blockParty.first { it.dayOfMonth == 10 }
         assertEquals(40.0, day10.actualSpent, 0.01)
         assertEquals(1, day10.topTransactions.size)
-        assertEquals(TransactionType.PURCHASE, day10.topTransactions.first().transactionType)
         assertTrue(day10.status != BlockPartyStatus.NO_DATA)
     }
 
@@ -387,18 +385,17 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
 
     private fun expense(
         amount: Double,
-        type: TransactionType,
         date: Long,
         merchant: String,
-        isNotMine: Boolean = false
-    ) = Expense(
+        isSharedExpense: Boolean = false
+    ) = TransactionSummary(
         id = 0,
         amount = amount,
+        effectiveAmount = amount,
         merchant = merchant,
-        transactionType = type,
         date = date,
         categoryId = null,
-        isNotMine = isNotMine
+        isSharedExpense = isSharedExpense
     )
 
     private fun millis(year: Int, month: Int, day: Int): Long {

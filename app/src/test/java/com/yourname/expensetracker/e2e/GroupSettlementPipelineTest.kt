@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.groups.SharedExpenseManager
 import com.yourname.expensetracker.domain.groups.SharedExpenseMember
 import com.yourname.expensetracker.domain.groups.SharedGroupExpense
 import com.yourname.expensetracker.domain.logic.SplitCalculator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
@@ -30,7 +31,7 @@ class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        sharedExpenseManager = SharedExpenseManager(dataPort, testDispatcher)
+        sharedExpenseManager = SharedExpenseManager(dataPort, timeProvider, testDispatcher)
     }
 
     @Test

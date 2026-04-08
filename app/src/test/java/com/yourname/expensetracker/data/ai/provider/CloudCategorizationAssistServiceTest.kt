@@ -4,7 +4,7 @@ import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
@@ -207,7 +207,7 @@ class CloudCategorizationAssistServiceTest {
             merchant = "Lidl",
             amount = 24.5,
             currency = "EUR",
-            transactionType = TransactionType.PURCHASE,
+            transactionType = DomainTransactionType.PURCHASE,
             date = null,
             currentCategoryId = null,
             deterministicMatchType = "FALLBACK",

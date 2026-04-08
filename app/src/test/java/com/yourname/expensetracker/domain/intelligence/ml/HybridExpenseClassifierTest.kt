@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.categorization.CategorizationResult
 import com.yourname.expensetracker.domain.categorization.MatchType as CategorizationMatchType
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -17,6 +18,7 @@ class HybridExpenseClassifierTest {
     private val categorizationEngine = mockk<CategorizationEngine>(relaxed = true)
     private val nbClassifier = mockk<ExpenseCategoryClassifier>(relaxed = true)
     private val context = mockk<Context>(relaxed = true)
+    private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
     private lateinit var hybridClassifier: HybridExpenseClassifier
 
     private val foodCategory = Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")
@@ -27,7 +29,7 @@ class HybridExpenseClassifierTest {
     @Before
     fun setup() {
         coEvery { categoryRepository.getAll() } returns listOf(foodCategory, groceriesCategory, miscCategory, uncategorizedCategory)
-        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier)
+        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier, timeProvider)
     }
 
     @Test
@@ -121,7 +123,7 @@ class HybridExpenseClassifierTest {
     @Test
     fun `gracefully falls back when category list is empty`() = runBlocking {
         coEvery { categoryRepository.getAll() } returns emptyList()
-        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier)
+        hybridClassifier = HybridExpenseClassifier(context, categoryRepository, categorizationEngine, nbClassifier, timeProvider)
 
         coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
             categoryId = null,

@@ -114,7 +114,7 @@ interface GroupTransactionCoordinator {
         paidById: Long,
         currency: String? = null,
         splitType: SplitType = SplitType.EQUAL,
-        date: Long = System.currentTimeMillis()
+        date: Long = 0L // sentinel — callers MUST supply an explicit boundary timestamp
     ): GroupExpenseCreationResult
     
     /**
@@ -140,7 +140,7 @@ interface GroupTransactionCoordinator {
         currency: String? = null,
         splitType: SplitType = SplitType.EQUAL,
         customSplitsJson: String? = null,
-        date: Long = System.currentTimeMillis()
+        date: Long = 0L // sentinel — callers MUST supply an explicit boundary timestamp
     ): GroupExpenseCreationResult
     
     /**

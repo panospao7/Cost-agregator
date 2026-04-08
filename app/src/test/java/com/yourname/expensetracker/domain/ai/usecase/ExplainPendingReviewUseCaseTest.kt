@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
@@ -110,7 +110,7 @@ class ExplainPendingReviewUseCaseTest {
         reviewExplanationEnabled = reviewExplanationEnabled
     )
 
-    private fun freshReadyArtifact(reviewId: Long = 1L) = AiArtifactEntity(
+    private fun freshReadyArtifact(reviewId: Long = 1L) = AiArtifactRecord(
         id            = 10L,
         targetType    = AiTargetType.PENDING_REVIEW,
         targetKey     = "pending_review:$reviewId",
@@ -185,7 +185,7 @@ class ExplainPendingReviewUseCaseTest {
         coEvery { reviewExplanationService.generate(any()) } returns
             AiServiceResult.Failure(AiServiceError.Unknown("provider unavailable"))
 
-        val slot = slot<AiArtifactEntity>()
+        val slot = slot<AiArtifactRecord>()
         // Capture the last upsert call
         coEvery { aiArtifactRepository.upsert(capture(slot)) } returns 1L
 
@@ -213,7 +213,7 @@ class ExplainPendingReviewUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } returns AiServiceResult.Success(explanation)
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(review)
@@ -239,7 +239,7 @@ class ExplainPendingReviewUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } returns
             AiServiceResult.Success(ReviewExplanation(headline = "H", body = "B"))
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(review)
@@ -255,7 +255,7 @@ class ExplainPendingReviewUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } returns
             AiServiceResult.Success(ReviewExplanation("H", "B"))
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(review)
@@ -282,7 +282,7 @@ class ExplainPendingReviewUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } returns
             AiServiceResult.Success(ReviewExplanation("H", "B"))
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(review)
@@ -305,7 +305,7 @@ class ExplainPendingReviewUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } throws RuntimeException("Network timeout")
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(review)
@@ -328,7 +328,7 @@ class ExplainPendingReviewUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { reviewExplanationService.generate(any()) } returns
             AiServiceResult.Success(ReviewExplanation("H", "B"))
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(review)

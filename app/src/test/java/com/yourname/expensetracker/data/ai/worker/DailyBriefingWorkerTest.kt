@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRe
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -33,6 +34,7 @@ class DailyBriefingWorkerTest {
     private lateinit var dashboardDataProvider: DashboardDataProvider
     private lateinit var analyticsRepository: DashboardAnalyticsRepository
     private lateinit var deliverProactiveBriefingNotificationUseCase: DeliverProactiveBriefingNotificationUseCase
+    private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
 
     @Before
     fun setup() {
@@ -57,7 +59,8 @@ class DailyBriefingWorkerTest {
                         generateDashboardBriefingUseCase,
                         dashboardDataProvider,
                         analyticsRepository,
-                        deliverProactiveBriefingNotificationUseCase
+                        deliverProactiveBriefingNotificationUseCase,
+                        timeProvider
                     )
                 }
             })
@@ -72,7 +75,7 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { generateDashboardBriefingUseCase(processed) }
+        coVerify(exactly = 1) { generateDashboardBriefingUseCase(processed, 1000L) }
         coVerify(exactly = 1) {
             deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any())
         }
@@ -86,7 +89,7 @@ class DailyBriefingWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { generateDashboardBriefingUseCase(emptyProcessed) }
+        coVerify(exactly = 1) { generateDashboardBriefingUseCase(emptyProcessed, 1000L) }
     }
 
     @Test
@@ -102,7 +105,7 @@ class DailyBriefingWorkerTest {
     fun `worker handles engine failure gracefully`() = runTest {
         val processed = sampleProcessedData()
         coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
-        coEvery { generateDashboardBriefingUseCase(processed) } throws IllegalStateException("engine down")
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } throws IllegalStateException("engine down")
 
         val result = buildWorker().doWork()
 

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.groups.SharedExpenseGroup
 import com.yourname.expensetracker.domain.groups.SharedExpenseMember
 import com.yourname.expensetracker.domain.groups.SharedExpenseManager
 import com.yourname.expensetracker.domain.groups.SharedGroupExpense
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -23,6 +24,7 @@ import org.junit.Test
 class SharedExpenseTest {
 
     private val sharedExpenseDataPort = mockk<SharedExpenseDataPort>(relaxed = true)
+    private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
 
     private lateinit var manager: SharedExpenseManager
     private lateinit var settlementCalculator: SettlementCalculator
@@ -30,7 +32,7 @@ class SharedExpenseTest {
     @Before
     fun setUp() {
         coEvery { sharedExpenseDataPort.getGroupOnce(any()) } returns null
-        manager = SharedExpenseManager(sharedExpenseDataPort, Dispatchers.Unconfined)
+        manager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, Dispatchers.Unconfined)
         settlementCalculator = SettlementCalculator()
     }
 

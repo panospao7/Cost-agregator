@@ -334,6 +334,6 @@ class ConfidenceRouter @Inject constructor(
             sourceStatsRepository.insertIfNotExists(SourceStats(packageName = packageName))
         }
         // Update cache
-        sourceStatsCache[packageName] = Pair(existing ?: SourceStats(packageName = packageName), System.currentTimeMillis())
+        sourceStatsCache[packageName] = Pair(existing ?: SourceStats(packageName = packageName), timeProvider.now())
     }
 }

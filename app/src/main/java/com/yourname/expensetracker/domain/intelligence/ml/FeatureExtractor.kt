@@ -55,15 +55,23 @@ class FeatureExtractor {
 
     /**
      * Extract features from notification text (before expense is created).
+     *
+     * @param eventTimeMillis explicit event timestamp in millis since epoch.
+     *   Callers MUST provide an explicit value from an injected [TimeProvider]
+     *   or from the notification timestamp — never from [System.currentTimeMillis]
+     *   directly. The sentinel value 0L signals a missing/unset timestamp; any
+     *   caller that receives 0L back in the extracted features has failed to
+     *   supply an explicit boundary timestamp.
      */
     fun extractFromNotification(
         title: String?,
         text: String?,
         packageName: String,
         amount: Double,
-        merchant: String
+        merchant: String,
+        eventTimeMillis: Long = 0L // sentinel — callers MUST supply an explicit boundary timestamp
     ): ExpenseFeatures {
-        val calendar = Calendar.getInstance()
+        val calendar = Calendar.getInstance().apply { timeInMillis = eventTimeMillis }
         
         val allText = listOfNotNull(title, text, merchant).joinToString(" ")
         val tokens = tokenize(allText)

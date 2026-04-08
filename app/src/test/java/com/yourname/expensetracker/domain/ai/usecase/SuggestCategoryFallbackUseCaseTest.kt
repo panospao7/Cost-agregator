@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
@@ -97,7 +98,7 @@ class SuggestCategoryFallbackUseCaseTest {
             rationale = "Merchant looks like a supermarket"
         )
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(item)
@@ -140,7 +141,7 @@ class SuggestCategoryFallbackUseCaseTest {
             rationale = "Merchant looks like a supermarket"
         )
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(item)
@@ -162,7 +163,7 @@ class SuggestCategoryFallbackUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { categorizationAssistService.suggest(input) } returns null
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(item)
@@ -182,7 +183,7 @@ class SuggestCategoryFallbackUseCaseTest {
             merchant = "Lidl",
             amount = 10.0,
             currency = "EUR",
-            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            transactionType = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE,
             date = receipt.parsedDate,
             currentCategoryId = null,
             deterministicMatchType = null,
@@ -201,7 +202,7 @@ class SuggestCategoryFallbackUseCaseTest {
             rationale = "Receipt text looks like supermarket shopping"
         )
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         val result = useCase(
@@ -275,7 +276,7 @@ class SuggestCategoryFallbackUseCaseTest {
             merchant = "Lidl",
             amount = 10.0,
             currency = "EUR",
-            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            transactionType = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE,
             date = receipt.parsedDate,
             currentCategoryId = 99L,
             deterministicMatchType = null,
@@ -335,7 +336,7 @@ class SuggestCategoryFallbackUseCaseTest {
         merchant = "Lidl",
         amount = 10.0,
         currency = "EUR",
-        transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+        transactionType = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE,
         date = null,
         currentCategoryId = null,
         deterministicMatchType = "FALLBACK",

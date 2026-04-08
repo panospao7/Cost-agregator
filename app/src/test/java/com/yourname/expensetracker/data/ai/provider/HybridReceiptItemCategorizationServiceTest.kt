@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.dto.CategoryRef
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
@@ -71,12 +71,9 @@ class HybridReceiptItemCategorizationServiceTest {
                 )
             ),
             userCategories = listOf(
-                Category(
+                CategoryRef(
                     id = 1L,
-                    name = "Groceries",
-                    icon = "🛒",
-                    color = "#00AA00",
-                    isDefault = true
+                    name = "Groceries"
                 )
             ),
             totalTax = 0.24,

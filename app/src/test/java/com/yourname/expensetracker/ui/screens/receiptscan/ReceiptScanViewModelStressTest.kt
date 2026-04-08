@@ -2,7 +2,7 @@ package com.yourname.expensetracker.ui.screens.receiptscan
 
 import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -247,7 +247,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             fromCache = false,
             usedImageInput = false
         )
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactRecord(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,
             targetKey = "scanned_receipt:7",
@@ -297,7 +297,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             fromCache = false,
             usedImageInput = false
         )
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactRecord(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,
             targetKey = "scanned_receipt:7",
@@ -341,7 +341,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             fromCache = false,
             usedImageInput = true
         )
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactRecord(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,
             targetKey = "scanned_receipt:7",
@@ -393,7 +393,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         coEvery { suggestReceiptExtractionUseCase(7L, false) } returns ReceiptAssistGenerationResult.Error(
             "AI receipt assist failed."
         )
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactRecord(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,
             targetKey = "scanned_receipt:7",
@@ -454,7 +454,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             ),
             fromCache = false
         )
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactRecord(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,
             targetKey = "scanned_receipt:7",
@@ -514,7 +514,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         coEvery {
             suggestCategoryFallbackUseCase(receipt, "Lidl", 12.34, 999L, null, false)
         } returns CategoryAssistGenerationResult.Error("AI category assist failed.")
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactRecord(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,
             targetKey = "scanned_receipt:7",
@@ -707,7 +707,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
                 notes = null
             )
         } returns Result.Success(9L)
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactRecord(
             id = 11L,
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,
@@ -720,7 +720,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             createdAt = 0L,
             updatedAt = 0L
         )
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactRecord(
             id = 12L,
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,
@@ -771,7 +771,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
 
     @Test
     fun `stress - dismissCategoryAssist clears state and marks artifact dismissed`() = runTest {
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.CATEGORIZATION_FALLBACK) } returns AiArtifactRecord(
             id = 5L,
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,
@@ -807,7 +807,7 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
 
     @Test
     fun `stress - dismissReceiptAssist clears state and marks artifact dismissed`() = runTest {
-        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("scanned_receipt:7", AiCapability.RECEIPT_EXTRACTION) } returns AiArtifactRecord(
             id = 4L,
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = 7L,

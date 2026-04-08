@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.repository.DeleteGroupMemberResult
 import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -17,8 +18,9 @@ import org.junit.Test
 class GroupUseCasesTest {
 
     private val groupsRepository = mockk<GroupsRepository>()
+    private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
 
-    private val addGroupExpenseUseCase = AddGroupExpenseUseCase(groupsRepository)
+    private val addGroupExpenseUseCase = AddGroupExpenseUseCase(groupsRepository, timeProvider)
     private val deleteGroupUseCase = DeleteGroupUseCase(groupsRepository)
     private val deleteGroupMemberUseCase = DeleteGroupMemberUseCase(groupsRepository)
 

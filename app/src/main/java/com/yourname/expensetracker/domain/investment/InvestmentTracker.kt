@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.dao.InvestmentValueDao
 import com.yourname.expensetracker.data.database.entity.Investment
 import com.yourname.expensetracker.data.database.entity.InvestmentType
 import com.yourname.expensetracker.data.database.entity.InvestmentValue
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -37,7 +38,8 @@ data class InvestmentPerformance(
 @Singleton
 class InvestmentTracker @Inject constructor(
     private val investmentDao: InvestmentDao,
-    private val investmentValueDao: InvestmentValueDao
+    private val investmentValueDao: InvestmentValueDao,
+    private val timeProvider: TimeProvider
 ) {
     
     /**
@@ -88,11 +90,12 @@ class InvestmentTracker @Inject constructor(
             val gainLossPercent = if (investedValue > 0) (gainLoss / investedValue) * 100 else 0.0
             
             // Get historical values for day change and all-time stats
-            val thirtyDaysAgo = System.currentTimeMillis() - (30L * 24 * 60 * 60 * 1000)
+            val now = timeProvider.now()
+            val thirtyDaysAgo = now - (30L * 24 * 60 * 60 * 1000)
             val historicalValues = investmentValueDao.getValuesBetween(
                 investmentId, 
                 thirtyDaysAgo, 
-                System.currentTimeMillis()
+                now
             )
             
             val dayChange = historicalValues.firstOrNull()?.dayChange
@@ -123,7 +126,7 @@ class InvestmentTracker @Inject constructor(
      */
     suspend fun updatePrice(investmentId: Long, newPrice: Double) = withContext(Dispatchers.IO) {
         val investment = investmentDao.getById(investmentId) ?: return@withContext
-        val timestamp = System.currentTimeMillis()
+        val timestamp = timeProvider.now()
         
         // Calculate day change
         val latestValue = investmentValueDao.getLatestValue(investmentId)
@@ -202,7 +205,7 @@ class InvestmentTracker @Inject constructor(
      */
     suspend fun getPortfolioValueHistory(days: Int = 30): List<DailyPortfolioValue> = 
         withContext(Dispatchers.IO) {
-            val endDate = System.currentTimeMillis()
+            val endDate = timeProvider.now()
             val startDate = endDate - (days * 24 * 60 * 60 * 1000L)
             
             val investments = investmentDao.getAllInvestments()

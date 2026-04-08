@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
 import com.yourname.expensetracker.domain.groups.SharedExpenseDataPort
 import com.yourname.expensetracker.domain.groups.SettlementCalculator
 import com.yourname.expensetracker.domain.groups.SharedExpenseManager
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -41,6 +42,7 @@ object GroupsModule {
 
     @Provides
     fun provideAddGroupExpenseUseCase(
-        repository: GroupsRepository
-    ): AddGroupExpenseUseCase = AddGroupExpenseUseCase(repository)
+        repository: GroupsRepository,
+        timeProvider: TimeProvider
+    ): AddGroupExpenseUseCase = AddGroupExpenseUseCase(repository, timeProvider)
 }

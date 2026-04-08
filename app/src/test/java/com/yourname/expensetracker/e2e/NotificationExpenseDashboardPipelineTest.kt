@@ -181,7 +181,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             context = context,
             categoryRepository = categoryRepository,
             categorizationEngine = categorizationEngineRef,
-            nbClassifier = ExpenseCategoryClassifier(context)
+            nbClassifier = ExpenseCategoryClassifier(context),
+            timeProvider = timeProvider
         )
 
         val expenseRepository = ExpenseRepository(
@@ -294,7 +295,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
                 DeleteGroupMemberResult.Error("Not needed in this test")
         }
 
-        val sharedExpenseManager = SharedExpenseManager(sharedExpenseDataPort, testDispatcher)
+        val sharedExpenseManager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, testDispatcher)
 
         val budgetRepository = BudgetRepository(
             budgetDao = budgetDao,

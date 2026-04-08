@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
@@ -20,7 +20,7 @@ class OnDeviceCategorizationAssistServiceTest {
         merchant = "Lidl",
         amount = 24.5,
         currency = "EUR",
-        transactionType = TransactionType.PURCHASE,
+        transactionType = DomainTransactionType.PURCHASE,
         date = null,
         currentCategoryId = null,
         deterministicMatchType = "FALLBACK",

@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -52,11 +53,28 @@ class AiArtifactRepositoryImplTest {
         updatedAt     = 1_000L
     )
 
+    private fun fakeRecord(
+        targetKey: String = "pending_review:1",
+        capability: AiCapability = AiCapability.REVIEW_EXPLANATION
+    ) = AiArtifactRecord(
+        id            = 1L,
+        targetType    = AiTargetType.PENDING_REVIEW,
+        targetKey     = targetKey,
+        capability    = capability,
+        status        = AiArtifactStatus.READY,
+        mode          = AiMode.AUTO,
+        promptVersion = "v1",
+        sourceHash    = "hash",
+        createdAt     = 1_000L,
+        updatedAt     = 1_000L
+    )
+
     // ── observeLatest ─────────────────────────────────────────────────────────
 
     @Test
     fun `observeLatest delegates to dao with capability name`() = runTest(testDispatcher) {
         val entity = fakeEntity()
+        val expected = fakeRecord()
         every {
             dao.observeLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION.name)
         } returns flowOf(entity)
@@ -65,7 +83,7 @@ class AiArtifactRepositoryImplTest {
             .observeLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION)
             .first()
 
-        assertEquals(entity, result)
+        assertEquals(expected, result)
         verify { dao.observeLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION.name) }
     }
 
@@ -88,13 +106,14 @@ class AiArtifactRepositoryImplTest {
     @Test
     fun `getLatest delegates to dao with capability name`() = runTest(testDispatcher) {
         val entity = fakeEntity()
+        val expected = fakeRecord()
         coEvery {
             dao.getLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION.name)
         } returns entity
 
         val result = repository.getLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION)
 
-        assertEquals(entity, result)
+        assertEquals(expected, result)
         coVerify { dao.getLatest("pending_review:1", AiCapability.REVIEW_EXPLANATION.name) }
     }
 
@@ -113,13 +132,13 @@ class AiArtifactRepositoryImplTest {
 
     @Test
     fun `upsert delegates to dao and returns row id`() = runTest(testDispatcher) {
-        val entity = fakeEntity()
-        coEvery { dao.upsert(entity) } returns 42L
+        val record = fakeRecord()
+        coEvery { dao.upsert(any()) } returns 42L
 
-        val id = repository.upsert(entity)
+        val id = repository.upsert(record)
 
         assertEquals(42L, id)
-        coVerify { dao.upsert(entity) }
+        coVerify { dao.upsert(any()) }
     }
 
     // ── markDismissed ─────────────────────────────────────────────────────────

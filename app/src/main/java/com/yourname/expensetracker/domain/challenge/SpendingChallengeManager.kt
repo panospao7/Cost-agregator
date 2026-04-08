@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -88,11 +89,11 @@ class SpendingChallengeManager @Inject constructor(
     ): SpendingChallenge {
         val now = timeProvider.now()
         return SpendingChallenge(
-            id = now, // Use captured timeProvider value as temporary ID
+            id = UUID.randomUUID().mostSignificantBits and Long.MAX_VALUE,
             name = name,
             type = type,
             startDate = now,
-            endDate = now + (durationDays * 24 * 60 * 60 * 1000L),
+            endDate = now + (durationDays.toLong() * 24 * 60 * 60 * 1000L),
             targetAmount = targetAmount,
             categoryId = categoryId,
             isActive = true,
@@ -131,7 +132,7 @@ class SpendingChallengeManager @Inject constructor(
             }
         }
         
-        val daysRemaining = ((challenge.endDate - timeProvider.now()) / (24 * 60 * 60 * 1000L)).toInt()
+        val daysRemaining = ((challenge.endDate - timeProvider.now()) / (24 * 60 * 60 * 1000L)).toInt().coerceAtLeast(0)
         val isCompleted = timeProvider.now() >= challenge.endDate || progress >= 100.0
         
         ChallengeProgress(

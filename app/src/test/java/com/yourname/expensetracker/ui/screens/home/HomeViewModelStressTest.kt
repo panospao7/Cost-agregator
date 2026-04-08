@@ -4,7 +4,7 @@ import android.app.Application
 import app.cash.turbine.test
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.data.database.model.DashboardWidgetConfig
 import com.yourname.expensetracker.data.repository.DashboardRepository
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
@@ -227,7 +227,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             )
         )
         every { aiArtifactRepository.observeLatest(any(), any()) } returns flowOf(
-            AiArtifactEntity(
+            AiArtifactRecord(
                 targetType = AiTargetType.DASHBOARD,
                 targetKey = "dashboard_home:1970-01-01",
                 capability = AiCapability.DASHBOARD_BRIEFING,

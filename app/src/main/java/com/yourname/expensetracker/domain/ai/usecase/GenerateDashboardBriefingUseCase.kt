@@ -44,7 +44,10 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
 
-    suspend operator fun invoke(processedData: ProcessedDashboardData) {
+    suspend operator fun invoke(
+        processedData: ProcessedDashboardData,
+        eventTimeMillis: Long? = null
+    ) {
         // ── 1. Settings gate ─────────────────────────────────────────────────
         val settings = aiSettingsRepository.settings().first()
         if (!settings.aiEnabled || !settings.dashboardBriefingEnabled) {
@@ -53,7 +56,7 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
         }
 
         // ── 2. Build input ───────────────────────────────────────────────────
-        val input = inputBuilder.build(processedData)
+        val input = inputBuilder.build(processedData, eventTimeMillis)
         val routeDecision = aiCapabilityRouter.decide(AiCapability.DASHBOARD_BRIEFING, settings)
         if (routeDecision.route == AiRoute.DISABLED) {
             Timber.d("GenerateDashboardBriefingUseCase: router disabled briefing generation, skipping.")
@@ -62,7 +65,7 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
 
         // ── 3. Derive target key ─────────────────────────────────────────────
         val targetKey = "dashboard_home:${input.dateKey}"
-        val now       = timeProvider.now()
+        val now       = eventTimeMillis ?: timeProvider.now()
 
         // ── 4. Cache freshness check ─────────────────────────────────────────
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)

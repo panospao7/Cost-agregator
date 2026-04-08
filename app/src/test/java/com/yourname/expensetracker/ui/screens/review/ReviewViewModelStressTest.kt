@@ -295,7 +295,7 @@ class ReviewViewModelStressTest {
         )
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings)
 
-        val fakeArtifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        val fakeArtifact = com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType      = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetKey       = "pending_review:10",
             capability      = AiCapability.REVIEW_EXPLANATION,
@@ -351,7 +351,7 @@ class ReviewViewModelStressTest {
         )
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings)
 
-        val fakeArtifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        val fakeArtifact = com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetKey = "pending_review:11",
             capability = AiCapability.REVIEW_EXPLANATION,
@@ -546,7 +546,7 @@ class ReviewViewModelStressTest {
         )
         coEvery {
             aiArtifactRepository.getLatest("pending_review:60", AiCapability.CATEGORIZATION_FALLBACK)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 60L,
             targetKey = "pending_review:60",
@@ -605,7 +605,7 @@ class ReviewViewModelStressTest {
         )
         coEvery {
             aiArtifactRepository.getLatest("pending_review:62", AiCapability.CATEGORIZATION_FALLBACK)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 62L,
             targetKey = "pending_review:62",
@@ -673,7 +673,7 @@ class ReviewViewModelStressTest {
         )
         coEvery {
             aiArtifactRepository.getLatest("pending_review:61", AiCapability.DEDUPE_JUDGE)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 61L,
             targetKey = "pending_review:61",
@@ -732,7 +732,7 @@ class ReviewViewModelStressTest {
         )
         coEvery {
             aiArtifactRepository.getLatest("pending_review:63", AiCapability.DEDUPE_JUDGE)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 63L,
             targetKey = "pending_review:63",
@@ -809,7 +809,7 @@ class ReviewViewModelStressTest {
         stateFlow.value = mapOf(70L to viewModelState)
         coEvery {
             aiArtifactRepository.getLatest("pending_review:70", AiCapability.CATEGORIZATION_FALLBACK)
-        } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 10L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 70L,
@@ -904,7 +904,7 @@ class ReviewViewModelStressTest {
                 finalAddress = null
             )
         } returns Result.Success(20L)
-        coEvery { aiArtifactRepository.getLatest("pending_review:72", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("pending_review:72", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 21L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 72L,
@@ -990,7 +990,7 @@ class ReviewViewModelStressTest {
                 finalAddress = null
             )
         } returns Result.Success(20L)
-        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 31L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 73L,
@@ -1003,7 +1003,7 @@ class ReviewViewModelStressTest {
             createdAt = 0L,
             updatedAt = 0L
         )
-        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.DEDUPE_JUDGE) } returns com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.DEDUPE_JUDGE) } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 32L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 73L,
@@ -1122,7 +1122,7 @@ class ReviewViewModelStressTest {
 
     @Test
     fun `stress - dismissCategoryAssist resets state and marks artifact dismissed`() = runTest {
-        val artifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        val artifact = com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 8L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 80L,
@@ -1158,7 +1158,7 @@ class ReviewViewModelStressTest {
 
     @Test
     fun `stress - dismissDedupeAssist resets state and marks artifact dismissed`() = runTest {
-        val artifact = com.yourname.expensetracker.data.database.entity.AiArtifactEntity(
+        val artifact = com.yourname.expensetracker.domain.dto.AiArtifactRecord(
             id = 9L,
             targetType = com.yourname.expensetracker.domain.ai.model.AiTargetType.PENDING_REVIEW,
             targetId = 81L,

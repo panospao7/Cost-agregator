@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
-import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.dto.CategoryRef
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.CloudCategoryOption
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
@@ -101,8 +101,8 @@ class CloudReceiptItemCategorizationServiceTest {
                 )
             ),
             userCategories = listOf(
-                Category(id = 1L, name = "Private Category Alpha", icon = "A", color = "#112233"),
-                Category(id = 2L, name = "Sensitive Category Beta", icon = "B", color = "#445566")
+                CategoryRef(id = 1L, name = "Private Category Alpha"),
+                CategoryRef(id = 2L, name = "Sensitive Category Beta")
             ),
             cloudCategoryOptions = listOf(
                 CloudCategoryOption(categoryId = 1L, cloudName = "cat_a1b2c3"),
@@ -213,8 +213,8 @@ class CloudReceiptItemCategorizationServiceTest {
                 )
             ),
             userCategories = listOf(
-                Category(id = 1L, name = "Private Category Alpha", icon = "A", color = "#112233"),
-                Category(id = 2L, name = "Sensitive Category Beta", icon = "B", color = "#445566")
+                CategoryRef(id = 1L, name = "Private Category Alpha"),
+                CategoryRef(id = 2L, name = "Sensitive Category Beta")
             ),
             cloudCategoryOptions = cloudCategoryOptions,
             totalTax = null,

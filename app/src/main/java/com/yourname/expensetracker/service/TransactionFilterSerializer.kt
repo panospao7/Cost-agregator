@@ -27,6 +27,7 @@ class TransactionFilterSerializer @Inject constructor() {
         private const val KEY_OWNERSHIP = "ownership"
         private const val KEY_MIN_AMOUNT = "minAmount"
         private const val KEY_MAX_AMOUNT = "maxAmount"
+        private const val KEY_CORRELATION_ID = "correlationId"
     }
     
     /**
@@ -47,6 +48,7 @@ class TransactionFilterSerializer @Inject constructor() {
             filter.ownership?.let { json.put(KEY_OWNERSHIP, it.name) }
             filter.minAmount?.let { json.put(KEY_MIN_AMOUNT, it) }
             filter.maxAmount?.let { json.put(KEY_MAX_AMOUNT, it) }
+            json.put(KEY_CORRELATION_ID, filter.correlationId)
             
             json.toString()
         } catch (e: Exception) {
@@ -105,6 +107,11 @@ class TransactionFilterSerializer @Inject constructor() {
                 json.getDouble(KEY_MAX_AMOUNT)
             } else null
             
+            // Deserialize correlationId; legacy payloads without this key default to 0L
+            val correlationId = if (json.has(KEY_CORRELATION_ID)) {
+                json.getLong(KEY_CORRELATION_ID)
+            } else 0L
+            
             DomainTransactionFilter(
                 categoryId = categoryId,
                 merchantName = merchantName,
@@ -112,7 +119,8 @@ class TransactionFilterSerializer @Inject constructor() {
                 dateRange = dateRange,
                 ownership = ownership,
                 minAmount = minAmount,
-                maxAmount = maxAmount
+                maxAmount = maxAmount,
+                correlationId = correlationId
             )
         } catch (e: Exception) {
             // Return null on parsing error - caller should handle gracefully

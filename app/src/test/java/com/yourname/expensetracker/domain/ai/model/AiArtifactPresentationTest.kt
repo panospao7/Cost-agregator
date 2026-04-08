@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.model
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -9,7 +9,7 @@ class AiArtifactPresentationTest {
 
     @Test
     fun `toDiagnosticsOrNull maps cloud artifact to display text`() {
-        val artifact = AiArtifactEntity(
+        val artifact = AiArtifactRecord(
             targetType = AiTargetType.PENDING_REVIEW,
             targetKey = "pending_review:1",
             capability = AiCapability.REVIEW_EXPLANATION,
@@ -30,7 +30,7 @@ class AiArtifactPresentationTest {
 
     @Test
     fun `toDiagnosticsOrNull maps on-device artifact to display text`() {
-        val artifact = AiArtifactEntity(
+        val artifact = AiArtifactRecord(
             targetType = AiTargetType.PENDING_REVIEW,
             targetKey = "pending_review:1",
             capability = AiCapability.CATEGORIZATION_FALLBACK,
@@ -51,7 +51,7 @@ class AiArtifactPresentationTest {
 
     @Test
     fun `toDiagnosticsOrNull returns null for auto mode`() {
-        val artifact = AiArtifactEntity(
+        val artifact = AiArtifactRecord(
             targetType = AiTargetType.PENDING_REVIEW,
             targetKey = "pending_review:1",
             capability = AiCapability.REVIEW_EXPLANATION,

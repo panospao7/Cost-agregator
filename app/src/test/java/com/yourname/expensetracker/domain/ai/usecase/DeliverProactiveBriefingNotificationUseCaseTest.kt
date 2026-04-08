@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
 import android.content.Context
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
@@ -153,7 +153,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         verify(exactly = 0) { notificationService.sendAiBriefingReady(any(), any(), any(), any()) }
     }
 
-    private fun briefingArtifact(updatedAt: Long) = AiArtifactEntity(
+    private fun briefingArtifact(updatedAt: Long) = AiArtifactRecord(
         targetType = AiTargetType.DASHBOARD,
         targetKey = "dashboard_home:2026-03-17",
         capability = AiCapability.DASHBOARD_BRIEFING,

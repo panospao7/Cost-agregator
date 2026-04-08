@@ -211,7 +211,7 @@ fun MainScreen(
                         ownership = ownership,
                         minAmount = saved.getOrNull(6) as? Double,
                         maxAmount = saved.getOrNull(7) as? Double,
-                        correlationId = (saved.getOrNull(8) as? Long) ?: System.currentTimeMillis()
+                        correlationId = (saved.getOrNull(8) as? Long) ?: 0L
                     )
                 }
             }

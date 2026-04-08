@@ -3,10 +3,12 @@ package com.yourname.expensetracker.domain.groups.usecase
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 
 class AddGroupExpenseUseCase @Inject constructor(
-    private val groupsRepository: GroupsRepository
+    private val groupsRepository: GroupsRepository,
+    private val timeProvider: TimeProvider
 ) {
     suspend operator fun invoke(
         groupId: Long,
@@ -16,8 +18,9 @@ class AddGroupExpenseUseCase @Inject constructor(
         paidById: Long,
         splitType: SplitType,
         customSplitsJson: String? = null,
-        date: Long = System.currentTimeMillis()
+        date: Long? = null
     ): GroupExpenseCreationResult {
+        val resolvedDate = date ?: timeProvider.now()
         val group = groupsRepository.getGroupById(groupId)
             ?: return GroupExpenseCreationResult.Error("Group not found")
         if (!group.isActive) {
@@ -38,7 +41,7 @@ class AddGroupExpenseUseCase @Inject constructor(
             paidById = paidById,
             splitType = splitType,
             customSplitsJson = customSplitsJson,
-            date = date
+            date = resolvedDate
         )
     }
 }

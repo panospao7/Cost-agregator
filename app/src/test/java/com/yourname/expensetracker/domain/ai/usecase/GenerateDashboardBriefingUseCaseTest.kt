@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.domain.dto.AiArtifactRecord
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
@@ -92,7 +92,7 @@ class GenerateDashboardBriefingUseCaseTest {
         upcomingItems        = emptyList()
     )
 
-    private fun freshReadyArtifact() = AiArtifactEntity(
+    private fun freshReadyArtifact() = AiArtifactRecord(
         id            = 5L,
         targetType    = AiTargetType.DASHBOARD,
         targetKey     = "dashboard_home:$dateKey",
@@ -172,7 +172,7 @@ class GenerateDashboardBriefingUseCaseTest {
         coEvery { dashboardBriefingService.generate(any()) } returns
             AiServiceResult.Failure(AiServiceError.Unknown("provider unavailable"))
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)
@@ -197,7 +197,7 @@ class GenerateDashboardBriefingUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { dashboardBriefingService.generate(any()) } returns AiServiceResult.Success(briefing)
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)
@@ -224,7 +224,7 @@ class GenerateDashboardBriefingUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { dashboardBriefingService.generate(any()) } returns AiServiceResult.Success(briefing)
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)
@@ -242,7 +242,7 @@ class GenerateDashboardBriefingUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { dashboardBriefingService.generate(any()) } throws RuntimeException("Timeout")
 
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)
@@ -262,7 +262,7 @@ class GenerateDashboardBriefingUseCaseTest {
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
         coEvery { dashboardBriefingService.generate(any()) } returns
             AiServiceResult.Success(DashboardBriefing(title = "T", text = "B", tone = "neutral"))
-        val captured = mutableListOf<AiArtifactEntity>()
+        val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
 
         useCase(processedData)
