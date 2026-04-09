@@ -7,7 +7,6 @@ import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.every
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -122,7 +121,7 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `rolling monthly mode uses fixed 30 days instead of calendar month bug b15`() {
+    fun `rolling monthly mode resolves active anchored cycle containing now`() {
         val now = atDateTime(2026, 3, 5, 12, 0)
         every { timeProvider.now() } returns now
 
@@ -130,15 +129,22 @@ class BudgetCalculatorBoundaryTest : AnalyticsEngineTestBase() {
         val budget = budget(periodMode = "ROLLING", period = BudgetPeriod.MONTHLY, startDate = startDate)
 
         val result = calculator.calculatePeriodRange(budget)
-        val fixedThirtyDayEnd = TimePeriodUtils.addDays(startDate, 30)
-        val calendarOneMonthEnd = Calendar.getInstance().apply {
-            timeInMillis = startDate
-            add(Calendar.MONTH, 1)
-        }.timeInMillis
 
-        assertEquals(startDate, result.first)
-        assertEquals(fixedThirtyDayEnd, result.second)
-        assertNotEquals(calendarOneMonthEnd, result.second)
+        // The active anchored cycle containing March 5 with anchor day 31:
+        // Since anchor day is 31 and we're on March 5 (before the 31st),
+        // the current cycle started on Feb 28 (31st coerced to max days in Feb)
+        // and ends on March 31 (anchor day in next month).
+        val start = Calendar.getInstance().apply { timeInMillis = result.first }
+        val end = Calendar.getInstance().apply { timeInMillis = result.second }
+
+        assertEquals(2026, start.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, start.get(Calendar.MONTH))
+        assertEquals(28, start.get(Calendar.DAY_OF_MONTH))
+
+        assertEquals(2026, end.get(Calendar.YEAR))
+        assertEquals(Calendar.MARCH, end.get(Calendar.MONTH))
+        assertEquals(31, end.get(Calendar.DAY_OF_MONTH))
+        assertTrue(result.first < result.second)
     }
 
     private fun budget(periodMode: String, period: BudgetPeriod, startDate: Long): Budget {

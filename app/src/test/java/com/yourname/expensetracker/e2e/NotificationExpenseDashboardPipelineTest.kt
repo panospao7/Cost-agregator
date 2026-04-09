@@ -308,7 +308,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
                 expenseRepository = expenseRepository,
                 sharedExpenseManager = sharedExpenseManager,
                 timeProvider = timeProvider
-            )
+            ),
+            timeBoundaryTicker = com.yourname.expensetracker.domain.util.TimeBoundaryTicker(timeProvider)
         )
 
         val savingsGoalDao = mockk<SavingsGoalDao>(relaxed = true)

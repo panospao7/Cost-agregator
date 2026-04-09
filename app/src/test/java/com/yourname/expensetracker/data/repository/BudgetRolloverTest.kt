@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
+import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -20,6 +21,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
+import java.util.TimeZone
 
 /**
  * PHASE 6 TEST: Budget Rollover
@@ -55,7 +57,8 @@ class BudgetRolloverTest {
             expenseDao,
             budgetCalculator,
             timeProvider,
-            offsetEngine
+            offsetEngine,
+            TimeBoundaryTicker(timeProvider)
         )
     }
 
@@ -254,6 +257,80 @@ class BudgetRolloverTest {
         assertThat(statuses[0].spentAmount).isEqualTo(0.0)
     }
 
+    /**
+     * Regression for ISSUE-3: Rollover history must iterate anchored windows with an explicit
+     * evaluation time so that every completed cycle is visited.
+     *
+     * Scenario (anchor day 31, monthly budget, amount = €1 000):
+     *   - Budget starts 2025-01-31
+     *   - Completed window 1: 2025-01-31 → 2025-02-28  (spent €600  → surplus €400)
+     *   - Active window:      2025-02-28 → 2025-03-31  (now = 2025-03-05)
+     *
+     * With the old implicit-evaluation-time path, `calculatePeriodWindow(period, Feb-28-end)`
+     * would evaluate against real-`now` (March) and resolve the *active* Feb-28→Mar-31 window
+     * again instead of advancing to it as a new completed cycle, causing the loop to stop
+     * without recording the Jan-31→Feb-28 window.
+     *
+     * With the corrected explicit path the Jan-31→Feb-28 window is collected and the €400
+     * surplus is included in the effective limit (€1 400).
+     */
+    @Test
+    fun `anchored monthly budget rollover includes completed Jan31-Feb28 cycle when evaluated in March`() = runTest {
+        // Fix the time provider to 2025-03-05 00:00:00 UTC
+        val marchFifthMs = makeUtcMs(2025, 3, 5)
+        every { timeProvider.now() } returns marchFifthMs
+
+        // Budget: anchor 2025-01-31, monthly, amount €1 000, rollover = true
+        val jan31Ms = makeUtcMs(2025, 1, 31)
+        val budget = createBudget(
+            rollover = true,
+            amount = 1000.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = jan31Ms
+        )
+
+        // Active window is Feb-28 → Mar-31 (or similar anchor-coerced boundary).
+        // Tell the calculator what the active period is for March 5.
+        val feb28Ms  = makeUtcMs(2025, 2, 28)
+        val mar31Ms  = makeUtcMs(2025, 3, 31)
+        every {
+            budgetCalculator.calculatePeriodRange(budget, marchFifthMs)
+        } returns (feb28Ms to mar31Ms)
+
+        // For the EXPLICIT window iterations we use the real BudgetCalculator logic via
+        // calculatePeriodWindowForTime — we DON'T mock that call so the real anchor-aware
+        // calendar math runs and advances windows correctly.
+        val realCalculator = BudgetCalculator(timeProvider)
+        val repository = BudgetRepository(
+            budgetDao,
+            categoryDao,
+            expenseDao,
+            realCalculator,
+            timeProvider,
+            offsetEngine,
+            TimeBoundaryTicker(timeProvider)
+        )
+
+        // One expense of €600 sitting in the Jan-31 → Feb-28 window.
+        val expenseInJanWindow = createExpense(
+            amount  = 600.0,
+            date    = makeUtcMs(2025, 2, 15)  // mid-February, inside Jan31→Feb28
+        )
+
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow()          } returns flowOf(emptyList<Category>())
+        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(listOf(expenseInJanWindow))
+
+        val statuses = repository.getBudgetStatuses().first()
+
+        assertThat(statuses).hasSize(1)
+        val status = statuses[0]
+
+        // Effective limit = base €1 000 + surplus from Jan31→Feb28 window (€1 000 − €600 = €400)
+        // → expected effective limit ≥ €1 400
+        assertThat(status.budget.amount).isAtLeast(1400.0)
+    }
+
     @Test
     fun `deactivating budget stops rollover accumulation`() = runTest {
         val activeBudget = createBudget(rollover = true, amount = 1000.0, isActive = true)
@@ -333,6 +410,17 @@ class BudgetRolloverTest {
     private fun getDateWeeksAgo(weeks: Int): Long {
         return Calendar.getInstance().apply {
             add(Calendar.WEEK_OF_YEAR, -weeks)
+        }.timeInMillis
+    }
+
+    /**
+     * Returns the epoch-millisecond timestamp for midnight UTC on the given year/month/day.
+     * Month is 1-based (1 = January).
+     */
+    private fun makeUtcMs(year: Int, month: Int, day: Int): Long {
+        return Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(year, month - 1, day, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
 }

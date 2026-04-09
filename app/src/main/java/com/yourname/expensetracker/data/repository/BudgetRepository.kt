@@ -9,11 +9,14 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -28,7 +31,8 @@ class BudgetRepository @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val budgetCalculator: BudgetCalculator,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
-    private val offsetEngine: SharedExpenseBudgetOffsetEngine
+    private val offsetEngine: SharedExpenseBudgetOffsetEngine,
+    private val timeBoundaryTicker: TimeBoundaryTicker
 ) {
     data class DebugBudgetSnapshot(
         val budgets: List<Budget>
@@ -41,84 +45,98 @@ class BudgetRepository @Inject constructor(
     
     suspend fun getById(id: Long): Budget? = budgetDao.getById(id)
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
-        // We fetch the last 25 months to cover yearly budgets + rollover (need 24 months for full yearly history)
-        val twentyFiveMonthsAgo = TimePeriodUtils.addMonths(timeProvider.now(), -25)
-        val endExclusive = TimePeriodUtils.getEndOfDay(timeProvider.now())
-        
-        return combine(
-            budgetDao.getActiveBudgetsFlow(),
-            categoryDao.getAllFlow(),
-            expenseDao.getExpensesBetweenFlow(twentyFiveMonthsAgo, endExclusive)
-        ) { budgets, categories, allExpenses ->
-            val purchases = allExpenses.filter { 
-                it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE &&
-                !it.isNotMine 
-            }
-            val categoryMap = categories.associateBy { it.id }
-            
-            budgets.map { budget ->
-                val now = timeProvider.now()
-                val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
-                val window = PeriodRange(periodStart, periodEnd)
-                
-                fun getSpentInRange(start: Long, end: Long): Double {
-                    return purchases
-                        .filter { 
-                            (budget.categoryId == null || it.categoryId == budget.categoryId) && 
-                            it.date >= start && it.date < end 
+        // Recalculate the expense query window on every day boundary so the flow
+        // stays current after midnight rollovers without requiring re-subscription.
+        return timeBoundaryTicker.dayBoundaryTicks().flatMapLatest { _ ->
+            // We fetch the last 25 months to cover yearly budgets + rollover (need 24 months for full yearly history)
+            val twentyFiveMonthsAgo = TimePeriodUtils.addMonths(timeProvider.now(), -25)
+            val endExclusive = TimePeriodUtils.getEndOfDay(timeProvider.now())
+
+            combine(
+                budgetDao.getActiveBudgetsFlow(),
+                categoryDao.getAllFlow(),
+                expenseDao.getExpensesBetweenFlow(twentyFiveMonthsAgo, endExclusive)
+            ) { budgets, categories, allExpenses ->
+                val purchases = allExpenses.filter {
+                    it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE &&
+                    !it.isNotMine
+                }
+                val categoryMap = categories.associateBy { it.id }
+
+                budgets.map { budget ->
+                    val now = timeProvider.now()
+                    val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
+                    val window = PeriodRange(periodStart, periodEnd)
+
+                    fun getSpentInRange(start: Long, end: Long): Double {
+                        return purchases
+                            .filter {
+                                (budget.categoryId == null || it.categoryId == budget.categoryId) &&
+                                it.date >= start && it.date < end
+                            }
+                            .sumOf { it.effectiveAmount }
+                    }
+
+                    // Calculate effective spend using offset engine for shared expenses
+                    // Note: We can't call suspend function here, so we use the regular calculation
+                    // The offset calculation happens in the background via a separate flow
+                    val rawSpent = getSpentInRange(window.start, window.end)
+
+                    // For now, use the raw spend. The adjusted spend will be calculated
+                    // asynchronously by the BudgetMonitor or ViewModel
+                    val spent = rawSpent
+                    var limit = budget.amount
+
+                    // LOG-002: Implement Compounding Rollover - BUG-2 FIX
+                    if (budget.rollover) {
+                        val budgetFirstStart = budget.startDate
+                        val periods = mutableListOf<PeriodRange>()
+                        // Use explicit evaluation times so every completed anchored cycle is
+                        // visited in order, regardless of where "now" falls.  The anchor date
+                        // is always budget.startDate so the period arithmetic stays aligned to
+                        // the original anchor; the evaluation time advances to the *end* of
+                        // each completed window so the next call resolves the following cycle.
+                        var currentWindow = budgetCalculator.calculatePeriodWindowForTime(
+                            budget.period, budgetFirstStart, budgetFirstStart
+                        )
+                        while (currentWindow.end <= window.start) {
+                            periods.add(currentWindow)
+                            currentWindow = budgetCalculator.calculatePeriodWindowForTime(
+                                budget.period, budgetFirstStart, currentWindow.end
+                            )
                         }
-                        .sumOf { it.effectiveAmount }
-                }
-
-                // Calculate effective spend using offset engine for shared expenses
-                // Note: We can't call suspend function here, so we use the regular calculation
-                // The offset calculation happens in the background via a separate flow
-                val rawSpent = getSpentInRange(window.start, window.end)
-                
-                // For now, use the raw spend. The adjusted spend will be calculated
-                // asynchronously by the BudgetMonitor or ViewModel
-                val spent = rawSpent
-                var limit = budget.amount
-                
-                // LOG-002: Implement Compounding Rollover - BUG-2 FIX
-                if (budget.rollover) {
-                    val budgetFirstStart = budget.startDate
-                    val periods = mutableListOf<PeriodRange>()
-                    var currentWindow = budgetCalculator.calculatePeriodWindow(budget.period, budgetFirstStart)
-                    while (currentWindow.end <= window.start) {
-                        periods.add(currentWindow)
-                        currentWindow = budgetCalculator.calculatePeriodWindow(budget.period, currentWindow.end)
+                        var effectiveLimit = budget.amount
+                        for (period in periods) {
+                            val spentInPeriod = getSpentInRange(period.start, period.end)
+                            val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
+                            effectiveLimit = budget.amount + surplus
+                        }
+                        limit = effectiveLimit
                     }
-                    var effectiveLimit = budget.amount
-                    for (period in periods) {
-                        val spentInPeriod = getSpentInRange(period.start, period.end)
-                        val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
-                        effectiveLimit = budget.amount + surplus
+
+                    val percent = if (limit > 0) (spent / limit).toFloat() else 0f
+                    val remaining = (limit - spent).coerceAtLeast(0.0)
+
+                    val health = when {
+                        percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
+                        percent >= budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
+                        percent >= budget.notifyAtWarning -> BudgetHealthStatus.WARNING
+                        else -> BudgetHealthStatus.ON_TRACK
                     }
-                    limit = effectiveLimit
+
+                    BudgetStatus(
+                        budget = budget.copy(amount = limit), // Show effective limit
+                        category = categoryMap[budget.categoryId],
+                        spentAmount = spent,
+                        remainingAmount = remaining,
+                        percentUsed = percent,
+                        healthStatus = health,
+                        periodStart = periodStart,
+                        periodEnd = periodEnd
+                    )
                 }
-
-                val percent = if (limit > 0) (spent / limit).toFloat() else 0f
-                val remaining = (limit - spent).coerceAtLeast(0.0)
-
-                val health = when {
-                    percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
-                    percent >= budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
-                    percent >= budget.notifyAtWarning -> BudgetHealthStatus.WARNING
-                    else -> BudgetHealthStatus.ON_TRACK
-                }
-
-                BudgetStatus(
-                    budget = budget.copy(amount = limit), // Show effective limit
-                    category = categoryMap[budget.categoryId],
-                    spentAmount = spent,
-                    remainingAmount = remaining,
-                    percentUsed = percent,
-                    healthStatus = health,
-                    periodStart = periodStart,
-                    periodEnd = periodEnd
-                )
             }
         }
     }

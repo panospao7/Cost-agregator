@@ -49,6 +49,7 @@
 **Description:** Week boundaries use locale-dependent `Calendar.firstDayOfWeek` instead of standardized Monday-start. Month boundaries use `+30 days` instead of calendar month math. Day indexing uses millisecond division causing DST errors. End boundaries use `23:59:59` instead of start-of-next-day exclusive. Reactive flows capture time windows once and never refresh on rollover.
 **Affected files:** `FinancialHealthCalculator.kt`, `BudgetCalculator.kt`, `HistoricalSpendingDistribution.kt`, `TransactionFilterSheet.kt`, `DashboardContractsAdapter.kt`, `BudgetRepository.kt`, `LocationBackfillWorker.kt`, `BillReminderManager.kt`, `RecurrenceCalculator.kt`, `RecurringExpenseEngine.kt`, `TimePeriodUtils.kt`, `AdvancedAnalyticsDashboard.kt`, `SpendingPaceCalculator.kt`
 **Suggested fix:** Centralize all period math through `TimePeriodUtils`. Use calendar-aware day/month addition. Use exclusive end boundaries consistently. Drive long-lived reactive flows from a rollover-aware clock/ticker.
+**[RESOLVED BY A.5]**
 
 ### A.6: Mixed Numeric Types (Float vs Double for financial data)
 **Batches affected:** 24, 36, 46, 47

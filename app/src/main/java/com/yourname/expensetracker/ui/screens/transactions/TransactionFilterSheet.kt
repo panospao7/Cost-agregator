@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter as VMOwnershipFilter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
@@ -31,6 +32,7 @@ fun TransactionFilterSheet(
     categories: List<Category>,
     currentFilter: TransactionFilter?,
     currentOwnershipFilter: VMOwnershipFilter,
+    referenceNowMs: Long,
     onDismiss: () -> Unit,
     onApply: (TransactionFilter?, VMOwnershipFilter) -> Unit,
     onClear: () -> Unit
@@ -38,10 +40,18 @@ fun TransactionFilterSheet(
     var selectedCategoryId by remember { mutableStateOf(currentFilter?.categoryId) }
     var selectedType by remember { mutableStateOf(currentFilter?.transactionType) }
     var selectedOwnership by remember { mutableStateOf(currentOwnershipFilter) }
-    var selectedYear by remember { mutableStateOf<Int?>(null) }
-    var selectedMonth by remember { mutableStateOf<Int?>(null) }
-    // Date range filtering can be complex to build visually from scratch quickly,
-    // so for now we'll stick to defining category, type and ownership which covers the 90% use case.
+    // Initialize year/month chips from the existing filter's dateRange so an
+    // existing explicit range is visible/editable when re-opening the sheet.
+    var selectedYear by remember {
+        mutableStateOf(currentFilter?.dateRange?.let { (start, _) ->
+            TimePeriodUtils.getYear(start)
+        })
+    }
+    var selectedMonth by remember {
+        mutableStateOf(currentFilter?.dateRange?.let { (start, _) ->
+            TimePeriodUtils.getMonth(start) + 1  // getMonth() is 0-based; chips are 1-based
+        })
+    }
 
     val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -175,7 +185,7 @@ fun TransactionFilterSheet(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+                    val currentYear = TimePeriodUtils.getYear(referenceNowMs)
                     listOf(currentYear, currentYear - 1, currentYear - 2, currentYear - 3).forEach { year ->
                         FilterChip(
                             selected = selectedYear == year,
@@ -248,47 +258,20 @@ fun TransactionFilterSheet(
 
             Button(
                 onClick = {
-                    val calendar = java.util.Calendar.getInstance()
-                    var startDate: Long? = null
-                    var endDate: Long? = null
-
-                    if (selectedYear != null) {
-                        calendar.timeInMillis = System.currentTimeMillis()
-                        calendar.set(java.util.Calendar.YEAR, selectedYear!!)
+                    // Build the date range using TimePeriodUtils half-open convention
+                    // [startInclusive, endExclusive) — no 23:59:59 clamping.
+                    val dateRangeToUse: Pair<Long, Long>? = if (selectedYear != null) {
                         if (selectedMonth != null) {
-                            calendar.set(java.util.Calendar.MONTH, selectedMonth!! - 1)
-                            calendar.set(java.util.Calendar.DAY_OF_MONTH, 1)
-                            calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-                            calendar.set(java.util.Calendar.MINUTE, 0)
-                            calendar.set(java.util.Calendar.SECOND, 0)
-                            startDate = calendar.timeInMillis
-                            
-                            calendar.set(java.util.Calendar.DAY_OF_MONTH, calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH))
-                            calendar.set(java.util.Calendar.HOUR_OF_DAY, 23)
-                            calendar.set(java.util.Calendar.MINUTE, 59)
-                            calendar.set(java.util.Calendar.SECOND, 59)
-                            endDate = calendar.timeInMillis
+                            // Specific year + month: e.g., 2024-Mar-01 00:00 → 2024-Apr-01 00:00
+                            TimePeriodUtils.getMonthRange(selectedYear!!, selectedMonth!!)
                         } else {
-                            calendar.set(java.util.Calendar.MONTH, 0)
-                            calendar.set(java.util.Calendar.DAY_OF_MONTH, 1)
-                            calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-                            calendar.set(java.util.Calendar.MINUTE, 0)
-                            calendar.set(java.util.Calendar.SECOND, 0)
-                            startDate = calendar.timeInMillis
-                            
-                            calendar.set(java.util.Calendar.MONTH, 11)
-                            calendar.set(java.util.Calendar.DAY_OF_MONTH, 31)
-                            calendar.set(java.util.Calendar.HOUR_OF_DAY, 23)
-                            calendar.set(java.util.Calendar.MINUTE, 59)
-                            calendar.set(java.util.Calendar.SECOND, 59)
-                            endDate = calendar.timeInMillis
+                            // Year only: e.g., 2024-Jan-01 00:00 → 2025-Jan-01 00:00
+                            TimePeriodUtils.getYearRange(selectedYear!!)
                         }
-                    }
-                    
-                    val dateRangeToUse = if (startDate != null && endDate != null) {
-                        Pair(startDate, endDate)
                     } else {
-                        currentFilter?.dateRange
+                        // No year selected → date filter is explicitly cleared (null),
+                        // NOT a fallback to the previous filter's dateRange.
+                        null
                     }
 
                     val newFilter = if (selectedCategoryId != null || selectedType != null || dateRangeToUse != null) {

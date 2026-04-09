@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
+import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,7 +47,8 @@ class BudgetRepositoryStressTest {
             expenseDao,
             budgetCalculator,
             timeProvider,
-            offsetEngine
+            offsetEngine,
+            TimeBoundaryTicker(timeProvider)
         )
     }
 

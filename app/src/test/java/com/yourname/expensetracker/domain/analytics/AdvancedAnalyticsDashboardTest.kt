@@ -46,21 +46,11 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
             exp("2026-04-10", 500.0, TransactionType.DEPOSIT, merchant = "Salary")
         )
 
+        // Stubs use half-open [rangeStart, rangeEnd) semantics: date >= rangeStart && date < rangeEnd
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
             val rangeStart = firstArg<Long>()
             val rangeEnd = secondArg<Long>()
-            when (rangeStart) {
-                start -> if (rangeEnd == end) {
-                    all
-                } else {
-                    all.filter { it.date in rangeStart..rangeEnd }
-                }
-                ms("2026-03-01") -> all.filter { it.date in ms("2026-03-01") until ms("2026-04-01") }
-                ms("2026-04-01") -> all.filter { it.date in ms("2026-04-01") until ms("2026-05-01") }
-                else -> {
-                    all.filter { it.date in rangeStart..rangeEnd }
-                }
-            }
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }
         }
 
         val result = dashboard.generateDashboardData(start, end)
@@ -77,12 +67,48 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         assertEquals("A", result.topMerchants.first().merchant)
         assertApproxEquals(200.0, result.topMerchants.first().amount)
 
-        assertEquals(3, result.monthlyTrend.size)
+        // Half-open [2026-03-01, 2026-05-01) covers only March and April — May bucket must NOT appear
+        assertEquals(2, result.monthlyTrend.size)
         assertEquals("2026-03", result.monthlyTrend[0].month)
         assertApproxEquals(150.0, result.monthlyTrend[0].spending)
         assertApproxEquals(300.0, result.monthlyTrend[0].income)
+        assertEquals("2026-04", result.monthlyTrend[1].month)
 
         assertEquals(3, result.weeklyPattern.sumOf { it.transactionCount })
+    }
+
+    @Test
+    fun `transactions at or after endDate are excluded from the final monthly bucket`() = runTest {
+        val start = ms("2026-04-01")
+        val end = ms("2026-05-01")
+
+        val all = listOf(
+            // Inside range [2026-04-01, 2026-05-01)
+            exp("2026-04-15", 80.0, TransactionType.PURCHASE, merchant = "InRange"),
+            // Exactly at endDate — must be excluded
+            exp("2026-05-01", 999.0, TransactionType.PURCHASE, merchant = "AtEnd"),
+            // After endDate — must also be excluded
+            exp("2026-05-10", 200.0, TransactionType.PURCHASE, merchant = "AfterEnd")
+        )
+
+        // Half-open stub: [rangeStart, rangeEnd)
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val rangeStart = firstArg<Long>()
+            val rangeEnd = secondArg<Long>()
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }
+        }
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        // Only one bucket: April — May must not appear
+        assertEquals(1, result.monthlyTrend.size)
+        assertEquals("2026-04", result.monthlyTrend[0].month)
+
+        // Only the in-range April transaction contributes spending
+        assertApproxEquals(80.0, result.monthlyTrend[0].spending)
+
+        // Totals also exclude out-of-range transactions
+        assertApproxEquals(80.0, result.totalSpent)
     }
 
     @Test

@@ -560,6 +560,7 @@ fun TransactionsScreen(
                 categories = categories,
                 currentFilter = activeFilter,
                 currentOwnershipFilter = ownershipFilter,
+                referenceNowMs = viewModel.referenceNow(),
                 onDismiss = { showFilterSheet = false },
                 onApply = { filter, ownership ->
                     if (filter != null) {

@@ -2,7 +2,6 @@ package com.yourname.expensetracker.domain.logic
 
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
-import java.util.Calendar
 
 /**
  * Utility class for all recurrence-related calculations.
@@ -64,24 +63,18 @@ object RecurrenceCalculator {
      * @return Next due date in milliseconds
      */
     fun calculateNextDate(currentDate: Long, frequency: RecurrenceFrequency): Long {
-        val calendar = Calendar.getInstance().apply {
-            timeInMillis = currentDate
-        }
-
-        when (frequency) {
-            RecurrenceFrequency.WEEKLY -> return TimePeriodUtils.addDays(currentDate, 7)
-            RecurrenceFrequency.BIWEEKLY -> return TimePeriodUtils.addDays(currentDate, 14)
-            RecurrenceFrequency.MONTHLY -> calendar.add(Calendar.MONTH, 1)
-            RecurrenceFrequency.QUARTERLY -> calendar.add(Calendar.MONTH, 3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> calendar.add(Calendar.MONTH, 6)
-            RecurrenceFrequency.ANNUALLY -> calendar.add(Calendar.YEAR, 1)
-            RecurrenceFrequency.IRREGULAR -> { 
+        return when (frequency) {
+            RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(currentDate, 7)
+            RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(currentDate, 14)
+            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(currentDate, 1)
+            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(currentDate, 3)
+            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(currentDate, 6)
+            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(currentDate, 1)
+            RecurrenceFrequency.IRREGULAR -> {
                 // For irregular expenses, keep the same date or add 1 month as default
-                calendar.add(Calendar.MONTH, 1)
+                TimePeriodUtils.addMonths(currentDate, 1)
             }
         }
-        
-        return calendar.timeInMillis
     }
     
     /**
@@ -92,23 +85,17 @@ object RecurrenceCalculator {
      * @return Previous due date in milliseconds
      */
     fun calculatePreviousDate(currentDate: Long, frequency: RecurrenceFrequency): Long {
-        val calendar = Calendar.getInstance().apply {
-            timeInMillis = currentDate
-        }
-
-        when (frequency) {
-            RecurrenceFrequency.WEEKLY -> return TimePeriodUtils.addDays(currentDate, -7)
-            RecurrenceFrequency.BIWEEKLY -> return TimePeriodUtils.addDays(currentDate, -14)
-            RecurrenceFrequency.MONTHLY -> calendar.add(Calendar.MONTH, -1)
-            RecurrenceFrequency.QUARTERLY -> calendar.add(Calendar.MONTH, -3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> calendar.add(Calendar.MONTH, -6)
-            RecurrenceFrequency.ANNUALLY -> calendar.add(Calendar.YEAR, -1)
-            RecurrenceFrequency.IRREGULAR -> { 
-                calendar.add(Calendar.MONTH, -1)
+        return when (frequency) {
+            RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(currentDate, -7)
+            RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(currentDate, -14)
+            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(currentDate, -1)
+            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(currentDate, -3)
+            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(currentDate, -6)
+            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(currentDate, -1)
+            RecurrenceFrequency.IRREGULAR -> {
+                TimePeriodUtils.addMonths(currentDate, -1)
             }
         }
-        
-        return calendar.timeInMillis
     }
     
     /**
@@ -135,7 +122,7 @@ object RecurrenceCalculator {
         daysWithin: Int = 7, 
         referenceDate: Long = System.currentTimeMillis()
     ): Boolean {
-        val windowEnd = referenceDate + (daysWithin * TimePeriodUtils.DAY_IN_MILLIS)
+        val windowEnd = TimePeriodUtils.addDays(referenceDate, daysWithin)
         return nextDueDate in referenceDate..windowEnd
     }
     

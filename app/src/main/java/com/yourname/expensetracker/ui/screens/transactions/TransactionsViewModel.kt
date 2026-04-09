@@ -262,6 +262,15 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Returns the current reference timestamp from the injected [TimeProvider].
+     *
+     * UI composables that need "now" (e.g., [TransactionFilterSheet] year chips)
+     * should call this instead of [System.currentTimeMillis] so time remains
+     * controllable in tests.
+     */
+    fun referenceNow(): Long = timeProvider.now()
+
     fun clearFilter() {
         _filter.value = null
         _ownershipFilter.value = OwnershipFilter.ALL

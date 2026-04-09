@@ -12,6 +12,8 @@ import kotlin.random.Random
  * Goal: Break the date calculation logic with DST transitions,
  * timezone edge cases, and boundary conditions.
  * 
+ * All range assertions follow the [startInclusive, endExclusive) contract.
+ *
  * @author Hostile QA Engineer
  */
 class TimePeriodUtilsStressTest {
@@ -98,6 +100,29 @@ class TimePeriodUtilsStressTest {
         // Around DST transitions, a day can be 23h, 24h, or 25h.
         assertTrue(start2 - start1 in 82_000_000..90_500_000)
         assertTrue(start3 - start2 in 82_000_000..90_500_000)
+    }
+
+    @Test
+    fun `stress - daysBetween is DST safe across spring forward`() {
+        val originalTz = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
+
+            // US DST spring forward: March 10, 2024
+            val march9 = Calendar.getInstance().apply {
+                set(2024, Calendar.MARCH, 9, 12, 0, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+            val march11 = Calendar.getInstance().apply {
+                set(2024, Calendar.MARCH, 11, 12, 0, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+
+            // Should be 2 calendar days even though only ~47 real hours elapsed
+            assertEquals(2, TimePeriodUtils.daysBetween(march9, march11))
+        } finally {
+            TimeZone.setDefault(originalTz)
+        }
     }
 
     // ============================================================================
@@ -252,7 +277,7 @@ class TimePeriodUtilsStressTest {
     }
 
     // ============================================================================
-    // SECTION 4: WEEK CALCULATION TESTS
+    // SECTION 4: WEEK CALCULATION TESTS (Monday-start, locale-independent)
     // ============================================================================
 
     @Test
@@ -299,6 +324,41 @@ class TimePeriodUtilsStressTest {
         } finally {
             Calendar.getInstance().firstDayOfWeek = originalFirstDay
         }
+    }
+
+    @Test
+    fun `stress - Monday-start week is locale-independent across timezones`() {
+        val originalTz = TimeZone.getDefault()
+        try {
+            listOf("America/New_York", "Europe/Athens", "Asia/Tokyo").forEach { tz ->
+                TimeZone.setDefault(TimeZone.getTimeZone(tz))
+                
+                val cal = Calendar.getInstance().apply {
+                    set(2024, Calendar.JUNE, 12, 12, 0, 0) // Wednesday
+                    set(Calendar.MILLISECOND, 0)
+                }
+                val weekStart = TimePeriodUtils.getStartOfWeek(cal.timeInMillis)
+                val weekCal = Calendar.getInstance().apply { timeInMillis = weekStart }
+                
+                assertEquals("Week must start on Monday in $tz",
+                    Calendar.MONDAY, weekCal.get(Calendar.DAY_OF_WEEK))
+            }
+        } finally {
+            TimeZone.setDefault(originalTz)
+        }
+    }
+
+    @Test
+    fun `stress - getWeekRange week end is next Monday`() {
+        val cal = Calendar.getInstance().apply {
+            set(2024, Calendar.JANUARY, 3, 12, 0, 0) // Wednesday
+            set(Calendar.MILLISECOND, 0)
+        }
+        val (start, end) = TimePeriodUtils.getWeekRange(cal.timeInMillis)
+        val endCal = Calendar.getInstance().apply { timeInMillis = end }
+        
+        assertEquals("Week end must be Monday (exclusive)", Calendar.MONDAY, endCal.get(Calendar.DAY_OF_WEEK))
+        assertEquals("Week must span 7 calendar days", 7, TimePeriodUtils.daysBetween(start, end))
     }
 
     // ============================================================================
@@ -387,11 +447,11 @@ class TimePeriodUtilsStressTest {
     }
 
     // ============================================================================
-    // SECTION 7: MAGIC CONSTANT 86400000 TESTS
+    // SECTION 7: CALENDAR-AWARE ADDITION TESTS (no raw millis math)
     // ============================================================================
 
     @Test
-    fun `stress - getLastNDaysRange assumes 24h days`() {
+    fun `stress - getLastNDaysRange uses calendar-aware subtraction`() {
         // Range should end at "now" and start at the start of the day exactly N days earlier.
         val june15 = Calendar.getInstance().apply {
             set(2024, Calendar.JUNE, 15, 12, 0, 0)
@@ -412,8 +472,7 @@ class TimePeriodUtilsStressTest {
     }
 
     @Test
-    fun `stress - getDayIndexFromMonthStart uses constant`() {
-        // Documenting the bug: uses 86400000L constant
+    fun `stress - getDayIndexFromMonthStart is calendar-based`() {
         val cal = Calendar.getInstance().apply {
             set(2024, Calendar.JUNE, 15, 12, 0, 0)
             set(Calendar.MILLISECOND, 0)
@@ -423,6 +482,27 @@ class TimePeriodUtilsStressTest {
         
         // Should be 14 (0-indexed, so June 15 = day 14)
         assertEquals(14, index)
+    }
+
+    @Test
+    fun `stress - addDays is DST safe`() {
+        val originalTz = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
+
+            val march9 = Calendar.getInstance().apply {
+                set(2024, Calendar.MARCH, 9, 12, 0, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+
+            val march11 = TimePeriodUtils.addDays(march9, 2)
+            val resultCal = Calendar.getInstance().apply { timeInMillis = march11 }
+
+            assertEquals(11, resultCal.get(Calendar.DAY_OF_MONTH))
+            assertEquals(Calendar.MARCH, resultCal.get(Calendar.MONTH))
+        } finally {
+            TimeZone.setDefault(originalTz)
+        }
     }
 
     // ============================================================================
@@ -599,42 +679,146 @@ class TimePeriodUtilsStressTest {
     }
 
     // ============================================================================
-    // SECTION 12: KNOWN BUGS DOCUMENTATION
+    // SECTION 12: HALF-OPEN CONTIGUITY STRESS
     // ============================================================================
 
     @Test
-    fun `bug - magic constant 86400000 used for day calculations`() {
-        // BUG: Multiple functions use hardcoded 86400000L constant
-        // This assumes every day is exactly 24 hours
-        // During DST transitions, days can be 23 or 25 hours
-        
-        // This test documents the bug location
-        // Functions affected:
-        // - getStartOfWeek (line 73)
-        // - getLastNDaysRange (line 129)
-        // - getDayIndexFromMonthStart (line 221)
-        
-        // Test around DST to see if bug manifests
+    fun `stress - consecutive day ranges are contiguous`() {
+        val start = Calendar.getInstance().apply {
+            set(2024, Calendar.MARCH, 9, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        for (i in 0..6) {
+            val dayTs = TimePeriodUtils.addDays(start, i)
+            val endOfDay = TimePeriodUtils.getEndOfDay(dayTs)
+            val nextDayStart = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(dayTs, 1))
+            assertEquals("Day $i end must equal day ${i+1} start (contiguous half-open)",
+                endOfDay, nextDayStart)
+        }
+    }
+
+    @Test
+    fun `stress - consecutive month ranges are contiguous`() {
+        val ref = Calendar.getInstance().apply {
+            set(2024, Calendar.JUNE, 15, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        for (offset in -6..5) {
+            val (_, currEnd) = TimePeriodUtils.getMonthRange(ref, offset)
+            val (nextStart, _) = TimePeriodUtils.getMonthRange(ref, offset + 1)
+            assertEquals("Month $offset end must equal month ${offset + 1} start",
+                currEnd, nextStart)
+        }
+    }
+
+    // ============================================================================
+    // SECTION 13: DST-AWARE WEEK CONTIGUITY
+    // ============================================================================
+
+    @Test
+    fun `stress - consecutive week ranges contiguous across US DST spring forward`() {
         val originalTz = TimeZone.getDefault()
-        
         try {
             TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
-            
-            // DST starts March 10, 2024
-            val aroundDST = Calendar.getInstance().apply {
+            // US DST spring forward: March 10, 2024 — test weeks around this date
+            val ref = Calendar.getInstance().apply {
                 set(2024, Calendar.MARCH, 10, 12, 0, 0)
+                set(Calendar.MILLISECOND, 0)
             }.timeInMillis
-            
-            // The calculation should use Calendar.add(Calendar.DAY_OF_MONTH, -n) instead
-            // but currently uses: timestamp - (days * 86400000L)
-            
-            // This test passes but documents the potential issue
-            val range = TimePeriodUtils.getLastNDaysRange(aroundDST, 7)
-            
-            // The difference should be approximately 7 days
-            // but may be off by an hour during DST
+
+            for (offset in -2..2) {
+                val (_, currEnd) = TimePeriodUtils.getWeekRange(ref, offset)
+                val (nextStart, _) = TimePeriodUtils.getWeekRange(ref, offset + 1)
+                assertEquals("Week $offset end must equal week ${offset + 1} start (DST spring)",
+                    currEnd, nextStart)
+            }
         } finally {
             TimeZone.setDefault(originalTz)
+        }
+    }
+
+    @Test
+    fun `stress - consecutive week ranges contiguous across EU DST spring forward`() {
+        val originalTz = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Europe/Athens"))
+            // EU DST spring forward: March 31, 2024
+            val ref = Calendar.getInstance().apply {
+                set(2024, Calendar.MARCH, 31, 12, 0, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+
+            for (offset in -2..2) {
+                val (_, currEnd) = TimePeriodUtils.getWeekRange(ref, offset)
+                val (nextStart, _) = TimePeriodUtils.getWeekRange(ref, offset + 1)
+                assertEquals("Week $offset end must equal week ${offset + 1} start (EU DST spring)",
+                    currEnd, nextStart)
+            }
+        } finally {
+            TimeZone.setDefault(originalTz)
+        }
+    }
+
+    @Test
+    fun `stress - getEndOfWeek consistent with getWeekRange across multiple weeks`() {
+        val ref = Calendar.getInstance().apply {
+            set(2024, Calendar.JUNE, 15, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        for (offset in -4..4) {
+            val shifted = TimePeriodUtils.addDays(ref, offset * 7)
+            val (_, weekRangeEnd) = TimePeriodUtils.getWeekRange(shifted)
+            val endOfWeek = TimePeriodUtils.getEndOfWeek(shifted)
+            assertEquals("getEndOfWeek and getWeekRange end must match for offset $offset",
+                weekRangeEnd, endOfWeek)
+        }
+    }
+
+    // ============================================================================
+    // SECTION 14: isInRange FUZZ
+    // ============================================================================
+
+    @Test
+    fun `stress - isInRange consistent with manual half-open check across random timestamps`() {
+        repeat(500) {
+            val ts = Random.nextLong(0, System.currentTimeMillis() + 365L * 24 * 60 * 60 * 1000)
+            val (start, end) = TimePeriodUtils.getDayRange(ts)
+
+            // Timestamp must be in its own day
+            assertTrue("ts=$ts should be in its day range",
+                TimePeriodUtils.isInRange(ts, start, end))
+
+            // End-exclusive must NOT be in the range
+            assertFalse("dayEnd should not be in its own day range",
+                TimePeriodUtils.isInRange(end, start, end))
+
+            // Manual check matches
+            assertEquals(ts >= start && ts < end,
+                TimePeriodUtils.isInRange(ts, start, end))
+        }
+    }
+
+    @Test
+    fun `stress - isInRange month boundary - last ms included, first ms of next month excluded`() {
+        for (month in 0..11) {
+            val cal = Calendar.getInstance().apply {
+                set(2024, month, 15, 12, 0, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(cal.timeInMillis)
+
+            assertTrue("First ms of month $month should be in range",
+                TimePeriodUtils.isInRange(monthStart, monthStart, monthEnd))
+
+            assertFalse("First ms of next month should NOT be in range for month $month",
+                TimePeriodUtils.isInRange(monthEnd, monthStart, monthEnd))
+
+            // 1 ms before end is still in range
+            assertTrue("Last ms of month $month should be in range",
+                TimePeriodUtils.isInRange(monthEnd - 1, monthStart, monthEnd))
         }
     }
 }

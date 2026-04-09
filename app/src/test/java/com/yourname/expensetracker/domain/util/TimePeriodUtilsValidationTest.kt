@@ -709,14 +709,17 @@ class TimePeriodUtilsValidationTest {
 
     @Test
     fun `startOfDay and endOfDay are consistent`() {
-        // Given: Any timestamp
+        // Given: Any timestamp (non-DST date)
         val timestamp = createDate(2024, 4, 15, 14, 30, 45)
         
         // When: Calculate start and end of day
         val startOfDay = TimePeriodUtils.getStartOfDay(timestamp)
         val endOfDay = TimePeriodUtils.getEndOfDay(timestamp)
         
-        // Then: endOfDay should be exactly 24 hours after startOfDay
+        // Then: endOfDay should be exactly one calendar day after startOfDay
+        // Use daysBetween for the contract check (DST-safe)
+        assertEquals(1, TimePeriodUtils.daysBetween(startOfDay, endOfDay))
+        // For non-DST dates, the difference should also be exactly 24h
         assertEquals(startOfDay + 24 * 60 * 60 * 1000, endOfDay)
     }
 
@@ -847,5 +850,145 @@ class TimePeriodUtilsValidationTest {
         
         // Then: Should be 14
         assertEquals(14, hourOfDay)
+    }
+
+    // ========== SCENARIO 13: getDayRange Helper ==========
+
+    @Test
+    fun `getDayRange returns same boundaries as individual start and end calls`() {
+        val timestamp = createDate(2024, 4, 15, 14, 30, 45)
+        val (start, end) = TimePeriodUtils.getDayRange(timestamp)
+        assertEquals(TimePeriodUtils.getStartOfDay(timestamp), start)
+        assertEquals(TimePeriodUtils.getEndOfDay(timestamp), end)
+    }
+
+    @Test
+    fun `getDayRange contains any timestamp within that day`() {
+        val timestamp = createDate(2024, 4, 15, 14, 30, 45)
+        val (start, end) = TimePeriodUtils.getDayRange(timestamp)
+        assertTrue(TimePeriodUtils.isInRange(timestamp, start, end))
+    }
+
+    @Test
+    fun `getDayRange excludes start of next day`() {
+        val timestamp = createDate(2024, 4, 15, 14, 30, 45)
+        val (start, end) = TimePeriodUtils.getDayRange(timestamp)
+        // end is start of next day; should NOT be in this day's range
+        assertTrue(!TimePeriodUtils.isInRange(end, start, end))
+    }
+
+    // ========== SCENARIO 14: getEndOfWeek Standalone Helper ==========
+
+    @Test
+    fun `getEndOfWeek returns next Monday at midnight`() {
+        // Given: A Wednesday (April 17, 2024)
+        val timestamp = createDate(2024, 4, 17, 10, 0, 0)
+        
+        // When: Calculate end of week
+        val endOfWeek = TimePeriodUtils.getEndOfWeek(timestamp)
+        
+        // Then: Should be Monday April 22, 2024 at 00:00:00
+        val expected = createDate(2024, 4, 22, 0, 0, 0)
+        assertEquals(expected, endOfWeek)
+    }
+
+    @Test
+    fun `getEndOfWeek on Sunday returns next Monday`() {
+        // Given: A Sunday (April 14, 2024) — still part of the Mon Apr 8 week
+        val timestamp = createDate(2024, 4, 14, 10, 0, 0)
+        
+        // When: Calculate end of week
+        val endOfWeek = TimePeriodUtils.getEndOfWeek(timestamp)
+        
+        // Then: Should be Monday April 15, 2024 at 00:00:00
+        val expected = createDate(2024, 4, 15, 0, 0, 0)
+        assertEquals(expected, endOfWeek)
+    }
+
+    @Test
+    fun `getEndOfWeek consistent with getWeekRange`() {
+        val timestamp = createDate(2024, 4, 17, 10, 0, 0)
+        val (_, weekRangeEnd) = TimePeriodUtils.getWeekRange(timestamp)
+        val endOfWeek = TimePeriodUtils.getEndOfWeek(timestamp)
+        assertEquals(weekRangeEnd, endOfWeek)
+    }
+
+    // ========== SCENARIO 15: isInRange Canonical Containment ==========
+
+    @Test
+    fun `isInRange includes startInclusive`() {
+        assertTrue(TimePeriodUtils.isInRange(100L, 100L, 200L))
+    }
+
+    @Test
+    fun `isInRange excludes endExclusive`() {
+        assertTrue(!TimePeriodUtils.isInRange(200L, 100L, 200L))
+    }
+
+    @Test
+    fun `isInRange includes middle values`() {
+        assertTrue(TimePeriodUtils.isInRange(150L, 100L, 200L))
+    }
+
+    @Test
+    fun `isInRange excludes values before start`() {
+        assertTrue(!TimePeriodUtils.isInRange(99L, 100L, 200L))
+    }
+
+    @Test
+    fun `isInRange works for real month boundary`() {
+        // Transaction on March 31 at 23:59:59 should be in March
+        val transaction = createDateAtEndOfDay(2024, 3, 31)
+        val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(transaction)
+        assertTrue(TimePeriodUtils.isInRange(transaction, monthStart, monthEnd))
+    }
+
+    @Test
+    fun `isInRange excludes transaction on 1st of next month`() {
+        // Transaction on April 1 at 00:00:00 should NOT be in March range
+        val marchRef = createDate(2024, 3, 15, 12, 0, 0)
+        val (marchStart, marchEnd) = TimePeriodUtils.getMonthRange(marchRef)
+        val april1Midnight = createDateAtMidnight(2024, 4, 1)
+        assertTrue(!TimePeriodUtils.isInRange(april1Midnight, marchStart, marchEnd))
+    }
+
+    // ========== SCENARIO 16: Calendar-aware Arithmetic Edge Cases ==========
+
+    @Test
+    fun `addMonths Jan 31 plus 1 month is Feb 29 in leap year`() {
+        val jan31 = createDate(2024, 1, 31, 12, 0, 0)
+        val result = TimePeriodUtils.addMonths(jan31, 1)
+        val cal = Calendar.getInstance().apply { timeInMillis = result }
+        assertEquals(Calendar.FEBRUARY, cal.get(Calendar.MONTH))
+        assertEquals(29, cal.get(Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
+    fun `addMonths Jan 31 plus 1 month is Feb 28 in non-leap year`() {
+        val jan31 = createDate(2023, 1, 31, 12, 0, 0)
+        val result = TimePeriodUtils.addMonths(jan31, 1)
+        val cal = Calendar.getInstance().apply { timeInMillis = result }
+        assertEquals(Calendar.FEBRUARY, cal.get(Calendar.MONTH))
+        assertEquals(28, cal.get(Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
+    fun `addDays crosses year boundary correctly`() {
+        val dec30 = createDate(2024, 12, 30, 12, 0, 0)
+        val result = TimePeriodUtils.addDays(dec30, 5)
+        val cal = Calendar.getInstance().apply { timeInMillis = result }
+        assertEquals(2025, cal.get(Calendar.YEAR))
+        assertEquals(Calendar.JANUARY, cal.get(Calendar.MONTH))
+        assertEquals(4, cal.get(Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
+    fun `addYears from leap day Feb 29 coerces to Feb 28 in non-leap year`() {
+        val feb29 = createDate(2024, 2, 29, 12, 0, 0)
+        val result = TimePeriodUtils.addYears(feb29, 1)
+        val cal = Calendar.getInstance().apply { timeInMillis = result }
+        assertEquals(2025, cal.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, cal.get(Calendar.MONTH))
+        assertEquals(28, cal.get(Calendar.DAY_OF_MONTH))
     }
 }

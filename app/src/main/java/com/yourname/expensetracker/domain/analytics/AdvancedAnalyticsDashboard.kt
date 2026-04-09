@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -157,43 +158,49 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     }
     
     private suspend fun getMonthlyTrend(startDate: Long, endDate: Long): List<MonthlyDataPoint> {
-        val calendar = java.util.Calendar.getInstance()
         val result = mutableListOf<MonthlyDataPoint>()
-        
-        calendar.timeInMillis = startDate
-        val startMonth = calendar.get(java.util.Calendar.MONTH)
-        val startYear = calendar.get(java.util.Calendar.YEAR)
-        
-        calendar.timeInMillis = endDate
-        val endMonth = calendar.get(java.util.Calendar.MONTH)
-        val endYear = calendar.get(java.util.Calendar.YEAR)
-        
+
+        val startYear = TimePeriodUtils.getYear(startDate)
+        val startMonth = TimePeriodUtils.getMonth(startDate)
+
         var currentYear = startYear
         var currentMonth = startMonth
-        
-        while (currentYear < endYear || (currentYear == endYear && currentMonth <= endMonth)) {
-            val monthKey = "$currentYear-${(currentMonth + 1).toString().padStart(2, '0')}"
-            
-            // Calculate month boundaries
+
+        // Iterate with a calendar-month cursor; stop when the cursor reaches endDate
+        // (half-open: buckets cover [startDate, endDate), so stop when monthStart >= endDate)
+        while (true) {
+            val calendar = java.util.Calendar.getInstance()
             calendar.set(currentYear, currentMonth, 1, 0, 0, 0)
+            calendar.set(java.util.Calendar.MILLISECOND, 0)
             val monthStart = calendar.timeInMillis
-            calendar.set(currentYear, currentMonth, calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH), 23, 59, 59)
-            val monthEnd = calendar.timeInMillis
-            
-            val expenses = expenseRepository.getExpensesBetween(monthStart, monthEnd)
-            
+
+            // Stop if the start of this month is at or beyond endDate (half-open upper bound)
+            if (monthStart >= endDate) break
+
+            // Advance calendar to the first day of the next month to get nextMonthStart
+            calendar.add(java.util.Calendar.MONTH, 1)
+            val nextMonthStart = calendar.timeInMillis
+
+            // Clamp bucket to the requested half-open dashboard range [startDate, endDate)
+            val bucketStart = maxOf(monthStart, startDate)
+            val bucketEnd = minOf(nextMonthStart, endDate)
+
+            val monthKey = "$currentYear-${(currentMonth + 1).toString().padStart(2, '0')}"
+
+            val expenses = expenseRepository.getExpensesBetween(bucketStart, bucketEnd)
+
             var spending = 0.0
             var income = 0.0
-            
+
             for (expense in expenses) {
                 when (expense.transactionType.name) {
                     "PURCHASE", "WITHDRAWAL" -> spending += expense.effectiveAmount
                     "DEPOSIT" -> income += expense.effectiveAmount
                 }
             }
-            
+
             result.add(MonthlyDataPoint(monthKey, spending, income))
-            
+
             // Move to next month
             currentMonth++
             if (currentMonth > 11) {
@@ -201,7 +208,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 currentYear++
             }
         }
-        
+
         return result
     }
     

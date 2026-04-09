@@ -13,7 +13,7 @@ import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
-import com.yourname.expensetracker.domain.model.dashboard.WeatherState
+import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardBudgetRepository
@@ -22,7 +22,9 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardExpenseRepo
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardFinancialWeatherRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardReviewQueueRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardSavingsGoalRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,7 +39,8 @@ class DashboardContractsAdapter @Inject constructor(
     private val savingsGoalRepository: SavingsGoalRepository,
     private val analyticsRepository: AnalyticsRepository,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val plannedExpenseRepository: PlannedExpenseRepository
+    private val plannedExpenseRepository: PlannedExpenseRepository,
+    private val timeBoundaryTicker: TimeBoundaryTicker
 ) : DashboardExpenseRepository,
     DashboardCategoryRepository,
     DashboardBudgetRepository,
@@ -46,11 +49,14 @@ class DashboardContractsAdapter @Inject constructor(
     DashboardSavingsGoalRepository,
     DashboardAnalyticsRepository {
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     override fun observeDashboardExpenses(): Flow<List<DashboardExpense>> {
-        val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(System.currentTimeMillis())
-        return expenseRepository
-            .getExpensesWithCategoryInPeriod(monthStart, monthEnd)
-            .map { list -> list.map { it.expense.toDomainDashboard() } }
+        return timeBoundaryTicker.dayBoundaryTicks().flatMapLatest { now ->
+            val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
+            expenseRepository
+                .getExpensesWithCategoryInPeriod(monthStart, monthEnd)
+                .map { list -> list.map { it.expense.toDomainDashboard() } }
+        }
     }
 
     override fun observeDashboardCategories(): Flow<List<DashboardCategory>> =

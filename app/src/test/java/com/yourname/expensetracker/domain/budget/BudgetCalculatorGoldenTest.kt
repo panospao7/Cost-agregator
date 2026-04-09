@@ -31,7 +31,7 @@ class BudgetCalculatorGoldenTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `rolling monthly mode uses fixed 30 day window from anchor date`() {
+    fun `rolling monthly mode resolves active anchored cycle via calendar month math`() {
         val now = atTime("2026-03-05", 12, 0, 0)
         every { timeProvider.now() } returns now
         val startDate = atTime("2026-02-10", 0, 0, 0)
@@ -39,9 +39,10 @@ class BudgetCalculatorGoldenTest : AnalyticsEngineTestBase() {
 
         val (start, end) = calculator.calculatePeriodRange(budget)
 
-        val expectedEnd = com.yourname.expensetracker.domain.util.TimePeriodUtils.addDays(startDate, 30)
-        assertApproxEquals(startDate.toDouble(), start.toDouble(), 0.0)
-        assertApproxEquals(expectedEnd.toDouble(), end.toDouble(), 0.0)
+        // Anchor day is 10. March 5 < 10, so period started in previous month: Feb 10.
+        // Period end is March 10 (anchor day in next month).
+        assertApproxEquals(atTime("2026-02-10", 0, 0, 0).toDouble(), start.toDouble(), 0.0)
+        assertApproxEquals(atTime("2026-03-10", 0, 0, 0).toDouble(), end.toDouble(), 0.0)
     }
 
     @Test

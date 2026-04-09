@@ -1,13 +1,11 @@
 package com.yourname.expensetracker.domain.reminder
 
-import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -43,7 +41,7 @@ class BillReminderManager @Inject constructor(
      */
     suspend fun getUpcomingReminders(daysAhead: Int = 14): List<BillReminder> = withContext(Dispatchers.IO) {
         val now = timeProvider.now()
-        val cutoff = now + (daysAhead * TimePeriodUtils.DAY_IN_MILLIS)
+        val cutoff = TimePeriodUtils.addDays(now, daysAhead)
         
         val recurring = recurringExpenseRepository.getAll()
         val reminders = mutableListOf<BillReminder>()
@@ -138,18 +136,13 @@ class BillReminderManager @Inject constructor(
     }
     
     private fun calculateNextDate(currentDate: Long, frequency: String): Long {
-        val calendar = Calendar.getInstance()
-        calendar.timeInMillis = currentDate
-        
-        when (frequency) {
-            "WEEKLY" -> return TimePeriodUtils.addDays(currentDate, 7)
-            "BIWEEKLY" -> return TimePeriodUtils.addDays(currentDate, 14)
-            "MONTHLY" -> calendar.add(Calendar.MONTH, 1)
-            "QUARTERLY" -> calendar.add(Calendar.MONTH, 3)
-            "YEARLY" -> calendar.add(Calendar.YEAR, 1)
-            else -> calendar.add(Calendar.MONTH, 1)
+        return when (frequency) {
+            "WEEKLY" -> TimePeriodUtils.addDays(currentDate, 7)
+            "BIWEEKLY" -> TimePeriodUtils.addDays(currentDate, 14)
+            "MONTHLY" -> TimePeriodUtils.addMonths(currentDate, 1)
+            "QUARTERLY" -> TimePeriodUtils.addMonths(currentDate, 3)
+            "YEARLY" -> TimePeriodUtils.addYears(currentDate, 1)
+            else -> TimePeriodUtils.addMonths(currentDate, 1)
         }
-        
-        return calendar.timeInMillis
     }
 }

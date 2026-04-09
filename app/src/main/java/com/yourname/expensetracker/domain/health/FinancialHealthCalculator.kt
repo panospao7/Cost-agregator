@@ -3,12 +3,8 @@ package com.yourname.expensetracker.domain.health
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
-import timber.log.Timber
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -85,11 +81,10 @@ class FinancialHealthCalculator @Inject constructor(
         noSpendStreak: Int
     ): PeriodHealthScore {
         val now = timeProvider.now()
-        val todayStart = getStartOfDay(now)
-        val todayEnd = getEndOfDay(now)
+        val (todayStart, todayEnd) = TimePeriodUtils.getDayRange(now)
         
         val todayExpenses = expenses.filter { 
-            it.date in todayStart..todayEnd 
+            TimePeriodUtils.isInRange(it.date, todayStart, todayEnd) 
         }
         
         val spentToday = todayExpenses.sumOf { it.effectiveAmount }
@@ -128,17 +123,16 @@ class FinancialHealthCalculator @Inject constructor(
         noSpendStreak: Int
     ): PeriodHealthScore {
         val now = timeProvider.now()
-        val weekStart = getStartOfWeek(now)
-        val weekEnd = getEndOfWeek(now)
+        val (weekStart, weekEnd) = TimePeriodUtils.getWeekRange(now)
         
         val weekExpenses = expenses.filter { 
-            it.date in weekStart..weekEnd 
+            TimePeriodUtils.isInRange(it.date, weekStart, weekEnd) 
         }
         
         val spentThisWeek = weekExpenses.sumOf { it.effectiveAmount }
         
         // Calculate volatility (coefficient of variation)
-        val dailySpending = weekExpenses.groupBy { getStartOfDay(it.date) }
+        val dailySpending = weekExpenses.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
             .map { (_, exps) -> exps.sumOf { it.effectiveAmount } }
         
         val volatility = calculateVolatility(dailySpending)
@@ -175,17 +169,16 @@ class FinancialHealthCalculator @Inject constructor(
         noSpendStreak: Int
     ): PeriodHealthScore {
         val now = timeProvider.now()
-        val monthStart = getStartOfMonth(now)
-        val monthEnd = getEndOfMonth(now)
+        val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
         
         val monthExpenses = expenses.filter { 
-            it.date in monthStart..monthEnd 
+            TimePeriodUtils.isInRange(it.date, monthStart, monthEnd) 
         }
         
         val spentThisMonth = monthExpenses.sumOf { it.effectiveAmount }
         
         // Calculate volatility
-        val dailySpending = monthExpenses.groupBy { getStartOfDay(it.date) }
+        val dailySpending = monthExpenses.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
             .map { (_, exps) -> exps.sumOf { it.effectiveAmount } }
         
         val volatility = calculateVolatility(dailySpending)
@@ -371,70 +364,6 @@ class FinancialHealthCalculator @Inject constructor(
         return weightedScore.coerceIn(0, 100)
     }
 
-    // Helper functions for time calculations
-    private fun getStartOfDay(timestamp: Long): Long {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        calendar.set(java.util.Calendar.MINUTE, 0)
-        calendar.set(java.util.Calendar.SECOND, 0)
-        calendar.set(java.util.Calendar.MILLISECOND, 0)
-        return calendar.timeInMillis
-    }
-
-    private fun getEndOfDay(timestamp: Long): Long {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 23)
-        calendar.set(java.util.Calendar.MINUTE, 59)
-        calendar.set(java.util.Calendar.SECOND, 59)
-        calendar.set(java.util.Calendar.MILLISECOND, 999)
-        return calendar.timeInMillis
-    }
-
-    private fun getStartOfWeek(timestamp: Long): Long {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        calendar.set(java.util.Calendar.DAY_OF_WEEK, calendar.firstDayOfWeek)
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        calendar.set(java.util.Calendar.MINUTE, 0)
-        calendar.set(java.util.Calendar.SECOND, 0)
-        calendar.set(java.util.Calendar.MILLISECOND, 0)
-        return calendar.timeInMillis
-    }
-
-    private fun getEndOfWeek(timestamp: Long): Long {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = getStartOfWeek(timestamp)
-        calendar.add(java.util.Calendar.DAY_OF_WEEK, 6)
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 23)
-        calendar.set(java.util.Calendar.MINUTE, 59)
-        calendar.set(java.util.Calendar.SECOND, 59)
-        calendar.set(java.util.Calendar.MILLISECOND, 999)
-        return calendar.timeInMillis
-    }
-
-    private fun getStartOfMonth(timestamp: Long): Long {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        calendar.set(java.util.Calendar.DAY_OF_MONTH, 1)
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        calendar.set(java.util.Calendar.MINUTE, 0)
-        calendar.set(java.util.Calendar.SECOND, 0)
-        calendar.set(java.util.Calendar.MILLISECOND, 0)
-        return calendar.timeInMillis
-    }
-
-    private fun getEndOfMonth(timestamp: Long): Long {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        calendar.set(java.util.Calendar.DAY_OF_MONTH, calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH))
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 23)
-        calendar.set(java.util.Calendar.MINUTE, 59)
-        calendar.set(java.util.Calendar.SECOND, 59)
-        calendar.set(java.util.Calendar.MILLISECOND, 999)
-        return calendar.timeInMillis
-    }
 }
 
 /**

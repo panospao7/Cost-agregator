@@ -3,9 +3,9 @@ package com.yourname.expensetracker.domain.forecasting
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
-import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.ln
@@ -45,25 +45,13 @@ class HistoricalSpendingDistribution @Inject constructor(
      */
     suspend fun computeDistribution(): DistributionFit? {
         val now = timeProvider.now()
-        val calendar = Calendar.getInstance().apply { timeInMillis = now }
 
-        // Lookback start: 18 months ago, start of that week (Monday)
-        calendar.add(Calendar.MONTH, -LOOKBACK_MONTHS)
-        calendar.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        val lookbackStart = calendar.timeInMillis
+        // Lookback start: 18 months ago, snapped to the start of that week (Monday)
+        val lookbackRaw = TimePeriodUtils.addMonths(now, -LOOKBACK_MONTHS)
+        val lookbackStart = TimePeriodUtils.getStartOfWeek(lookbackRaw)
 
         // End: start of the current week (so we don't include a partial current week)
-        val nowCal = Calendar.getInstance().apply { timeInMillis = now }
-        nowCal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
-        nowCal.set(Calendar.HOUR_OF_DAY, 0)
-        nowCal.set(Calendar.MINUTE, 0)
-        nowCal.set(Calendar.SECOND, 0)
-        nowCal.set(Calendar.MILLISECOND, 0)
-        val currentWeekStart = nowCal.timeInMillis
+        val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
 
         if (currentWeekStart <= lookbackStart) {
             Timber.w("Not enough history for Monte Carlo (lookback start >= current week start)")
@@ -126,37 +114,42 @@ class HistoricalSpendingDistribution @Inject constructor(
 
     /**
      * Groups expenses into calendar weeks (Monday-Sunday) and calculates per-week metrics.
+     *
+     * Uses [TimePeriodUtils.getStartOfWeek] for calendar-safe, DST-aware week bucketing
+     * and [TimePeriodUtils.getStartOfDay] for distinct-day counting.
      */
     private fun groupIntoWeeks(
         expenses: List<Expense>,
         rangeStart: Long,
         rangeEnd: Long
     ): List<WeekData> {
-        val msPerDay = 24 * 60 * 60 * 1000L
-        val msPerWeek = 7 * msPerDay
-
-        // Build a map: weekIndex -> list of expenses
-        val weekMap = mutableMapOf<Int, MutableList<Expense>>()
+        // Build a map: weekStartTimestamp -> list of expenses
+        val weekMap = mutableMapOf<Long, MutableList<Expense>>()
         for (expense in expenses) {
-            val weekIndex = ((expense.date - rangeStart) / msPerWeek).toInt()
-            weekMap.getOrPut(weekIndex) { mutableListOf() }.add(expense)
+            val weekStart = TimePeriodUtils.getStartOfWeek(expense.date)
+            weekMap.getOrPut(weekStart) { mutableListOf() }.add(expense)
         }
 
-        // Also enumerate all weeks in the range (so we count empty weeks too)
-        val totalWeeks = ((rangeEnd - rangeStart) / msPerWeek).toInt()
+        // Enumerate all weeks in the range so we count empty weeks too
+        val allWeekStarts = mutableListOf<Long>()
+        var cursor = rangeStart // rangeStart is already a Monday 00:00:00
+        while (cursor < rangeEnd) {
+            allWeekStarts.add(cursor)
+            cursor = TimePeriodUtils.addDays(cursor, 7)
+        }
 
-        return (0 until totalWeeks).map { weekIndex ->
-            val weekExpenses = weekMap[weekIndex] ?: emptyList()
+        return allWeekStarts.mapIndexed { index, weekStart ->
+            val weekExpenses = weekMap[weekStart] ?: emptyList()
             val total = weekExpenses.sumOf { it.effectiveAmount }
 
-            // Count distinct calendar days with transactions
+            // Count distinct calendar days with transactions (DST-safe)
             val distinctDays = weekExpenses
-                .map { it.date / msPerDay }
+                .map { TimePeriodUtils.getStartOfDay(it.date) }
                 .toSet()
                 .size
 
             WeekData(
-                weekIndex = weekIndex,
+                weekIndex = index,
                 total = total,
                 transactionCount = weekExpenses.size,
                 distinctDays = distinctDays

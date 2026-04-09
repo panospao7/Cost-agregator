@@ -3,20 +3,21 @@ its cruc# Execution Playbook — ExpenseTracker Refactoring
 > **Project:** ExpenseTracker (Android/Kotlin/Clean Architecture)
 > **Branch:** `master-refactor`
 > **Current Phase:** Phase 1 — Universal Epics
-> **Active Epic:** A.3 — Non-deterministic Default Values
-> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 next
+> **Active Epic:** A.6 — Mixed Numeric Types (Float vs Double)
+> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 next
 
 ---
 
 ## 0. AUTONOMOUS EXECUTION RULES (CRITICAL)
 - **Full Cycle Completion:** Only move to the next epic when the current one is FULLY complete (Plan → Code → Review PASS → Documentation → Commit).
 - **No Permission Requests:** Do NOT ask the user for permission or directions. Follow the instructions autonomously.
-- **No Stopping:** Do NOT stop until ALL 10 epics (A.1 through A.10) are resolved.
+- **No Stopping:** Do NOT stop until ALL 10 epics (A.1 through A.10) are resolved, then continue through Phase B until all pipeline issues are resolved.
 - **Commit but Don't Push:** At the end of each epic, commit the changes but DO NOT push to remote. Push only when all 10 epics are complete.
 - **Documentation is Mandatory:** Every epic MUST update the Registry and affected Batch reports BEFORE the commit. No exceptions.
 - **Review Loop:** If the reviewer finds issues, fix them one at a time using @coder, then re-review. Repeat until PASS.
 - **Micro-Batch Coding:** Always use @specialist-coder for 1-5 files at a time. Never batch large changes.
 - **Sequential Execution:** Complete A.1 → A.2 → A.3 → ... → A.10 in order. Do not skip or parallelize epics.
+- **Phase Gate:** Do NOT begin any Phase B pipeline until **all A epics are fully complete** (PASS + docs + commit).
 
 ---
 
@@ -374,20 +375,114 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] All batches implemented (TimeProvider injection, correlationId fixes, test updates)
   - [x] Review: **PASS** (after 4 review passes, 9 issues fixed)
   - [x] Registry updated (`[RESOLVED BY A.3]`)
-  - [x] **Awaiting commit** (will commit after A.10 completes)
-- [ ] **A.4:** Duplicate Detection Logic Inconsistencies
-- [ ] **A.5:** Time Boundary / Calendar Arithmetic Inconsistencies
+  - [x] Committed
+- [x] **A.4:** Duplicate Detection Logic Inconsistencies
+  - [x] Plan created (`PLAN-A4-duplicate-detection.md`)
+  - [x] All issue-review batches completed (ISSUES 1-9 resolved)
+  - [x] Review: **PASS**
+  - [x] Registry updated (`[RESOLVED BY A.4]`)
+  - [x] Batch reports + deep-analysis mirrors updated
+  - [x] Committed (`b857b28`)
+- [x] **A.5:** Time Boundary / Calendar Arithmetic Inconsistencies
+  - [x] Plan created (`PLAN-A5-time-boundaries.md`)
+  - [x] All batches implemented
+  - [x] Review: **PASS**
+  - [x] Registry updated (`[RESOLVED BY A.5]`)
+  - [x] Batch reports + deep-analysis mirrors updated
+  - [x] Committed
 - [ ] **A.6:** Mixed Numeric Types (Float vs Double)
 - [ ] **A.7:** Fire-and-Forget Coroutine Anti-Pattern
 - [ ] **A.8:** Shared Mutable State / Thread Safety Gaps
 - [ ] **A.9:** Hidden Data Truncation / DAO Default Limits
 - [ ] **A.10:** Transaction Type Blindness
 
+### Phase 1 Todo Roadmap (Strict Priority)
+1. **A.6 — Mixed Numeric Types (Float vs Double)**
+   - Priority rationale: medium-risk model consistency cleanup, smaller blast radius than later epics, unlocks safer financial model handling before large-scale truncation/type audits
+2. **A.7 — Fire-and-Forget Coroutine Anti-Pattern**
+   - Priority rationale: high severity structured concurrency/cancellation correctness across services and workers
+3. **A.8 — Shared Mutable State / Thread Safety Gaps**
+   - Priority rationale: concurrency safety across singleton services, caches, formatters, and managers
+4. **A.9 — Hidden Data Truncation / DAO Default Limits**
+   - Priority rationale: critical data correctness issue with large blast radius; defer until concurrency and time-contract foundations are stable
+5. **A.10 — Transaction Type Blindness**
+   - Priority rationale: high-severity aggregation correctness pass that should land after A.9 query contract cleanup to avoid rework
+
 ### Phase 2: Pipeline Fixes
 - [ ] B.1: AI/ML Pipeline
 - [ ] B.2: Budget/Forecasting Pipeline
 - [ ] B.3: Receipt/OCR Pipeline
-- [ ] ... (See Registry for full list)
+- [ ] B.4: Database/DAO/Entity Pipeline
+- [ ] B.5: Location/Geocoding Pipeline
+- [ ] B.6: Notification/Service/Worker Pipeline
+- [ ] B.7: Export/Backup Pipeline
+- [ ] B.8: Savings/Investment Pipeline
+- [ ] B.9: UI/Compose Pipeline
+- [ ] B.10: Categorization/Intelligence Pipeline
+- [ ] B.11: Email/Parsing Pipeline
+- [ ] B.12: Groups/Shared Expenses Pipeline
+
+### Phase 2 Todo Roadmap (Priority Order)
+0. **Gate:** Phase 2 may start only after **A.1–A.10 are all complete, documented, and committed**.
+1. **B.4 — Database/DAO/Entity Pipeline**
+   - Must run first and in isolation because schema/entity/DAO contract changes can invalidate other pipelines instantly.
+2. **B.1 — AI/ML Pipeline**
+   - Contains stop-ship privacy/GDPR issues and multiple high-severity routing/data-loss bugs.
+3. **B.3 — Receipt/OCR Pipeline**
+   - High-risk extraction, OCR normalization, warranty, and statement parsing correctness.
+4. **B.6 — Notification/Service/Worker Pipeline**
+   - Core ingestion/service reliability and worker correctness; heavily user-facing.
+5. **B.11 — Email/Parsing Pipeline**
+   - Parsing correctness and email import data integrity with overlaps to receipt/notification semantics.
+6. **B.2 — Budget/Forecasting Pipeline**
+   - Large business-critical pipeline with many high-severity forecasting/math issues.
+7. **B.10 — Categorization/Intelligence Pipeline**
+   - Important intelligence consistency issues, but safer after upstream AI/data contracts stabilize.
+8. **B.5 — Location/Geocoding Pipeline**
+   - Can often run safely in parallel with unrelated pipelines after B.4 is done.
+9. **B.7 — Export/Backup Pipeline**
+   - Fairly isolated and good candidate for parallel execution after B.4.
+10. **B.8 — Savings/Investment Pipeline**
+   - Financial-model heavy, but mostly independent after foundations stabilize.
+11. **B.9 — UI/Compose Pipeline**
+   - Large user-facing cleanup layer best done after deeper domain/data pipelines settle.
+12. **B.12 — Groups/Shared Expenses Pipeline**
+   - Domain-specific but intertwined with shared-expense correctness; safer after broader financial/data semantics stabilize.
+
+### Phase 2 Parallelization Rules (CRITICAL)
+- **Golden Rule:** Parallelize **across different pipelines**, never **within the same pipeline**.
+- Safe example: one agent on B.3, one on B.5, one on B.7.
+- Unsafe example: two agents both fixing separate issues inside B.1 at the same time.
+- **B.4 Isolation Rule:** While B.4 is active, do **not** run other B pipelines in parallel. Finish B.4 completely first.
+- After B.4 is complete, fan out only across **disjoint pipelines** with clearly non-overlapping file sets.
+- Each active pipeline still follows its own internal sequence: plan → micro-batches → review loop → docs → commit.
+- Never let two agents edit the same file, same package hotspot, or same shared contract concurrently.
+
+### Phase 2 Compile / Verification Protocol for Parallel Work
+- When multiple Phase B pipelines run in parallel, **coding agents should not all run full compile/test tasks independently**, because Gradle daemons and Windows file locks will conflict.
+- During parallel pipeline execution:
+  - coding agents perform **static verification only** where possible:
+    - read-back verification of changed files
+    - import/signature checks
+    - smallest-scope test/source updates
+  - if compilation is required inside a batch, prefer the narrowest compile target and avoid overlapping long Gradle runs across agents
+- Use a **single serialized verification lane** after code batches land locally:
+  1. verify pipeline P1 changes
+  2. verify pipeline P2 changes
+  3. verify pipeline P3 changes
+- The orchestrator owns the verification lane and schedules compile/test runs **one pipeline at a time**.
+- Recommended verification order for parallel Phase B:
+  1. merge/stabilize one pipeline’s micro-batches in working tree
+  2. run `:app:compileDebugKotlin`
+  3. run focused tests for that pipeline only
+  4. send to reviewer
+  5. move to next active pipeline
+- If multiple pipelines are active in parallel, do **not** claim test success from coding agents unless the orchestrator’s serialized verification lane has produced actual evidence.
+
+### Phase 2 Prompting Rules
+- Planner/reviewer may discover cross-pipeline issues and classify them.
+- Coding agents must remain inside the currently assigned pipeline and batch.
+- If a discovered issue crosses into another pipeline, record it and defer it to that pipeline instead of fixing it opportunistically.
 
 ---
 

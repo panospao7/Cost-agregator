@@ -40,13 +40,10 @@ class BudgetCalculator @Inject constructor(
     fun calculatePeriodRange(budget: Budget, now: Long = timeProvider.now()): Pair<Long, Long> {
         return when (budget.periodMode.uppercase()) {
             "ROLLING" -> {
-                val start = budget.startDate
-                val end = when (budget.period) {
-                    BudgetPeriod.MONTHLY -> TimePeriodUtils.addDays(start, 30)
-                    BudgetPeriod.WEEKLY -> TimePeriodUtils.addDays(start, 7)
-                    else -> calculatePeriodWindowForTime(budget.period, budget.startDate, now).end
-                }
-                start to end
+                // Resolve the active anchored cycle containing `now` instead of
+                // pinning start = budget.startDate forever.
+                val window = calculatePeriodWindowForTime(budget.period, budget.startDate, now)
+                window.start to window.end
             }
             else -> {
                 when (budget.period) {
