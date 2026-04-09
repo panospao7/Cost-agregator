@@ -16,8 +16,10 @@ import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.first
+import timber.log.Timber
 import java.util.Locale
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 class InterpretFinancialQueryUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
@@ -39,11 +41,14 @@ class InterpretFinancialQueryUseCase @Inject constructor(
 
         val input = inputBuilder.build(rawQuery, settings, conversationHistory)
 
-        val providerResult = runCatching {
+        val providerResult = try {
             queryInterpretationService.interpret(input)
-        }.getOrElse {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "InterpretFinancialQueryUseCase: query interpretation provider failed")
             FinancialQueryInterpretationResult.Unsupported(
-                it.message ?: "Query interpretation failed"
+                e.message ?: "Query interpretation failed"
             )
         }
 

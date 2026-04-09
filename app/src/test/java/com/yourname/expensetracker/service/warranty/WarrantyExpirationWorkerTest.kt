@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.service.NotificationService
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -91,6 +92,19 @@ class WarrantyExpirationWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.retry(), result)
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+    }
+
+    @Test
+    fun `worker propagates CancellationException instead of returning retry`() = runTest {
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } throws CancellationException("cancelled")
+
+        try {
+            buildWorker().doWork()
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected — cancellation must not be swallowed
+        }
         verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
     }
 

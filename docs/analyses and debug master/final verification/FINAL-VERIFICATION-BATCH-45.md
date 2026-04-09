@@ -74,7 +74,7 @@
 ## False Positives (issues in original reports that are NOT actually bugs)
 | # | Original Report | File:Line | Why It's False Positive |
 |---|----------------|-----------|------------------------|
-| 1 | `R #1 / D #9` | `com/yourname/expensetracker/domain/receipt/ReceiptOcrService.kt:641-650` | `runWithRetry()` does catch `CancellationException`, but on real coroutine cancellation the following `delay()` immediately rethrows from the cancelled context, so the OCR block is not retried. The implementation should still avoid logging cancellation as an OCR failure, but the reported “retries cancelled work” behavior is not reproducible here. |
+| 1 | `R #1 / D #9` | `com/yourname/expensetracker/domain/receipt/ReceiptOcrService.kt:641-650` | `runWithRetry()` does catch `CancellationException`, but on real coroutine cancellation the following `delay()` immediately rethrows from the cancelled context, so the OCR block is not retried. The implementation should still avoid logging cancellation as an OCR failure, but the reported “retries cancelled work” behavior is not reproducible here. **[Explicit CancellationException rethrow added by A.7]** |
 
 ## Cross-Component Pipeline Issues
 | # | Pipeline | Severity | Type | Description | Affected Files | Suggested Fix |

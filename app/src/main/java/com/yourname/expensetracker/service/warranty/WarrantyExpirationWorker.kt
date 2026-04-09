@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
 
@@ -54,6 +55,8 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             
             Timber.d("Warranty check complete. Found ${expiringIn7Days.size} expiring in 7 days, ${expiringIn30Days.size} in 30 days")
             Result.success()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Error checking warranty expirations")
             Result.retry()

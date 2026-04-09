@@ -22,7 +22,9 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 class SuggestCategoryFallbackUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
@@ -204,7 +206,10 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
                 )
                 CategoryAssistGenerationResult.Success(validated, fromCache = false)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            Timber.e(e, "SuggestCategoryFallbackUseCase: provider call failed for $targetKey")
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status = AiArtifactStatus.FAILED,

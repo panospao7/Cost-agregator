@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvide
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import java.text.SimpleDateFormat
@@ -55,6 +56,8 @@ class DailyBriefingWorker @AssistedInject constructor(
             )
             Timber.d("DailyBriefingWorker: completed successfully.")
             Result.success()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "DailyBriefingWorker: unexpected failure.")
             // Return success so WorkManager does not retry with exponential back-off;

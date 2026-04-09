@@ -16,6 +16,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -142,6 +143,28 @@ class CategorizationAssistInputBuilderTest {
 
         assertTrue(result.merchant.startsWith("merchant_"))
         assertNull(result.supportingText)
+    }
+
+    @Test
+    fun `build propagates CancellationException from repository instead of returning empty hints`() = runTest {
+        coEvery { categoryRepository.getAll() } returns listOf(
+            Category(id = 1L, name = "Groceries", icon = "G", color = "#0000FF")
+        )
+        every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
+        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+            canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
+            alias = null,
+            confidence = 0.9f,
+            matchType = MatchType.EXACT_MATCH
+        )
+        coEvery { expenseRepository.getRecentTransactionsForMerchant(any(), any()) } throws CancellationException("cancelled")
+
+        try {
+            builder.build(makeItem(), AiSettings())
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected: cancellation propagates instead of being swallowed
+        }
     }
 
     private fun makeItem(): PendingReviewWithReceipt {

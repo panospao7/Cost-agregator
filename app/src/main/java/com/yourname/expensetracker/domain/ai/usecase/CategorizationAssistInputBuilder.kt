@@ -16,7 +16,9 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.dto.CategoryRef
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 class CategorizationAssistInputBuilder @Inject constructor(
     private val categoryRepository: CategoryRepository,
@@ -114,7 +116,10 @@ class CategorizationAssistInputBuilder @Inject constructor(
                     categoryName = expenseWithCategory.categoryName ?: "Uncategorized"
                 )
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            Timber.w(e, "CategorizationAssistInputBuilder: failed to fetch recent transaction hints for merchant=%s", merchantKey)
             emptyList()
         }
     }

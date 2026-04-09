@@ -15,6 +15,7 @@ import timber.log.Timber
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Orchestrates real-time anomaly alerts for expenses.
@@ -140,6 +141,8 @@ class AnomalyAlertOrchestrator @Inject constructor(
             )
 
             Timber.i("Anomaly alert sent for ${expense.expense.merchant}: €${expense.expense.effectiveAmount}")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Error checking anomaly alert for expense ${expense.expense.id}")
         }

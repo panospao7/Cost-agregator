@@ -12,6 +12,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -123,5 +124,25 @@ class InterpretFinancialQueryUseCaseTest {
         val structured = result as FinancialQueryInterpretationResult.Structured
         assertEquals(QueryMetric.LIST, structured.intent.metric)
         assertEquals(setOf(7L), structured.intent.filters.categoryIds)
+    }
+
+    @Test
+    fun `invoke propagates CancellationException from provider instead of returning Unsupported`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(aiEnabled = true, assistantEnabled = true, queryInterpretationEnabled = true)
+        )
+        val built = com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput(
+            rawQuery = "total this month",
+            currentTimeMs = 1000L
+        )
+        coEvery { inputBuilder.build(any(), any(), any()) } returns built
+        coEvery { queryInterpretationService.interpret(built) } throws CancellationException("cancelled")
+
+        try {
+            useCase("total this month")
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected: cancellation propagates instead of being mapped to Unsupported
+        }
     }
 }

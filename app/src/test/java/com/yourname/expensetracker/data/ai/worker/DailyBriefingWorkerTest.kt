@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -112,6 +113,20 @@ class DailyBriefingWorkerTest {
         assertEquals(Result.success(), result)
         coVerify(exactly = 0) {
             deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any())
+        }
+    }
+
+    @Test
+    fun `worker propagates CancellationException instead of returning success`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } throws CancellationException("cancelled")
+
+        try {
+            buildWorker().doWork()
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected — cancellation must not be swallowed
         }
     }
 

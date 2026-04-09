@@ -30,6 +30,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import kotlin.coroutines.cancellation.CancellationException
 
 class ExplainPendingReviewUseCaseTest {
 
@@ -316,6 +317,31 @@ class ExplainPendingReviewUseCaseTest {
         assertEquals(AiArtifactStatus.FAILED, failedArtifact.status)
         assertTrue(failedArtifact.errorMessage?.contains("Network timeout") == true)
         assertTrue(failedArtifact.errorMessage?.contains("Route: CLOUD") == true)
+    }
+
+    // ── cancellation propagation ──────────────────────────────────────────────
+
+    @Test
+    fun `invoke propagates CancellationException without writing FAILED artifact`() = runTest {
+        val review = makePendingReview()
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        every { inputBuilder.build(any(), any()) } returns makeInput()
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { reviewExplanationService.generate(any()) } throws CancellationException("cancelled")
+
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        try {
+            useCase(review)
+            fail("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected
+        }
+
+        // Only the RUNNING tombstone should have been written, no FAILED artifact
+        assertTrue(captured.size == 1)
+        assertEquals(AiArtifactStatus.RUNNING, captured.first().status)
     }
 
     // ── expiresAt set correctly ───────────────────────────────────────────────

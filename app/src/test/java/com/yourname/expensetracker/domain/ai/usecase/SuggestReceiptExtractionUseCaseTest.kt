@@ -30,9 +30,11 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.Ignore
+import kotlin.coroutines.cancellation.CancellationException
 
 class SuggestReceiptExtractionUseCaseTest {
 
@@ -244,6 +246,31 @@ class SuggestReceiptExtractionUseCaseTest {
         assertEquals(AiArtifactStatus.FAILED, captured.last().status)
         assertTrue(captured.last().errorMessage?.contains("cloud allowed") == true)
         assertTrue(captured.last().errorMessage?.contains("Route: CLOUD") == true)
+    }
+
+    @Test
+    fun `invoke propagates CancellationException without writing FAILED artifact`() = runTest {
+        val receipt = makeReceipt(confidence = 0.2f)
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        coEvery { receiptRepository.getReceiptById(1L) } returns receipt
+        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { receiptAssistService.suggest(input) } throws CancellationException("cancelled")
+
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        try {
+            useCase(receiptId = 1L)
+            fail("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected
+        }
+
+        // Only the RUNNING tombstone should have been written, no FAILED artifact
+        assertTrue(captured.size == 1)
+        assertEquals(AiArtifactStatus.RUNNING, captured.first().status)
     }
 
     private fun enabledSettings() = AiSettings(

@@ -79,6 +79,8 @@ class BudgetMonitor @Inject constructor(
                         processBudgetStatus(status, now)
                     }
                     return@launch // Success - exit
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     lastException = e
                     if (isTransientError(e)) {

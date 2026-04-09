@@ -29,6 +29,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import kotlin.coroutines.cancellation.CancellationException
 
 class GenerateDashboardBriefingUseCaseTest {
 
@@ -251,6 +252,30 @@ class GenerateDashboardBriefingUseCaseTest {
         val failedArtifact = captured.last()
         assertEquals(AiArtifactStatus.FAILED, failedArtifact.status)
         assertTrue(failedArtifact.errorMessage?.contains("Timeout") == true)
+    }
+
+    // ── cancellation propagation ──────────────────────────────────────────────
+
+    @Test
+    fun `invoke propagates CancellationException without writing FAILED artifact`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        every { inputBuilder.build(any()) } returns fakeInput()
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dashboardBriefingService.generate(any()) } throws CancellationException("cancelled")
+
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        try {
+            useCase(processedData)
+            fail("Expected CancellationException to propagate")
+        } catch (_: CancellationException) {
+            // expected
+        }
+
+        // Only the RUNNING tombstone should have been written, no FAILED artifact
+        assertTrue(captured.size == 1)
+        assertEquals(AiArtifactStatus.RUNNING, captured.first().status)
     }
 
     // ── expiresAt ─────────────────────────────────────────────────────────────

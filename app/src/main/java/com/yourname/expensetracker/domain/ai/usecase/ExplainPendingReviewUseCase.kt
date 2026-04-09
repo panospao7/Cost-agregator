@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Generates (or returns a cached) AI explanation artifact for a pending review.
@@ -122,6 +123,8 @@ class ExplainPendingReviewUseCase @Inject constructor(
             aiArtifactRepository.upsert(finalEntity)
             Timber.d("ExplainPendingReviewUseCase: artifact stored with status ${finalEntity.status} for review ${review.id}.")
 
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "ExplainPendingReviewUseCase: generation failed for review ${review.id}")
             aiArtifactRepository.upsert(

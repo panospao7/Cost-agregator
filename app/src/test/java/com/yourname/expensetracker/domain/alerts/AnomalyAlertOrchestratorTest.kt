@@ -22,8 +22,10 @@ import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import kotlin.coroutines.cancellation.CancellationException
 
 class AnomalyAlertOrchestratorTest {
 
@@ -288,5 +290,25 @@ class AnomalyAlertOrchestratorTest {
 
     companion object {
         private const val FIXED_NOW = 1_730_000_000_000L
+    }
+
+    @Test
+    fun `checkAndAlert propagates CancellationException instead of logging and swallowing`() = runTest {
+        val expense = expenseWithCategory(id = 800L, merchant = "Cancel Shop", categoryId = 5L, categoryName = "Test")
+
+        // Arrange: make the DAO call throw CancellationException
+        coEvery { expenseDao.getExpensesByCategory(eq(5L), any(), any()) } throws CancellationException("test cancellation")
+
+        // Act + Assert: CancellationException must propagate
+        try {
+            orchestrator.checkAndAlert(expense)
+            fail("Expected CancellationException to propagate")
+        } catch (e: CancellationException) {
+            // expected — cancellation was correctly rethrown
+        }
+
+        // Verify no alert was persisted or sent
+        coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
+        verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
     }
 }

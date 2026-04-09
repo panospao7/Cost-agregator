@@ -23,7 +23,9 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 class SuggestReceiptExtractionUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
@@ -152,7 +154,10 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
                     ReceiptAssistGenerationResult.Error(readableError)
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            Timber.e(e, "SuggestReceiptExtractionUseCase: provider call failed for receipt $receiptId")
             aiArtifactRepository.upsert(
                 baseEntity.copy(
                     status = AiArtifactStatus.FAILED,

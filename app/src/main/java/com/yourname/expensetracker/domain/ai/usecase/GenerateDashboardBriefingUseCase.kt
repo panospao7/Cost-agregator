@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Generates (or returns a cached) AI dashboard briefing artifact.
@@ -117,6 +118,8 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
             aiArtifactRepository.upsert(finalEntity)
             Timber.d("GenerateDashboardBriefingUseCase: artifact stored with status ${finalEntity.status}.")
 
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "GenerateDashboardBriefingUseCase: generation failed")
             aiArtifactRepository.upsert(

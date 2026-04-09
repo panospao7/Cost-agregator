@@ -3,8 +3,8 @@ its cruc# Execution Playbook — ExpenseTracker Refactoring
 > **Project:** ExpenseTracker (Android/Kotlin/Clean Architecture)
 > **Branch:** `master-refactor`
 > **Current Phase:** Phase 1 — Universal Epics
-> **Active Epic:** A.7 — Fire-and-Forget Coroutine Anti-Pattern
-> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 next
+> **Active Epic:** A.8 — Shared Mutable State / Thread Safety Gaps
+> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 next
 
 ---
 
@@ -397,19 +397,23 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Registry updated (`[RESOLVED BY A.6]`)
   - [x] Batch reports + deep-analysis mirrors updated
   - [x] Committed
-- [ ] **A.7:** Fire-and-Forget Coroutine Anti-Pattern
+- [x] **A.7:** Fire-and-Forget Coroutine Anti-Pattern
+  - [x] Plan created (`PLAN-A7-fire-and-forget-coroutines.md`)
+  - [x] All batches implemented
+  - [x] Review: **PASS**
+  - [x] Registry updated (`[RESOLVED BY A.7]`)
+  - [x] Batch reports + deep-analysis mirrors updated
+  - [x] Committed
 - [ ] **A.8:** Shared Mutable State / Thread Safety Gaps
 - [ ] **A.9:** Hidden Data Truncation / DAO Default Limits
 - [ ] **A.10:** Transaction Type Blindness
 
 ### Phase 1 Todo Roadmap (Strict Priority)
-1. **A.7 — Fire-and-Forget Coroutine Anti-Pattern**
-   - Priority rationale: high severity structured concurrency/cancellation correctness across services and workers
-2. **A.8 — Shared Mutable State / Thread Safety Gaps**
+1. **A.8 — Shared Mutable State / Thread Safety Gaps**
    - Priority rationale: concurrency safety across singleton services, caches, formatters, and managers
-3. **A.9 — Hidden Data Truncation / DAO Default Limits**
+2. **A.9 — Hidden Data Truncation / DAO Default Limits**
    - Priority rationale: critical data correctness issue with large blast radius; defer until concurrency and time-contract foundations are stable
-4. **A.10 — Transaction Type Blindness**
+3. **A.10 — Transaction Type Blindness**
    - Priority rationale: high-severity aggregation correctness pass that should land after A.9 query contract cleanup to avoid rework
 
 ### Phase 2: Pipeline Fixes

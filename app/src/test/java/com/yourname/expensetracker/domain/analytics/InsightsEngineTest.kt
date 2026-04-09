@@ -10,6 +10,8 @@ import org.junit.Test
 import io.mockk.mockk
 import io.mockk.every
 import io.mockk.coEvery
+import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.cancellation.CancellationException
 
 class InsightsEngineTest {
     private lateinit var engine: InsightsEngine
@@ -85,5 +87,32 @@ class InsightsEngineTest {
         val totals = engine.buildDailyTotals(expenses, 1)
         val todayTotal = totals.values.last()
         assertEquals(10.0, todayTotal, 0.01)
+    }
+
+    @Test
+    fun `generateInsights propagates CancellationException instead of returning degraded snapshot`() = runTest {
+        // Arrange: make a repository call throw CancellationException
+        val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
+        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } throws CancellationException("test cancellation")
+
+        val cancelEngine = InsightsEngine(
+            expenseRepository = expenseRepository,
+            recurringExpenseEngine = mockk(relaxed = true),
+            timeProvider = timeProvider,
+            spendingPaceCalculator = mockk(relaxed = true),
+            anomalyDetector = mockk(relaxed = true),
+            monthlyComparisonCalculator = mockk(relaxed = true),
+            categoryInsightEngine = mockk(relaxed = true),
+            merchantInsightEngine = mockk(relaxed = true),
+            dayOfWeekAnalyzer = mockk(relaxed = true)
+        )
+
+        // Act + Assert: CancellationException must propagate, not be swallowed
+        try {
+            cancelEngine.generateInsights(emptyList(), emptyList())
+            fail("Expected CancellationException to propagate")
+        } catch (e: CancellationException) {
+            // expected — cancellation was correctly rethrown
+        }
     }
 }

@@ -15,6 +15,7 @@ import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
+import kotlin.coroutines.cancellation.CancellationException
 
 // === Engine ===
 
@@ -48,30 +49,30 @@ class InsightsEngine @Inject constructor(
 
         // Start all independent queries in parallel with error handling
         val monthlyComparisonDeferred = async { 
-            try { buildMonthlyComparison(currentMonth, previousMonth) } catch (e: Exception) { null }
+            try { buildMonthlyComparison(currentMonth, previousMonth) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: monthlyComparison branch failed"); null }
         }
         val categoryInsightsDeferred = async { 
-            try { buildCategoryInsights(currentMonth, previousMonth, categoryMap, allExpenses) } catch (e: Exception) { null }
+            try { buildCategoryInsights(currentMonth, previousMonth, categoryMap, allExpenses) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: categoryInsights branch failed"); null }
         }
         val topMerchantsDeferred = async { 
-            try { buildMerchantInsights(allExpenses) } catch (e: Exception) { null }
+            try { buildMerchantInsights(allExpenses) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: topMerchants branch failed"); null }
         }
         val spendingPaceDeferred = async { 
-            try { buildSpendingPace(currentMonth, previousMonth, allExpenses) } catch (e: Exception) { null }
+            try { buildSpendingPace(currentMonth, previousMonth, allExpenses) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: spendingPace branch failed"); null }
         }
         val anomaliesDeferred = async { 
-            try { findAnomalies(currentMonth, categoryMap, allExpenses) } catch (e: Exception) { null }
+            try { findAnomalies(currentMonth, categoryMap, allExpenses) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: anomalies branch failed"); null }
         }
         val recurringExpensesDeferred = async { 
-            try { findRecurringExpenses(allExpenses) } catch (e: Exception) { emptyList() }
+            try { findRecurringExpenses(allExpenses) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: recurringExpenses branch failed"); emptyList() }
         }
         
         val threeMonthsAgo = getMonthPeriod(now, -2)
         val dayOfWeekPatternDeferred = async {
-            try { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs, allExpenses) } catch (e: Exception) { null }
+            try { buildDayOfWeekPattern(threeMonthsAgo.startMs, currentMonth.endMs, allExpenses) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: dayOfWeekPattern branch failed"); null }
         }
         val largestTransactionDeferred = async { 
-            try { expenseRepository.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) } catch (e: Exception) { null }
+            try { expenseRepository.getLargestExpenseForPeriod(currentMonth.startMs, currentMonth.endMs) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: largestTransaction branch failed"); null }
         }
 
         // Await all results with error resilience

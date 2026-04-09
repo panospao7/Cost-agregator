@@ -26,6 +26,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -254,6 +255,8 @@ class ReceiptOcrService @Inject constructor(
             Timber.d("Extracted ${text.length} chars from $pageLimit pages")
             
             return@withContext text
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             // MED-01 FIX: Add logging instead of silent catch
             Timber.e(e, "PDF text extraction failed for $pdfUri")
@@ -333,6 +336,8 @@ class ReceiptOcrService @Inject constructor(
                 page.close()
                 bitmap?.recycle()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             // MED-01 FIX: Add logging to catch blocks  
             Timber.e(e, "Thumbnail rendering failed for PDF: $pdfUri")
@@ -434,6 +439,8 @@ class ReceiptOcrService @Inject constructor(
                 savedImagePath = savedThumbnailPath
             )
             
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "PDF processing failed for $pdfUri")
             throw IllegalStateException("Failed to scan PDF: ${e.message}", e)
@@ -640,6 +647,8 @@ class ReceiptOcrService @Inject constructor(
         repeat(maxAttempts) { attempt ->
             try {
                 return block()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 if (attempt == maxAttempts - 1) {
                     Timber.e(e, "OCR failed after $maxAttempts attempts")

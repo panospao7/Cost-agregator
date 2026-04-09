@@ -65,6 +65,7 @@
 **Description:** `catch (e: Exception)` blocks swallow `CancellationException` across analytics, AI use cases, workers, and services. This converts coroutine cancellation into silent failures, prevents proper structured concurrency, and causes stale FAILED artifacts to be persisted for cancelled jobs. Broad exception catching also masks real errors.
 **Affected files:** `BudgetMonitor.kt`, `CategorizationAssistInputBuilder.kt`, `InterpretFinancialQueryUseCase.kt`, `DailyBriefingWorker.kt`, `SuggestReceiptExtractionUseCase.kt`, `SuggestCategoryFallbackUseCase.kt`, `ExplainPendingReviewUseCase.kt`, `GenerateDashboardBriefingUseCase.kt`, `InsightsEngine.kt`, `AnomalyAlertOrchestrator.kt`, `ReceiptOcrService.kt`, `WarrantyExpirationWorker.kt`
 **Suggested fix:** Re-throw `CancellationException` before any generic catch block. Use `try/catch` instead of `runCatching { }.getOrElse { }` in suspend functions. Log non-cancellation exceptions explicitly.
+- [RESOLVED BY A.7]
 
 ### A.8: Shared Mutable State / Thread Safety Gaps
 **Batches affected:** 01, 02, 07, 10, 11, 15, 25, 27, 28, 34, 36, 41, 42, 45
