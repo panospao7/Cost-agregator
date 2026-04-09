@@ -4,6 +4,6 @@ data class CategoryBreakdown(
     val category: CategoryInfo,
     val totalAmount: Double,
     val transactionCount: Int,
-    val percentageOfTotal: Float,
+    val percentageOfTotal: Double,
     val periodLabel: String
 )

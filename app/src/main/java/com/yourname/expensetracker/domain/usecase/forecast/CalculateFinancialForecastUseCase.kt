@@ -43,7 +43,7 @@ class CalculateFinancialForecastUseCase @Inject constructor(
                 categoryName = status.category?.name,
                 spentAmount = status.spentAmount,
                 remainingAmount = status.remainingAmount,
-                percentUsed = status.percentUsed,
+                percentUsed = status.percentUsed.toDouble(),
                 healthStatus = status.healthStatus,
                 periodStart = status.periodStart,
                 periodEnd = status.periodEnd

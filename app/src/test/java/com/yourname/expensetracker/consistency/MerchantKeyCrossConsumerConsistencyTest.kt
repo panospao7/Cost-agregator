@@ -29,7 +29,7 @@ class MerchantKeyCrossConsumerConsistencyTest {
 
         for (merchant in merchants) {
             val directKey = MerchantKeyGenerator.generate(merchant)
-            val dedupeKey = Expense.generateDedupeKey(amount, merchant, date)
+            val dedupeKey = Expense.generateDedupeKey(amount, merchant, date, "EUR")
             assert(dedupeKey.contains(directKey)) {
                 "Expense dedupeKey must contain MerchantKeyGenerator output: $merchant"
             }
@@ -56,7 +56,7 @@ class MerchantKeyCrossConsumerConsistencyTest {
         val amount = 50.25
         val merchant = "Starbucks"
         val date = 1700000000000L
-        val dedupeKey = Expense.generateDedupeKey(amount, merchant, date)
+        val dedupeKey = Expense.generateDedupeKey(amount, merchant, date, "EUR")
         val merchantKey = MerchantKeyGenerator.generate(merchant)
         assert(dedupeKey.contains("50.25"))
         assert(dedupeKey.contains(merchantKey))
@@ -65,7 +65,7 @@ class MerchantKeyCrossConsumerConsistencyTest {
     @Test
     fun `edge - empty merchant produces empty key in both paths`() {
         val directKey = MerchantKeyGenerator.generate("")
-        val dedupeKey = Expense.generateDedupeKey(10.0, "", System.currentTimeMillis())
+        val dedupeKey = Expense.generateDedupeKey(10.0, "", System.currentTimeMillis(), "EUR")
         assertEquals("", directKey)
         assert(dedupeKey.contains("_"))
     }
@@ -85,7 +85,7 @@ class MerchantKeyCrossConsumerConsistencyTest {
         val m = "Store 12345"
         val key = MerchantKeyGenerator.generate(m)
         assert(key.contains("12345") || key.isNotEmpty())
-        val dedupeKey = Expense.generateDedupeKey(10.0, m, System.currentTimeMillis())
+            val dedupeKey = Expense.generateDedupeKey(10.0, m, System.currentTimeMillis(), "EUR")
         assert(dedupeKey.contains(key))
     }
 
@@ -102,7 +102,7 @@ class MerchantKeyCrossConsumerConsistencyTest {
         for (m in merchants) {
             val k1 = MerchantKeyGenerator.generate(m)
             val k2 = MerchantKeyGenerator.generate(m)
-            val dedupeKey = Expense.generateDedupeKey(1.0, m, 0L)
+            val dedupeKey = Expense.generateDedupeKey(1.0, m, 0L, "EUR")
             assertEquals("Deterministic: $m", k1, k2)
             assert(dedupeKey.contains(k1))
         }

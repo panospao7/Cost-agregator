@@ -15,11 +15,11 @@ import javax.inject.Singleton
 data class SpendingSummary(
     val totalSpent: Double,
     val previousTotalSpent: Double?,
-    val changePercent: Float?,
+    val changePercent: Double?,
     /** Daily spending totals for the current period, one entry per day. */
-    val dailyHistory: List<Float>,
+    val dailyHistory: List<Double>,
     /** Daily spending totals for the previous period, one entry per day. */
-    val previousDailyHistory: List<Float>,
+    val previousDailyHistory: List<Double>,
     val transactionCount: Int
 )
 
@@ -75,7 +75,7 @@ class AnalyticsRepository @Inject constructor(
             }
 
             val changePercent = if (previousTotal > 0) {
-                ((totalSpent - previousTotal) / previousTotal * 100).toFloat()
+                (totalSpent - previousTotal) / previousTotal * 100
             } else null
 
             emit(
@@ -83,8 +83,8 @@ class AnalyticsRepository @Inject constructor(
                     totalSpent = totalSpent,
                     previousTotalSpent = if (previousTotal > 0) previousTotal else null,
                     changePercent = changePercent,
-                    dailyHistory = dailyHistory.map { it.toFloat() },
-                    previousDailyHistory = previousDailyHistory.map { it.toFloat() },
+                    dailyHistory = dailyHistory.toList(),
+                    previousDailyHistory = previousDailyHistory.toList(),
                     transactionCount = transactionCount
                 )
             )

@@ -80,7 +80,7 @@ fun CategoryBreakdownSheet(
                         icon = breakdown.category.icon,
                         color = color,
                         amount = breakdown.totalAmount,
-                        percentage = breakdown.percentageOfTotal / 100f
+                        percentage = (breakdown.percentageOfTotal / 100.0).toFloat()
                     )
                 )
                 Spacer(modifier = Modifier.height(12.dp))

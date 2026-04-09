@@ -161,11 +161,11 @@ class TotalsAggregationEngineTest {
 
         assertEquals(3, result.size)
         assertEquals(250.0, result[0].totalAmount, 0.01)
-        assertEquals(50.0f, result[0].percentageOfTotal, 0.01f)
+        assertEquals(50.0, result[0].percentageOfTotal, 0.01)
         assertEquals(150.0, result[1].totalAmount, 0.01)
-        assertEquals(30.0f, result[1].percentageOfTotal, 0.01f)
+        assertEquals(30.0, result[1].percentageOfTotal, 0.01)
         assertEquals(100.0, result[2].totalAmount, 0.01)
-        assertEquals(20.0f, result[2].percentageOfTotal, 0.01f)
+        assertEquals(20.0, result[2].percentageOfTotal, 0.01)
         assertEquals("Jan", result[0].periodLabel)
     }
 
@@ -301,7 +301,7 @@ class TotalsAggregationEngineTest {
         val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan")
 
         assertEquals(1, result.size)
-        assertEquals(0.0f, result[0].percentageOfTotal, 0.01f)
+        assertEquals(0.0, result[0].percentageOfTotal, 0.01)
     }
 
     @Test

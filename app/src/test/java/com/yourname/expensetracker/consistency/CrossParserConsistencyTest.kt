@@ -56,7 +56,7 @@ class CrossParserConsistencyTest {
         val amount = 25.50
         val merchant = "Starbucks"
         val date = System.currentTimeMillis()
-        val dedupeKey = Expense.generateDedupeKey(amount, merchant, date)
+        val dedupeKey = Expense.generateDedupeKey(amount, merchant, date, "EUR")
         val expectedMerchantKey = MerchantKeyGenerator.generate(merchant)
         assert(dedupeKey.contains(expectedMerchantKey)) {
             "DedupeKey must contain merchant key: $dedupeKey"

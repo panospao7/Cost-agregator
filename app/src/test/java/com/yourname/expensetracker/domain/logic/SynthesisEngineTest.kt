@@ -435,7 +435,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         categoryName = null,
         spentAmount = 0.0,
         remainingAmount = limit,
-        percentUsed = 0.0f,
+        percentUsed = 0.0,
         healthStatus = health,
         periodStart = 0,
         periodEnd = 0

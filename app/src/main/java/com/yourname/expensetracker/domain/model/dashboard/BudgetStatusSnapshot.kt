@@ -8,7 +8,7 @@ data class BudgetStatusSnapshot(
     val categoryName: String?,
     val spentAmount: Double,
     val remainingAmount: Double,
-    val percentUsed: Float,
+    val percentUsed: Double,
     val healthStatus: BudgetHealthStatus,
     val periodStart: Long,
     val periodEnd: Long

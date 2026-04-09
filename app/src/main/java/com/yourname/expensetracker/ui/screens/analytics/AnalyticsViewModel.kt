@@ -260,7 +260,7 @@ class AnalyticsViewModel @Inject constructor(
 
         val currentTotal = summary.totalSpent
         val previousTotal = summary.previousTotalSpent ?: 0.0
-        val changePercent = summary.changePercent
+        val changePercent = summary.changePercent?.toFloat()
 
         // Category breakdown
         val categoryBreakdown = catBreakdown // Repo returns Domain model directly

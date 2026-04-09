@@ -408,7 +408,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val domainBlocks = synthesisEngine.calculateBlockPartyData(
             forecast = runwayResult.forecast,
             expenses = ctx.expenseEntities,
-            dailySpending = ctx.data.summary.dailyHistory,
+            dailySpending = ctx.data.summary.dailyHistory.map { it.toFloat() },
             budgetLimit = ctx.totalBudgetAmount
         )
 

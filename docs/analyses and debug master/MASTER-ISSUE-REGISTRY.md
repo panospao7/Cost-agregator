@@ -57,6 +57,7 @@
 **Description:** Financial domain models mix `Float` and `Double`: `SpendingSummary` uses `Double` totals with `Float` histories, `BudgetStatusSnapshot` stores `percentUsed` as `Float` while amounts are `Double`, `CategoryBreakdown` uses `Float` percentages, `MonteCarloBudgetImpact` uses `Float` for risk fields. This introduces avoidable precision loss in financial calculations.
 **Affected files:** `SpendingSummary.kt`, `BudgetStatusSnapshot.kt`, `CategoryBreakdown.kt`, `DashboardCategoryBreakdown.kt`, `MonteCarloBudgetImpact.kt`, `FinancialForecast.kt`
 **Suggested fix:** Use `Double` consistently in all domain/repository models. Convert to `Float` only at chart/UI rendering boundaries.
+- [RESOLVED BY A.6]
 
 ### A.7: Fire-and-Forget Coroutine Anti-Pattern
 **Batches affected:** 02, 05, 07, 10, 16, 17, 18, 19, 21, 35, 36, 42, 45, 48

@@ -73,9 +73,9 @@ class TotalsAggregationEngineDeepTest {
 
         val result = engine.getCategoryBreakdown(dateMs(2026, 4, 1), dateMs(2026, 5, 1), "Apr")
 
-        assertApproxEquals(75f, result.first { it.category.id == 1L }.percentageOfTotal, 0.01f)
-        assertApproxEquals(25f, result.first { it.category.id == 2L }.percentageOfTotal, 0.01f)
-        assertApproxEquals(100.0, result.sumOf { it.percentageOfTotal.toDouble() }, 0.01)
+        assertApproxEquals(75.0, result.first { it.category.id == 1L }.percentageOfTotal, 0.01)
+        assertApproxEquals(25.0, result.first { it.category.id == 2L }.percentageOfTotal, 0.01)
+        assertApproxEquals(100.0, result.sumOf { it.percentageOfTotal }, 0.01)
     }
 
     @Test

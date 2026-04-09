@@ -19,13 +19,13 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 250.0,
             transactionCount = 10,
-            percentageOfTotal = 25.0f,
+            percentageOfTotal = 25.0,
             periodLabel = "Jan"
         )
 
         assertEquals(250.0, breakdown.totalAmount, 0.01)
         assertEquals(10, breakdown.transactionCount)
-        assertEquals(25.0f, breakdown.percentageOfTotal, 0.01f)
+        assertEquals(25.0, breakdown.percentageOfTotal, 0.01)
         assertEquals("Jan", breakdown.periodLabel)
         assertEquals(categoryInfo, breakdown.category)
     }
@@ -43,7 +43,7 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 250.0,
             transactionCount = 10,
-            percentageOfTotal = 25.0f,
+            percentageOfTotal = 25.0,
             periodLabel = "Jan"
         )
 
@@ -63,7 +63,7 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 250.0,
             transactionCount = 10,
-            percentageOfTotal = 25.0f,
+            percentageOfTotal = 25.0,
             periodLabel = "Jan"
         )
 
@@ -72,7 +72,7 @@ class CategoryBreakdownTest {
         assertEquals(original.category, copy.category)
         assertEquals(original.totalAmount, copy.totalAmount, 0.01)
         assertEquals(original.transactionCount, copy.transactionCount)
-        assertEquals(original.percentageOfTotal, copy.percentageOfTotal, 0.01f)
+        assertEquals(original.percentageOfTotal, copy.percentageOfTotal, 0.01)
         assertEquals(original.periodLabel, copy.periodLabel)
     }
 
@@ -89,17 +89,17 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 250.0,
             transactionCount = 10,
-            percentageOfTotal = 25.0f,
+            percentageOfTotal = 25.0,
             periodLabel = "Jan"
         )
 
         val modified = original.copy(
             totalAmount = 300.0,
-            percentageOfTotal = 30.0f
+            percentageOfTotal = 30.0
         )
 
         assertEquals(300.0, modified.totalAmount, 0.01)
-        assertEquals(30.0f, modified.percentageOfTotal, 0.01f)
+        assertEquals(30.0, modified.percentageOfTotal, 0.01)
         assertEquals("Jan", modified.periodLabel)
     }
 
@@ -123,7 +123,7 @@ class CategoryBreakdownTest {
             category = categoryInfo1,
             totalAmount = 250.0,
             transactionCount = 10,
-            percentageOfTotal = 25.0f,
+            percentageOfTotal = 25.0,
             periodLabel = "Jan"
         )
 
@@ -131,7 +131,7 @@ class CategoryBreakdownTest {
             category = categoryInfo2,
             totalAmount = 250.0,
             transactionCount = 10,
-            percentageOfTotal = 25.0f,
+            percentageOfTotal = 25.0,
             periodLabel = "Jan"
         )
 
@@ -152,7 +152,7 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 250.0,
             transactionCount = 10,
-            percentageOfTotal = 25.0f,
+            percentageOfTotal = 25.0,
             periodLabel = "Jan"
         )
 
@@ -175,13 +175,13 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 0.0,
             transactionCount = 0,
-            percentageOfTotal = 0.0f,
+            percentageOfTotal = 0.0,
             periodLabel = "Feb"
         )
 
         assertEquals(0.0, breakdown.totalAmount, 0.01)
         assertEquals(0, breakdown.transactionCount)
-        assertEquals(0.0f, breakdown.percentageOfTotal, 0.01f)
+        assertEquals(0.0, breakdown.percentageOfTotal, 0.01)
     }
 
     @Test
@@ -204,7 +204,7 @@ class CategoryBreakdownTest {
             category = groceriesInfo,
             totalAmount = 500.0,
             transactionCount = 20,
-            percentageOfTotal = 50.0f,
+            percentageOfTotal = 50.0,
             periodLabel = "Mar"
         )
 
@@ -212,7 +212,7 @@ class CategoryBreakdownTest {
             category = entertainmentInfo,
             totalAmount = 300.0,
             transactionCount = 5,
-            percentageOfTotal = 30.0f,
+            percentageOfTotal = 30.0,
             periodLabel = "Mar"
         )
 
@@ -234,7 +234,7 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 250.0,
             transactionCount = 10,
-            percentageOfTotal = 25.0f,
+            percentageOfTotal = 25.0,
             periodLabel = "Jan"
         )
 
@@ -242,7 +242,7 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 300.0,
             transactionCount = 12,
-            percentageOfTotal = 30.0f,
+            percentageOfTotal = 30.0,
             periodLabel = "Feb"
         )
 
@@ -265,7 +265,7 @@ class CategoryBreakdownTest {
             category = incomeCategoryInfo,
             totalAmount = 5000.0,
             transactionCount = 1,
-            percentageOfTotal = 100.0f,
+            percentageOfTotal = 100.0,
             periodLabel = "Jan"
         )
 
@@ -406,11 +406,11 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 100.0,
             transactionCount = 1,
-            percentageOfTotal = 100.0f,
+            percentageOfTotal = 100.0,
             periodLabel = "Jan"
         )
 
-        assertEquals(100.0f, breakdown.percentageOfTotal, 0.01f)
+        assertEquals(100.0, breakdown.percentageOfTotal, 0.01)
     }
 
     @Test
@@ -426,10 +426,10 @@ class CategoryBreakdownTest {
             category = categoryInfo,
             totalAmount = 33.33,
             transactionCount = 2,
-            percentageOfTotal = 33.33f,
+            percentageOfTotal = 33.33,
             periodLabel = "Jan"
         )
 
-        assertEquals(33.33f, breakdown.percentageOfTotal, 0.01f)
+        assertEquals(33.33, breakdown.percentageOfTotal, 0.01)
     }
 }

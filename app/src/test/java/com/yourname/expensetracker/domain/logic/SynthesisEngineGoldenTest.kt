@@ -169,7 +169,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             categoryName = null,
             spentAmount = 0.0,
             remainingAmount = amount,
-            percentUsed = 0f,
+            percentUsed = 0.0,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = 0L,
             periodEnd = 0L

@@ -210,9 +210,9 @@ class TotalsAggregationEngine @Inject constructor(
                 )
 
                 val percentage = if (grandTotal > 0) {
-                    (result.total / grandTotal * 100).toFloat()
+                    result.total / grandTotal * 100
                 } else {
-                    0f
+                    0.0
                 }
 
                 CategoryBreakdown(

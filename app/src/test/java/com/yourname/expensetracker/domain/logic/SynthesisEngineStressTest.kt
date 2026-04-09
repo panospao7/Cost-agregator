@@ -100,7 +100,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         categoryName = null,
         spentAmount = spent,
         remainingAmount = limit - spent,
-        percentUsed = if (limit > 0) (spent / limit * 100).toFloat() else 0f,
+        percentUsed = if (limit > 0) (spent / limit * 100) else 0.0,
         healthStatus = health,
         periodStart = 0,
         periodEnd = 0
@@ -778,7 +778,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                     categoryName = null,
                     spentAmount = 0.0,
                     remainingAmount = 0.0,
-                    percentUsed = 0f,
+                    percentUsed = 0.0,
                     healthStatus = BudgetHealthStatus.ON_TRACK,
                     periodStart = 0,
                     periodEnd = 0

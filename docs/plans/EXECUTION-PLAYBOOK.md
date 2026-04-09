@@ -3,8 +3,8 @@ its cruc# Execution Playbook — ExpenseTracker Refactoring
 > **Project:** ExpenseTracker (Android/Kotlin/Clean Architecture)
 > **Branch:** `master-refactor`
 > **Current Phase:** Phase 1 — Universal Epics
-> **Active Epic:** A.6 — Mixed Numeric Types (Float vs Double)
-> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 next
+> **Active Epic:** A.7 — Fire-and-Forget Coroutine Anti-Pattern
+> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 next
 
 ---
 
@@ -390,22 +390,26 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Registry updated (`[RESOLVED BY A.5]`)
   - [x] Batch reports + deep-analysis mirrors updated
   - [x] Committed
-- [ ] **A.6:** Mixed Numeric Types (Float vs Double)
+- [x] **A.6:** Mixed Numeric Types (Float vs Double)
+  - [x] Plan created (`PLAN-A6-mixed-numeric-types.md`)
+  - [x] All batches implemented
+  - [x] Review: **PASS**
+  - [x] Registry updated (`[RESOLVED BY A.6]`)
+  - [x] Batch reports + deep-analysis mirrors updated
+  - [x] Committed
 - [ ] **A.7:** Fire-and-Forget Coroutine Anti-Pattern
 - [ ] **A.8:** Shared Mutable State / Thread Safety Gaps
 - [ ] **A.9:** Hidden Data Truncation / DAO Default Limits
 - [ ] **A.10:** Transaction Type Blindness
 
 ### Phase 1 Todo Roadmap (Strict Priority)
-1. **A.6 — Mixed Numeric Types (Float vs Double)**
-   - Priority rationale: medium-risk model consistency cleanup, smaller blast radius than later epics, unlocks safer financial model handling before large-scale truncation/type audits
-2. **A.7 — Fire-and-Forget Coroutine Anti-Pattern**
+1. **A.7 — Fire-and-Forget Coroutine Anti-Pattern**
    - Priority rationale: high severity structured concurrency/cancellation correctness across services and workers
-3. **A.8 — Shared Mutable State / Thread Safety Gaps**
+2. **A.8 — Shared Mutable State / Thread Safety Gaps**
    - Priority rationale: concurrency safety across singleton services, caches, formatters, and managers
-4. **A.9 — Hidden Data Truncation / DAO Default Limits**
+3. **A.9 — Hidden Data Truncation / DAO Default Limits**
    - Priority rationale: critical data correctness issue with large blast radius; defer until concurrency and time-contract foundations are stable
-5. **A.10 — Transaction Type Blindness**
+4. **A.10 — Transaction Type Blindness**
    - Priority rationale: high-severity aggregation correctness pass that should land after A.9 query contract cleanup to avoid rework
 
 ### Phase 2: Pipeline Fixes

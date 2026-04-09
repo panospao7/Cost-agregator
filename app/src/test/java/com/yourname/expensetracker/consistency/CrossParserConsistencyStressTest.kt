@@ -34,12 +34,12 @@ class CrossParserConsistencyStressTest {
         val amount = 50.0
         val merchant = "Starbucks"
         val date = 1700000000000L
-        val expected = Expense.generateDedupeKey(amount, merchant, date)
+        val expected = Expense.generateDedupeKey(amount, merchant, date, "EUR")
         repeat(100) {
             assertEquals(
                 "generateDedupeKey must be deterministic",
                 expected,
-                Expense.generateDedupeKey(amount, merchant, date)
+                Expense.generateDedupeKey(amount, merchant, date, "EUR")
             )
         }
     }

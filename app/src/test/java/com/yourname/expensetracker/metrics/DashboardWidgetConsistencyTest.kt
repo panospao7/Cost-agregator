@@ -170,7 +170,7 @@ class DashboardWidgetConsistencyTest {
             categoryName = null,
             spentAmount = 100.0,
             remainingAmount = 900.0,
-            percentUsed = 10f,
+            percentUsed = 10.0,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = monthStart,
             periodEnd = monthStart + 30 * 86400000L
@@ -210,7 +210,7 @@ class DashboardWidgetConsistencyTest {
             categoryName = null,
             spentAmount = 500.0,
             remainingAmount = 500.0,
-            percentUsed = 50f,
+            percentUsed = 50.0,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = 0,
             periodEnd = 0

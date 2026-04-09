@@ -404,9 +404,9 @@ class TotalsAggregationEngineValidationTest {
         assertEquals(100.0, totalPercentage, 0.01)
         
         // Verify individual percentages
-        assertEquals(50.0f, result[0].percentageOfTotal, 0.01f) // 500/1000 = 50%
-        assertEquals(30.0f, result[1].percentageOfTotal, 0.01f) // 300/1000 = 30%
-        assertEquals(20.0f, result[2].percentageOfTotal, 0.01f) // 200/1000 = 20%
+        assertEquals(50.0, result[0].percentageOfTotal, 0.01) // 500/1000 = 50%
+        assertEquals(30.0, result[1].percentageOfTotal, 0.01) // 300/1000 = 30%
+        assertEquals(20.0, result[2].percentageOfTotal, 0.01) // 200/1000 = 20%
     }
 
     @Test
@@ -432,7 +432,7 @@ class TotalsAggregationEngineValidationTest {
         
         // Then: Single category should have 100%
         assertEquals(1, result.size)
-        assertEquals(100.0f, result[0].percentageOfTotal, 0.01f)
+        assertEquals(100.0, result[0].percentageOfTotal, 0.01)
     }
 
     @Test

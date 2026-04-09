@@ -232,7 +232,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 categoryName = it.category?.name,
                 spentAmount = it.spentAmount,
                 remainingAmount = it.remainingAmount,
-                percentUsed = it.percentUsed,
+                percentUsed = it.percentUsed.toDouble(),
                 healthStatus = it.healthStatus,
                 periodStart = it.periodStart,
                 periodEnd = it.periodEnd
@@ -255,8 +255,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                     totalSpent = monthSpent,
                     previousTotalSpent = null,
                     changePercent = null,
-                    dailyHistory = emptyList<Float>(),
-                    previousDailyHistory = emptyList<Float>(),
+                    dailyHistory = emptyList<Double>(),
+                    previousDailyHistory = emptyList<Double>(),
                     transactionCount = expenses.count { it.transactionType == TransactionType.PURCHASE }
                 ),
                 categoryBreakdown = listOf(
